@@ -18,13 +18,14 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, cast
 
 from mechanical_librarian.application.shadow_reviews import ShadowReviewError
 from mechanical_librarian.domain.shadow_review import (
     QUALIFICATION_MODE,
     RESULT_SCHEMA,
     ReviewerProfileIdentity,
+    ShadowReviewDocumentError,
     ShadowReviewRequest,
     ShadowReviewResult,
     ShadowReviewValueError,
@@ -34,7 +35,10 @@ from mechanical_librarian.domain.shadow_review import (
 PROFILE_SCHEMA = "reviewer-qualification-profile-v1"
 MAX_PROFILE_BYTES = 65_536
 _FAILURES = frozenset(
-    {"runtime", "setup", "auth", "profile", "timeout", "cancel", "output"}
+    {
+        "runtime", "setup", "auth", "profile", "timeout", "cancel", "schema",
+        "response_format", "malformed_output", "semantic_validation",
+    }
 )
 MAX_CITATIONS = 256
 MAX_PROBLEMS = 32
@@ -50,6 +54,12 @@ class ShadowReviewerError(ShadowReviewError):
         self.count = min(max(count, 0), 2_147_483_647)
         self.digest = digest
         super().__init__(code, count=self.count, digest=self.digest)
+
+
+@dataclass(frozen=True, slots=True)
+class _SchemaBinding:
+    serialized: bytes
+    digest: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,10 +300,11 @@ class CodexShadowReviewer:
                     schema_path = job_path / "output-schema.json"
                     result_path = job_path / "result.json"
                     prompt_path = job_path / "prompt.bin"
-                    schema_path.write_text(
-                        canonical_json(_output_schema(request)), encoding="utf-8"
+                    binding = _schema_binding(request)
+                    schema_path.write_bytes(binding.serialized)
+                    prompt_path.write_bytes(
+                        _prompt(request, schema_digest=binding.digest).encode("utf-8")
                     )
-                    prompt_path.write_bytes(_prompt(request).encode("utf-8"))
                     os.chmod(schema_path, 0o600)
                     os.chmod(prompt_path, 0o600)
                     stdout_path = job_path / "stdout.bin"
@@ -327,18 +338,12 @@ class CodexShadowReviewer:
                     try:
                         result_bytes = result_path.read_bytes()
                     except OSError as error:
-                        raise ShadowReviewerError("output") from error
-                    if len(result_bytes) > self._profile.identity.output_bytes:
-                        raise ShadowReviewerError("output")
-                    try:
-                        serialized = result_bytes.decode("utf-8", errors="strict")
-                        return ShadowReviewResult.from_json(serialized, request)
-                    except (UnicodeError, ShadowReviewValueError) as error:
-                        raise ShadowReviewerError(
-                            "output",
-                            count=len(result_bytes),
-                            digest=hashlib.sha256(result_bytes).hexdigest(),
-                        ) from error
+                        raise ShadowReviewerError("malformed_output") from error
+                    return _validated_result(
+                        result_bytes,
+                        request,
+                        maximum=self._profile.identity.output_bytes,
+                    )
                 finally:
                     if job_path is not None:
                         shutil.rmtree(job_path, ignore_errors=True)
@@ -632,6 +637,7 @@ class CodexShadowReviewer:
                 "exec",
                 "--ignore-user-config",
                 "--ignore-rules",
+                "--skip-git-repo-check",
                 "--ephemeral",
                 "--strict-config",
                 "--model",
@@ -914,86 +920,186 @@ def _diagnostic(stdout_file, stderr_file) -> tuple[int, str]:
     return count, digest.hexdigest()
 
 
-def _prompt(request: ShadowReviewRequest) -> str:
+def _validated_result(
+    result_bytes: bytes,
+    request: ShadowReviewRequest,
+    *,
+    maximum: int,
+) -> ShadowReviewResult:
+    digest = hashlib.sha256(result_bytes).hexdigest()
+    if len(result_bytes) > maximum:
+        raise ShadowReviewerError(
+            "malformed_output", count=len(result_bytes), digest=digest
+        )
+    try:
+        serialized = result_bytes.decode("utf-8", errors="strict")
+    except UnicodeError as error:
+        raise ShadowReviewerError(
+            "malformed_output", count=len(result_bytes), digest=digest
+        ) from error
+    try:
+        return ShadowReviewResult.from_json(serialized, request)
+    except ShadowReviewDocumentError as error:
+        raise ShadowReviewerError(
+            "malformed_output", count=len(result_bytes), digest=digest
+        ) from error
+    except ShadowReviewValueError as error:
+        raise ShadowReviewerError(
+            "semantic_validation", count=len(result_bytes), digest=digest
+        ) from error
+
+
+def _prompt(request: ShadowReviewRequest, *, schema_digest: str) -> str:
     return (
         "Outcome: provide one bounded shadow recommendation for every proposal.\n"
         "Constraints: use only packet candidates and citations; do not infer missing "
         "facts; choose manual when evidence is insufficient; problems are adverse "
         "facts only.\nEvidence: the canonical packet follows.\nOutput: return only "
         "one object matching shadow-review-result-v1.\nStop: after every proposal "
-        "is covered exactly once.\n"
+        "is covered exactly once.\nSchema digest: "
+        + schema_digest + "\n"
         + request.packet.to_json()
     )
 
 
 def _output_schema(request: ShadowReviewRequest) -> dict[str, object]:
-    proposal_ids = [value["proposal_id"] for value in request.packet.proposals]
-    citation_ids = [value["citation_id"] for value in request.packet.citations]
-    candidate_ids = [
-        candidate["candidate_id"]
-        for proposal in request.packet.proposals
-        for candidate in proposal["candidates"]
-    ]
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": False,
-        "properties": {
-            "recommendations": {
-                "items": {
-                    "additionalProperties": False,
-                    "properties": {
-                        "candidate_id": {
-                            "anyOf": [{"enum": candidate_ids}, {"type": "null"}]
-                        },
-                        "citations": {
-                            "items": {"enum": citation_ids},
-                            "maxItems": MAX_CITATIONS,
-                            "minItems": 1,
-                            "type": "array",
-                            "uniqueItems": True,
-                        },
-                        "problems": {
-                            "items": {
-                                "maxLength": 1_024,
-                                "minLength": 1,
-                                "type": "string",
-                            },
-                            "maxItems": MAX_PROBLEMS,
-                            "type": "array",
-                        },
-                        "proposal_id": {"enum": proposal_ids},
-                        "reasons": {
-                            "items": {
-                                "maxLength": 1_024,
-                                "minLength": 1,
-                                "type": "string",
-                            },
-                            "maxItems": 16,
-                            "minItems": 1,
-                            "type": "array",
-                        },
-                        "recommendation": {"enum": sorted(_recommendations())},
-                    },
-                    "required": [
-                        "candidate_id",
-                        "citations",
-                        "problems",
-                        "proposal_id",
-                        "reasons",
-                        "recommendation",
-                    ],
-                    "type": "object",
-                },
-                "maxItems": len(proposal_ids),
-                "minItems": len(proposal_ids),
-                "type": "array",
-            },
-            "review_request_id": {"const": request.review_request_id},
-            "schema_version": {"const": RESULT_SCHEMA},
-        },
-        "required": ["recommendations", "review_request_id", "schema_version"],
-        "type": "object",
+    raw = json.loads(request.output_schema)
+    if type(raw) is not dict:
+        raise ShadowReviewerError("schema")
+    return raw
+
+
+def _schema_binding(request: ShadowReviewRequest) -> _SchemaBinding:
+    schema = _output_schema(request)
+    _validate_output_schema(schema)
+    serialized = request.output_schema.encode("utf-8")
+    if hashlib.sha256(serialized).hexdigest() != request.output_schema_digest:
+        raise ShadowReviewerError("schema")
+    return _SchemaBinding(serialized, request.output_schema_digest)
+
+
+def _validate_output_schema(schema: object) -> None:
+    """Permit only the pinned structured-output subset and typed bindings."""
+    allowed = {
+        "$schema",
+        "additionalProperties",
+        "anyOf",
+        "const",
+        "enum",
+        "items",
+        "maxItems",
+        "maxLength",
+        "minItems",
+        "minLength",
+        "properties",
+        "required",
+        "type",
     }
+    json_types = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        type(None): "null",
+    }
+    primitive_types = set(json_types.values())
+    all_types = primitive_types | {"object", "array"}
+
+    def visit(value: object, *, root: bool = False) -> None:
+        if type(value) is not dict or not value or not set(value) <= allowed:
+            raise ShadowReviewerError("schema")
+        if root:
+            if value.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
+                raise ShadowReviewerError("schema")
+        elif "$schema" in value:
+            raise ShadowReviewerError("schema")
+        primitive = value.get("type")
+        if primitive is not None and (
+            type(primitive) is not str or primitive not in all_types
+        ):
+            raise ShadowReviewerError("schema")
+        if "const" in value or "enum" in value:
+            enum = value.get("enum", [])
+            if type(enum) is not list:
+                raise ShadowReviewerError("schema")
+            values = ([value["const"]] if "const" in value else []) + enum
+            if (
+                primitive not in primitive_types
+                or not values
+                or any(json_types.get(type(item)) != primitive for item in values)
+                or (
+                    "enum" in value
+                    and len({canonical_json(item) for item in enum}) != len(enum)
+                )
+            ):
+                raise ShadowReviewerError("schema")
+        if (
+            "const" in value
+            and "enum" in value
+            and value["const"] not in value["enum"]
+        ):
+            raise ShadowReviewerError("schema")
+        if "items" in value:
+            if primitive != "array":
+                raise ShadowReviewerError("schema")
+            visit(value["items"])
+        for key in ("maxItems", "minItems"):
+            if key in value and (
+                primitive != "array"
+                or type(value[key]) is not int
+                or value[key] < 0
+            ):
+                raise ShadowReviewerError("schema")
+        for key in ("maxLength", "minLength"):
+            if key in value and (
+                primitive != "string"
+                or type(value[key]) is not int
+                or value[key] < 0
+            ):
+                raise ShadowReviewerError("schema")
+        if "required" in value and (
+            primitive != "object"
+            or type(value["required"]) is not list
+            or not value["required"]
+            or any(type(item) is not str for item in value["required"])
+            or len(set(value["required"])) != len(value["required"])
+        ):
+            raise ShadowReviewerError("schema")
+        if "additionalProperties" in value and (
+            primitive != "object" or value["additionalProperties"] is not False
+        ):
+            raise ShadowReviewerError("schema")
+        if "anyOf" in value:
+            if (
+                set(value) != {"anyOf"}
+                or type(value["anyOf"]) is not list
+                or not value["anyOf"]
+            ):
+                raise ShadowReviewerError("schema")
+            for child in value["anyOf"]:
+                visit(child)
+        if "properties" in value:
+            if (
+                primitive != "object"
+                or type(value["properties"]) is not dict
+                or not value["properties"]
+                or type(value.get("required")) is not list
+                or set(value["required"]) != set(value["properties"])
+                or value.get("additionalProperties") is not False
+            ):
+                raise ShadowReviewerError("schema")
+            for child in value["properties"].values():
+                visit(child)
+        if primitive == "array" and "items" not in value:
+            raise ShadowReviewerError("schema")
+        if primitive == "object" and "properties" not in value:
+            raise ShadowReviewerError("schema")
+        if "minItems" in value and "maxItems" in value and value["minItems"] > value["maxItems"]:
+            raise ShadowReviewerError("schema")
+        if "minLength" in value and "maxLength" in value and value["minLength"] > value["maxLength"]:
+            raise ShadowReviewerError("schema")
+
+    visit(schema, root=True)
 
 
 def _recommendations() -> set[str]:

@@ -4,6 +4,7 @@ import io
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import tempfile
 import threading
@@ -29,9 +30,15 @@ from mechanical_librarian.application.shadow_reviews import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.shadow_review import (
+    MAX_PACKET_BYTES,
+    MAX_PROFILE_IDENTITY_BYTES,
+    MAX_REQUEST_BYTES,
     ReviewerProfileIdentity,
+    ShadowReviewDocumentError,
+    ShadowReviewPacket,
     ShadowReviewRequest,
     ShadowReviewResult,
+    ShadowReviewSemanticError,
     ShadowReviewValueError,
     canonical_json,
 )
@@ -47,7 +54,7 @@ def _identity() -> ReviewerProfileIdentity:
         "bubblewrap-v1",
         "gpt-5.6-sol",
         "medium",
-        "shadow-review-prompt-v1",
+        "shadow-review-prompt-v2",
         "codex-shadow-profile-v1",
         "shadow-review-packet-v1",
         "shadow-review-result-v1",
@@ -456,6 +463,91 @@ class ShadowReviewTests(unittest.TestCase):
                 ShadowReviewResult.from_json(canonical_json(malformed), request)
             repository.close()
 
+    def test_maximum_packet_request_round_trips_and_persists(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository, case_id = self._repository(directory)
+            base = ShadowReviewRequest.from_json(
+                repository.preview_shadow_request(case_id, _identity().to_json())
+            ).packet
+
+            def packet_with_padding(size: int) -> ShadowReviewPacket:
+                data = json.loads(base.to_json())
+                original = data["proposals"][0]["candidates"][0]
+                data["proposals"][0]["candidates"] = [
+                    {
+                        **original,
+                        "candidate_id": f"alternative_{index:064x}",
+                    }
+                    for index in range(512)
+                ]
+                data["citations"][0]["fact"]["request_bound_padding"] = "x" * size
+                return ShadowReviewPacket(
+                    data["review_case_id"],
+                    tuple(data["proposals"]),
+                    tuple(data["citations"]),
+                    tuple(data["correlations"]),
+                    data["schema_version"],
+                )
+
+            lower, upper = 0, MAX_PACKET_BYTES
+            while lower < upper:
+                candidate = (lower + upper + 1) // 2
+                try:
+                    packet_with_padding(candidate)
+                except ShadowReviewValueError:
+                    upper = candidate - 1
+                else:
+                    lower = candidate
+            packet = packet_with_padding(lower)
+            self.assertLessEqual(
+                MAX_PACKET_BYTES - len(packet.to_json().encode("utf-8")), 1
+            )
+            request = ShadowReviewRequest.create_from_packet(_identity(), packet)
+            self.assertGreater(
+                len(request.to_json().encode("utf-8")),
+                MAX_PACKET_BYTES + MAX_PROFILE_IDENTITY_BYTES,
+            )
+            self.assertLessEqual(
+                len(request.to_json().encode("utf-8")), MAX_REQUEST_BYTES
+            )
+            self.assertEqual(
+                request, ShadowReviewRequest.from_json(request.to_json())
+            )
+            repository._connection.execute(
+                "INSERT INTO shadow_review_requests("
+                "review_request_id,review_case_id,profile_document,"
+                "packet_document,request_document) VALUES(?,?,?,?,?)",
+                (
+                    request.review_request_id,
+                    request.review_case_id,
+                    request.profile.to_json(),
+                    request.packet.to_json(),
+                    request.to_json(),
+                ),
+            )
+            repository._connection.commit()
+            stored = repository._connection.execute(
+                "SELECT request_document FROM shadow_review_requests "
+                "WHERE review_request_id=?",
+                (request.review_request_id,),
+            ).fetchone()
+            self.assertIsNotNone(stored)
+            self.assertEqual(
+                request, ShadowReviewRequest.from_json(stored[0])
+            )
+            self.assertEqual(
+                request,
+                repository._validated_shadow_request(
+                    request.review_request_id
+                ),
+            )
+            schema = repository._connection.execute(
+                "SELECT sql FROM sqlite_master "
+                "WHERE type='table' AND name='shadow_review_requests'"
+            ).fetchone()[0]
+            self.assertIn(str(MAX_REQUEST_BYTES), schema)
+            repository.close()
+
     def test_profile_load_does_not_touch_declared_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -481,7 +573,7 @@ class ShadowReviewTests(unittest.TestCase):
                 "packet_version": "shadow-review-packet-v1",
                 "policy_version": "qualification-only-policy-v1",
                 "profile_version": "codex-shadow-profile-v1",
-                "prompt_version": "shadow-review-prompt-v1",
+                    "prompt_version": "shadow-review-prompt-v2",
                 "reasoning": "medium",
                 "sandbox": {
                     "path": str(root / "missing-bwrap"),
@@ -588,7 +680,7 @@ class ShadowReviewTests(unittest.TestCase):
                 )
                 self.assertEqual("", output.getvalue())
                 self.assertEqual(
-                    '{"code":"output","mode":"qualification_only",'
+                    '{"code":"malformed_output","mode":"qualification_only",'
                     '"schema_version":"shadow-review-failure-v1"}\n',
                     errors.getvalue(),
                 )
@@ -644,7 +736,7 @@ class ShadowReviewTests(unittest.TestCase):
         )
         self.assertEqual("", output.getvalue())
         self.assertEqual(
-            '{"code":"output","mode":"qualification_only",'
+            '{"code":"malformed_output","mode":"qualification_only",'
             '"schema_version":"shadow-review-failure-v1"}\n',
             errors.getvalue(),
         )
@@ -667,7 +759,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
             "bubblewrap-v1",
             "gpt-5.6-sol",
             "medium",
-            "shadow-review-prompt-v1",
+            "shadow-review-prompt-v2",
             "codex-shadow-profile-v1",
             "shadow-review-packet-v1",
             "shadow-review-result-v1",
@@ -874,6 +966,246 @@ class CodexShadowAdapterTests(unittest.TestCase):
             self.assertEqual("/proc/self/fd/11", command[0])
             bind = command.index("/runtime/codex")
             self.assertEqual("/proc/self/fd/10", command[bind - 1])
+            self.assertIn("--skip-git-repo-check", command)
+
+    def test_production_runner_applies_profile_resource_limits(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex, sandbox = root / "codex", root / "bwrap"
+            codex.write_bytes(b"codex")
+            sandbox.write_bytes(b"bwrap")
+            os.chmod(codex, 0o700)
+            os.chmod(sandbox, 0o700)
+            profile = self._profile(root, codex, sandbox)
+            with patch.object(codex_shadow.resource, "setrlimit") as setrlimit:
+                CodexShadowReviewer(profile)._limit_child()
+            self.assertEqual(
+                [
+                    (
+                        codex_shadow.resource.RLIMIT_AS,
+                        (
+                            profile.identity.memory_bytes,
+                            profile.identity.memory_bytes,
+                        ),
+                    ),
+                    (
+                        codex_shadow.resource.RLIMIT_FSIZE,
+                        (profile.identity.file_bytes, profile.identity.file_bytes),
+                    ),
+                    (
+                        codex_shadow.resource.RLIMIT_NPROC,
+                        (
+                            profile.identity.process_limit,
+                            profile.identity.process_limit,
+                        ),
+                    ),
+                    (codex_shadow.resource.RLIMIT_NOFILE, (64, 64)),
+                ],
+                [call.args for call in setrlimit.call_args_list],
+            )
+
+    def test_production_run_parses_result_and_cleans_its_child_job(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex, sandbox = root / "codex", root / "bwrap"
+            codex.write_bytes(b"codex")
+            sandbox.write_bytes(b"bwrap")
+            os.chmod(codex, 0o700)
+            os.chmod(sandbox, 0o700)
+            profile = self._profile(root, codex, sandbox)
+            reviewer = CodexShadowReviewer(profile)
+            request = ShadowReviewRequest.synthetic_canary(profile.identity)
+            expected = _result(request)
+            dispatches: list[tuple[int, int, str]] = []
+
+            def run_gated(*args) -> int:
+                dispatched = args[-1]
+                dispatched(1234, 1234, "5678")
+                jobs = list(profile.job_root_path.glob("shadow-review-*"))
+                self.assertEqual(1, len(jobs))
+                (jobs[0] / "result.json").write_bytes(
+                    expected.to_json().encode("utf-8")
+                )
+                return 0
+
+            with (
+                patch.object(codex_shadow.sys, "platform", "linux"),
+                patch.object(reviewer, "_verify_codex"),
+                patch.object(reviewer, "_require_chatgpt_auth"),
+                patch.object(reviewer, "_run_gated", side_effect=run_gated),
+            ):
+                result = reviewer.run(
+                    request,
+                    lambda pid, pgid, token: dispatches.append(
+                        (pid, pgid, token)
+                    ),
+                )
+            self.assertEqual(expected, result)
+            self.assertEqual([(1234, 1234, "5678")], dispatches)
+            self.assertFalse(
+                list(profile.job_root_path.glob("shadow-review-*"))
+            )
+
+    def test_nonzero_execution_statuses_are_runtime_with_bounded_diagnostics(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex, sandbox = root / "codex", root / "bwrap"
+            codex.write_bytes(b"codex")
+            sandbox.write_bytes(b"bwrap")
+            os.chmod(codex, 0o700)
+            os.chmod(sandbox, 0o700)
+            profile = self._profile(root, codex, sandbox)
+            request = ShadowReviewRequest.synthetic_canary(profile.identity)
+            stdout, stderr = b"synthetic-out", b"synthetic-err"
+            diagnostic = stdout + stderr
+
+            for returncode in (126, 128 + signal.SIGKILL, 1):
+                reviewer = CodexShadowReviewer(profile)
+
+                def run_gated(*args, code=returncode) -> int:
+                    os.write(args[4], stdout)
+                    os.write(args[5], stderr)
+                    args[6](1234, 1234, "5678")
+                    return code
+
+                with (
+                    self.subTest(returncode=returncode),
+                    patch.object(codex_shadow.sys, "platform", "linux"),
+                    patch.object(reviewer, "_verify_codex"),
+                    patch.object(reviewer, "_require_chatgpt_auth"),
+                    patch.object(
+                        reviewer, "_run_gated", side_effect=run_gated
+                    ),
+                    self.assertRaises(ShadowReviewerError) as raised,
+                ):
+                    reviewer.run(request, lambda *_: None)
+                self.assertEqual("runtime", raised.exception.code)
+                self.assertEqual("runtime", str(raised.exception))
+                self.assertEqual(len(diagnostic), raised.exception.count)
+                self.assertEqual(
+                    hashlib.sha256(diagnostic).hexdigest(),
+                    raised.exception.digest,
+                )
+                self.assertNotIn("synthetic", str(raised.exception))
+                self.assertFalse(
+                    list(profile.job_root_path.glob("shadow-review-*"))
+                )
+
+    def test_output_schema_is_typed_bound_and_digest_frozen(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository, case_id = ShadowReviewTests()._repository(directory)
+            request = ShadowReviewRequest.from_json(
+                repository.preview_shadow_request(case_id, _identity().to_json())
+            )
+            binding = codex_shadow._schema_binding(request)
+            schema = json.loads(binding.serialized)
+            self.assertEqual(
+                hashlib.sha256(binding.serialized).hexdigest(), binding.digest
+            )
+            properties = schema["properties"]
+            self.assertEqual("string", properties["review_request_id"]["type"])
+            item = properties["recommendations"]["items"]["properties"]
+            self.assertEqual("string", item["proposal_id"]["type"])
+            self.assertEqual("string", item["citations"]["items"]["type"])
+            self.assertNotIn("uniqueItems", item["citations"])
+            repository.close()
+
+    def test_output_schema_rejects_typeless_or_contradictory_bindings(self) -> None:
+        with self.assertRaisesRegex(ShadowReviewerError, "schema"):
+            codex_shadow._validate_output_schema({"enum": ["bound"]})
+        with self.assertRaisesRegex(ShadowReviewerError, "schema"):
+            codex_shadow._validate_output_schema(
+                {"const": "bound", "enum": ["other"], "type": "string"}
+            )
+        with self.assertRaisesRegex(ShadowReviewerError, "schema"):
+            codex_shadow._validate_output_schema(
+                {"const": "bound", "enum": ["bound", 42], "type": "string"}
+            )
+        invalid = (
+            {
+                "$schema": "wrong",
+                "additionalProperties": False,
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+                "type": "object",
+            },
+            {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "items": {"type": "string"},
+                "maxLength": 1,
+                "type": "array",
+            },
+            {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": False,
+                "properties": {"value": {"type": "string"}},
+                "required": ["other"],
+                "type": "object",
+            },
+            {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": True,
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+                "type": "object",
+            },
+        )
+        for schema in invalid:
+            with self.subTest(schema=schema), self.assertRaisesRegex(
+                ShadowReviewerError, "schema"
+            ):
+                codex_shadow._validate_output_schema(schema)
+
+    def test_output_documents_partition_malformed_and_semantic_failures(self) -> None:
+        request = ShadowReviewRequest.synthetic_canary(_identity())
+        valid = _result(request).to_json().encode("utf-8")
+        malformed = (
+            b"\xff",
+            b"{",
+            valid.replace(
+                b'{"recommendations":',
+                b'{"recommendations":[],"recommendations":',
+                1,
+            ),
+            b" " + valid,
+        )
+        for serialized in malformed:
+            with self.subTest(serialized=serialized[:20]):
+                with self.assertRaises(ShadowReviewerError) as raised:
+                    codex_shadow._validated_result(
+                        serialized,
+                        request,
+                        maximum=MAX_REQUEST_BYTES,
+                    )
+                self.assertEqual("malformed_output", raised.exception.code)
+                self.assertEqual(len(serialized), raised.exception.count)
+                self.assertEqual(
+                    hashlib.sha256(serialized).hexdigest(),
+                    raised.exception.digest,
+                )
+        semantic = json.loads(valid)
+        semantic["recommendations"] = []
+        semantic_bytes = canonical_json(semantic).encode("utf-8")
+        with self.assertRaises(ShadowReviewerError) as raised:
+            codex_shadow._validated_result(
+                semantic_bytes,
+                request,
+                maximum=MAX_REQUEST_BYTES,
+            )
+        self.assertEqual("semantic_validation", raised.exception.code)
+        self.assertEqual(len(semantic_bytes), raised.exception.count)
+        self.assertEqual(
+            hashlib.sha256(semantic_bytes).hexdigest(),
+            raised.exception.digest,
+        )
+        with self.assertRaises(ShadowReviewDocumentError):
+            ShadowReviewResult.from_json("{", request)
+        with self.assertRaises(ShadowReviewSemanticError):
+            ShadowReviewResult.from_json(
+                canonical_json(semantic), request
+            )
 
     def test_start_gate_does_not_exec_when_dispatch_persistence_fails(self) -> None:
         shell_source = Path(os.path.realpath("/bin/sh")).read_bytes()

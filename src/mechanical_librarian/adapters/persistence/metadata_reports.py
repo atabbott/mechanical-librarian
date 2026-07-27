@@ -34,6 +34,7 @@ from mechanical_librarian.domain.review_case import (
     is_actionable,
 )
 from mechanical_librarian.domain.shadow_review import (
+    MAX_REQUEST_BYTES,
     QUALIFICATION_MODE,
     ReviewerProfileIdentity,
     ShadowReviewPacket,
@@ -54,7 +55,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v8'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v9'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -123,7 +124,9 @@ _SHADOW_REQUESTS_SQL = (
     "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
     "profile_document TEXT NOT NULL CHECK(typeof(profile_document)='text' AND length(CAST(profile_document AS BLOB)) BETWEEN 2 AND 16384), "
     "packet_document TEXT NOT NULL CHECK(typeof(packet_document)='text' AND length(CAST(packet_document AS BLOB)) BETWEEN 2 AND 1048576), "
-    "request_document TEXT NOT NULL CHECK(typeof(request_document)='text' AND length(CAST(request_document AS BLOB)) BETWEEN 2 AND 1064960))"
+    "request_document TEXT NOT NULL CHECK(typeof(request_document)='text' AND length(CAST(request_document AS BLOB)) BETWEEN 2 AND "
+    + str(MAX_REQUEST_BYTES)
+    + "))"
 )
 _SHADOW_ATTEMPTS_SQL = (
     "CREATE TABLE shadow_review_attempts ("
@@ -145,7 +148,7 @@ _SHADOW_OUTCOMES_SQL = (
     "attempt_id TEXT PRIMARY KEY NOT NULL REFERENCES shadow_review_attempts(attempt_id), "
     "kind TEXT NOT NULL CHECK(kind IN ('result','failure')), "
     "result_document TEXT CHECK(result_document IS NULL OR (typeof(result_document)='text' AND length(CAST(result_document AS BLOB)) BETWEEN 2 AND 262144)), "
-    "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('runtime','setup','auth','profile','timeout','cancel','output','currentness')), "
+    "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('runtime','setup','auth','profile','timeout','cancel','schema','response_format','malformed_output','semantic_validation','currentness')), "
     "diagnostic_count INTEGER NOT NULL CHECK(diagnostic_count BETWEEN 0 AND 2147483647), "
     "diagnostic_digest TEXT CHECK(diagnostic_digest IS NULL OR (length(diagnostic_digest)=64 AND diagnostic_digest NOT GLOB '*[^0-9a-f]*')), "
     "CHECK((kind='result' AND result_document IS NOT NULL AND failure_code IS NULL AND diagnostic_count=0 AND diagnostic_digest IS NULL) OR "
@@ -1075,7 +1078,10 @@ class SQLiteMetadataReportRepository:
                     "profile",
                     "timeout",
                     "cancel",
-                    "output",
+                    "schema",
+                    "response_format",
+                    "malformed_output",
+                    "semantic_validation",
                     "currentness",
                 }
                 or type(count) is not int

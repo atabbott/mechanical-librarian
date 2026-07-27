@@ -25,7 +25,10 @@ _FAILURES = frozenset(
         "profile",
         "timeout",
         "cancel",
-        "output",
+        "schema",
+        "response_format",
+        "malformed_output",
+        "semantic_validation",
         "currentness",
     }
 )
@@ -210,7 +213,7 @@ def execute_shadow_review(
     except ReviewAdmissionStaleError as error:
         raise ShadowReviewError("currentness") from error
     except ShadowReviewValueError as error:
-        raise ShadowReviewError("output") from error
+        raise ShadowReviewError("malformed_output") from error
     except Exception as error:
         raise ShadowReviewError("runtime") from error
 

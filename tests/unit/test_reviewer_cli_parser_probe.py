@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import subprocess
 import tempfile
@@ -12,8 +13,15 @@ from unittest.mock import patch
 
 import scripts.qualify_reviewer_cli_parser as parser_probe
 from mechanical_librarian.adapters.reviewers import codex_shadow
-from mechanical_librarian.adapters.reviewers.codex_shadow import QualificationProfile
-from mechanical_librarian.domain.shadow_review import ReviewerProfileIdentity
+from mechanical_librarian.adapters.reviewers.codex_shadow import (
+    CodexShadowReviewer,
+    QualificationProfile,
+)
+from mechanical_librarian.domain.shadow_review import (
+    ReviewerProfileIdentity,
+    ShadowReviewRequest,
+    ShadowReviewResult,
+)
 
 
 def _profile(root: Path, codex: Path, sandbox: Path) -> QualificationProfile:
@@ -29,7 +37,7 @@ def _profile(root: Path, codex: Path, sandbox: Path) -> QualificationProfile:
         "bubblewrap-v1",
         "gpt-5.6-sol",
         "medium",
-        "shadow-review-prompt-v1",
+        "shadow-review-prompt-v2",
         "codex-shadow-profile-v1",
         "shadow-review-packet-v1",
         "shadow-review-result-v1",
@@ -61,6 +69,36 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                 [], 0, b"codex-cli 0.146.0-alpha.3.1\n", b""
             )
             success = subprocess.CompletedProcess([], 0, b"", b"")
+            live_requests: list[ShadowReviewRequest] = []
+
+            def run_canary(
+                _reviewer: CodexShadowReviewer,
+                request: ShadowReviewRequest,
+                dispatched,
+            ) -> ShadowReviewResult:
+                live_requests.append(request)
+                dispatched(1234, 1234, "5678")
+                proposal = request.packet.proposals[0]
+                result = ShadowReviewResult(
+                    request.review_request_id,
+                    (
+                        {
+                            "candidate_id": proposal["candidates"][0][
+                                "candidate_id"
+                            ],
+                            "citations": [
+                                request.packet.citations[0]["citation_id"]
+                            ],
+                            "problems": [],
+                            "proposal_id": proposal["proposal_id"],
+                            "reasons": ["Synthetic cited evidence is sufficient."],
+                            "recommendation": "recommend_candidate",
+                        },
+                    ),
+                )
+                result.validate_for(request)
+                return result
+
             with (
                 patch.object(parser_probe.sys, "platform", "linux"),
                 patch.object(
@@ -69,18 +107,33 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                 patch.object(
                     codex_shadow.subprocess,
                     "run",
-                    side_effect=[version, success, success, success, success],
+                    side_effect=[version, success, success, success],
                 ) as run,
+                patch.object(
+                    CodexShadowReviewer,
+                    "run",
+                    autospec=True,
+                    side_effect=run_canary,
+                ) as live,
             ):
                 self.assertEqual(
                     {
                         "checks": 4,
-                        "schema_version": "reviewer-cli-parser-probe-v1",
+                        "schema_version": "reviewer-cli-parser-probe-v2",
                         "status": "passed",
                     },
                     parser_probe.qualify_reviewer_cli_parser(profile),
                 )
             commands = [call.args[0] for call in run.call_args_list[1:]]
+            self.assertEqual(1, live.call_count)
+            self.assertEqual(1, len(live_requests))
+            self.assertEqual(
+                live_requests[0],
+                ShadowReviewRequest.from_json(live_requests[0].to_json()),
+            )
+            self.assertEqual(
+                "shadow-review-request-v2", live_requests[0].schema_version
+            )
             self.assertTrue(
                 all(str(profile.auth_store_path) not in command for command in commands)
             )
@@ -88,7 +141,7 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
             self.assertEqual(("login", "--device-auth", "--help"), tuple(commands[0][-3:]))
             self.assertEqual(("login", "status", "--help"), tuple(commands[1][-3:]))
             self.assertEqual(("logout", "--help"), tuple(commands[2][-2:]))
-            for command in commands[:3]:
+            for command in commands:
                 self.assertEqual(
                     set(codex_shadow._auth_config()),
                     {
@@ -99,18 +152,44 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                 )
                 self.assertIn("--ro-bind-data", command)
                 self.assertNotIn("/dev/null", command)
-            self.assertEqual("--help", commands[3][-1])
-            self.assertIn("--ignore-user-config", commands[3])
-            self.assertIn("--ignore-rules", commands[3])
-            self.assertEqual(
-                set(codex_shadow._exact_config("medium")),
-                {
-                    commands[3][index + 1]
-                    for index, value in enumerate(commands[3][:-1])
-                    if value == "-c"
-                },
+            self.assertTrue(
+                all(
+                    call.kwargs.get("stdout") is subprocess.DEVNULL
+                    for call in run.call_args_list[1:]
+                )
             )
-            self.assertTrue(all(call.kwargs["stdout"] is subprocess.DEVNULL for call in run.call_args_list[1:]))
+            schema = json.loads(live_requests[0].output_schema)
+            keys: set[str] = set()
+
+            def collect(value: object, *, property_map: bool = False) -> None:
+                if type(value) is dict:
+                    if not property_map:
+                        keys.update(value)
+                    for key, item in value.items():
+                        collect(item, property_map=key == "properties")
+                elif type(value) is list:
+                    for item in value:
+                        collect(item)
+
+            collect(schema)
+            self.assertEqual(
+                {
+                    "$schema",
+                    "additionalProperties",
+                    "anyOf",
+                    "const",
+                    "enum",
+                    "items",
+                    "maxItems",
+                    "maxLength",
+                    "minItems",
+                    "minLength",
+                    "properties",
+                    "required",
+                    "type",
+                },
+                keys,
+            )
             self.assertFalse(list(profile.job_root_path.glob("reviewer-cli-parser-*")))
             self.assertEqual(b"synthetic-auth-sentinel", sentinel.read_bytes())
             self.assertEqual(sentinel_mode, sentinel.stat().st_mode & 0o777)
@@ -123,7 +202,7 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
             with redirect_stderr(output):
                 self.assertEqual(1, parser_probe.main(["--qualification-profile", "/private/profile"]))
         self.assertEqual(
-            '{"code":"parser","schema_version":"reviewer-cli-parser-probe-v1","status":"failed"}\n',
+            '{"code":"parser","schema_version":"reviewer-cli-parser-probe-v2","status":"failed"}\n',
             output.getvalue(),
         )
 
@@ -165,7 +244,7 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                         ),
                     )
         self.assertEqual(
-            '{"code":"setup","schema_version":"reviewer-cli-parser-probe-v1","status":"failed"}\n',
+            '{"code":"setup","schema_version":"reviewer-cli-parser-probe-v2","status":"failed"}\n',
             output.getvalue(),
         )
 

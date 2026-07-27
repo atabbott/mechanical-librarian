@@ -149,10 +149,21 @@ credentials. Auth uses the same descriptor-bound boundary and masks
 `/auth/config.toml` with an immutable empty `--perms 0400 --ro-bind-data`
 read-only bind for the entire child lifetime, so a same-UID creation or
 replacement after preflight cannot alter the authentication invocation. Review
-user configuration and rules are ignored; shell and unified
+user configuration and rules are ignored, and the isolated ordinary command
+uses `--skip-git-repo-check` because `/job` is deliberately empty; shell and unified
 execution, web search, apps, agents, hooks, memories, remote plugins, update,
 feedback, analytics, history, and approval are disabled by exact configuration.
-Resource, time, file, output, and process counts are bounded. Request, attempt,
+Resource, time, file, output, and process counts are bounded. The exact
+per-case structured-output schema bytes are subset-validated, digest-bound into
+the canonical request and untrusted prompt, and raw output failure classes
+remain value-free. Malformed UTF-8/JSON, duplicate-key, noncanonical, and
+truncated documents are distinct from canonical parsed results that violate
+their request semantics; only bounded count/digest diagnostics cross the trust
+boundary.
+No current pinned CLI diagnostic safely proves response-format rejection, so a
+nonzero ordinary-command exit is conservatively `runtime` whether caused by
+exec, signal, resource, network/service, or an unknown failure.
+Request, attempt,
 dispatch, and outcome facts are append-only. Raw streams and reasoning are
 discarded. Dispatched ambiguity is `unknown`; there is no automatic retry, and
 explicit reevaluation requires proof that the complete prior supervised process
@@ -160,7 +171,7 @@ group is absent.
 
 The final report database, `catalogue-v1` database, `config-v4`, artifact
 records, and `batch-manifest-v2` each accept only absent or their exact current
-schema. `metadata-report-v1` through `metadata-report-v7`, prior development schemas, extra objects, altered
+schema. `metadata-report-v1` through `metadata-report-v8`, prior development schemas, extra objects, altered
 SQL, failed foreign-key/integrity checks, and other schemas fail closed before
 mutation. Persisted report content is validated when an exact-ID or
 current-scope read selects it and when a selected current report or exact-ID

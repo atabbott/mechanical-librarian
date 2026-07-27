@@ -128,7 +128,7 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v8'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v9'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -136,22 +136,44 @@ def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(metadata_persistence._NO_DELETE_SQL)
 
 
-def _create_v7_schema(connection: sqlite3.Connection) -> None:
+def _create_v8_schema(connection: sqlite3.Connection) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v8'", "= 'metadata-report-v7'"
+            "= 'metadata-report-v9'", "= 'metadata-report-v8'"
         ),
         metadata_persistence._CURRENT_SQL,
+        metadata_persistence._CURRENT_LINEAGE_SQL,
         metadata_persistence._COVER_REFERENCES_SQL,
         metadata_persistence._COVER_ARTIFACT_INDEX_SQL,
         metadata_persistence._COVER_PREVIEW_INDEX_SQL,
         metadata_persistence._PROPOSAL_SETS_SQL,
+        metadata_persistence._REVIEW_CASES_SQL,
+        metadata_persistence._REVIEW_POINTERS_SQL,
+        metadata_persistence._REVIEW_TRANSITIONS_SQL,
+        metadata_persistence._SHADOW_REQUESTS_SQL.replace(
+            str(metadata_persistence.MAX_REQUEST_BYTES), "1064960"
+        ),
+        metadata_persistence._SHADOW_ATTEMPTS_SQL,
+        metadata_persistence._SHADOW_DISPATCHES_SQL,
+        metadata_persistence._SHADOW_OUTCOMES_SQL,
         metadata_persistence._NO_UPDATE_SQL,
-        metadata_persistence._NO_DELETE_SQL,
         metadata_persistence._COVER_NO_UPDATE_SQL,
         metadata_persistence._COVER_NO_DELETE_SQL,
         metadata_persistence._PROPOSAL_NO_UPDATE_SQL,
         metadata_persistence._PROPOSAL_NO_DELETE_SQL,
+        metadata_persistence._REVIEW_NO_UPDATE_SQL,
+        metadata_persistence._REVIEW_NO_DELETE_SQL,
+        metadata_persistence._REVIEW_TRANSITION_NO_UPDATE_SQL,
+        metadata_persistence._REVIEW_TRANSITION_NO_DELETE_SQL,
+        metadata_persistence._SHADOW_REQUEST_NO_UPDATE_SQL,
+        metadata_persistence._SHADOW_REQUEST_NO_DELETE_SQL,
+        metadata_persistence._SHADOW_ATTEMPT_NO_UPDATE_SQL,
+        metadata_persistence._SHADOW_ATTEMPT_NO_DELETE_SQL,
+        metadata_persistence._SHADOW_DISPATCH_NO_UPDATE_SQL,
+        metadata_persistence._SHADOW_DISPATCH_NO_DELETE_SQL,
+        metadata_persistence._SHADOW_OUTCOME_NO_UPDATE_SQL,
+        metadata_persistence._SHADOW_OUTCOME_NO_DELETE_SQL,
+        metadata_persistence._NO_DELETE_SQL,
     )
     for statement in statements:
         connection.execute(statement)
@@ -187,8 +209,8 @@ class MetadataPersistenceTests(unittest.TestCase):
                 _create_legacy_schema,
             ),
             (
-                "previous v7",
-                _create_v7_schema,
+                "previous v8",
+                _create_v8_schema,
             ),
             (
                 "F09k report schema",
@@ -286,7 +308,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
-            self.assertEqual(schema_version, ("metadata-report-v8",))
+            self.assertEqual(schema_version, ("metadata-report-v9",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)

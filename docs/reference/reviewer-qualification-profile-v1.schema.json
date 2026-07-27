@@ -91,7 +91,7 @@
       "const": "codex-shadow-profile-v1"
     },
     "prompt_version": {
-      "const": "shadow-review-prompt-v1"
+      "const": "shadow-review-prompt-v2"
     },
     "reasoning": {
       "const": "medium"

@@ -14,12 +14,22 @@ from mechanical_librarian.domain.review_case import ReviewCase
 
 PACKET_SCHEMA = "shadow-review-packet-v1"
 RESULT_SCHEMA = "shadow-review-result-v1"
-REQUEST_SCHEMA = "shadow-review-request-v1"
+REQUEST_SCHEMA = "shadow-review-request-v2"
 PROFILE_IDENTITY_SCHEMA = "reviewer-profile-identity-v1"
 QUALIFICATION_MODE = "qualification_only"
 MAX_PACKET_BYTES = 1_048_576
 MAX_RESULT_BYTES = 262_144
 MAX_PROFILE_IDENTITY_BYTES = 16_384
+MAX_OUTPUT_SCHEMA_BYTES = MAX_PACKET_BYTES
+# The generated schema is ASCII-only. Embedding it as a JSON string can add at
+# most one escape byte per schema byte; the remaining allowance covers the
+# fixed request keys, identifiers, and JSON punctuation.
+MAX_REQUEST_BYTES = (
+    MAX_PACKET_BYTES
+    + MAX_PROFILE_IDENTITY_BYTES
+    + (2 * MAX_OUTPUT_SCHEMA_BYTES)
+    + 65_536
+)
 MAX_REASON_CHARACTERS = 1_024
 MAX_PROBLEMS = 32
 MAX_CITATIONS = 256
@@ -35,6 +45,14 @@ _RECOMMENDATIONS = frozenset(
 
 class ShadowReviewValueError(ValueError):
     """A reviewer document is outside the closed F11 contract."""
+
+
+class ShadowReviewDocumentError(ShadowReviewValueError):
+    """Reviewer bytes are not one canonical JSON document."""
+
+
+class ShadowReviewSemanticError(ShadowReviewValueError):
+    """A canonical reviewer document violates its bound request."""
 
 
 def canonical_json(value: object) -> str:
@@ -72,7 +90,7 @@ class ReviewerProfileIdentity:
             or _DIGEST.fullmatch(self.sandbox_sha256) is None
             or self.model != "gpt-5.6-sol"
             or self.reasoning != "medium"
-            or self.prompt_version != "shadow-review-prompt-v1"
+            or self.prompt_version != "shadow-review-prompt-v2"
             or self.profile_version != "codex-shadow-profile-v1"
             or self.packet_version != PACKET_SCHEMA
             or self.output_version != RESULT_SCHEMA
@@ -367,18 +385,52 @@ class ShadowReviewRequest:
     review_case_id: str
     profile: ReviewerProfileIdentity
     packet: ShadowReviewPacket
+    output_schema: str
+    output_schema_digest: str
     mode: str = QUALIFICATION_MODE
     schema_version: str = REQUEST_SCHEMA
 
     def __post_init__(self) -> None:
+        try:
+            schema_bytes = self.output_schema.encode("utf-8")
+            schema = json.loads(
+                self.output_schema,
+                object_pairs_hook=_unique_object,
+                parse_constant=lambda value: (_ for _ in ()).throw(
+                    ValueError(value)
+                ),
+            )
+        except (
+            AttributeError,
+            TypeError,
+            ValueError,
+            UnicodeError,
+            RecursionError,
+            json.JSONDecodeError,
+        ) as error:
+            raise ShadowReviewValueError(
+                "shadow-review request is invalid"
+            ) from error
         if (
             self.schema_version != REQUEST_SCHEMA
             or self.mode != QUALIFICATION_MODE
             or _REQUEST_ID.fullmatch(self.review_request_id) is None
             or type(self.profile) is not ReviewerProfileIdentity
             or type(self.packet) is not ShadowReviewPacket
+            or type(self.output_schema) is not str
+            or not self.output_schema.isascii()
+            or not 1 <= len(schema_bytes) <= MAX_OUTPUT_SCHEMA_BYTES
+            or type(self.output_schema_digest) is not str
+            or hashlib.sha256(schema_bytes).hexdigest()
+            != self.output_schema_digest
+            or canonical_json(schema) != self.output_schema
+            or self.output_schema
+            != canonical_json(
+                _reviewer_output_schema(self.packet, self.review_request_id)
+            )
             or self.packet.review_case_id != self.review_case_id
             or self.review_request_id != self.expected_id()
+            or len(self.to_json().encode("utf-8")) > MAX_REQUEST_BYTES
         ):
             raise ShadowReviewValueError("shadow-review request is invalid")
 
@@ -386,21 +438,91 @@ class ShadowReviewRequest:
     def create(
         cls, case: ReviewCase, profile: ReviewerProfileIdentity, packet: ShadowReviewPacket
     ) -> Self:
+        if (
+            type(case) is not ReviewCase
+            or type(profile) is not ReviewerProfileIdentity
+            or type(packet) is not ShadowReviewPacket
+            or case.review_case_id != packet.review_case_id
+        ):
+            raise ShadowReviewValueError("shadow-review request binding is invalid")
+        return cls.create_from_packet(profile, packet)
+
+    @classmethod
+    def create_from_packet(
+        cls, profile: ReviewerProfileIdentity, packet: ShadowReviewPacket
+    ) -> Self:
+        if (
+            type(profile) is not ReviewerProfileIdentity
+            or type(packet) is not ShadowReviewPacket
+        ):
+            raise ShadowReviewValueError("shadow-review request binding is invalid")
         data = {
             "mode": QUALIFICATION_MODE,
             "packet": packet.to_data(),
             "profile": profile.to_data(),
-            "review_case_id": case.review_case_id,
+            "review_case_id": packet.review_case_id,
             "schema_version": REQUEST_SCHEMA,
         }
         identity = "review_request_" + hashlib.sha256(
             canonical_json(data).encode("utf-8")
         ).hexdigest()
-        return cls(identity, case.review_case_id, profile, packet)
+        schema = canonical_json(_reviewer_output_schema(packet, identity))
+        return cls(
+            identity, packet.review_case_id, profile, packet, schema,
+            hashlib.sha256(schema.encode("utf-8")).hexdigest(),
+        )
+
+    @classmethod
+    def synthetic_canary(cls, profile: ReviewerProfileIdentity) -> Self:
+        """Build one deterministic, synthetic request through the production contract."""
+        case_id = "review_case_" + ("0" * 64)
+        proposal_id = "review_proposal_" + ("1" * 64)
+        candidate_id = "alternative_" + ("2" * 64)
+        citation_id = "synthetic_citation_" + ("3" * 64)
+        packet = ShadowReviewPacket(
+            case_id,
+            (
+                {
+                    "candidates": [
+                        {
+                            "assessment": {
+                                "confidence": "synthetic",
+                                "problems": [],
+                            },
+                            "candidate_id": candidate_id,
+                            "correlations": [],
+                            "evidence_references": [citation_id],
+                            "scope": "field",
+                            "value": "Synthetic title",
+                        }
+                    ],
+                    "current": {
+                        "confidence": "unknown",
+                        "source": "synthetic",
+                        "value": "Current synthetic title",
+                    },
+                    "destination": "title",
+                    "outcome": "unresolved_choice",
+                    "proposal_id": proposal_id,
+                    "reasons": ["Synthetic compatibility canary."],
+                },
+            ),
+            (
+                {
+                    "citation_id": citation_id,
+                    "fact": {
+                        "reference": citation_id,
+                        "state": "synthetic",
+                        "value": "Synthetic title",
+                    },
+                },
+            ),
+            (),
+        )
+        return cls.create_from_packet(profile, packet)
 
     def expected_id(self) -> str:
-        data = self.to_data()
-        data.pop("review_request_id")
+        data = {"mode": self.mode, "packet": self.packet.to_data(), "profile": self.profile.to_data(), "review_case_id": self.review_case_id, "schema_version": self.schema_version}
         return "review_request_" + hashlib.sha256(
             canonical_json(data).encode("utf-8")
         ).hexdigest()
@@ -409,6 +531,8 @@ class ShadowReviewRequest:
         return {
             "mode": self.mode,
             "packet": self.packet.to_data(),
+            "output_schema": self.output_schema,
+            "output_schema_digest": self.output_schema_digest,
             "profile": self.profile.to_data(),
             "review_case_id": self.review_case_id,
             "review_request_id": self.review_request_id,
@@ -420,10 +544,12 @@ class ShadowReviewRequest:
 
     @classmethod
     def from_json(cls, serialized: str) -> Self:
-        raw = _canonical_object(serialized, MAX_PACKET_BYTES + MAX_PROFILE_IDENTITY_BYTES)
+        raw = _canonical_object(serialized, MAX_REQUEST_BYTES)
         if set(raw) != {
             "mode",
             "packet",
+            "output_schema",
+            "output_schema_digest",
             "profile",
             "review_case_id",
             "review_request_id",
@@ -438,6 +564,8 @@ class ShadowReviewRequest:
                 raw["review_case_id"],  # type: ignore[arg-type]
                 ReviewerProfileIdentity.from_json(profile_json),
                 ShadowReviewPacket.from_json(packet_json),
+                raw["output_schema"],  # type: ignore[arg-type]
+                raw["output_schema_digest"],  # type: ignore[arg-type]
                 raw["mode"],  # type: ignore[arg-type]
                 raw["schema_version"],  # type: ignore[arg-type]
             )
@@ -460,7 +588,7 @@ class ShadowReviewResult:
             or self.review_request_id != request.review_request_id
             or type(self.recommendations) is not tuple
         ):
-            raise ShadowReviewValueError("shadow-review result is invalid")
+            raise ShadowReviewSemanticError("shadow-review result is invalid")
         expected = {
             value["proposal_id"]: {
                 item["candidate_id"] for item in value["candidates"]
@@ -478,7 +606,7 @@ class ShadowReviewResult:
                 "reasons",
                 "recommendation",
             }:
-                raise ShadowReviewValueError("shadow-review result is invalid")
+                raise ShadowReviewSemanticError("shadow-review result is invalid")
             proposal_id = recommendation["proposal_id"]
             kind = recommendation["recommendation"]
             candidate_id = recommendation["candidate_id"]
@@ -505,14 +633,18 @@ class ShadowReviewResult:
                 raise ShadowReviewValueError("shadow-review result is invalid")
             if kind == "recommend_candidate":
                 if type(candidate_id) is not str or candidate_id not in expected[proposal_id]:
-                    raise ShadowReviewValueError("shadow-review result is invalid")
+                    raise ShadowReviewSemanticError(
+                        "shadow-review result is invalid"
+                    )
             elif candidate_id is not None:
-                raise ShadowReviewValueError("shadow-review result is invalid")
+                raise ShadowReviewSemanticError("shadow-review result is invalid")
             if kind == "manual" and not problems:
-                raise ShadowReviewValueError("shadow-review result is invalid")
+                raise ShadowReviewSemanticError("shadow-review result is invalid")
             seen.add(proposal_id)
         if seen != set(expected):
-            raise ShadowReviewValueError("shadow-review result coverage is invalid")
+            raise ShadowReviewSemanticError(
+                "shadow-review result coverage is invalid"
+            )
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -526,11 +658,16 @@ class ShadowReviewResult:
 
     @classmethod
     def from_json(cls, serialized: str, request: ShadowReviewRequest) -> Self:
-        raw = _canonical_object(serialized, MAX_RESULT_BYTES)
+        try:
+            raw = _canonical_object(serialized, MAX_RESULT_BYTES)
+        except ShadowReviewValueError as error:
+            raise ShadowReviewDocumentError(
+                "shadow-review result document is malformed"
+            ) from error
         if set(raw) != {"recommendations", "review_request_id", "schema_version"}:
-            raise ShadowReviewValueError("shadow-review result is invalid")
+            raise ShadowReviewSemanticError("shadow-review result is invalid")
         if type(raw["recommendations"]) is not list:
-            raise ShadowReviewValueError("shadow-review result is invalid")
+            raise ShadowReviewSemanticError("shadow-review result is invalid")
         try:
             value = cls(
                 raw["review_request_id"],  # type: ignore[arg-type]
@@ -538,10 +675,16 @@ class ShadowReviewResult:
                 raw["schema_version"],  # type: ignore[arg-type]
             )
             value.validate_for(request)
+        except ShadowReviewSemanticError:
+            raise
         except (TypeError, ValueError) as error:
-            raise ShadowReviewValueError("shadow-review result is invalid") from error
+            raise ShadowReviewSemanticError(
+                "shadow-review result is invalid"
+            ) from error
         if value.to_json() != serialized:
-            raise ShadowReviewValueError("shadow-review result is not canonical")
+            raise ShadowReviewDocumentError(
+                "shadow-review result document is not canonical"
+            )
         return value
 
 
@@ -603,6 +746,19 @@ def _bounded_text(value: object) -> bool:
     )
 
 
+def _reviewer_output_schema(packet: ShadowReviewPacket, review_request_id: str) -> dict[str, object]:
+    proposal_ids = [value["proposal_id"] for value in packet.proposals]
+    citation_ids = [value["citation_id"] for value in packet.citations]
+    candidate_ids = sorted(
+        {
+            candidate["candidate_id"]
+            for proposal in packet.proposals
+            for candidate in proposal["candidates"]  # type: ignore[union-attr]
+        }
+    )
+    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "additionalProperties": False, "properties": {"recommendations": {"items": {"additionalProperties": False, "properties": {"candidate_id": {"anyOf": [{"enum": candidate_ids, "type": "string"}, {"type": "null"}]}, "citations": {"items": {"enum": citation_ids, "type": "string"}, "maxItems": MAX_CITATIONS, "minItems": 1, "type": "array"}, "problems": {"items": {"maxLength": MAX_REASON_CHARACTERS, "minLength": 1, "type": "string"}, "maxItems": MAX_PROBLEMS, "type": "array"}, "proposal_id": {"enum": proposal_ids, "type": "string"}, "reasons": {"items": {"maxLength": MAX_REASON_CHARACTERS, "minLength": 1, "type": "string"}, "maxItems": 16, "minItems": 1, "type": "array"}, "recommendation": {"enum": ["manual", "recommend_candidate", "recommend_keep_current"], "type": "string"}}, "required": ["candidate_id", "citations", "problems", "proposal_id", "reasons", "recommendation"], "type": "object"}, "maxItems": len(proposal_ids), "minItems": len(proposal_ids), "type": "array"}, "review_request_id": {"const": review_request_id, "type": "string"}, "schema_version": {"const": RESULT_SCHEMA, "type": "string"}}, "required": ["recommendations", "review_request_id", "schema_version"], "type": "object"}
+
+
 def _canonical_object(serialized: str, maximum: int) -> dict[str, object]:
     try:
         if (
@@ -639,8 +795,10 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 __all__ = [
+    "MAX_OUTPUT_SCHEMA_BYTES",
     "MAX_PACKET_BYTES",
     "MAX_PROFILE_IDENTITY_BYTES",
+    "MAX_REQUEST_BYTES",
     "MAX_RESULT_BYTES",
     "PACKET_SCHEMA",
     "PROFILE_IDENTITY_SCHEMA",
@@ -651,6 +809,8 @@ __all__ = [
     "ShadowReviewPacket",
     "ShadowReviewRequest",
     "ShadowReviewResult",
+    "ShadowReviewDocumentError",
+    "ShadowReviewSemanticError",
     "ShadowReviewValueError",
     "canonical_json",
 ]
