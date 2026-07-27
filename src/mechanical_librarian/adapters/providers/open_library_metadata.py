@@ -6,6 +6,7 @@ import json
 import re
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -14,8 +15,14 @@ from typing import Any
 import httpx
 
 from mechanical_librarian.application.metadata_report import (
+    MetadataDiscoveryPlan,
     MetadataLookup,
     ProviderCoverDescriptor,
+    ProviderLaneResult,
+    merge_provider_cover_descriptors,
+    provider_isbn_applicability,
+    provider_observation,
+    qualify_provider_observation,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverContext,
@@ -49,6 +56,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     comparison_links,
     isbn_family,
+    normalize_title,
 )
 
 
@@ -61,6 +69,7 @@ _AUTHOR_KEY = re.compile(r"^/authors/OL[1-9][0-9]*A$")
 _LANGUAGE_KEY = re.compile(r"^/languages/([a-z]{2,3})$")
 _MAX_SEARCH_ROWS = 3
 _MAX_VALUES = 8
+_MAX_AGGREGATE_RESPONSE_BYTES = 2_097_152
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +133,9 @@ class OpenLibraryMetadataProvider:
         self._name = name
         self._client = client
         self._maximum_bytes = maximum_bytes
+        self._remaining_response_bytes = min(
+            maximum_bytes * 45, _MAX_AGGREGATE_RESPONSE_BYTES
+        )
         self._timeout_seconds = float(timeout_seconds)
         self._pacer = pacer if pacer is not None else OpenLibraryPacer()
         self._called = False
@@ -135,19 +147,81 @@ class OpenLibraryMetadataProvider:
 
     def observe(
         self,
-        lookup: MetadataLookup,
+        plan: MetadataDiscoveryPlan | MetadataLookup,
         *,
         deadline: float | None = None,
     ) -> ProviderObservation:
-        if type(lookup) is not MetadataLookup:
-            raise ValueError("provider lookup is invalid")
         if self._called:
             return ProviderObservation(
                 self._name,
                 ProviderStatus.UNAVAILABLE,
-                query_kind=lookup.kind,
+                query_kind=(
+                    plan.kind
+                    if type(plan) is MetadataLookup
+                    else ProviderQueryKind.DISCOVERY
+                ),
             )
         self._called = True
+        if type(plan) is MetadataLookup:
+            try:
+                return self._observe_lookup(plan, deadline=deadline)
+            finally:
+                self._client.close()
+        if type(plan) is not MetadataDiscoveryPlan:
+            raise ValueError("provider lookup is invalid")
+        if plan.overflow:
+            self._client.close()
+            return ProviderObservation(
+                self._name, ProviderStatus.QUERY_LIMIT_EXCEEDED
+            )
+        results: list[ProviderLaneResult] = []
+        descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+        try:
+            for lane in plan.lanes:
+                self.cover_descriptors = ()
+                lookup = MetadataLookup(
+                    lane.kind,
+                    plan.local_claims,
+                    lane.title,
+                    lane.authors,
+                    lane.matched_family,
+                )
+                observation = qualify_provider_observation(
+                    self._observe_lookup(lookup, deadline=deadline), lookup
+                )
+                results.append(
+                    ProviderLaneResult(
+                        lane, observation.status, observation.candidates
+                    )
+                )
+                merged = merge_provider_cover_descriptors(
+                    descriptors,
+                    (
+                        self.cover_descriptors
+                        if observation.status is ProviderStatus.CANDIDATES
+                        else ()
+                    ),
+                )
+                if merged is None:
+                    results[-1] = ProviderLaneResult(
+                        lane, ProviderStatus.MALFORMED
+                    )
+                else:
+                    descriptors = merged
+        finally:
+            self._client.close()
+        self.cover_descriptors = descriptors
+        return provider_observation(
+            self._name,
+            _canonical_discovery_results(self._name, tuple(results)),
+        )
+
+    def _observe_lookup(
+        self,
+        lookup: MetadataLookup,
+        *,
+        deadline: float | None,
+    ) -> ProviderObservation:
         local_claims = lookup.local_claims
         usable = tuple(
             sorted(
@@ -156,9 +230,19 @@ class OpenLibraryMetadataProvider:
                     for claim in local_claims
                     if claim.kind is ClaimKind.ISBN
                     and claim.canonical is not None
-                    and claim.applicability in {"ebook", "unknown"}
-                    and claim.basis == "opening_matter"
-                    and claim.rear_provenance is None
+                    and (
+                        (
+                            lookup.matched_family is None
+                            and claim.applicability in {"ebook", "unknown"}
+                            and claim.basis == "opening_matter"
+                            and claim.rear_provenance is None
+                        )
+                        or (
+                            lookup.matched_family is not None
+                            and isbn_family(claim.canonical)
+                            == lookup.matched_family
+                        )
+                    )
                 ),
                 key=lambda claim: (claim.canonical or "", claim.reference),
             )
@@ -206,7 +290,7 @@ class OpenLibraryMetadataProvider:
                 lookup.kind,
             )
         try:
-            with self._client:
+            with nullcontext():
                 if lookup.kind is ProviderQueryKind.ISBN:
                     search = self._request(
                         OPEN_LIBRARY_SEARCH_URL,
@@ -313,6 +397,8 @@ class OpenLibraryMetadataProvider:
         params: dict[str, str] | None = None,
         deadline: float | None,
     ) -> dict[str, Any]:
+        if self._remaining_response_bytes <= 0:
+            raise _ProviderFailure(ProviderStatus.OVERSIZED)
         if not self._pacer.wait(deadline):
             raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
         remaining = self._timeout_seconds
@@ -349,10 +435,16 @@ class OpenLibraryMetadataProvider:
                     raise _ProviderFailure(ProviderStatus.MALFORMED)
                 payload = _body(
                     response,
-                    self._maximum_bytes,
+                    min(
+                        self._maximum_bytes,
+                        self._remaining_response_bytes,
+                    ),
                     deadline=deadline,
                 )
-        except _ProviderFailure:
+                self._remaining_response_bytes -= len(payload)
+        except _ProviderFailure as error:
+            if error.status is ProviderStatus.OVERSIZED:
+                self._remaining_response_bytes = 0
             raise
         except (httpx.HTTPError, OSError, ValueError):
             raise _ProviderFailure(ProviderStatus.UNAVAILABLE) from None
@@ -414,7 +506,7 @@ def _admitted_work_candidates(
     for raw_work in docs:
         work = _mapping(raw_work)
         work_key = _key(work.get("key"), _WORK_KEY)
-        authors = _string_list(work.get("author_name", []), _MAX_VALUES)
+        authors = _author_list(work.get("author_name", []), _MAX_VALUES)
         editions = _mapping(work.get("editions"))
         edition_docs = editions.get("docs")
         if type(edition_docs) is not list:
@@ -502,7 +594,7 @@ def _candidate(
             ClaimKind.ISBN,
             compact,
             ClaimScope.EDITION,
-            applicability="ebook",
+            applicability=provider_isbn_applicability(compact, local_claims),
         )
     add(ClaimKind.ASIN, None, ClaimScope.EDITION, state=FieldState.UNSUPPORTED)
     add(ClaimKind.TITLE, edition.get("title"), ClaimScope.EDITION)
@@ -688,6 +780,127 @@ def _candidate(
         ),
         edition_cover,
         work_cover,
+    )
+
+
+def _canonical_discovery_results(
+    provider: str,
+    results: tuple[ProviderLaneResult, ...],
+) -> tuple[ProviderLaneResult, ...]:
+    """Combine only qualified work authors with independently admitted editions."""
+    isbn_candidates: dict[str, list[ProviderCandidate]] = {}
+    work_candidates: dict[str, ProviderCandidate] = {}
+    for result in results:
+        for candidate in result.candidates:
+            if result.lane.kind is ProviderQueryKind.ISBN:
+                isbn_candidates.setdefault(candidate.identity, []).append(candidate)
+            elif result.lane.kind is ProviderQueryKind.WORK:
+                work_candidates[candidate.identity] = candidate
+
+    merged: dict[str, ProviderCandidate] = {}
+    for identity, work in work_candidates.items():
+        editions = isbn_candidates.get(identity, [])
+        if (
+            not editions
+            or editions[0].work_identity != work.work_identity
+            or any(
+                candidate != editions[0]
+                or candidate.work_identity != work.work_identity
+                for candidate in editions[1:]
+            )
+        ):
+            continue
+        edition = editions[0]
+        creators = tuple(
+            claim
+            for claim in work.claims
+            if claim.kind is ClaimKind.CREATOR
+            and claim.scope is ClaimScope.WORK
+            and claim.state is FieldState.VALID
+            and claim.value is not None
+            and claim.role == "author"
+        )
+        if not creators or len(creators) != len(
+            {
+                claim.value.casefold()
+                for claim in creators
+                if claim.value is not None
+            }
+        ):
+            continue
+        work_claim_content = {
+            (
+                claim.kind,
+                claim.value,
+                claim.state,
+                claim.scope,
+                claim.applicability,
+                claim.role,
+                claim.links,
+            )
+            for claim in work.claims
+            if claim.kind is not ClaimKind.CREATOR
+        }
+        edition_claim_content = {
+            (
+                claim.kind,
+                claim.value,
+                claim.state,
+                claim.scope,
+                claim.applicability,
+                claim.role,
+                claim.links,
+            )
+            for claim in edition.claims
+            if claim.kind is not ClaimKind.CREATOR
+        }
+        if (
+            not work_claim_content.issubset(edition_claim_content)
+            or not set(work.evidence).issubset(edition.evidence)
+        ):
+            continue
+        claims = [
+            claim
+            for claim in edition.claims
+            if not (
+                claim.kind is ClaimKind.CREATOR
+                and claim.scope is ClaimScope.WORK
+            )
+        ]
+        raw_order = max((claim.raw_order for claim in claims), default=-1) + 1
+        claims.extend(
+            ProviderClaim.create(
+                provider=provider,
+                candidate=identity,
+                kind=creator.kind,
+                value=creator.value,
+                state=creator.state,
+                scope=creator.scope,
+                applicability=creator.applicability,
+                role=creator.role,
+                raw_order=raw_order + index,
+                links=creator.links,
+            )
+            for index, creator in enumerate(creators)
+        )
+        merged[identity] = ProviderCandidate(
+            identity,
+            edition.work_identity,
+            tuple(claims),
+            edition.evidence,
+        )
+    if not merged:
+        return results
+    return tuple(
+        ProviderLaneResult(
+            result.lane,
+            result.status,
+            tuple(
+                merged.get(candidate.identity, candidate)
+                for candidate in result.candidates
+            ),
+        )
+        for result in results
     )
 
 
@@ -1067,6 +1280,16 @@ def _string_list(value: object, maximum: int) -> tuple[str, ...]:
         raise ValueError("provider string list is malformed")
     values = tuple(_text(item) for item in value)
     return tuple(sorted(set(values)))[:maximum]
+
+
+def _author_list(value: object, maximum: int) -> tuple[str, ...]:
+    if type(value) is not list or len(value) > maximum:
+        raise ValueError("provider author list is malformed")
+    values = tuple(_text(item) for item in value)
+    normalized = tuple(normalize_title(item).casefold() for item in values)
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("provider author list is malformed")
+    return values
 
 
 def _search_isbn_families(value: object) -> set[str]:

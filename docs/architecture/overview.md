@@ -91,7 +91,7 @@ without ranking. Open Library uses exact Search-to-edition-to-work admission,
 one adapter-local request-start pacer, and no author traversal, fallback
 discovery, retry, or generic provider registry.
 
-`batch-manifest-v2` is an immutable secret-free operator artifact. It binds the
+`batch-manifest-v3` is an immutable secret-free operator artifact. It binds the
 current catalogue generation, exact entries, report-relevant configuration,
 enabled provider names and adapter discriminators, and conservative call
 maxima. `ForegroundBatchRun`
@@ -116,12 +116,15 @@ workflow, job, cache, or deletion surface. Batch work stores no attempt or
 resume state; shadow-review attempts are the explicit qualification-only
 exception. These rules are the current-runtime application of repository-wide
 ADR-0013.
-The `metadata-report-v9` document retains all 16 ordered Audiobookshelf target
+The `metadata-report-v10` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
 source capability
 provenance, and bounded occurrence/rear-spine provenance needed to replay the
-observation, plus source-scoped finite provider evidence; the relational
+observation, plus source-scoped finite provider evidence and canonical
+provider discovery lanes. Distinct ISBN-10/13 families and the optional
+complete-title/author lane remain separate; provider-local work convergence is
+recorded without becoming independent corroboration. The relational
 envelope remains only its scope, identity, digest, and schema-version index.
 Within the exact current schema, a current-scope
 lookup follows the separate pointer offline, while an exact-ID lookup never

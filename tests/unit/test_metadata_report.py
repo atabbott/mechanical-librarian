@@ -16,6 +16,7 @@ from mechanical_librarian.application.metadata_report import (
     InspectionResult,
     MetadataLookup,
     ProviderBinding,
+    ProviderLaneResult,
     TargetFile,
     TargetCover,
     TargetSnapshot,
@@ -23,6 +24,8 @@ from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     _variant_marker,
     metadata_lookup,
+    metadata_discovery_plan,
+    provider_observation,
     qualify_provider_observation,
 )
 from mechanical_librarian.domain.cover_evidence import (
@@ -261,6 +264,241 @@ class MetadataReportTests(unittest.TestCase):
             metadata_lookup(complete, (isbn, competing)).kind,
         )
 
+        target_title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="The Example",
+            canonical="The Example",
+            excerpt="The Example",
+            applicability="not_applicable",
+            basis="target_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        )
+        plan = metadata_discovery_plan(
+            complete, (target_title, isbn, competing)
+        )
+        self.assertFalse(plan.overflow)
+        self.assertEqual(
+            [ProviderQueryKind.ISBN, ProviderQueryKind.ISBN, ProviderQueryKind.WORK],
+            sorted((lane.kind for lane in plan.lanes), key=lambda value: value.value),
+        )
+        self.assertEqual(
+            {"9780306406157", "9780140328721"},
+            {
+                lane.matched_family
+                for lane in plan.lanes
+                if lane.kind is ProviderQueryKind.ISBN
+            },
+        )
+
+    def test_discovery_plan_deduplicates_families_and_records_convergence(self) -> None:
+        title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="The Example",
+            canonical="The Example",
+            excerpt="The Example",
+            applicability="not_applicable",
+            basis="target_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        )
+        isbn_13 = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="ebook ISBN 9780306406157",
+            applicability="ebook",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+        )
+        isbn_10 = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="0-306-40615-2",
+            canonical="0306406152",
+            excerpt="print ISBN 0-306-40615-2",
+            applicability="print",
+            checksum="valid_isbn_10",
+            applicability_basis="print",
+            basis="opening_matter",
+            rear_provenance=RearClaimProvenance(
+                "a" * 64, 1, 1, "also_by", "rear.xhtml"
+            ),
+        )
+        fields = tuple(
+            TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.VALUE,
+                ("Ada Author",),
+            )
+            if field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields("The Example")
+        )
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", "The Example", (), fields=fields),
+            (title, isbn_13, isbn_10),
+        )
+        isbn_lane = next(
+            lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ISBN
+        )
+        work_lane = next(
+            lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK
+        )
+        self.assertEqual(
+            tuple(sorted((isbn_13.reference, isbn_10.reference))),
+            isbn_lane.input_references,
+        )
+        candidate = ProviderCandidate("edition-1", "work-1", ())
+        observation = provider_observation(
+            "catalogue",
+            (
+                ProviderLaneResult(
+                    isbn_lane, ProviderStatus.CANDIDATES, (candidate,)
+                ),
+                ProviderLaneResult(
+                    work_lane, ProviderStatus.CANDIDATES, (candidate,)
+                ),
+            ),
+        )
+        self.assertEqual(1, len(observation.candidates))
+        self.assertEqual(2, len(observation.lanes))
+        self.assertEqual(1, len(observation.convergence))
+        self.assertEqual(
+            tuple(sorted(lane.identity for lane in plan.lanes)),
+            observation.convergence[0].lane_identities,
+        )
+        lane_references = {
+            value.reference
+            for lane in observation.lanes
+            for value in lane.candidates
+        }
+        self.assertEqual(2, len(lane_references))
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary", "ebooks", "item-1", fields
+            ),
+            file=FileFacts(0, "b" * 64, "c" * 64),
+            local_claims=(title, isbn_13, isbn_10),
+            local_reasons=("opening_matter_isbn",),
+            providers=(observation,),
+        )
+        self.assertEqual(report, MetadataReport.from_json(report.to_json()))
+        self.assertEqual("metadata-report-v10", report.schema_version)
+
+    def test_aggregate_candidate_failures_preserve_independent_lane_statuses(
+        self,
+    ) -> None:
+        claims = tuple(
+            LocalClaim.create(
+                kind=ClaimKind.ISBN,
+                observed=value,
+                canonical=value,
+                excerpt=f"ISBN {value}",
+                applicability="unknown",
+                checksum="valid_isbn_13",
+                applicability_basis="unlabelled",
+            )
+            for value in (
+                "9780061120084",
+                "9780140328721",
+                "9780306406157",
+                "9780439554930",
+            )
+        )
+        lanes = metadata_discovery_plan(
+            TargetSnapshot("ebook", None, ()), claims
+        ).lanes
+        candidates = tuple(
+            ProviderCandidate(f"edition-{index}", f"work-{index}", ())
+            for index in range(MAX_CANDIDATES + 1)
+        )
+        overflow_results = (
+            ProviderLaneResult(
+                lanes[0], ProviderStatus.CANDIDATES, candidates[:3]
+            ),
+            ProviderLaneResult(
+                lanes[1], ProviderStatus.CANDIDATES, candidates[3:]
+            ),
+            ProviderLaneResult(lanes[2], ProviderStatus.RATE_LIMITED),
+            ProviderLaneResult(lanes[3], ProviderStatus.NO_MATCH),
+        )
+        conflict_results = (
+            ProviderLaneResult(
+                lanes[0],
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("edition-shared", "work-one", ()),),
+            ),
+            ProviderLaneResult(
+                lanes[1],
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("edition-shared", "work-two", ()),),
+            ),
+            ProviderLaneResult(lanes[2], ProviderStatus.RATE_LIMITED),
+            ProviderLaneResult(lanes[3], ProviderStatus.NO_MATCH),
+        )
+
+        for label, results, expected in (
+            (
+                "overflow",
+                overflow_results,
+                ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            ),
+            ("conflict", conflict_results, ProviderStatus.MALFORMED),
+        ):
+            observation = provider_observation("catalogue", results)
+            replayed_order = provider_observation(
+                "catalogue", tuple(reversed(results))
+            )
+            by_identity = {
+                lane.identity: lane.status for lane in observation.lanes
+            }
+            with self.subTest(label=label):
+                self.assertEqual(expected, observation.status)
+                self.assertEqual((), observation.candidates)
+                self.assertEqual(expected, by_identity[lanes[0].identity])
+                self.assertEqual(expected, by_identity[lanes[1].identity])
+                self.assertEqual(
+                    ProviderStatus.RATE_LIMITED,
+                    by_identity[lanes[2].identity],
+                )
+                self.assertEqual(
+                    ProviderStatus.NO_MATCH,
+                    by_identity[lanes[3].identity],
+                )
+                self.assertEqual(observation.to_data(), replayed_order.to_data())
+
+    def test_discovery_plan_reports_exact_family_overflow_without_subset(self) -> None:
+        claims: list[LocalClaim] = []
+        for index in range(9):
+            prefix = f"97800000000{index}"
+            check = (
+                10
+                - sum(
+                    int(character) * (1 if position % 2 == 0 else 3)
+                    for position, character in enumerate(prefix)
+                )
+                % 10
+            ) % 10
+            value = prefix + str(check)
+            claims.append(
+                LocalClaim.create(
+                    kind=ClaimKind.ISBN,
+                    observed=value,
+                    canonical=value,
+                    excerpt=value,
+                    applicability="unknown",
+                    checksum="valid_isbn_13",
+                    applicability_basis="unlabelled",
+                )
+            )
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", None, ()), tuple(claims)
+        )
+        self.assertTrue(plan.overflow)
+        self.assertEqual((), plan.lanes)
+
     def test_work_lookup_admits_one_exact_work_and_strips_edition_authority(self) -> None:
         lookup = MetadataLookup(
             ProviderQueryKind.WORK,
@@ -475,44 +713,78 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(ProviderStatus.CANDIDATES, qualified.status)
         self.assertEqual(("edition-1",), tuple(value.identity for value in qualified.candidates))
 
-    def test_work_lookup_accepts_the_complete_author_set_in_provider_order(self) -> None:
+    def test_work_lookup_requires_the_complete_canonical_author_order(self) -> None:
         lookup = MetadataLookup(
             ProviderQueryKind.WORK,
             (),
             "The Example",
-            ("Ada Author", "Bea Author"),
+            ("Zed Author", "Ada Author"),
         )
-        claims = tuple(
-            ProviderClaim.create(
-                provider="catalogue",
-                candidate="edition-1",
-                kind=kind,
-                value=value,
-                state=FieldState.VALID,
-                scope=ClaimScope.WORK,
-                applicability="not_applicable",
-                role=role,
-                raw_order=index,
-            )
-            for index, (kind, value, role) in enumerate(
-                (
-                    (ClaimKind.TITLE, "The Example", None),
-                    (ClaimKind.CREATOR, "Bea Author", "author"),
-                    (ClaimKind.CREATOR, "Ada Author", "author"),
-                )
-            )
-        )
-        result = qualify_provider_observation(
-            ProviderObservation(
-                "catalogue",
+        for label, provider_authors, expected in (
+            (
+                "exact normalized order",
+                ("ZED AUTHOR", "ada author"),
                 ProviderStatus.CANDIDATES,
-                (),
-                (ProviderCandidate("edition-1", "work-1", claims),),
-                ProviderQueryKind.WORK,
             ),
-            lookup,
-        )
-        self.assertEqual(ProviderStatus.CANDIDATES, result.status)
+            (
+                "same set wrong order",
+                ("Ada Author", "Zed Author"),
+                ProviderStatus.NO_MATCH,
+            ),
+            ("missing author", ("Zed Author",), ProviderStatus.NO_MATCH),
+            (
+                "extra duplicate",
+                ("Zed Author", "Ada Author", "Ada Author"),
+                ProviderStatus.NO_MATCH,
+            ),
+            (
+                "duplicate replacement",
+                ("Zed Author", "Zed Author"),
+                ProviderStatus.NO_MATCH,
+            ),
+        ):
+            claims = (
+                ProviderClaim.create(
+                    provider="catalogue",
+                    candidate="edition-1",
+                    kind=ClaimKind.TITLE,
+                    value="The Example",
+                    state=FieldState.VALID,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                    raw_order=0,
+                ),
+                *(
+                    ProviderClaim.create(
+                        provider="catalogue",
+                        candidate="edition-1",
+                        kind=ClaimKind.CREATOR,
+                        value=value,
+                        state=FieldState.VALID,
+                        scope=ClaimScope.WORK,
+                        applicability="not_applicable",
+                        role="author",
+                        raw_order=index,
+                    )
+                    for index, value in enumerate(provider_authors, start=1)
+                ),
+            )
+            result = qualify_provider_observation(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    (ProviderCandidate("edition-1", "work-1", claims),),
+                    ProviderQueryKind.WORK,
+                ),
+                lookup,
+            )
+            with self.subTest(label=label):
+                self.assertEqual(expected, result.status)
+                self.assertEqual(
+                    expected is ProviderStatus.CANDIDATES,
+                    bool(result.candidates),
+                )
 
     def test_closed_claim_vocabulary_is_exact(self) -> None:
         self.assertEqual(

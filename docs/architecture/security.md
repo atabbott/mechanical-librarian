@@ -9,9 +9,12 @@ GET routes. It has no provider, metadata-write, media-write, report, apply,
 background, retry, or cleanup authority.
 
 `metadata-report` may read one configured target item, one selected read-only
-EPUB, owner-only credential files, one fixed credential-bearing metadata request
-per applicable provider, and separately credential-free bounded cover request
-chains for admitted descriptors. It may append a neutral report and update its
+EPUB, owner-only credential files, at most nine fixed credential-bearing
+Hardcover metadata requests, at most nine credential-free Open Library
+Search requests and 45 aggregate Open Library metadata requests, and separately
+credential-free bounded cover request chains for admitted descriptors. These
+metadata maxima apply only when their provider and corresponding discovery
+lanes are enabled and admitted. It may append a neutral report and update its
 current pointer. It has
 no target-write, media-write, review, decision, apply, background, retry,
 deletion, repair, import, schema-migration, or backward-compatibility authority.
@@ -66,11 +69,21 @@ metadata and Covers origins. HTTP clients ignore ambient proxy/environment
 configuration and redirects.
 
 Disabled providers cause no secret access, client construction, or egress.
-Unreferenced providers are never bound. One usable ISBN family selects only
-the exact ISBN operation. With no usable family, the application permits one
-title-plus-complete-author operation; title-only, incomplete authors, or
-multiple usable families return `insufficient_input` without egress. There is
-no automatic retry.
+Unreferenced providers are never bound. Each of at most eight distinct
+checksum-valid ISBN-10/13 families selects one exact ISBN lane; one
+title-plus-complete-author work lane is also admitted when that complete input
+exists. More than eight ISBN families return `query_limit_exceeded` before
+provider client construction and permits no subset egress. With neither an ISBN
+lane nor a complete work lane, title-only or incomplete-author input returns
+`insufficient_input` without a provider request.
+
+Each referenced enabled Hardcover provider makes at most one fixed GraphQL
+request per admitted lane, for nine aggregate metadata requests. Each referenced
+enabled Open Library provider makes at most one fixed Search request per lane
+and at most two edition plus two distinct work detail requests per lane, for
+nine Search and 45 aggregate metadata requests. The lanes share one client,
+the response-byte aggregate and deadline, and, for Open Library, one
+request-start pacer. There is no automatic retry.
 
 Cover acquisition remains report-only. The ABS raw-cover route is bracketed by
 the final item read and has no credentials, cookies, referrer, or user agent.
@@ -170,8 +183,9 @@ explicit reevaluation requires proof that the complete prior supervised process
 group is absent.
 
 The final report database, `catalogue-v1` database, `config-v4`, artifact
-records, and `batch-manifest-v2` each accept only absent or their exact current
-schema. `metadata-report-v1` through `metadata-report-v8`, prior development schemas, extra objects, altered
+records, and `batch-manifest-v3` each accept only absent or their exact current
+schema. `metadata-report-v1` through `metadata-report-v9`, prior development
+schemas, extra objects, altered
 SQL, failed foreign-key/integrity checks, and other schemas fail closed before
 mutation. Persisted report content is validated when an exact-ID or
 current-scope read selects it and when a selected current report or exact-ID
@@ -192,7 +206,12 @@ enough to identify fixed-origin metadata and cover requests. It is not included
 in application fingerprints, reports, IDs, manifests, persisted artifacts,
 logs, or diagnostics. Search and detail responses use existing strict byte,
 content-type, encoding, JSON, projection, and aggregate-deadline bounds.
-Candidate admission accepts only exact normalized ISBN-family rows with
+The application admits at most eight distinct ISBN-family lanes and one
+complete-title/author lane. Overflow is typed before client construction and
+causes no subset egress. One adapter instance owns all lane sequencing, fixed
+request maxima, 2 MiB aggregate response-byte ceiling, and the shared
+pacer/deadline. Candidate admission accepts
+only exact normalized ISBN-family rows with
 canonical Open Library edition/work keys. Cover URLs are constructed from
 bounded numeric IDs at the fixed Covers origin; malformed present IDs are
 retained as `rejected` report outcomes without a request. Valid URLs are paced

@@ -103,7 +103,8 @@ ranking policy:
 
 There are no provider defaults, inheritance, overrides, weights, priorities,
 configurable fallback rules, environment substitutions, or undocumented
-configuration sources. The fixed no-ISBN title-plus-complete-author fallback is
-part of the report contract rather than operator policy. Proposal creation uses
+configuration sources. The fixed complete title-plus-author discovery lane is
+part of the report contract rather than operator policy and runs alongside
+bounded ISBN-family lanes. Proposal creation uses
 only the selected target connection/library/mount and never reads provider
 authority; its fixed evaluation policy is not configurable.

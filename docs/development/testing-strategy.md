@@ -38,12 +38,13 @@ The suite covers:
   files, and opaque identity across reorder;
 - isolated EPUB traversal, expansion limits, malformed markup, external/entity
   exclusion, timeout, child failure, invalid IPC, and output bounds;
-- provider input selection, no-input zero egress, one-request cardinality,
-  observable cap overflow, cross-provider claim-reference uniqueness, sparse
-  candidates, exact ISBN versus complete-author work fallback, fail-closed work
+- provider discovery-plan construction, disabled/no-input zero egress,
+  exact per-lane and aggregate request cardinality, typed no-subset overflow,
+  collision-free lane candidate references, sparse candidates, every valid
+  ISBN family plus the optional complete-author work lane, fail-closed work
   qualification, typed taxonomy/publication scope, all-or-nothing malformed
   handling, and identity order;
-- Open Library exact ISBN-family Search admission, canonical edition/work
+- Open Library exact per-family Search admission, canonical edition/work
   request order, shared one-second pacing, finite rich evidence, terminal
   failure mapping, identified metadata/cover requests, cover-failure isolation,
   provider-order/contact privacy, and the explicit five-item batch envelope;

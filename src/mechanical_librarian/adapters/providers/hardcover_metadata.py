@@ -12,8 +12,14 @@ from typing import Any
 import httpx
 
 from mechanical_librarian.application.metadata_report import (
+    MetadataDiscoveryPlan,
     MetadataLookup,
     ProviderCoverDescriptor,
+    ProviderLaneResult,
+    merge_provider_cover_descriptors,
+    provider_isbn_applicability,
+    provider_observation,
+    qualify_provider_observation,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverContext,
@@ -30,6 +36,7 @@ from mechanical_librarian.domain.metadata_report import (
     MAX_SERIES, MAX_TAGS, ProviderCandidate, ProviderClaim,
     ProviderEvidence, ProviderEvidenceKind, ProviderObservation,
     ProviderQueryKind, ProviderStatus, canonical_json, comparison_links,
+    isbn_family,
 )
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text, validate_role_projection
 
@@ -37,6 +44,7 @@ from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, vali
 HARDCOVER_URL = "https://api.hardcover.app/v1/graphql"
 HARDCOVER_SCHEMA_COMMIT = "2c03110845765c32af945ed550a942330c394a3e"
 MAX_RESPONSE_BYTES = 262_144
+MAX_AGGREGATE_RESPONSE_BYTES = 2_097_152
 _ISBN_QUERY = (
     "query MetadataEvidenceByIsbn($isbns:[String!]!){editions(where:{_or:["
     f"{{isbn_13:{{_in:$isbns}}}},{{isbn_10:{{_in:$isbns}}}}]}},order_by:{{id:asc}},limit:{MAX_CANDIDATES + 1})"
@@ -62,26 +70,116 @@ class HardcoverMetadataProvider:
             raise ValueError("provider timeout is invalid")
         self._name, self._client = name, client
         self._maximum_bytes = min(maximum_bytes, MAX_RESPONSE_BYTES)
+        self._remaining_response_bytes = min(
+            self._maximum_bytes * 9, MAX_AGGREGATE_RESPONSE_BYTES
+        )
         self._timeout_seconds = float(timeout_seconds)
         self._called = False
         self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
 
-    def observe(self, lookup: MetadataLookup, *, deadline: float | None = None) -> ProviderObservation:
-        if type(lookup) is not MetadataLookup:
-            raise ValueError("provider lookup is invalid")
+    def observe(
+        self,
+        plan: MetadataDiscoveryPlan | MetadataLookup,
+        *,
+        deadline: float | None = None,
+    ) -> ProviderObservation:
         if self._called:
             return ProviderObservation(
                 self._name,
                 ProviderStatus.UNAVAILABLE,
-                query_kind=lookup.kind,
+                query_kind=(
+                    plan.kind
+                    if type(plan) is MetadataLookup
+                    else ProviderQueryKind.DISCOVERY
+                ),
             )
         self._called = True
+        if type(plan) is MetadataLookup:
+            try:
+                return self._observe_lookup(plan, deadline=deadline)
+            finally:
+                self._client.close()
+        if type(plan) is not MetadataDiscoveryPlan:
+            raise ValueError("provider lookup is invalid")
+        if plan.overflow:
+            self._client.close()
+            return ProviderObservation(
+                self._name, ProviderStatus.QUERY_LIMIT_EXCEEDED
+            )
+        results: list[ProviderLaneResult] = []
+        descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+        try:
+            for lane in plan.lanes:
+                self.cover_descriptors = ()
+                lookup = MetadataLookup(
+                    lane.kind,
+                    plan.local_claims,
+                    lane.title,
+                    lane.authors,
+                    lane.matched_family,
+                )
+                observation = qualify_provider_observation(
+                    self._observe_lookup(lookup, deadline=deadline),
+                    lookup,
+                )
+                results.append(
+                    ProviderLaneResult(
+                        lane, observation.status, observation.candidates
+                    )
+                )
+                merged = merge_provider_cover_descriptors(
+                    descriptors,
+                    (
+                        self.cover_descriptors
+                        if observation.status is ProviderStatus.CANDIDATES
+                        else ()
+                    ),
+                )
+                if merged is None:
+                    results[-1] = ProviderLaneResult(
+                        lane, ProviderStatus.MALFORMED
+                    )
+                else:
+                    descriptors = merged
+        finally:
+            self._client.close()
+        self.cover_descriptors = descriptors
+        return provider_observation(self._name, tuple(results))
+
+    def _observe_lookup(
+        self,
+        lookup: MetadataLookup,
+        *,
+        deadline: float | None,
+    ) -> ProviderObservation:
         local_claims = lookup.local_claims
-        usable = tuple(sorted((claim for claim in local_claims if claim.kind is ClaimKind.ISBN and claim.canonical is not None and claim.applicability in {"ebook", "unknown"} and claim.basis == "opening_matter" and claim.rear_provenance is None), key=lambda claim: (claim.canonical or "", claim.reference)))
+        usable = tuple(
+            sorted(
+                (
+                    claim
+                    for claim in local_claims
+                    if claim.kind is ClaimKind.ISBN
+                    and claim.canonical is not None
+                    and (
+                        (
+                            lookup.matched_family is None
+                            and claim.applicability in {"ebook", "unknown"}
+                            and claim.basis == "opening_matter"
+                            and claim.rear_provenance is None
+                        )
+                        or (
+                            lookup.matched_family is not None
+                            and isbn_family(claim.canonical)
+                            == lookup.matched_family
+                        )
+                    )
+                ),
+                key=lambda claim: (claim.canonical or "", claim.reference),
+            )
+        )
         references: tuple[str, ...] = ()
         if lookup.kind is ProviderQueryKind.ISBN:
             if not usable:
-                self._client.close()
                 return ProviderObservation(
                     self._name,
                     ProviderStatus.INSUFFICIENT_INPUT,
@@ -111,7 +209,6 @@ class HardcoverMetadataProvider:
                 },
             }
         else:
-            self._client.close()
             return ProviderObservation(
                 self._name,
                 ProviderStatus.INSUFFICIENT_INPUT,
@@ -128,11 +225,13 @@ class HardcoverMetadataProvider:
                 candidates,
                 lookup.kind,
             )
+        if self._remaining_response_bytes <= 0:
+            return result(ProviderStatus.OVERSIZED)
         try:
             remaining = self._timeout_seconds if deadline is None else min(self._timeout_seconds, deadline - time.monotonic())
             if remaining <= 0:
                 return result(ProviderStatus.UNAVAILABLE)
-            with self._client, self._client.stream("POST", HARDCOVER_URL, content=canonical_json(body).encode(), headers={"Accept": "application/json", "Content-Type": "application/json", "Accept-Encoding": "identity"}, timeout=remaining) as response:
+            with self._client.stream("POST", HARDCOVER_URL, content=canonical_json(body).encode(), headers={"Accept": "application/json", "Content-Type": "application/json", "Accept-Encoding": "identity"}, timeout=remaining) as response:
                 if response.status_code == 401:
                     return result(ProviderStatus.AUTHENTICATION)
                 if response.status_code == 403:
@@ -145,13 +244,39 @@ class HardcoverMetadataProvider:
                     return result(ProviderStatus.MALFORMED)
                 if response.headers.get("content-encoding", "identity").strip().lower() not in {"", "identity"}:
                     return result(ProviderStatus.MALFORMED)
-                payload = _body(response, self._maximum_bytes, deadline=deadline)
+                payload = _body(
+                    response,
+                    min(self._maximum_bytes, self._remaining_response_bytes),
+                    deadline=deadline,
+                )
+                self._remaining_response_bytes -= len(payload)
         except _ResponseOversized:
+            self._remaining_response_bytes = 0
             return result(ProviderStatus.OVERSIZED)
         except (httpx.HTTPError, OSError, ValueError):
             return result(ProviderStatus.UNAVAILABLE)
         try:
-            candidates = _parse_candidates(payload, self._name, local_claims)
+            candidates = _parse_candidates(
+                payload,
+                self._name,
+                local_claims,
+            )
+            if (
+                lookup.kind is ProviderQueryKind.ISBN
+                and lookup.matched_family is not None
+            ):
+                if any(
+                    lookup.matched_family
+                    not in {
+                        family
+                        for claim in candidate.claims
+                        if claim.kind is ClaimKind.ISBN
+                        and claim.value is not None
+                        and (family := isbn_family(claim.value)) is not None
+                    }
+                    for candidate in candidates
+                ):
+                    return result(ProviderStatus.MALFORMED)
         except _CandidateLimit:
             return result(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
         except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
@@ -164,10 +289,11 @@ class HardcoverMetadataProvider:
             )
         except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
             self.cover_descriptors = ()
-        return result(
+        observation = result(
             ProviderStatus.CANDIDATES if candidates else ProviderStatus.NO_MATCH,
             candidates,
         )
+        return observation
 
 
 def _body(response: httpx.Response, maximum: int, *, deadline: float | None = None) -> bytes:
@@ -185,7 +311,11 @@ def _body(response: httpx.Response, maximum: int, *, deadline: float | None = No
     return b"".join(chunks)
 
 
-def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalClaim, ...]) -> tuple[ProviderCandidate, ...]:
+def _parse_candidates(
+    payload: bytes,
+    provider: str,
+    local_claims: tuple[LocalClaim, ...],
+) -> tuple[ProviderCandidate, ...]:
     source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
     root = _closed(source, {"data"})
     data = _closed(root["data"], {"editions", "books"})
@@ -220,7 +350,12 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
         used.add(book_id)
         identity = f"hardcover-edition-{edition_id:010d}"
         work_identity = f"hardcover-work-{book_id:010d}"
-        claims = _edition_claims(provider, identity, row, local_claims)
+        claims = _edition_claims(
+            provider,
+            identity,
+            row,
+            local_claims,
+        )
         claims.extend(_work_claims(provider, identity, indexed[book_id], local_claims, len(claims)))
         candidates.append(
             ProviderCandidate(
@@ -386,12 +521,26 @@ def _edition_cover_context(row: dict[str, Any]) -> tuple[CoverContext, ...]:
     )
 
 
-def _edition_claims(provider: str, identity: str, row: dict[str, Any], local: tuple[LocalClaim, ...]) -> list[ProviderClaim]:
+def _edition_claims(
+    provider: str,
+    identity: str,
+    row: dict[str, Any],
+    local: tuple[LocalClaim, ...],
+) -> list[ProviderClaim]:
     claims: list[ProviderClaim] = []
     def add(kind: ClaimKind, value: object, scope: ClaimScope = ClaimScope.EDITION, applicability: str = "not_applicable") -> None:
         claims.append(_claim(provider, identity, kind, value, scope, applicability, None, local, len(claims)))
     for key, kind in (("isbn_10", ClaimKind.ISBN), ("isbn_13", ClaimKind.ISBN), ("asin", ClaimKind.ASIN), ("title", ClaimKind.TITLE), ("subtitle", ClaimKind.SUBTITLE), ("release_date", ClaimKind.PUBLICATION_DATE)):
-        add(kind, row[key], ClaimScope.EDITION, "ebook" if kind is ClaimKind.ISBN else "not_applicable")
+        add(
+            kind,
+            row[key],
+            ClaimScope.EDITION,
+            (
+                provider_isbn_applicability(row[key], local)
+                if kind is ClaimKind.ISBN
+                else "not_applicable"
+            ),
+        )
     publisher = _closed_or_none(row["publisher"], {"id", "name", "parent_id"})
     add(ClaimKind.PUBLISHER, None if publisher is None else publisher["name"])
     claims.append(_state_claim(provider, identity, ClaimKind.IMPRINT, FieldState.UNSUPPORTED, ClaimScope.EDITION, local, len(claims)))

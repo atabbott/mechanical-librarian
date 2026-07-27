@@ -22,7 +22,7 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 
 
-REPORT_SCHEMA = "metadata-report-v9"
+REPORT_SCHEMA = "metadata-report-v10"
 COMPARISON_VERSION = "same-kind-v1"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -37,6 +37,8 @@ MAX_DESCRIPTION_CHARACTERS = 16_384
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
 _REFERENCE = re.compile(r"^(?:local|provider)_[0-9a-f]{64}$")
+_LANE_IDENTITY = re.compile(r"^lane_[0-9a-f]{64}$")
+_LANE_CANDIDATE_REFERENCE = re.compile(r"^lane_candidate_[0-9a-f]{64}$")
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
@@ -285,10 +287,12 @@ class ProviderStatus(StrEnum):
     MALFORMED = "malformed"
     OVERSIZED = "oversized"
     CANDIDATE_LIMIT_EXCEEDED = "candidate_limit_exceeded"
+    QUERY_LIMIT_EXCEEDED = "query_limit_exceeded"
 
 
 class ProviderQueryKind(StrEnum):
     NONE = "none"
+    DISCOVERY = "discovery"
     ISBN = "isbn"
     WORK = "work"
 
@@ -427,6 +431,24 @@ def stable_reference(prefix: str, value: object) -> str:
     if prefix not in {"local", "provider"}:
         raise ReportValueError("claim reference prefix is invalid")
     return f"{prefix}_{hashlib.sha256(canonical_json(value).encode('utf-8')).hexdigest()}"
+
+
+def provider_lane_candidate_reference(
+    provider: str,
+    lane_identity: str,
+    edition_identity: str,
+    work_identity: str,
+) -> str:
+    return "lane_candidate_" + hashlib.sha256(
+        canonical_json(
+            {
+                "edition_identity": edition_identity,
+                "lane_identity": lane_identity,
+                "provider": provider,
+                "work_identity": work_identity,
+            }
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def normalize_title(value: str) -> str:
@@ -834,6 +856,102 @@ class ProviderCandidate:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderLaneCandidate:
+    reference: str
+    edition_identity: str
+    work_identity: str
+
+    def __post_init__(self) -> None:
+        if _LANE_CANDIDATE_REFERENCE.fullmatch(self.reference) is None:
+            raise ReportValueError("provider lane candidate reference is invalid")
+        _text(self.edition_identity, "provider candidate identity", 128)
+        _text(self.work_identity, "provider candidate work identity", 128)
+
+    def to_data(self) -> dict[str, str]:
+        return {
+            "edition_identity": self.edition_identity,
+            "reference": self.reference,
+            "work_identity": self.work_identity,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderLaneObservation:
+    identity: str
+    kind: ProviderQueryKind
+    status: ProviderStatus
+    input_references: tuple[str, ...] = ()
+    matched_family: str | None = None
+    candidates: tuple[ProviderLaneCandidate, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            _LANE_IDENTITY.fullmatch(self.identity) is None
+            or self.kind not in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK}
+            or type(self.status) is not ProviderStatus
+        ):
+            raise ReportValueError("provider lane is invalid")
+        if (
+            type(self.input_references) is not tuple
+            or tuple(sorted(set(self.input_references))) != self.input_references
+            or any(
+                _REFERENCE.fullmatch(value) is None or not value.startswith("local_")
+                for value in self.input_references
+            )
+        ):
+            raise ReportValueError("provider lane input references are invalid")
+        if self.kind is ProviderQueryKind.ISBN:
+            if (
+                type(self.matched_family) is not str
+                or re.fullmatch(r"97[89][0-9]{10}", self.matched_family) is None
+                or not self.input_references
+            ):
+                raise ReportValueError("provider ISBN lane is invalid")
+        elif self.matched_family is not None or not self.input_references:
+            raise ReportValueError("provider work lane is invalid")
+        if (
+            type(self.candidates) is not tuple
+            or any(type(value) is not ProviderLaneCandidate for value in self.candidates)
+            or tuple(value.reference for value in self.candidates)
+            != tuple(sorted({value.reference for value in self.candidates}))
+            or (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates)
+        ):
+            raise ReportValueError("provider lane candidates are invalid")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "candidates": [value.to_data() for value in self.candidates],
+            "identity": self.identity,
+            "input_references": list(self.input_references),
+            "kind": self.kind.value,
+            "matched_family": self.matched_family,
+            "status": self.status.value,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderConvergence:
+    work_identity: str
+    lane_identities: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _text(self.work_identity, "provider convergence work identity", 128)
+        if (
+            type(self.lane_identities) is not tuple
+            or len(self.lane_identities) < 2
+            or tuple(sorted(set(self.lane_identities))) != self.lane_identities
+            or any(_LANE_IDENTITY.fullmatch(value) is None for value in self.lane_identities)
+        ):
+            raise ReportValueError("provider convergence is invalid")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "lane_identities": list(self.lane_identities),
+            "work_identity": self.work_identity,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderObservation:
     provider: str
     status: ProviderStatus
@@ -841,6 +959,8 @@ class ProviderObservation:
     candidates: tuple[ProviderCandidate, ...] = ()
     query_kind: ProviderQueryKind = ProviderQueryKind.NONE
     authority: str | None = None
+    lanes: tuple[ProviderLaneObservation, ...] = ()
+    convergence: tuple[ProviderConvergence, ...] = ()
 
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
@@ -874,6 +994,81 @@ class ProviderObservation:
             for claim in candidate.claims
         ):
             raise ReportValueError("provider candidate claim reference is inconsistent")
+        if (
+            type(self.lanes) is not tuple
+            or any(type(value) is not ProviderLaneObservation for value in self.lanes)
+            or tuple(value.identity for value in self.lanes)
+            != tuple(sorted({value.identity for value in self.lanes}))
+        ):
+            raise ReportValueError("provider lanes are invalid")
+        if self.lanes:
+            expected_kind = (
+                self.lanes[0].kind
+                if len(self.lanes) == 1
+                else ProviderQueryKind.DISCOVERY
+            )
+            if self.query_kind is not expected_kind:
+                raise ReportValueError("provider aggregate query kind is inconsistent")
+            expected_inputs = tuple(
+                sorted(
+                    {
+                        reference
+                        for lane in self.lanes
+                        for reference in lane.input_references
+                    }
+                )
+            )
+            if (
+                self.status is not ProviderStatus.DISABLED
+                and self.input_references != expected_inputs
+            ):
+                raise ReportValueError("provider aggregate inputs are inconsistent")
+        lane_references = tuple(
+            candidate.reference
+            for lane in self.lanes
+            for candidate in lane.candidates
+        )
+        if len(set(lane_references)) != len(lane_references):
+            raise ReportValueError("provider lane candidate references are duplicated")
+        if any(
+            candidate.reference
+            != provider_lane_candidate_reference(
+                self.provider,
+                lane.identity,
+                candidate.edition_identity,
+                candidate.work_identity,
+            )
+            for lane in self.lanes
+            for candidate in lane.candidates
+        ):
+            raise ReportValueError("provider lane candidate reference is inconsistent")
+        candidates_by_identity = {
+            candidate.identity: candidate for candidate in self.candidates
+        }
+        if any(
+            candidate.edition_identity not in candidates_by_identity
+            or candidates_by_identity[candidate.edition_identity].work_identity
+            != candidate.work_identity
+            for lane in self.lanes
+            for candidate in lane.candidates
+        ):
+            raise ReportValueError("provider lane candidates are inconsistent")
+        lanes_by_work: dict[str, set[str]] = {}
+        for lane in self.lanes:
+            for candidate in lane.candidates:
+                lanes_by_work.setdefault(candidate.work_identity, set()).add(
+                    lane.identity
+                )
+        expected_convergence = tuple(
+            ProviderConvergence(work_identity, tuple(sorted(lane_identities)))
+            for work_identity, lane_identities in sorted(lanes_by_work.items())
+            if len(lane_identities) > 1
+        )
+        if self.convergence:
+            if self.convergence != expected_convergence:
+                raise ReportValueError("provider convergence is inconsistent")
+        elif expected_convergence:
+            object.__setattr__(self, "convergence", expected_convergence)
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -883,6 +1078,8 @@ class ProviderObservation:
             "query_kind": self.query_kind.value,
             "status": self.status.value,
             "authority": self.authority,
+            "convergence": [value.to_data() for value in self.convergence],
+            "lanes": [value.to_data() for value in self.lanes],
         }
 
 
@@ -950,6 +1147,12 @@ class MetadataReport:
         known = set(references)
         if any(not set(provider.input_references).issubset(known) for provider in self.providers):
             raise ReportValueError("provider inputs do not reference local claims")
+        if any(
+            not set(lane.input_references).issubset(known)
+            for provider in self.providers
+            for lane in provider.lanes
+        ):
+            raise ReportValueError("provider lane inputs do not reference local claims")
         provider_claims = tuple(
             claim
             for provider in self.providers
@@ -1564,7 +1767,9 @@ def _provider_from_data(value: object) -> ProviderObservation:
         {
             "authority",
             "candidates",
+            "convergence",
             "input_references",
+            "lanes",
             "provider",
             "query_kind",
             "status",
@@ -1578,6 +1783,52 @@ def _provider_from_data(value: object) -> ProviderObservation:
         candidates,
         ProviderQueryKind(item["query_kind"]),
         item["authority"],
+        tuple(_provider_lane_from_data(value) for value in _list(item["lanes"])),
+        tuple(
+            _provider_convergence_from_data(value)
+            for value in _list(item["convergence"])
+        ),
+    )
+
+
+def _provider_lane_from_data(value: object) -> ProviderLaneObservation:
+    item = _object(
+        value,
+        {
+            "candidates",
+            "identity",
+            "input_references",
+            "kind",
+            "matched_family",
+            "status",
+        },
+    )
+    return ProviderLaneObservation(
+        item["identity"],
+        ProviderQueryKind(item["kind"]),
+        ProviderStatus(item["status"]),
+        tuple(_strings(item["input_references"])),
+        item["matched_family"],
+        tuple(
+            _provider_lane_candidate_from_data(candidate)
+            for candidate in _list(item["candidates"])
+        ),
+    )
+
+
+def _provider_lane_candidate_from_data(value: object) -> ProviderLaneCandidate:
+    item = _object(
+        value, {"edition_identity", "reference", "work_identity"}
+    )
+    return ProviderLaneCandidate(
+        item["reference"], item["edition_identity"], item["work_identity"]
+    )
+
+
+def _provider_convergence_from_data(value: object) -> ProviderConvergence:
+    item = _object(value, {"lane_identities", "work_identity"})
+    return ProviderConvergence(
+        item["work_identity"], tuple(_strings(item["lane_identities"]))
     )
 
 
@@ -1678,11 +1929,13 @@ __all__ = [
     "IdentifierEvidence", "IdentifierEvidenceBasis", "IdentifierRelation",
     "MAX_REPORT_BYTES", "MetadataReport", "ProviderCandidate", "ProviderClaim",
     "ProviderEvidence", "ProviderEvidenceKind",
+    "ProviderConvergence", "ProviderLaneCandidate", "ProviderLaneObservation",
     "ProviderObservation", "ProviderQueryKind", "ProviderStatus",
     "REPORT_SCHEMA", "ReportValueError",
     "TargetDestination", "TargetFacts", "TargetField", "TargetFieldState",
     "TargetSeries", "canonical_json", "claim_scope", "comparison_links",
     "default_target_fields",
     "derive_identifier_evidence", "isbn_family", "normalize_title",
-    "stable_reference", "validate_observed_title",
+    "provider_lane_candidate_reference", "stable_reference",
+    "validate_observed_title",
 ]

@@ -99,7 +99,7 @@ def manifest(
     if type(snapshot.generation) is not int or snapshot.generation < 1 or not _digest(snapshot.fingerprint) or not _digest(config_fingerprint) or len(selections) > 10_000 or len(set(identities)) != len(identities) or tuple(sorted(set(providers))) != providers or any(not _name(value) for value in providers) or len(provider_adapters) != len(providers) or any(value not in {"hardcover", "open_library"} for value in provider_adapters) or any(not _entry_valid(asdict(value)) for value in selections):
         raise BatchError("batch manifest is invalid")
     body = {
-        "schema": "batch-manifest-v2",
+        "schema": "batch-manifest-v3",
         "catalogue_generation": snapshot.generation,
         "catalogue_fingerprint": snapshot.fingerprint,
         "batch_config_fingerprint": config_fingerprint,
@@ -123,7 +123,7 @@ def parse_manifest(raw: bytes) -> dict[str, object]:
         value = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=_unique, parse_constant=_reject_constant)
     except (UnicodeError, ValueError, RecursionError):
         raise BatchError("batch manifest is invalid") from None
-    if type(value) is not dict or set(value) != {"schema", "id", "catalogue_generation", "catalogue_fingerprint", "batch_config_fingerprint", "entries", "providers", "provider_adapters", "call_maxima"} or value.get("schema") != "batch-manifest-v2" or not _digest(value.get("id")):
+    if type(value) is not dict or set(value) != {"schema", "id", "catalogue_generation", "catalogue_fingerprint", "batch_config_fingerprint", "entries", "providers", "provider_adapters", "call_maxima"} or value.get("schema") != "batch-manifest-v3" or not _digest(value.get("id")):
         raise BatchError("batch manifest is invalid")
     identity = value["id"]
     body = {key: item for key, item in value.items() if key != "id"}
@@ -150,7 +150,7 @@ def _maxima(entries: int, adapters: tuple[str, ...]) -> dict[str, int]:
         "target_item_observations": entries * 6,
         "target_raw_cover_requests": entries * 4,
         "provider_metadata_requests": entries
-        * (hardcover + open_library * 5),
+        * (hardcover * 9 + open_library * 45),
         "remote_cover_requests": entries
         * (hardcover * 5 * 4 + open_library * 4),
     }

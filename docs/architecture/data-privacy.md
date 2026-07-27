@@ -14,6 +14,10 @@ The target projection retains exactly 16 bounded Audiobookshelf destinations.
 Provider cover rows retain only safe opaque source/work/edition identities,
 typed designation, allowlisted edition context, artifact digests, dimensions,
 media type, and preview references.
+Provider discovery additionally retains opaque lane identities, exact local
+claim references, normalized ISBN families, and provider-local edition/work
+identities. It retains no request URL or raw lane payload. Same-provider lane
+convergence remains one lineage and cannot count as independent corroboration.
 One ProposalSet per distinct exact report/policy result retains only the report
 ID, derived target fingerprint, fixed policy version, bounded candidate values,
 assessments, evidence references, hashed correlation groups, reasons,

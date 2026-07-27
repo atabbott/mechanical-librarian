@@ -62,9 +62,12 @@ references and bounded provider identities, not another copy of observations
 or excerpts, and exact replay rejects a relationship that does not recompute
 from the report's claims and candidates.
 
-Provider observations are `disabled`, `insufficient_input`, `candidates`,
+Provider lane observations are `disabled`, `insufficient_input`, `candidates`,
 `no_match`, `authentication`, `authorization`, `rate_limited`, `unavailable`,
-`malformed`, `oversized`, or `candidate_limit_exceeded`. Candidate claims record
+`malformed`, `oversized`, `candidate_limit_exceeded`, or
+`query_limit_exceeded`. One provider aggregate owns the configured authority,
+canonical candidate set, and same-provider convergence across its child lanes.
+Candidate claims record
 agreement, disagreement, incompatible, or not-comparable facts against stable
 local claim references. Open Library candidates may also retain only the closed
 finite evidence kinds declared by `ProviderEvidenceKind`, never arbitrary
@@ -73,10 +76,12 @@ Provider-local work identity may associate alternate ebook or print ISBNs with
 an accepted identifier, but it cannot corroborate another provider or make an
 unresolved claim accepted.
 
-`ProviderQueryKind` records whether no request, exact ISBN-family observation,
-or work fallback produced the provider observation. Work fallback is admitted
-only from an exact title and complete ordered target-author list and only when
-no usable ISBN exists. It retains work-scoped title, authors, series/sequence,
+`ProviderQueryKind` records no request, one exact ISBN-family lane, one work
+lane, or a multi-lane discovery aggregate. Every distinct valid ISBN family
+has one opaque canonical lane retaining all triggering local references.
+One work lane is admitted from an exact title and complete ordered
+target-author list alongside any ISBN lanes. It retains work-scoped title,
+authors, series/sequence,
 description, typed taxonomy, first publication, and cover evidence; its
 application filter removes edition claims and fails closed for competing or
 translated/adapted/abridged works.
@@ -163,7 +168,7 @@ snapshot.
 
 ## Foreground evidence batch
 
-One `batch-manifest-v2` document freezes an ordered set of exact catalogue
+One `batch-manifest-v3` document freezes an ordered set of exact catalogue
 entries. It binds the current catalogue generation and fingerprint, selected
 file identities, a secret-free report-configuration fingerprint, enabled
 provider names and adapter discriminators, and bounded call maxima. Its content

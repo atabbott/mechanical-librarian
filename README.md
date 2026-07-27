@@ -25,10 +25,12 @@ evidence workflow. An operator can:
 
 The report combines all 16 current Audiobookshelf metadata destinations,
 bounded structured EPUB evidence, independent configured Hardcover and Open
-Library observations, and validated cover artifacts. One usable ISBN family
-keeps the exact ISBN path. Only when no usable ISBN exists may a configured
-provider receive one exact title-plus-complete-author work lookup; qualified
-work evidence never becomes edition evidence. The provider gallery retains at
+Library observations, and validated cover artifacts. Every distinct
+checksum-valid ISBN-10/13 family from bounded package, front, or rear evidence
+gets its own exact discovery lane, while one complete title-plus-author work
+lane runs alongside it when available. Same-provider lane convergence remains
+one correlated source, conflicts stay unresolved, and work evidence never
+becomes edition evidence. The provider gallery retains at
 most eight sources and four per provider with safe provenance and explicit
 truncation. The report remains neutral. A separate deterministic evaluator
 produces exactly one explainable result for each destination without contacting

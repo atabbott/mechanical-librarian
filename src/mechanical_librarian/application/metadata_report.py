@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from mechanical_librarian.application.configuration import (
@@ -21,8 +21,11 @@ from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     LocalClaim,
     MetadataReport,
+    MAX_CANDIDATES,
     ProviderCandidate,
     ProviderEvidenceKind,
+    ProviderLaneCandidate,
+    ProviderLaneObservation,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
@@ -30,12 +33,15 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    canonical_json,
     default_target_fields,
     derive_field_results,
     isbn_family,
     normalize_title,
+    provider_lane_candidate_reference,
 )
 from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
     CoverProvenance,
     CoverSource,
     CoverSourceKind,
@@ -125,6 +131,7 @@ class MetadataLookup:
     local_claims: tuple[LocalClaim, ...]
     title: str | None = None
     authors: tuple[str, ...] = ()
+    matched_family: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -144,8 +151,336 @@ class MetadataLookup:
             normalize_title(self.title)
             for author in self.authors:
                 normalize_title(author)
-        elif self.title is not None or self.authors:
+        elif self.title is not None or self.authors or self.matched_family is not None:
             raise MetadataReportError("provider lookup is invalid")
+
+
+MAX_ISBN_DISCOVERY_LANES = 8
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataDiscoveryLane:
+    identity: str
+    kind: ProviderQueryKind
+    input_references: tuple[str, ...]
+    matched_family: str | None = None
+    canonical_isbns: tuple[str, ...] = ()
+    title: str | None = None
+    authors: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            not self.identity.startswith("lane_")
+            or len(self.identity) != 69
+            or any(
+                character not in "0123456789abcdef"
+                for character in self.identity.removeprefix("lane_")
+            )
+            or type(self.kind) is not ProviderQueryKind
+            or self.kind not in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK}
+            or type(self.input_references) is not tuple
+            or tuple(sorted(set(self.input_references))) != self.input_references
+        ):
+            raise MetadataReportError("provider discovery lane is invalid")
+        if self.kind is ProviderQueryKind.ISBN:
+            if (
+                self.matched_family is None
+                or not self.canonical_isbns
+                or self.title is not None
+                or self.authors
+            ):
+                raise MetadataReportError("provider discovery lane is invalid")
+        elif (
+            self.matched_family is not None
+            or self.canonical_isbns
+            or self.title is None
+            or not self.authors
+        ):
+            raise MetadataReportError("provider discovery lane is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataDiscoveryPlan:
+    local_claims: tuple[LocalClaim, ...]
+    lanes: tuple[MetadataDiscoveryLane, ...]
+    overflow: bool = False
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.local_claims) is not tuple
+            or any(type(value) is not LocalClaim for value in self.local_claims)
+            or type(self.lanes) is not tuple
+            or any(type(value) is not MetadataDiscoveryLane for value in self.lanes)
+            or len(self.lanes) > MAX_ISBN_DISCOVERY_LANES + 1
+            or tuple(value.identity for value in self.lanes)
+            != tuple(sorted({value.identity for value in self.lanes}))
+            or type(self.overflow) is not bool
+            or (self.overflow and self.lanes)
+        ):
+            raise MetadataReportError("provider discovery plan is invalid")
+        known = {value.reference for value in self.local_claims}
+        if any(
+            not set(lane.input_references).issubset(known) for lane in self.lanes
+        ) or (
+            len(
+                {
+                    lane.matched_family
+                    for lane in self.lanes
+                    if lane.kind is ProviderQueryKind.ISBN
+                }
+            )
+            != sum(
+                lane.kind is ProviderQueryKind.ISBN for lane in self.lanes
+            )
+        ) or sum(
+            lane.kind is ProviderQueryKind.WORK for lane in self.lanes
+        ) > 1:
+            raise MetadataReportError("provider discovery plan is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderLaneResult:
+    lane: MetadataDiscoveryLane
+    status: ProviderStatus
+    candidates: tuple[ProviderCandidate, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.lane) is not MetadataDiscoveryLane
+            or type(self.status) is not ProviderStatus
+            or type(self.candidates) is not tuple
+            or any(type(value) is not ProviderCandidate for value in self.candidates)
+            or (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates)
+        ):
+            raise MetadataReportError("provider lane result is invalid")
+
+
+def _lane_identity(payload: dict[str, object]) -> str:
+    return "lane_" + hashlib.sha256(canonical_json(payload).encode()).hexdigest()
+
+
+def metadata_discovery_plan(
+    target: TargetSnapshot, local_claims: tuple[LocalClaim, ...]
+) -> MetadataDiscoveryPlan:
+    families: dict[str, list[LocalClaim]] = {}
+    for claim in local_claims:
+        if (
+            claim.kind is ClaimKind.ISBN
+            and claim.canonical is not None
+            and (family := isbn_family(claim.canonical)) is not None
+        ):
+            families.setdefault(family, []).append(claim)
+    if len(families) > MAX_ISBN_DISCOVERY_LANES:
+        return MetadataDiscoveryPlan(local_claims, (), True)
+
+    lanes: list[MetadataDiscoveryLane] = []
+    for family, claims in sorted(families.items()):
+        references = tuple(sorted(claim.reference for claim in claims))
+        canonical_isbns = tuple(
+            sorted({claim.canonical for claim in claims if claim.canonical is not None})
+        )
+        identity = _lane_identity(
+            {
+                "canonical_isbns": list(canonical_isbns),
+                "input_references": list(references),
+                "kind": ProviderQueryKind.ISBN.value,
+                "matched_family": family,
+            }
+        )
+        lanes.append(
+            MetadataDiscoveryLane(
+                identity,
+                ProviderQueryKind.ISBN,
+                references,
+                family,
+                canonical_isbns,
+            )
+        )
+
+    fields = {field.destination: field for field in target.fields}
+    title = fields[TargetDestination.TITLE]
+    authors = fields[TargetDestination.AUTHORS]
+    complete_work = (
+        title.state is TargetFieldState.VALUE
+        and type(title.value) is str
+        and authors.state is TargetFieldState.VALUE
+        and type(authors.value) is tuple
+        and bool(authors.value)
+        and all(type(value) is str for value in authors.value)
+        and len({normalize_title(value).casefold() for value in authors.value})
+        == len(authors.value)
+    )
+    if complete_work:
+        normalized_title = normalize_title(title.value)
+        normalized_authors = tuple(normalize_title(value) for value in authors.value)
+        title_references = tuple(
+            sorted(
+                claim.reference
+                for claim in local_claims
+                if claim.kind is ClaimKind.TITLE
+                and claim.basis == "target_metadata"
+            )
+        )
+        if title_references:
+            identity = _lane_identity(
+                {
+                    "authors": list(normalized_authors),
+                    "input_references": list(title_references),
+                    "kind": ProviderQueryKind.WORK.value,
+                    "title": normalized_title,
+                }
+            )
+            lanes.append(
+                MetadataDiscoveryLane(
+                    identity,
+                    ProviderQueryKind.WORK,
+                    title_references,
+                    title=normalized_title,
+                    authors=normalized_authors,
+                )
+            )
+    return MetadataDiscoveryPlan(
+        local_claims, tuple(sorted(lanes, key=lambda value: value.identity))
+    )
+
+
+def provider_observation(
+    provider: str,
+    results: tuple[ProviderLaneResult, ...],
+    *,
+    authority: str | None = None,
+) -> ProviderObservation:
+    candidates_by_identity: dict[str, ProviderCandidate] = {}
+    conflict = False
+    aggregate_failure: ProviderStatus | None = None
+    for result in results:
+        for candidate in result.candidates:
+            previous = candidates_by_identity.get(candidate.identity)
+            if previous is None:
+                candidates_by_identity[candidate.identity] = candidate
+                continue
+            if previous == candidate:
+                continue
+            if previous.work_identity != candidate.work_identity:
+                conflict = True
+                continue
+            previous_claims = set(previous.claims)
+            candidate_claims = set(candidate.claims)
+            previous_evidence = set(previous.evidence)
+            candidate_evidence = set(candidate.evidence)
+            if (
+                previous_claims.issubset(candidate_claims)
+                and previous_evidence.issubset(candidate_evidence)
+            ):
+                candidates_by_identity[candidate.identity] = candidate
+            elif not (
+                candidate_claims.issubset(previous_claims)
+                and candidate_evidence.issubset(previous_evidence)
+            ):
+                conflict = True
+    if conflict or len(candidates_by_identity) > MAX_CANDIDATES:
+        aggregate_failure = (
+            ProviderStatus.MALFORMED
+            if conflict
+            else ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+        )
+        results = tuple(
+            (
+                ProviderLaneResult(result.lane, aggregate_failure)
+                if result.status is ProviderStatus.CANDIDATES
+                else result
+            )
+            for result in results
+        )
+        candidates_by_identity = {}
+
+    lanes: list[ProviderLaneObservation] = []
+    for result in results:
+        lane_candidates = tuple(
+            sorted(
+                (
+                    ProviderLaneCandidate(
+                        provider_lane_candidate_reference(
+                            provider,
+                            result.lane.identity,
+                            candidate.identity,
+                            candidate.work_identity,
+                        ),
+                        candidate.identity,
+                        candidate.work_identity,
+                    )
+                    for candidate in result.candidates
+                ),
+                key=lambda value: value.reference,
+            )
+        )
+        lanes.append(
+            ProviderLaneObservation(
+                result.lane.identity,
+                result.lane.kind,
+                result.status,
+                result.lane.input_references,
+                result.lane.matched_family,
+                lane_candidates,
+            )
+        )
+
+    candidates = tuple(
+        sorted(candidates_by_identity.values(), key=lambda value: value.identity)
+    )
+    if aggregate_failure is not None:
+        aggregate_status = aggregate_failure
+    elif candidates:
+        aggregate_status = ProviderStatus.CANDIDATES
+    elif results:
+        priorities = (
+            ProviderStatus.QUERY_LIMIT_EXCEEDED,
+            ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            ProviderStatus.MALFORMED,
+            ProviderStatus.OVERSIZED,
+            ProviderStatus.AUTHENTICATION,
+            ProviderStatus.AUTHORIZATION,
+            ProviderStatus.RATE_LIMITED,
+            ProviderStatus.UNAVAILABLE,
+            ProviderStatus.NO_MATCH,
+        )
+        aggregate_status = next(
+            (
+                status
+                for status in priorities
+                if any(result.status is status for result in results)
+            ),
+            ProviderStatus.INSUFFICIENT_INPUT,
+        )
+    else:
+        aggregate_status = ProviderStatus.INSUFFICIENT_INPUT
+    references = tuple(
+        sorted(
+            {
+                reference
+                for result in results
+                for reference in result.lane.input_references
+            }
+        )
+    )
+    kind = (
+        ProviderQueryKind.NONE
+        if not results
+        else (
+            results[0].lane.kind
+            if len(results) == 1
+            else ProviderQueryKind.DISCOVERY
+        )
+    )
+    return ProviderObservation(
+        provider,
+        aggregate_status,
+        references,
+        candidates,
+        kind,
+        authority,
+        tuple(sorted(lanes, key=lambda value: value.identity)),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +504,87 @@ class ProviderCoverDescriptor:
     terminal_state: CoverSourceState | None = None
 
 
+def merge_provider_cover_descriptor(
+    previous: ProviderCoverDescriptor,
+    current: ProviderCoverDescriptor,
+) -> ProviderCoverDescriptor | None:
+    """Merge one lane-neutral cover source or reject conflicting source facts."""
+    if previous == current:
+        return previous
+    if (
+        previous.source_id != current.source_id
+        or previous.provenance is None
+        or current.provenance is None
+        or replace(previous, provenance=None) != replace(current, provenance=None)
+        or {
+            previous.provenance.designation,
+            current.provenance.designation,
+        }
+        != {
+            CoverDesignation.EXACT_EDITION,
+            CoverDesignation.RELATED_EDITION,
+        }
+        or replace(
+            previous.provenance,
+            designation=CoverDesignation.RELATED_EDITION,
+        )
+        != replace(
+            current.provenance,
+            designation=CoverDesignation.RELATED_EDITION,
+        )
+    ):
+        return None
+    return replace(
+        previous,
+        provenance=replace(
+            previous.provenance,
+            designation=CoverDesignation.EXACT_EDITION,
+        ),
+    )
+
+
+def merge_provider_cover_descriptors(
+    retained: tuple[ProviderCoverDescriptor, ...],
+    lane: tuple[ProviderCoverDescriptor, ...],
+) -> tuple[ProviderCoverDescriptor, ...] | None:
+    """Atomically admit one lane's cover descriptors into the aggregate."""
+    descriptors = {value.source_id: value for value in retained}
+    if len(descriptors) != len(retained):
+        return None
+    for descriptor in lane:
+        previous = descriptors.get(descriptor.source_id)
+        if previous is None:
+            descriptors[descriptor.source_id] = descriptor
+            continue
+        merged = merge_provider_cover_descriptor(previous, descriptor)
+        if merged is None:
+            return None
+        descriptors[descriptor.source_id] = merged
+    return tuple(descriptors[key] for key in sorted(descriptors))
+
+
+def provider_isbn_applicability(
+    value: object,
+    local_claims: tuple[LocalClaim, ...],
+) -> str:
+    """Resolve one returned ISBN family without borrowing another lane's scope."""
+    family = isbn_family(value) if type(value) is str else None
+    applicability = {
+        claim.applicability
+        for claim in local_claims
+        if claim.kind is ClaimKind.ISBN
+        and claim.canonical is not None
+        and isbn_family(claim.canonical) == family
+    }
+    if "ebook" in applicability:
+        return "ebook"
+    if applicability == {"print"}:
+        return "print"
+    if "ambiguous" in applicability:
+        return "ambiguous"
+    return "unknown"
+
+
 class TargetReader(Protocol):
     def read(self, item: str) -> TargetSnapshot: ...
 
@@ -183,7 +599,7 @@ class EpubInspector(Protocol):
 
 
 class MetadataProvider(Protocol):
-    def observe(self, lookup: MetadataLookup) -> ProviderObservation: ...
+    def observe(self, plan: MetadataDiscoveryPlan) -> ProviderObservation: ...
 
 
 class CoverObserver(Protocol):
@@ -324,7 +740,7 @@ def qualify_provider_observation(
         if (
             titles == (expected_title,)
             and len(authors) == len(expected_authors)
-            and set(authors) == set(expected_authors)
+            and authors == expected_authors
             and not disqualifying_roles
             and not variant_marker
         ):
@@ -494,15 +910,44 @@ class GenerateMetadataReport:
         # then the inspector's DOM/source occurrence order.  Content-addressed
         # references are deliberately not an ordering key.
         combined_claims = (*target_title_claim, *local.claims)
-        lookup = metadata_lookup(initial, combined_claims)
+        plan = metadata_discovery_plan(initial, combined_claims)
         observations: list[ProviderObservation] = []
         descriptors: list[ProviderCoverDescriptor] = []
         cover_aggregate_deadline = time.monotonic() + 60.0
         for binding in self._providers:
             if not binding.enabled:
+                disabled_lanes = tuple(
+                    ProviderLaneObservation(
+                        lane.identity,
+                        lane.kind,
+                        ProviderStatus.DISABLED,
+                        lane.input_references,
+                        lane.matched_family,
+                    )
+                    for lane in plan.lanes
+                )
                 observations.append(
                     ProviderObservation(
                         binding.name, ProviderStatus.DISABLED,
+                        query_kind=(
+                            disabled_lanes[0].kind
+                            if len(disabled_lanes) == 1
+                            else (
+                                ProviderQueryKind.DISCOVERY
+                                if disabled_lanes
+                                else ProviderQueryKind.NONE
+                            )
+                        ),
+                        authority=binding.authority,
+                        lanes=disabled_lanes,
+                    )
+                )
+                continue
+            if plan.overflow:
+                observations.append(
+                    ProviderObservation(
+                        binding.name,
+                        ProviderStatus.QUERY_LIMIT_EXCEEDED,
                         authority=binding.authority,
                     )
                 )
@@ -517,19 +962,22 @@ class GenerateMetadataReport:
                 raise CredentialError("provider credential unavailable") from error
             try:
                 observation = (
-                    provider.observe(lookup, deadline=cover_aggregate_deadline)
+                    provider.observe(plan, deadline=cover_aggregate_deadline)
                     if hasattr(provider, "cover_descriptors")
-                    else provider.observe(lookup)
+                    else provider.observe(plan)
                 )
             except Exception:
-                observation = ProviderObservation(
-                    binding.name, ProviderStatus.UNAVAILABLE,
+                observation = provider_observation(
+                    binding.name,
+                    tuple(
+                        ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE)
+                        for lane in plan.lanes
+                    ),
                     authority=binding.authority,
                 )
             if observation.provider != binding.name:
                 repository.close()
                 raise MetadataReportError("provider result is invalid")
-            observation = qualify_provider_observation(observation, lookup)
             observation = ProviderObservation(
                 observation.provider,
                 observation.status,
@@ -537,6 +985,8 @@ class GenerateMetadataReport:
                 observation.candidates,
                 observation.query_kind,
                 binding.authority,
+                observation.lanes,
+                observation.convergence,
             )
             observations.append(observation)
             candidate_descriptors = getattr(provider, "cover_descriptors", ())
@@ -692,9 +1142,14 @@ def require_report_current(
 __all__ = [
     "CoverObserver", "CoverReadError", "CoverSourceChangedError", "CoverTimeoutError", "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
     "ArtifactAuthorityError", "InspectionResult", "ItemInspectionError",
-    "MetadataLookup", "MetadataProvider", "MetadataReportError",
+    "MetadataDiscoveryLane", "MetadataDiscoveryPlan", "MetadataLookup",
+    "MetadataProvider", "MetadataReportError",
     "ProviderBinding", "ProviderCoverDescriptor",
+    "ProviderLaneResult",
     "ReportRepository", "TargetFile", "TargetReader", "TargetSnapshot",
     "UnsupportedMediaError",
-    "metadata_lookup", "qualify_provider_observation", "require_report_current",
+    "merge_provider_cover_descriptor", "merge_provider_cover_descriptors",
+    "metadata_discovery_plan",
+    "metadata_lookup", "provider_isbn_applicability", "provider_observation",
+    "qualify_provider_observation", "require_report_current",
 ]
