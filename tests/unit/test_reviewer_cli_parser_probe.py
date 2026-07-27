@@ -62,6 +62,12 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
             )
             success = subprocess.CompletedProcess([], 0, b"", b"")
             authenticated = subprocess.CompletedProcess([], 0, b"Logged in using ChatGPT\n", b"")
+            original_read_bytes = Path.read_bytes
+
+            def read_bytes(path: Path) -> bytes:
+                if path.name == "result.json":
+                    return b'{"case":"synthetic-compatibility-canary"}'
+                return original_read_bytes(path)
             with (
                 patch.object(parser_probe.sys, "platform", "linux"),
                 patch.object(
@@ -70,8 +76,9 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                 patch.object(
                     codex_shadow.subprocess,
                     "run",
-                    side_effect=[version, success, success, success, success, version, authenticated, success],
+                    side_effect=[version, success, success, success, version, authenticated, success],
                 ) as run,
+                patch.object(Path, "read_bytes", new=read_bytes),
             ):
                 self.assertEqual(
                     {
@@ -101,19 +108,19 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                 )
                 self.assertIn("--ro-bind-data", command)
                 self.assertNotIn("/dev/null", command)
-            self.assertEqual("-", commands[3][-1])
-            self.assertIn("--ignore-user-config", commands[3])
-            self.assertIn("--ignore-rules", commands[3])
-            self.assertIn("--skip-git-repo-check", commands[3])
+            self.assertEqual("-", commands[5][-1])
+            self.assertIn("--ignore-user-config", commands[5])
+            self.assertIn("--ignore-rules", commands[5])
+            self.assertIn("--skip-git-repo-check", commands[5])
             self.assertEqual(
                 set(codex_shadow._exact_config("medium")),
                 {
-                    commands[3][index + 1]
-                    for index, value in enumerate(commands[3][:-1])
+                    commands[5][index + 1]
+                    for index, value in enumerate(commands[5][:-1])
                     if value == "-c"
                 },
             )
-            self.assertTrue(all(call.kwargs.get("stdout") is subprocess.DEVNULL for call in run.call_args_list[1:5]))
+            self.assertTrue(all(call.kwargs.get("stdout") is subprocess.DEVNULL for call in run.call_args_list[1:4]))
             self.assertFalse(list(profile.job_root_path.glob("reviewer-cli-parser-*")))
             self.assertEqual(b"synthetic-auth-sentinel", sentinel.read_bytes())
             self.assertEqual(sentinel_mode, sentinel.stat().st_mode & 0o777)

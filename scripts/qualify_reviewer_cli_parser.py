@@ -84,29 +84,6 @@ def _qualify_probe_profile(profile: QualificationProfile) -> None:
                     (codex.descriptor, sandbox.descriptor, config_fd),
                     profile.identity.timeout_seconds,
                 )
-            with tempfile.TemporaryDirectory(
-                prefix="reviewer-cli-parser-job-", dir=profile.job_root_path
-            ) as directory:
-                job_path = Path(directory)
-                schema = job_path / "output-schema.json"
-                schema.write_text('{"additionalProperties":false,"type":"object"}', encoding="utf-8")
-                schema.chmod(0o600)
-                prompt = job_path / "synthetic-prompt.json"
-                prompt.write_bytes(b'{"case":"synthetic-compatibility-canary"}')
-                prompt.chmod(0o600)
-                expected = reviewer._sandbox_command(
-                    job_path,
-                    job_path / "result.json",
-                    codex.invocation_path,
-                    sandbox.invocation_path,
-                )
-                command = reviewer._sandbox_command(
-                    job_path, job_path / "result.json", codex.invocation_path, sandbox.invocation_path
-                )
-                if command != expected or "--skip-git-repo-check" not in command:
-                    raise ShadowReviewerError("schema")
-                with prompt.open("rb") as prompt_file:
-                    _run(command, (codex.descriptor, sandbox.descriptor), profile.identity.timeout_seconds, prompt_file)
 
 
 def _qualify_synthetic_canary(profile: QualificationProfile) -> None:
@@ -118,12 +95,22 @@ def _qualify_synthetic_canary(profile: QualificationProfile) -> None:
             reviewer._require_chatgpt_auth(reviewer._auth_command(codex, sandbox, config_fd), codex, sandbox, config_fd)
         with tempfile.TemporaryDirectory(prefix="reviewer-cli-canary-", dir=profile.job_root_path) as directory:
             job = Path(directory)
-            (job / "output-schema.json").write_text('{"additionalProperties":false,"type":"object"}', encoding="utf-8")
+            schema = job / "output-schema.json"
+            schema.write_text('{"additionalProperties":false,"required":["case"],"properties":{"case":{"const":"synthetic-compatibility-canary","type":"string"}},"type":"object"}', encoding="utf-8")
             prompt = job / "synthetic-prompt.json"
             prompt.write_bytes(b'{"case":"synthetic-compatibility-canary"}')
             command = reviewer._sandbox_command(job, job / "result.json", codex.invocation_path, sandbox.invocation_path)
             with prompt.open("rb") as input_file:
                 _run(command, (codex.descriptor, sandbox.descriptor), profile.identity.timeout_seconds, input_file)
+            try:
+                result = (job / "result.json").read_bytes()
+                if len(result) > profile.identity.output_bytes:
+                    raise ValueError
+                payload = json.loads(result.decode("utf-8", errors="strict"))
+                if type(payload) is not dict or payload != {"case": "synthetic-compatibility-canary"}:
+                    raise ValueError
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+                raise ShadowReviewerError("malformed_output") from None
 
 
 def _run(command: list[str], descriptors: tuple[int, ...], limit: int, stdin=subprocess.DEVNULL) -> None:
