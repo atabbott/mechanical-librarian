@@ -795,6 +795,7 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 __all__ = [
+    "MAX_CITATIONS",
     "MAX_OUTPUT_SCHEMA_BYTES",
     "MAX_PACKET_BYTES",
     "MAX_PROFILE_IDENTITY_BYTES",

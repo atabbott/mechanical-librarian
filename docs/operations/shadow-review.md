@@ -160,3 +160,17 @@ Invalid UTF-8, JSON, duplicate keys, noncanonical JSON, and truncated documents
 are durable `malformed_output` failures. A canonical parsed result that violates
 its bound request is instead durable `semantic_validation`; both retain only
 bounded byte count and digest diagnostics.
+For a canonical document, the adapter validates every raw citation identifier
+against the exact packet allowlist and enforces the 256-item raw bound before
+normalizing each recommendation to a sorted unique set. Reordering and known
+duplicates alone therefore do not invalidate advice. Unknown, missing,
+malformed, mixed-validity, or over-bound citations still fail semantic
+validation; normalization never adds evidence or repairs recommendation
+coverage, candidate membership, or currentness.
+
+The raw result bytes remain unchanged in the private bounded job path until its
+existing cleanup. Failures digest those exact bytes. Successful normalization
+crosses the adapter seam only as an in-memory typed marker containing a changed
+flag and aggregate duplicate count; raw identifiers and ordering are not
+exposed, and the marker does not enter canonical result JSON, persistence,
+identity, or replay.

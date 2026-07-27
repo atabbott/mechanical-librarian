@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Accept order-insensitive, repeated known reviewer citations at the untrusted
+  output boundary, then persist and replay one deterministic sorted unique set.
+  Unknown, missing, malformed, mixed-validity, and over-bound citations remain
+  invalid; exact raw bytes stay private and only an aggregate typed
+  normalization marker crosses the adapter seam. (#379)
+
 - Keep EPUB ISBN recognition occurrence-local and reject checksum-valid
   ISBN-shaped values explicitly owned by a non-ISBN package scheme or URI.
   (#372)

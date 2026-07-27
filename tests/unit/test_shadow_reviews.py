@@ -24,7 +24,9 @@ from mechanical_librarian.adapters.reviewers.codex_shadow import (
     load_qualification_profile,
 )
 from mechanical_librarian.application.shadow_reviews import (
+    CitationNormalizationMarker,
     ShadowReviewError,
+    ShadowReviewRunResult,
     execute_shadow_review,
     preview_shadow_review,
 )
@@ -89,6 +91,35 @@ def _result(request: ShadowReviewRequest) -> ShadowReviewResult:
     return value
 
 
+def _request_with_citations(
+    count: int = 2,
+    *,
+    seed: str = "a",
+    identity: ReviewerProfileIdentity | None = None,
+) -> ShadowReviewRequest:
+    profile_identity = _identity() if identity is None else identity
+    request = ShadowReviewRequest.synthetic_canary(profile_identity)
+    packet = request.packet.to_data()
+    fact = packet["citations"][0]["fact"]
+    packet["citations"] = [
+        {
+            "citation_id": f"synthetic_citation_{seed}{index:063x}",
+            "fact": fact,
+        }
+        for index in range(count)
+    ]
+    return ShadowReviewRequest.create_from_packet(
+        profile_identity,
+        ShadowReviewPacket(
+            packet["review_case_id"],
+            tuple(packet["proposals"]),
+            tuple(packet["citations"]),
+            tuple(packet["correlations"]),
+            packet["schema_version"],
+        ),
+    )
+
+
 class _Runner:
     def __init__(self, *, fail: str | None = None) -> None:
         self.calls = 0
@@ -99,7 +130,9 @@ class _Runner:
         dispatched(12345, 12345, "777")
         if self.fail is not None:
             raise ShadowReviewerError(self.fail, count=9, digest="c" * 64)
-        return _result(request)
+        return ShadowReviewRunResult(
+            _result(request), CitationNormalizationMarker(False, 0)
+        )
 
 
 class ShadowReviewTests(unittest.TestCase):
@@ -1014,8 +1047,22 @@ class CodexShadowAdapterTests(unittest.TestCase):
             os.chmod(sandbox, 0o700)
             profile = self._profile(root, codex, sandbox)
             reviewer = CodexShadowReviewer(profile)
-            request = ShadowReviewRequest.synthetic_canary(profile.identity)
-            expected = _result(request)
+            request = _request_with_citations(identity=profile.identity)
+            citation_ids = [
+                citation["citation_id"]
+                for citation in request.packet.citations
+            ]
+            expected_data = _result(request).to_data()
+            expected_data["recommendations"][0]["citations"] = citation_ids
+            expected = ShadowReviewResult.from_json(
+                canonical_json(expected_data), request
+            )
+            untrusted = json.loads(expected.to_json())
+            untrusted["recommendations"][0]["citations"] = [
+                citation_ids[1],
+                citation_ids[0],
+                citation_ids[0],
+            ]
             dispatches: list[tuple[int, int, str]] = []
 
             def run_gated(*args) -> int:
@@ -1024,7 +1071,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
                 jobs = list(profile.job_root_path.glob("shadow-review-*"))
                 self.assertEqual(1, len(jobs))
                 (jobs[0] / "result.json").write_bytes(
-                    expected.to_json().encode("utf-8")
+                    canonical_json(untrusted).encode("utf-8")
                 )
                 return 0
 
@@ -1040,7 +1087,11 @@ class CodexShadowAdapterTests(unittest.TestCase):
                         (pid, pgid, token)
                     ),
                 )
-            self.assertEqual(expected, result)
+            self.assertEqual(expected, result.result)
+            self.assertEqual(
+                CitationNormalizationMarker(True, 1),
+                result.citation_normalization,
+            )
             self.assertEqual([(1234, 1234, "5678")], dispatches)
             self.assertFalse(
                 list(profile.job_root_path.glob("shadow-review-*"))
@@ -1206,6 +1257,109 @@ class CodexShadowAdapterTests(unittest.TestCase):
             ShadowReviewResult.from_json(
                 canonical_json(semantic), request
             )
+
+    def test_untrusted_citations_normalize_before_domain_construction(self) -> None:
+        request = _request_with_citations()
+        citation_ids = [
+            citation["citation_id"] for citation in request.packet.citations
+        ]
+        ordered = _result(request).to_data()
+        ordered["recommendations"][0]["citations"] = citation_ids
+        reordered = json.loads(canonical_json(ordered))
+        reordered["recommendations"][0]["citations"] = [
+            citation_ids[1],
+            citation_ids[0],
+        ]
+        duplicated = json.loads(canonical_json(ordered))
+        duplicated["recommendations"][0]["citations"] = [
+            citation_ids[1],
+            citation_ids[0],
+            citation_ids[0],
+        ]
+
+        canonical = codex_shadow._validated_result(
+            canonical_json(ordered).encode("utf-8"),
+            request,
+            maximum=MAX_REQUEST_BYTES,
+        )
+        reordered_result = codex_shadow._validated_result(
+            canonical_json(reordered).encode("utf-8"),
+            request,
+            maximum=MAX_REQUEST_BYTES,
+        )
+        duplicated_result = codex_shadow._validated_result(
+            canonical_json(duplicated).encode("utf-8"),
+            request,
+            maximum=MAX_REQUEST_BYTES,
+        )
+
+        self.assertEqual(
+            CitationNormalizationMarker(False, 0),
+            canonical.citation_normalization,
+        )
+        self.assertEqual(
+            CitationNormalizationMarker(True, 0),
+            reordered_result.citation_normalization,
+        )
+        self.assertEqual(
+            CitationNormalizationMarker(True, 1),
+            duplicated_result.citation_normalization,
+        )
+        self.assertEqual(canonical.result, reordered_result.result)
+        self.assertEqual(canonical.result, duplicated_result.result)
+        self.assertEqual(
+            canonical.result.to_json(), reordered_result.result.to_json()
+        )
+        self.assertEqual(
+            hashlib.sha256(
+                canonical.result.to_json().encode("utf-8")
+            ).hexdigest(),
+            hashlib.sha256(
+                duplicated_result.result.to_json().encode("utf-8")
+            ).hexdigest(),
+        )
+        self.assertEqual(
+            canonical.result,
+            ShadowReviewResult.from_json(canonical.result.to_json(), request),
+        )
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewResult.from_json(canonical_json(reordered), request)
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewResult.from_json(canonical_json(duplicated), request)
+
+    def test_untrusted_citation_failures_retain_exact_raw_diagnostics(self) -> None:
+        request = _request_with_citations()
+        other_request = _request_with_citations(seed="b")
+        known = request.packet.citations[0]["citation_id"]
+        unknown = other_request.packet.citations[0]["citation_id"]
+        base = _result(request).to_data()
+        cases: dict[str, object] = {
+            "unknown": [unknown],
+            "mixed": [known, unknown],
+            "missing": None,
+            "malformed": [known, 1],
+            "over_bound": [known] * 257,
+        }
+        for name, citations in cases.items():
+            with self.subTest(name=name):
+                raw = json.loads(canonical_json(base))
+                if citations is None:
+                    del raw["recommendations"][0]["citations"]
+                else:
+                    raw["recommendations"][0]["citations"] = citations
+                serialized = canonical_json(raw).encode("utf-8")
+                with self.assertRaises(ShadowReviewerError) as raised:
+                    codex_shadow._validated_result(
+                        serialized,
+                        request,
+                        maximum=MAX_REQUEST_BYTES,
+                    )
+                self.assertEqual("semantic_validation", raised.exception.code)
+                self.assertEqual(len(serialized), raised.exception.count)
+                self.assertEqual(
+                    hashlib.sha256(serialized).hexdigest(),
+                    raised.exception.digest,
+                )
 
     def test_start_gate_does_not_exec_when_dispatch_persistence_fails(self) -> None:
         shell_source = Path(os.path.realpath("/bin/sh")).read_bytes()

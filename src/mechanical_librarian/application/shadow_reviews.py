@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Protocol
 
 from mechanical_librarian.domain.shadow_review import (
@@ -46,12 +47,47 @@ class ShadowReviewError(RuntimeError):
         super().__init__(code)
 
 
+@dataclass(frozen=True, slots=True)
+class CitationNormalizationMarker:
+    """Aggregate-safe outcome of citation normalization at the trust boundary."""
+
+    changed: bool
+    duplicate_count: int
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.changed) is not bool
+            or type(self.duplicate_count) is not int
+            or not 0 <= self.duplicate_count <= 2_147_483_647
+            or (not self.changed and self.duplicate_count != 0)
+        ):
+            raise ShadowReviewValueError(
+                "citation normalization marker is invalid"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ShadowReviewRunResult:
+    """Validated advice plus non-persistent aggregate boundary diagnostics."""
+
+    result: ShadowReviewResult
+    citation_normalization: CitationNormalizationMarker
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.result) is not ShadowReviewResult
+            or type(self.citation_normalization)
+            is not CitationNormalizationMarker
+        ):
+            raise ShadowReviewValueError("shadow-review run result is invalid")
+
+
 class ShadowReviewRunner(Protocol):
     def run(
         self,
         request: ShadowReviewRequest,
         dispatched: Callable[[int, int, str], None],
-    ) -> ShadowReviewResult: ...
+    ) -> ShadowReviewRunResult: ...
 
 
 class ShadowReviewRepository(Protocol):
@@ -194,7 +230,12 @@ def execute_shadow_review(
             dispatched = True
 
         try:
-            result = runner.run(request, record_dispatch)
+            run_result = runner.run(request, record_dispatch)
+            if type(run_result) is not ShadowReviewRunResult:
+                raise ShadowReviewValueError(
+                    "shadow-review run result is invalid"
+                )
+            result = run_result.result
             result.validate_for(request)
             repository.record_shadow_result(attempt_id, result.to_json())
         except ShadowReviewError as error:
@@ -254,8 +295,10 @@ def _validate_projection(serialized: str, review_request_id: str) -> str:
 
 
 __all__ = [
+    "CitationNormalizationMarker",
     "ShadowReviewError",
     "ShadowReviewRepository",
+    "ShadowReviewRunResult",
     "ShadowReviewRunner",
     "execute_shadow_review",
     "inspect_shadow_review",

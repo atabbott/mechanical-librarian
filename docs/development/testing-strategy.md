@@ -65,7 +65,11 @@ The suite covers:
   rejection, and zero provider calls during proposal creation;
 - rejection before unauthorized parser/provider/publication activity,
   transaction-bound currentness drift, exact-byte snapshot binding, title
-  privacy rejection, redaction, and absence of product/media writes; and
+  privacy rejection, redaction, and absence of product/media writes;
+- reviewer-boundary citation normalization across reordered and duplicate
+  known identifiers, exact raw cardinality and allowlist rejection, mixed and
+  cross-case failures, aggregate-only markers, canonical result identity, and
+  persistence replay; and
 - installed package shape, distribution exclusions, generated-schema drift,
   static dependency direction, and retired-surface absence.
 
