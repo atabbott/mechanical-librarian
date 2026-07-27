@@ -52,9 +52,11 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     default_target_fields,
+    isbn_family,
 )
 from mechanical_librarian.domain.cover_evidence import (
-    CoverArtifact, CoverSource, CoverSourceKind, CoverSourceState, cover_source_id,
+    CoverArtifact, CoverDesignation, CoverSource, CoverSourceKind,
+    CoverSourceState, cover_source_id,
 )
 
 
@@ -1343,18 +1345,26 @@ class ProviderAdapterTests(unittest.TestCase):
         contributors = [claim for claim in claims if claim.kind is ClaimKind.CONTRIBUTOR]
         self.assertIn("translator", {claim.role for claim in contributors})
         self.assertTrue(any(claim.state.value == "malformed" for claim in contributors))
+        print_claim = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="Print ISBN: 9780306406157",
+            applicability="print",
+            checksum="valid_isbn_13",
+            applicability_basis="print",
+        )
         print_claims = hardcover_metadata._parse_candidates(
             payload,
             "catalogue",
-            (self._claim(),),
-            isbn_applicability="print",
+            (print_claim,),
         )[0].claims
         self.assertEqual(
             {"print"},
             {
                 claim.applicability
                 for claim in print_claims
-                if claim.kind is ClaimKind.ISBN
+                if claim.kind is ClaimKind.ISBN and claim.value is not None
             },
         )
 
@@ -1565,6 +1575,170 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(
             {ProviderStatus.NO_MATCH},
             {lane.status for lane in observation.lanes},
+        )
+
+    def test_hardcover_converges_differing_isbn_applicability_and_shared_cover(
+        self,
+    ) -> None:
+        title = self._title_claim()
+        ebook = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="0306406152",
+            canonical="0306406152",
+            excerpt="eBook ISBN 0306406152",
+            applicability="ebook",
+            checksum="valid_isbn_10",
+            applicability_basis="ebook",
+        )
+        print_only = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780140328721",
+            canonical="9780140328721",
+            excerpt="Print ISBN 9780140328721",
+            applicability="print",
+            checksum="valid_isbn_13",
+            applicability_basis="print",
+        )
+        fields = tuple(
+            TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.VALUE,
+                ("Ada Example",),
+            )
+            if field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields("Current title")
+        )
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", "Current title", (), fields=fields),
+            (title, ebook, print_only),
+        )
+        payload = self._envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 10,
+                    "isbn_10": "0306406152",
+                    "isbn_13": "9780140328721",
+                    "image": {"url": "https://images.example/edition.jpg"},
+                }
+            ],
+            [
+                {
+                    "id": 10,
+                    "title": "Current title",
+                    "image": {"url": "https://images.example/work.jpg"},
+                    "contributions": [
+                        {
+                            "id": 1,
+                            "contribution": "Author",
+                            "author": {"id": 1, "name": "Ada Example"},
+                        }
+                    ],
+                }
+            ],
+        )
+        provider = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
+                )
+            ),
+            65_536,
+        )
+        observation = provider.observe(plan)
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        self.assertEqual(1, len(observation.candidates))
+        self.assertEqual(
+            {ProviderStatus.CANDIDATES},
+            {lane.status for lane in observation.lanes},
+        )
+        self.assertEqual(
+            tuple(sorted(lane.identity for lane in plan.lanes)),
+            observation.convergence[0].lane_identities,
+        )
+        lanes = {lane.matched_family: lane for lane in observation.lanes}
+        self.assertEqual(
+            (ebook.reference,),
+            lanes["9780306406157"].input_references,
+        )
+        self.assertEqual(
+            (print_only.reference,),
+            lanes["9780140328721"].input_references,
+        )
+        self.assertEqual((title.reference,), lanes[None].input_references)
+        self.assertEqual(
+            3,
+            len(
+                {
+                    candidate.reference
+                    for lane in observation.lanes
+                    for candidate in lane.candidates
+                }
+            ),
+        )
+
+        isbn_claims = tuple(
+            claim
+            for claim in observation.candidates[0].claims
+            if claim.kind is ClaimKind.ISBN and claim.value is not None
+        )
+        self.assertEqual(
+            {
+                "9780306406157": {"ebook"},
+                "9780140328721": {"print"},
+            },
+            {
+                family: {
+                    claim.applicability
+                    for claim in isbn_claims
+                    if isbn_family(claim.value) == family
+                }
+                for family in ("9780306406157", "9780140328721")
+            },
+        )
+        self.assertEqual(
+            {
+                "9780306406157": {ebook.reference},
+                "9780140328721": {print_only.reference},
+            },
+            {
+                family: {
+                    link.local_reference
+                    for claim in isbn_claims
+                    if isbn_family(claim.value) == family
+                    for link in claim.links
+                    if link.outcome is Comparison.AGREEMENT
+                }
+                for family in ("9780306406157", "9780140328721")
+            },
+        )
+        self.assertTrue(
+            all(
+                {ebook.reference, print_only.reference}
+                == {link.local_reference for link in claim.links}
+                for claim in isbn_claims
+            )
+        )
+        self.assertEqual(2, len(provider.cover_descriptors))
+        self.assertEqual(
+            2, len({value.source_id for value in provider.cover_descriptors})
+        )
+        edition_cover = next(
+            value
+            for value in provider.cover_descriptors
+            if value.provenance is not None
+            and value.provenance.edition_identity is not None
+        )
+        self.assertEqual(
+            CoverDesignation.EXACT_EDITION,
+            edition_cover.provenance.designation,
         )
 
         for status_code, expected in (

@@ -25,8 +25,14 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
+    TargetDestination,
+    TargetField,
+    TargetFieldState,
+    default_target_fields,
+    isbn_family,
 )
 from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
     CoverSourceState,
     CoverSourceKind,
     cover_source_id,
@@ -425,6 +431,155 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             {request.url.params["q"] for request in requests},
         )
 
+    def test_discovery_converges_differing_isbn_applicability_and_shared_cover(
+        self,
+    ) -> None:
+        ebook = _isbn()
+        print_only = _isbn("9780140328721", applicability="print")
+        title = _title()
+        fields = tuple(
+            TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.VALUE,
+                ("Ada Example",),
+            )
+            if field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields("Local work title")
+        )
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", "Local work title", (), fields=fields),
+            (title, ebook, print_only),
+        )
+        edition = _edition("/books/OL1M", work="/works/OL5W", cover=100)
+        edition["isbn_13"] = ["9780306406157", "9780140328721"]
+        work = _work("/works/OL5W", cover=200)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/search.json":
+                family_query = request.url.params.get("q")
+                if family_query is not None:
+                    search = _search("/books/OL1M")
+                    search["docs"][0]["editions"]["docs"][0]["isbn"] = [  # type: ignore[index]
+                        family_query.removeprefix("isbn:")
+                    ]
+                    value = search
+                else:
+                    value = {
+                        "docs": [
+                            {
+                                "key": "/works/OL5W",
+                                "author_name": ["Ada Example"],
+                                "editions": {
+                                    "docs": [{"key": "/books/OL1M"}]
+                                },
+                            }
+                        ]
+                    }
+            elif request.url.path == "/books/OL1M.json":
+                value = edition
+            else:
+                self.assertEqual("/works/OL5W.json", request.url.path)
+                value = work
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=value,
+            )
+
+        provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        observation = provider.observe(plan)
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        self.assertEqual(1, len(observation.candidates))
+        self.assertEqual(
+            {ProviderStatus.CANDIDATES},
+            {lane.status for lane in observation.lanes},
+        )
+        self.assertEqual(
+            tuple(sorted(lane.identity for lane in plan.lanes)),
+            observation.convergence[0].lane_identities,
+        )
+        lanes = {lane.matched_family: lane for lane in observation.lanes}
+        self.assertEqual((ebook.reference,), lanes["9780306406157"].input_references)
+        self.assertEqual(
+            (print_only.reference,),
+            lanes["9780140328721"].input_references,
+        )
+        self.assertEqual((title.reference,), lanes[None].input_references)
+        self.assertEqual(
+            3,
+            len(
+                {
+                    candidate.reference
+                    for lane in observation.lanes
+                    for candidate in lane.candidates
+                }
+            ),
+        )
+
+        isbn_claims = tuple(
+            claim
+            for claim in observation.candidates[0].claims
+            if claim.kind is ClaimKind.ISBN and claim.value is not None
+        )
+        self.assertEqual(
+            {
+                "9780306406157": {"ebook"},
+                "9780140328721": {"print"},
+            },
+            {
+                family: {
+                    claim.applicability
+                    for claim in isbn_claims
+                    if isbn_family(claim.value) == family
+                }
+                for family in ("9780306406157", "9780140328721")
+            },
+        )
+        self.assertEqual(
+            {
+                "9780306406157": {ebook.reference},
+                "9780140328721": {print_only.reference},
+            },
+            {
+                family: {
+                    link.local_reference
+                    for claim in isbn_claims
+                    if isbn_family(claim.value) == family
+                    for link in claim.links
+                    if link.outcome is Comparison.AGREEMENT
+                }
+                for family in ("9780306406157", "9780140328721")
+            },
+        )
+        self.assertTrue(
+            all(
+                {ebook.reference, print_only.reference}
+                == {link.local_reference for link in claim.links}
+                for claim in isbn_claims
+            )
+        )
+        self.assertEqual(2, len(provider.cover_descriptors))
+        self.assertEqual(
+            2, len({value.source_id for value in provider.cover_descriptors})
+        )
+        edition_cover = next(
+            value
+            for value in provider.cover_descriptors
+            if value.provenance is not None
+            and value.provenance.edition_identity is not None
+        )
+        self.assertEqual(
+            CoverDesignation.EXACT_EDITION,
+            edition_cover.provenance.designation,
+        )
+
     def test_isbn_10_and_13_of_one_family_share_one_exact_search(self) -> None:
         requests: list[httpx.Request] = []
 
@@ -459,7 +614,6 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             _work("/works/OL5W"),
             (_isbn(applicability="print"),),
             "9780306406157",
-            isbn_applicability="print",
         )
         self.assertEqual(
             {"print"},

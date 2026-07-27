@@ -19,6 +19,8 @@ from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
     ProviderCoverDescriptor,
     ProviderLaneResult,
+    merge_provider_cover_descriptor,
+    provider_isbn_applicability,
     provider_observation,
     qualify_provider_observation,
 )
@@ -185,17 +187,47 @@ class OpenLibraryMetadataProvider:
                 observation = qualify_provider_observation(
                     self._observe_lookup(lookup, deadline=deadline), lookup
                 )
+                if (
+                    lane.kind is ProviderQueryKind.WORK
+                    and observation.status is ProviderStatus.CANDIDATES
+                ):
+                    observation = ProviderObservation(
+                        observation.provider,
+                        observation.status,
+                        observation.input_references,
+                        tuple(
+                            ProviderCandidate(
+                                candidate.identity,
+                                candidate.work_identity,
+                                tuple(
+                                    claim
+                                    for claim in candidate.claims
+                                    if claim.kind is not ClaimKind.CREATOR
+                                ),
+                                candidate.evidence,
+                            )
+                            for candidate in observation.candidates
+                        ),
+                        observation.query_kind,
+                        observation.authority,
+                    )
                 results.append(
                     ProviderLaneResult(
                         lane, observation.status, observation.candidates
                     )
                 )
                 for descriptor in self.cover_descriptors:
-                    previous = descriptors.setdefault(descriptor.source_id, descriptor)
-                    if previous != descriptor:
+                    previous = descriptors.get(descriptor.source_id)
+                    if previous is None:
+                        descriptors[descriptor.source_id] = descriptor
+                        continue
+                    merged = merge_provider_cover_descriptor(previous, descriptor)
+                    if merged is None:
                         results[-1] = ProviderLaneResult(
                             lane, ProviderStatus.MALFORMED
                         )
+                    else:
+                        descriptors[descriptor.source_id] = merged
         finally:
             self._client.close()
         self.cover_descriptors = tuple(
@@ -322,30 +354,6 @@ class OpenLibraryMetadataProvider:
                         dict[str, Any],
                     ]
                 ] = []
-                isbn_applicability = "ebook"
-                if (
-                    lookup.kind is ProviderQueryKind.ISBN
-                    and lookup.matched_family is not None
-                ):
-                    trigger_applicability = {
-                        claim.applicability
-                        for claim in usable
-                        if isbn_family(claim.canonical)
-                        == lookup.matched_family
-                    }
-                    isbn_applicability = (
-                        "ebook"
-                        if "ebook" in trigger_applicability
-                        else (
-                            "print"
-                            if trigger_applicability == {"print"}
-                            else (
-                                "ambiguous"
-                                if "ambiguous" in trigger_applicability
-                                else "unknown"
-                            )
-                        )
-                    )
                 for edition_key, work_key, work_authors in admitted:
                     edition = self._request(
                         OPEN_LIBRARY_ORIGIN + edition_key + ".json",
@@ -365,7 +373,6 @@ class OpenLibraryMetadataProvider:
                         local_claims,
                         family,
                         work_authors,
-                        isbn_applicability=isbn_applicability,
                     )
                     candidates.append(candidate)
                     cover_candidates.append(
@@ -542,8 +549,6 @@ def _candidate(
     local_claims: tuple[LocalClaim, ...],
     requested_family: str | None,
     work_authors: tuple[str, ...] = (),
-    *,
-    isbn_applicability: str = "ebook",
 ) -> tuple[ProviderCandidate, _CoverId, _CoverId]:
     if _key(edition.get("key"), _EDITION_KEY) != edition_key:
         raise ValueError("edition identity is malformed")
@@ -604,7 +609,7 @@ def _candidate(
             ClaimKind.ISBN,
             compact,
             ClaimScope.EDITION,
-            applicability=isbn_applicability,
+            applicability=provider_isbn_applicability(compact, local_claims),
         )
     add(ClaimKind.ASIN, None, ClaimScope.EDITION, state=FieldState.UNSUPPORTED)
     add(ClaimKind.TITLE, edition.get("title"), ClaimScope.EDITION)

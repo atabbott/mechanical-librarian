@@ -16,6 +16,8 @@ from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
     ProviderCoverDescriptor,
     ProviderLaneResult,
+    merge_provider_cover_descriptor,
+    provider_isbn_applicability,
     provider_observation,
     qualify_provider_observation,
 )
@@ -125,11 +127,17 @@ class HardcoverMetadataProvider:
                     )
                 )
                 for descriptor in self.cover_descriptors:
-                    previous = descriptors.setdefault(descriptor.source_id, descriptor)
-                    if previous != descriptor:
+                    previous = descriptors.get(descriptor.source_id)
+                    if previous is None:
+                        descriptors[descriptor.source_id] = descriptor
+                        continue
+                    merged = merge_provider_cover_descriptor(previous, descriptor)
+                    if merged is None:
                         results[-1] = ProviderLaneResult(
                             lane, ProviderStatus.MALFORMED
                         )
+                    else:
+                        descriptors[descriptor.source_id] = merged
         finally:
             self._client.close()
         self.cover_descriptors = tuple(
@@ -244,51 +252,24 @@ class HardcoverMetadataProvider:
         except (httpx.HTTPError, OSError, ValueError):
             return result(ProviderStatus.UNAVAILABLE)
         try:
-            isbn_applicability = "ebook"
-            if lookup.kind is ProviderQueryKind.ISBN and lookup.matched_family is not None:
-                trigger_applicability = {
-                    claim.applicability
-                    for claim in usable
-                    if isbn_family(claim.canonical) == lookup.matched_family
-                }
-                isbn_applicability = (
-                    "ebook"
-                    if "ebook" in trigger_applicability
-                    else (
-                        "print"
-                        if trigger_applicability == {"print"}
-                        else (
-                            "ambiguous"
-                            if "ambiguous" in trigger_applicability
-                            else "unknown"
-                        )
-                    )
-                )
             candidates = _parse_candidates(
                 payload,
                 self._name,
                 local_claims,
-                isbn_applicability=isbn_applicability,
             )
             if (
                 lookup.kind is ProviderQueryKind.ISBN
                 and lookup.matched_family is not None
             ):
-                expected_families = {
-                    family
-                    for claim in usable
-                    if (family := isbn_family(claim.canonical)) is not None
-                }
                 if any(
-                    not expected_families.intersection(
-                        {
-                            family
-                            for claim in candidate.claims
-                            if claim.kind is ClaimKind.ISBN
-                            and claim.value is not None
-                            and (family := isbn_family(claim.value)) is not None
-                        }
-                    )
+                    lookup.matched_family
+                    not in {
+                        family
+                        for claim in candidate.claims
+                        if claim.kind is ClaimKind.ISBN
+                        and claim.value is not None
+                        and (family := isbn_family(claim.value)) is not None
+                    }
                     for candidate in candidates
                 ):
                     return result(ProviderStatus.MALFORMED)
@@ -330,8 +311,6 @@ def _parse_candidates(
     payload: bytes,
     provider: str,
     local_claims: tuple[LocalClaim, ...],
-    *,
-    isbn_applicability: str = "ebook",
 ) -> tuple[ProviderCandidate, ...]:
     source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
     root = _closed(source, {"data"})
@@ -372,7 +351,6 @@ def _parse_candidates(
             identity,
             row,
             local_claims,
-            isbn_applicability=isbn_applicability,
         )
         claims.extend(_work_claims(provider, identity, indexed[book_id], local_claims, len(claims)))
         candidates.append(
@@ -544,8 +522,6 @@ def _edition_claims(
     identity: str,
     row: dict[str, Any],
     local: tuple[LocalClaim, ...],
-    *,
-    isbn_applicability: str,
 ) -> list[ProviderClaim]:
     claims: list[ProviderClaim] = []
     def add(kind: ClaimKind, value: object, scope: ClaimScope = ClaimScope.EDITION, applicability: str = "not_applicable") -> None:
@@ -555,7 +531,11 @@ def _edition_claims(
             kind,
             row[key],
             ClaimScope.EDITION,
-            isbn_applicability if kind is ClaimKind.ISBN else "not_applicable",
+            (
+                provider_isbn_applicability(row[key], local)
+                if kind is ClaimKind.ISBN
+                else "not_applicable"
+            ),
         )
     publisher = _closed_or_none(row["publisher"], {"id", "name", "parent_id"})
     add(ClaimKind.PUBLISHER, None if publisher is None else publisher["name"])

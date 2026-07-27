@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from mechanical_librarian.application.configuration import (
@@ -41,6 +41,7 @@ from mechanical_librarian.domain.metadata_report import (
     provider_lane_candidate_reference,
 )
 from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
     CoverProvenance,
     CoverSource,
     CoverSourceKind,
@@ -493,6 +494,67 @@ class ProviderCoverDescriptor:
     allow_redirects: bool = True
     user_agent: str | None = None
     terminal_state: CoverSourceState | None = None
+
+
+def merge_provider_cover_descriptor(
+    previous: ProviderCoverDescriptor,
+    current: ProviderCoverDescriptor,
+) -> ProviderCoverDescriptor | None:
+    """Merge one lane-neutral cover source or reject conflicting source facts."""
+    if previous == current:
+        return previous
+    if (
+        previous.source_id != current.source_id
+        or previous.provenance is None
+        or current.provenance is None
+        or replace(previous, provenance=None) != replace(current, provenance=None)
+        or {
+            previous.provenance.designation,
+            current.provenance.designation,
+        }
+        != {
+            CoverDesignation.EXACT_EDITION,
+            CoverDesignation.RELATED_EDITION,
+        }
+        or replace(
+            previous.provenance,
+            designation=CoverDesignation.RELATED_EDITION,
+        )
+        != replace(
+            current.provenance,
+            designation=CoverDesignation.RELATED_EDITION,
+        )
+    ):
+        return None
+    return replace(
+        previous,
+        provenance=replace(
+            previous.provenance,
+            designation=CoverDesignation.EXACT_EDITION,
+        ),
+    )
+
+
+def provider_isbn_applicability(
+    value: object,
+    local_claims: tuple[LocalClaim, ...],
+) -> str:
+    """Resolve one returned ISBN family without borrowing another lane's scope."""
+    family = isbn_family(value) if type(value) is str else None
+    applicability = {
+        claim.applicability
+        for claim in local_claims
+        if claim.kind is ClaimKind.ISBN
+        and claim.canonical is not None
+        and isbn_family(claim.canonical) == family
+    }
+    if "ebook" in applicability:
+        return "ebook"
+    if applicability == {"print"}:
+        return "print"
+    if "ambiguous" in applicability:
+        return "ambiguous"
+    return "unknown"
 
 
 class TargetReader(Protocol):
@@ -1058,6 +1120,7 @@ __all__ = [
     "ProviderLaneResult",
     "ReportRepository", "TargetFile", "TargetReader", "TargetSnapshot",
     "UnsupportedMediaError",
-    "metadata_discovery_plan", "metadata_lookup", "provider_observation",
+    "merge_provider_cover_descriptor", "metadata_discovery_plan",
+    "metadata_lookup", "provider_isbn_applicability", "provider_observation",
     "qualify_provider_observation", "require_report_current",
 ]
