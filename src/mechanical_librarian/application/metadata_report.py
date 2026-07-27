@@ -712,7 +712,7 @@ def qualify_provider_observation(
         if (
             titles == (expected_title,)
             and len(authors) == len(expected_authors)
-            and set(authors) == set(expected_authors)
+            and authors == expected_authors
             and not disqualifying_roles
             and not variant_marker
         ):

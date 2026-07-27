@@ -631,44 +631,78 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(ProviderStatus.CANDIDATES, qualified.status)
         self.assertEqual(("edition-1",), tuple(value.identity for value in qualified.candidates))
 
-    def test_work_lookup_accepts_the_complete_author_set_in_provider_order(self) -> None:
+    def test_work_lookup_requires_the_complete_canonical_author_order(self) -> None:
         lookup = MetadataLookup(
             ProviderQueryKind.WORK,
             (),
             "The Example",
-            ("Ada Author", "Bea Author"),
+            ("Zed Author", "Ada Author"),
         )
-        claims = tuple(
-            ProviderClaim.create(
-                provider="catalogue",
-                candidate="edition-1",
-                kind=kind,
-                value=value,
-                state=FieldState.VALID,
-                scope=ClaimScope.WORK,
-                applicability="not_applicable",
-                role=role,
-                raw_order=index,
-            )
-            for index, (kind, value, role) in enumerate(
-                (
-                    (ClaimKind.TITLE, "The Example", None),
-                    (ClaimKind.CREATOR, "Bea Author", "author"),
-                    (ClaimKind.CREATOR, "Ada Author", "author"),
-                )
-            )
-        )
-        result = qualify_provider_observation(
-            ProviderObservation(
-                "catalogue",
+        for label, provider_authors, expected in (
+            (
+                "exact normalized order",
+                ("ZED AUTHOR", "ada author"),
                 ProviderStatus.CANDIDATES,
-                (),
-                (ProviderCandidate("edition-1", "work-1", claims),),
-                ProviderQueryKind.WORK,
             ),
-            lookup,
-        )
-        self.assertEqual(ProviderStatus.CANDIDATES, result.status)
+            (
+                "same set wrong order",
+                ("Ada Author", "Zed Author"),
+                ProviderStatus.NO_MATCH,
+            ),
+            ("missing author", ("Zed Author",), ProviderStatus.NO_MATCH),
+            (
+                "extra duplicate",
+                ("Zed Author", "Ada Author", "Ada Author"),
+                ProviderStatus.NO_MATCH,
+            ),
+            (
+                "duplicate replacement",
+                ("Zed Author", "Zed Author"),
+                ProviderStatus.NO_MATCH,
+            ),
+        ):
+            claims = (
+                ProviderClaim.create(
+                    provider="catalogue",
+                    candidate="edition-1",
+                    kind=ClaimKind.TITLE,
+                    value="The Example",
+                    state=FieldState.VALID,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                    raw_order=0,
+                ),
+                *(
+                    ProviderClaim.create(
+                        provider="catalogue",
+                        candidate="edition-1",
+                        kind=ClaimKind.CREATOR,
+                        value=value,
+                        state=FieldState.VALID,
+                        scope=ClaimScope.WORK,
+                        applicability="not_applicable",
+                        role="author",
+                        raw_order=index,
+                    )
+                    for index, value in enumerate(provider_authors, start=1)
+                ),
+            )
+            result = qualify_provider_observation(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    (ProviderCandidate("edition-1", "work-1", claims),),
+                    ProviderQueryKind.WORK,
+                ),
+                lookup,
+            )
+            with self.subTest(label=label):
+                self.assertEqual(expected, result.status)
+                self.assertEqual(
+                    expected is ProviderStatus.CANDIDATES,
+                    bool(result.candidates),
+                )
 
     def test_closed_claim_vocabulary_is_exact(self) -> None:
         self.assertEqual(
