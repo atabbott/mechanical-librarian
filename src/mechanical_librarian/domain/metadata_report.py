@@ -1959,7 +1959,15 @@ def _comparison_value(kind: ClaimKind, value: str) -> str:
     if kind is ClaimKind.ISBN:
         return "".join(character for character in value if character.isdigit() or character in "Xx").upper()
     if kind is ClaimKind.PUBLICATION_DATE:
-        return normalize_date_value(value)[0]
+        normalized, precision = normalize_date_value(value)
+        if precision is DatePrecision.TIMESTAMP:
+            instant = datetime.fromisoformat(normalized)
+            if instant.utcoffset() is None:
+                raise ReportValueError(
+                    "comparison timestamp requires an explicit offset"
+                )
+            return instant.astimezone(timezone.utc).isoformat()
+        return normalized
     if kind is ClaimKind.DESCRIPTION:
         _projection_text(value, "comparison description", MAX_DESCRIPTION_CHARACTERS)
         return " ".join(unicodedata.normalize("NFC", value).split()).casefold()

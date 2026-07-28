@@ -1608,24 +1608,41 @@ class MetadataReportTests(unittest.TestCase):
                 date_precision=precision,
             )
 
-        zulu = local(
-            "2024-03-05T10:30:00Z",
+        zulu = local("2024-03-05T14:30:00Z", DatePrecision.TIMESTAMP)
+        positive_offset = local(
+            "2024-03-05T11:30:00+01:00",
+            DatePrecision.TIMESTAMP,
+        )
+        rollover = local(
+            "2024-03-05T23:30:00Z",
             DatePrecision.TIMESTAMP,
         )
         different = local(
-            "2024-03-05T10:30:01Z",
+            "2024-03-05T14:30:01Z",
             DatePrecision.TIMESTAMP,
         )
         day = local("2024-03-05", DatePrecision.DAY)
-        provider = ProviderClaim.create(
-            provider="catalogue",
-            candidate="edition-1",
-            kind=ClaimKind.PUBLICATION_DATE,
-            value="2024-03-05T10:30:00+00:00",
-            state=FieldState.VALID,
-            scope=ClaimScope.EDITION,
-            applicability="not_applicable",
+        naive = local(
+            "2024-03-05T14:30:00",
+            DatePrecision.TIMESTAMP,
         )
+        invalid = local(
+            "2024-02-30T14:30:00Z",
+            DatePrecision.TIMESTAMP,
+        )
+
+        def provider(value: str) -> ProviderClaim:
+            return ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition-1",
+                kind=ClaimKind.PUBLICATION_DATE,
+                value=value,
+                state=FieldState.VALID,
+                scope=ClaimScope.EDITION,
+                applicability="not_applicable",
+            )
+
+        negative_offset = provider("2024-03-05T10:30:00-04:00")
         self.assertEqual(
             {
                 zulu.reference: Comparison.AGREEMENT,
@@ -1635,15 +1652,40 @@ class MetadataReportTests(unittest.TestCase):
             {
                 link.local_reference: link.outcome
                 for link in comparison_links(
-                    provider,
+                    negative_offset,
                     (zulu, different, day),
                 )
             },
         )
-        self.assertEqual("2024-03-05T10:30:00Z", zulu.canonical)
         self.assertEqual(
-            "2024-03-05T10:30:00+00:00",
-            provider.date_lexical,
+            (ComparisonLink(positive_offset.reference, Comparison.AGREEMENT),),
+            comparison_links(
+                provider("2024-03-05T10:30:00Z"),
+                (positive_offset,),
+            ),
+        )
+        self.assertEqual(
+            (ComparisonLink(rollover.reference, Comparison.AGREEMENT),),
+            comparison_links(
+                provider("2024-03-06T00:30:00+01:00"),
+                (rollover,),
+            ),
+        )
+        for malformed in (naive, invalid):
+            with (
+                self.subTest(value=malformed.canonical),
+                self.assertRaises(ReportValueError),
+            ):
+                comparison_links(negative_offset, (malformed,))
+        with self.assertRaises(ReportValueError):
+            comparison_links(
+                provider("2024-03-05T14:30:00"),
+                (zulu,),
+            )
+        self.assertEqual("2024-03-05T14:30:00Z", zulu.canonical)
+        self.assertEqual(
+            "2024-03-05T10:30:00-04:00",
+            negative_offset.date_lexical,
         )
 
     def test_identifier_evidence_classifies_provider_local_work_relations(self) -> None:

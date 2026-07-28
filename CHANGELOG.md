@@ -21,8 +21,9 @@
   all internal identities are recomputed; non-provider replay remains
   self-contained. Lowercase provider ASIN input is canonicalized to the closed
   uppercase form before its content identity is constructed, and date
-  comparison normalizes both lexical operands so equivalent `Z` and `+00:00`
-  timestamps agree without discarding either source lexical value or precision.
+  comparison maps aware timestamp operands to their exact UTC instant so
+  equivalent nonzero offsets agree without discarding either source lexical
+  value or precision; naive timestamps fail closed.
   ADR-0016 supersedes ADR-0015 to freeze the
   packet-v2/request-v3 trust boundary. The first actual provider dispatch now
   records
