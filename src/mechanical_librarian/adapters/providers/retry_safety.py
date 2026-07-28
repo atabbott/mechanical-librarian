@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import format_datetime
 
+import httpcore
 import httpx
 
 
@@ -41,6 +42,11 @@ class ProviderAttemptRecord:
 def transient_transport_failure(error: BaseException) -> str | None:
     """Classify only transport failures whose types prove transientness."""
 
+    causes = _bounded_cause_chain(error)
+    if causes is None or any(
+        isinstance(cause, ssl.SSLError) for cause in causes
+    ):
+        return None
     if type(error) is httpx.ConnectTimeout:
         return "transport_connect_timeout"
     if type(error) is httpx.ReadTimeout:
@@ -54,7 +60,11 @@ def transient_transport_failure(error: BaseException) -> str | None:
     category = typed.get(type(error))
     if category is None:
         return None
-    return category if _has_safe_cause(error) else None
+    if type(error) is httpx.RemoteProtocolError and any(
+        type(cause) is httpcore.RemoteProtocolError for cause in causes
+    ):
+        return category
+    return category if any(_is_safe_cause(cause) for cause in causes) else None
 
 
 def bounded_retry_after(value: str | None, *, now: float) -> float | None:
@@ -91,32 +101,40 @@ def bounded_attempt_elapsed(started: float, finished: float) -> float:
     return min(elapsed, 60.0)
 
 
-def _has_safe_cause(error: BaseException) -> bool:
+def _bounded_cause_chain(
+    error: BaseException,
+) -> tuple[BaseException, ...] | None:
+    """Return a short, complete cause chain or reject ambiguous nesting."""
+
     seen = {id(error)}
     current = error.__cause__
+    causes: list[BaseException] = []
     for _ in range(4):
-        if current is None or id(current) in seen:
-            return False
+        if current is None:
+            return tuple(causes)
+        if id(current) in seen:
+            return None
         seen.add(id(current))
-        if isinstance(current, ssl.SSLError):
-            return False
-        if type(current) is socket.gaierror:
-            return (
-                current.errno == socket.EAI_AGAIN
-                if socket.EAI_AGAIN is not None
-                else False
-            )
-        if isinstance(
-            current,
-            (ConnectionAbortedError, ConnectionResetError, BrokenPipeError),
-        ):
-            return True
-        if type(current) is TimeoutError:
-            return True
-        if isinstance(current, OSError) and current.errno in _SAFE_OS_ERRNOS:
-            return True
+        causes.append(current)
         current = current.__cause__
-    return False
+    return None if current is not None else tuple(causes)
+
+
+def _is_safe_cause(cause: BaseException) -> bool:
+    if type(cause) is socket.gaierror:
+        return (
+            cause.errno == socket.EAI_AGAIN
+            if socket.EAI_AGAIN is not None
+            else False
+        )
+    if isinstance(
+        cause,
+        (ConnectionAbortedError, ConnectionResetError, BrokenPipeError),
+    ):
+        return True
+    if type(cause) is TimeoutError:
+        return True
+    return isinstance(cause, OSError) and cause.errno in _SAFE_OS_ERRNOS
 
 
 __all__ = [

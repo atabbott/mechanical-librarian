@@ -4,6 +4,7 @@ import socket
 import ssl
 import unittest
 
+import httpcore
 import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
@@ -51,7 +52,7 @@ class ProviderRetrySafetyTests(unittest.TestCase):
             (
                 _caused(
                     httpx.RemoteProtocolError("redacted"),
-                    ConnectionAbortedError(),
+                    httpcore.RemoteProtocolError("redacted"),
                 ),
                 "transport_remote_protocol_error",
             ),
@@ -79,9 +80,28 @@ class ProviderRetrySafetyTests(unittest.TestCase):
             httpx.InvalidURL("redacted"),
             httpx.ConnectError("connection reset by peer"),
             _caused(httpx.ConnectError("redacted"), ssl.SSLError()),
+            _caused(httpx.ConnectTimeout("redacted"), ssl.SSLError()),
             _caused(
                 httpx.ConnectError("redacted"),
                 socket.gaierror(socket.EAI_NONAME, "redacted"),
+            ),
+        )
+        for error in rejected:
+            with self.subTest(error=type(error).__name__):
+                self.assertIsNone(transient_transport_failure(error))
+
+    def test_tls_anywhere_in_bounded_cause_chain_vetoes_retry(self) -> None:
+        safe_cause = ConnectionResetError()
+        safe_cause.__cause__ = ssl.SSLError()
+        protocol_cause = httpcore.RemoteProtocolError("redacted")
+        protocol_cause.__cause__ = ssl.SSLError()
+        rejected = (
+            _caused(httpx.ConnectError("redacted"), safe_cause),
+            _caused(httpx.ConnectTimeout("redacted"), safe_cause),
+            _caused(httpx.ReadTimeout("redacted"), safe_cause),
+            _caused(
+                httpx.RemoteProtocolError("redacted"),
+                protocol_cause,
             ),
         )
         for error in rejected:
