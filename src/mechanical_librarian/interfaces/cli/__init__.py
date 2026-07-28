@@ -20,6 +20,7 @@ from mechanical_librarian.application.failure_diagnostics import (
 from mechanical_librarian.application.metadata_report import (
     CredentialError,
     CurrentnessError,
+    MetadataReportError,
     UnsupportedMediaError,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport, ReportValueError
@@ -516,6 +517,14 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
             )
         except ShadowReviewError as error:
             errors.write(_shadow_failure(error.diagnostic) + "\n")
+            return 1
+        except MetadataReportError:
+            errors.write(
+                _shadow_failure(
+                    reviewer_failure_diagnostic("persistence")
+                )
+                + "\n"
+            )
             return 1
         except Exception:
             errors.write(_shadow_failure(reviewer_failure_diagnostic("runtime")) + "\n")

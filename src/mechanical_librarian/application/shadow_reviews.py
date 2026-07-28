@@ -155,6 +155,8 @@ def preview_shadow_review(
         )
     except ShadowReviewError:
         raise
+    except MetadataReportError as error:
+        raise ShadowReviewError("persistence") from error
     except Exception as error:
         raise ShadowReviewError("currentness") from error
 
@@ -174,6 +176,8 @@ def inspect_shadow_review(
         )
     except ShadowReviewError:
         raise
+    except MetadataReportError as error:
+        raise ShadowReviewError("persistence") from error
     except Exception as error:
         raise ShadowReviewError("runtime") from error
 

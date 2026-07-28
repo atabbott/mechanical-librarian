@@ -214,6 +214,9 @@ identity, or replay.
 the request identity, currentness, final status, bounded total attempt count,
 and canonical aggregated diagnostics. It emits no request, packet, result,
 attempt ID/number, PID/process-group/start token, raw output, digest, or timing.
+A dispatched attempt without a durable terminal outcome reopens as `unknown`
+with one bounded reviewer/unknown/execution diagnostic; `unknown` and `failed`
+inspection states therefore never carry an empty diagnostic list.
 `shadow-review-failure-v2` uses the identical diagnostic shape on CLI stderr.
 The production-signal mapping matrix covers every frozen diagnostic category;
 unknown producer signals fail closed to `unknown` rather than borrowing a

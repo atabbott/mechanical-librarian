@@ -981,6 +981,10 @@ class GenerateMetadataReport:
                         binding.name,
                         ProviderStatus.QUERY_LIMIT_EXCEEDED,
                         authority=binding.authority,
+                        diagnostics=provider_attempt_diagnostics(
+                            (),
+                            status=ProviderStatus.QUERY_LIMIT_EXCEEDED.value,
+                        ),
                     )
                 )
                 continue

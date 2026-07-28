@@ -772,6 +772,13 @@ class ShadowReviewResult:
             )
 
     def validate_for(self, request: ShadowReviewRequest) -> None:
+        if (
+            type(self.review_request_id) is not str
+            or _REQUEST_ID.fullmatch(self.review_request_id) is None
+        ):
+            raise ShadowReviewSemanticError(
+                "shadow-review result is invalid"
+            )
         if self.review_request_id != request.review_request_id:
             raise ShadowReviewIdentityError(
                 "shadow-review result identity is invalid"

@@ -14,7 +14,13 @@ from pathlib import Path
 from urllib.parse import quote
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.domain.failure_diagnostics import FailureDiagnostic
+from mechanical_librarian.domain.failure_diagnostics import (
+    MAX_DIAGNOSTIC_COUNT,
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
+)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     REPORT_SCHEMA,
@@ -1155,6 +1161,29 @@ class SQLiteMetadataReportRepository:
                 tuple[str, str, str, bool | None, bool | None],
                 FailureDiagnostic,
             ] = {}
+
+            def add_diagnostic(diagnostic: FailureDiagnostic) -> None:
+                key = (
+                    diagnostic.category.value,
+                    diagnostic.component.value,
+                    diagnostic.stage.value,
+                    diagnostic.retryable,
+                    diagnostic.current,
+                )
+                prior = diagnostics.get(key)
+                diagnostics[key] = FailureDiagnostic(
+                    diagnostic.category,
+                    diagnostic.component,
+                    diagnostic.stage,
+                    diagnostic.retryable,
+                    diagnostic.current,
+                    min(
+                        diagnostic.count
+                        + (0 if prior is None else prior.count),
+                        MAX_DIAGNOSTIC_COUNT,
+                    ),
+                )
+
             top_status = "pending"
             for row in rows:
                 pid, kind, result_document, failure_document = row
@@ -1166,29 +1195,18 @@ class SQLiteMetadataReportRepository:
                     status = QUALIFICATION_MODE
                 elif kind == "failure":
                     status = "unknown" if pid is not None else "failed"
-                    diagnostic = FailureDiagnostic.from_json(failure_document)
-                    key = (
-                        diagnostic.category.value,
-                        diagnostic.component.value,
-                        diagnostic.stage.value,
-                        diagnostic.retryable,
-                        diagnostic.current,
-                    )
-                    prior = diagnostics.get(key)
-                    diagnostics[key] = FailureDiagnostic(
-                        diagnostic.category,
-                        diagnostic.component,
-                        diagnostic.stage,
-                        diagnostic.retryable,
-                        diagnostic.current,
-                        min(
-                            diagnostic.count
-                            + (0 if prior is None else prior.count),
-                            2_147_483_647,
-                        ),
+                    add_diagnostic(
+                        FailureDiagnostic.from_json(failure_document)
                     )
                 elif pid is not None:
                     status = "unknown"
+                    add_diagnostic(
+                        FailureDiagnostic(
+                            FailureCategory.UNKNOWN,
+                            FailureComponent.REVIEWER,
+                            FailureStage.EXECUTION,
+                        )
+                    )
                 top_status = status
             return _canonical_json(
                 {

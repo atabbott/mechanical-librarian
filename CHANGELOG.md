@@ -16,7 +16,10 @@
   syntax are proven, a zero-exit result naming another request is a typed
   `identity` failure before citation checks; malformed identity remains
   semantic, other semantic/citation failures remain `citation_membership`, and
-  repository faults are typed `persistence`.
+  repository faults at application and CLI-runner boundaries are
+  typed `persistence`. Outcome-less dispatched attempts reopen with one bounded
+  `unknown` reviewer diagnostic, and discovery-plan overflow records
+  `lookup_construction` in each affected provider observation.
   Malformed output and every other nonzero exit remain separate. Advance clean
   exact-current contracts to
   `metadata-report-v15`, `shadow-review-inspect-v2`, and

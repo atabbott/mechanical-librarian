@@ -45,6 +45,9 @@ Provider status remains the existing neutral `ProviderStatus`; diagnostics
 explain failure shape without changing candidate or availability semantics.
 An HTTP 200 Hardcover response with a valid GraphQL `errors` envelope is a
 terminal `provider_declared_error` attempt, never a successful response.
+Status-only application outcomes also supply their required diagnostic:
+discovery-plan overflow maps `query_limit_exceeded` to
+provider/lookup_construction/lookup without constructing a provider.
 
 Reviewer adapters may retain bounded raw job evidence inside their existing
 owner-private lifetime. Before persistence, their legacy internal signals map
@@ -66,7 +69,10 @@ reviewer/identity/identity before citation normalization, membership, and the
 broader semantic catch; missing or malformed identity remains semantic, and no
 exception text or result identifier participates in that classification.
 Exact repository faults map to persistence/persistence/persistence rather than
-runtime.
+runtime at both application and CLI-runner boundaries. A dispatched
+attempt with no durable terminal outcome reopens as `unknown` with one bounded
+reviewer/unknown/execution diagnostic per such attempt; inspection never emits
+an unknown or failed status with an empty diagnostic set.
 
 The report database accepts only the exact new schema. ADR-0013 applies: prior
 development state is rejected before mutation and has no migration, import, or

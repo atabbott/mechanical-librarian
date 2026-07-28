@@ -112,7 +112,10 @@ pool/write-timeout, and unknown failures. Every retry remains inside pacing,
 deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. The application maps only their closed category and outcome to
 report-v15 diagnostic aggregates; provider, ordinal, delay, elapsed time,
-headers, bodies, and exception text are dropped.
+headers, bodies, and exception text are dropped. Application-created
+query-limit outcomes follow the same closed mapping and persist
+provider/lookup_construction/lookup without constructing or invoking a
+provider.
 
 The fixed Hardcover selections stay within three relationship levels. Typed
 taxonomy is joined from bounded sibling-root tag rows by exact provider IDs;
@@ -255,7 +258,10 @@ reviewer/identity/identity before citation normalization or membership checks,
 without string matching or retaining either identifier. Missing or malformed
 identity remains semantic, and noncanonical input remains malformed output.
 Exact repository faults map to the persistence component/category/stage rather
-than runtime.
+than runtime, including database open and inspection failures crossing the
+CLI-runner boundary. A dispatched attempt with no terminal outcome reopens
+with a bounded reviewer/unknown/execution aggregate, so unknown inspection
+never requires the CLI to invent a replacement runtime failure.
 Request, attempt,
 dispatch, and outcome facts are append-only. Raw streams and reasoning are
 discarded. Dispatched ambiguity is `unknown`; there is no automatic retry, and

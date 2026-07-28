@@ -10,8 +10,10 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     open_repository,
@@ -28,6 +30,7 @@ from mechanical_librarian.application.shadow_reviews import (
     ShadowReviewError,
     ShadowReviewRunResult,
     execute_shadow_review,
+    inspect_shadow_review,
     preview_shadow_review,
 )
 from mechanical_librarian.application.failure_diagnostics import (
@@ -1112,6 +1115,7 @@ class ShadowReviewTests(unittest.TestCase):
 
     def test_dispatch_without_terminal_outcome_is_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reports.sqlite"
             repository, case_id = self._repository(directory)
             prepared = json.loads(
                 repository.prepare_shadow_request(
@@ -1134,7 +1138,55 @@ class ShadowReviewTests(unittest.TestCase):
             )
             self.assertEqual("unknown", inspected["status"])
             self.assertEqual(1, inspected["attempt_count"])
+            self.assertEqual(
+                [
+                    {
+                        "category": "unknown",
+                        "component": "reviewer",
+                        "count": 1,
+                        "current": None,
+                        "retryable": None,
+                        "stage": "execution",
+                    }
+                ],
+                inspected["diagnostics"],
+            )
             repository.close()
+
+            reopened = open_repository(database, create=False)
+            restarted = inspect_shadow_review(
+                reopened, request_id, _identity()
+            )
+            reopened.close()
+            output, errors = io.StringIO(), io.StringIO()
+            self.assertEqual(
+                0,
+                main(
+                    [
+                        "shadow-review-inspect",
+                        "--database",
+                        "/private/database",
+                        "--review-request-id",
+                        request_id,
+                        "--qualification-profile",
+                        "/private/profile",
+                    ],
+                    shadow_inspect_runner=lambda *_: restarted,
+                    stdout=output,
+                    stderr=errors,
+                ),
+            )
+            self.assertEqual("", errors.getvalue())
+            self.assertEqual(json.loads(restarted), json.loads(output.getvalue()))
+            for forbidden in (
+                "12345",
+                "777",
+                "attempt_id",
+                "failure_document",
+                "result_document",
+                "/private",
+            ):
+                self.assertNotIn(forbidden, restarted)
 
     def test_pending_pre_dispatch_restart_can_be_explicitly_reevaluated(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1294,6 +1346,17 @@ class ShadowReviewTests(unittest.TestCase):
                 canonical_json(wrong_identity),
                 request,
             )
+        for malformed_id in ("review_request_private", None):
+            with self.subTest(malformed_id=malformed_id):
+                malformed = ShadowReviewResult(
+                    malformed_id,  # type: ignore[arg-type]
+                    _result(request).recommendations,
+                )
+                with self.assertRaises(ShadowReviewSemanticError) as raised:
+                    malformed.validate_for(request)
+                self.assertNotIsInstance(
+                    raised.exception, ShadowReviewIdentityError
+                )
 
         missing_coverage = _result(request).to_data()
         missing_coverage["recommendations"] = []
@@ -1653,6 +1716,67 @@ class ShadowReviewTests(unittest.TestCase):
             _failure_output("malformed_output"), errors.getvalue()
         )
         self.assertTrue(request_id.startswith("review_request_"))
+
+    def test_cli_maps_exact_shadow_repository_failures_to_persistence(
+        self,
+    ) -> None:
+        request_id = "review_request_" + "a" * 64
+        private = "/private/repository-detail"
+
+        class BrokenRepository:
+            def inspect_shadow_request(self, *_args):
+                raise MetadataReportError(private)
+
+            def close(self) -> None:
+                return None
+
+        for name, repository_effect in (
+            ("open", MetadataReportError(private)),
+            ("inspect", BrokenRepository()),
+        ):
+            output, errors = io.StringIO(), io.StringIO()
+            open_patch = (
+                patch.object(
+                    composition,
+                    "open_repository",
+                    side_effect=repository_effect,
+                )
+                if isinstance(repository_effect, Exception)
+                else patch.object(
+                    composition,
+                    "open_repository",
+                    return_value=repository_effect,
+                )
+            )
+            with self.subTest(boundary=name), patch.object(
+                composition,
+                "load_qualification_profile",
+                return_value=SimpleNamespace(identity=_identity()),
+            ), open_patch:
+                self.assertEqual(
+                    1,
+                    main(
+                        [
+                            "shadow-review-inspect",
+                            "--database",
+                            "/private/database",
+                            "--review-request-id",
+                            request_id,
+                            "--qualification-profile",
+                            "/private/profile",
+                        ],
+                        shadow_inspect_runner=(
+                            composition.inspect_shadow_review_request
+                        ),
+                        stdout=output,
+                        stderr=errors,
+                    ),
+                )
+            self.assertEqual("", output.getvalue())
+            self.assertEqual(
+                _failure_output("persistence"), errors.getvalue()
+            )
+            self.assertNotIn(private, errors.getvalue())
 
     def test_cli_rejects_zero_exit_private_and_diagnostic_drift(
         self,

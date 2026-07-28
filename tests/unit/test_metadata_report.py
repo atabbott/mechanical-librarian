@@ -901,6 +901,60 @@ class MetadataReportTests(unittest.TestCase):
         self.assertTrue(plan.overflow)
         self.assertEqual((), plan.lanes)
 
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        snapshot = TargetSnapshot("ebook", None, (selected,))
+        target = _Target([snapshot, snapshot])
+        inspector = _Inspector(InspectionResult("b" * 64, tuple(claims)))
+        repository = _Repository()
+        service = GenerateMetadataReport(
+            target=target,
+            inspector=inspector,
+            repository_factory=lambda: repository,
+            providers=(
+                ProviderBinding(
+                    "catalogue",
+                    True,
+                    lambda: self.fail("overflow must not construct a provider"),
+                ),
+            ),
+            connection=TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/target"
+            ),
+            library=LibraryConfiguration(
+                "ebooks",
+                "primary",
+                "library-id",
+                "ebook",
+                "books",
+                ("catalogue",),
+            ),
+            mount=MediaMountConfiguration(
+                "books", "/media", "/library", True
+            ),
+            limits=ReportLimits(),
+        )
+        report = MetadataReport.from_json(service.run("item-1", 0))
+        self.assertEqual(
+            ProviderStatus.QUERY_LIMIT_EXCEEDED,
+            report.providers[0].status,
+        )
+        self.assertEqual(
+            [
+                {
+                    "category": "lookup_construction",
+                    "component": "provider",
+                    "count": 1,
+                    "current": None,
+                    "retryable": False,
+                    "stage": "lookup",
+                }
+            ],
+            [
+                diagnostic.to_data()
+                for diagnostic in report.providers[0].diagnostics
+            ],
+        )
+
     def test_work_lookup_admits_one_exact_work_and_strips_edition_authority(self) -> None:
         lookup = MetadataLookup(
             ProviderQueryKind.WORK,
