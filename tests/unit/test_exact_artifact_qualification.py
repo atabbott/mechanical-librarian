@@ -18,6 +18,7 @@ import scripts.qualify_exact_artifact as qualifier_module
 from scripts.qualify_exact_artifact import (
     QualificationFailure,
     _decode_stdout,
+    _proposal_identifier,
     _qualification_environment,
     _review_probe_epub,
     _run,
@@ -28,6 +29,21 @@ from scripts.qualify_exact_artifact import (
 
 
 class ExactArtifactQualificationTests(unittest.TestCase):
+    def test_installed_probe_requires_the_current_proposal_policy(self) -> None:
+        proposal = {
+            "policy_version": "fixed-conservative-v2",
+            "report": {
+                "report_id": "report_" + "a" * 64,
+                "target_fingerprint": "b" * 64,
+            },
+            "results": [],
+            "schema_version": "proposal-set-v1",
+        }
+        self.assertTrue(_proposal_identifier(proposal).startswith("proposal_set_"))
+        proposal["policy_version"] = "fixed-conservative-v1"
+        with self.assertRaises(QualificationFailure):
+            _proposal_identifier(proposal)
+
     def test_review_probe_epub_has_fixed_member_timestamps(self) -> None:
         for actionable in (False, True):
             with self.subTest(actionable=actionable):

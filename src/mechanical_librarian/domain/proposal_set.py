@@ -40,7 +40,7 @@ from mechanical_librarian.domain.metadata_report import (
 
 
 PROPOSAL_SCHEMA = "proposal-set-v1"
-POLICY_VERSION = "fixed-conservative-v1"
+POLICY_VERSION = "fixed-conservative-v2"
 MAX_PROPOSAL_BYTES = 2_097_152
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")

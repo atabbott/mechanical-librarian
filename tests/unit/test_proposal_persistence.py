@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,6 +21,7 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import (
+    POLICY_VERSION,
     ProposalOutcome,
     ProposalSet,
     evaluate_report,
@@ -84,6 +86,7 @@ class ProposalPersistenceTests(unittest.TestCase):
                 report.to_json(), repository.publish(report, lambda: True)
             )
             proposal = evaluate_report(report)
+            self.assertEqual(POLICY_VERSION, proposal.policy_version)
             authors = next(
                 result
                 for result in proposal.results
@@ -126,10 +129,40 @@ class ProposalPersistenceTests(unittest.TestCase):
                 "PRAGMA table_info(proposal_sets)"
             ).fetchall()
             self.assertEqual(
-                ["proposal_set_id", "report_id", "document"],
+                [
+                    "proposal_set_id",
+                    "report_id",
+                    "policy_version",
+                    "document",
+                ],
                 [column[1] for column in columns],
             )
+            policy = repository._connection.execute(
+                "SELECT policy_version FROM proposal_sets"
+            ).fetchone()
+            self.assertEqual((POLICY_VERSION,), policy)
             repository.close()
+
+    def test_prior_policy_store_schema_is_rejected_without_mutation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            repository = open_repository(path)
+            repository.close()
+
+            connection = sqlite3.connect(path)
+            connection.execute(
+                "ALTER TABLE proposal_sets DROP COLUMN policy_version"
+            )
+            connection.commit()
+            connection.close()
+            before = path.read_bytes()
+
+            with self.assertRaises(MetadataReportError):
+                open_repository(path)
+
+            self.assertEqual(before, path.read_bytes())
 
     def test_transaction_rechecks_current_report_before_insert(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

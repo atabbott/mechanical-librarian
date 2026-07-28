@@ -312,11 +312,13 @@ class ReviewCasePersistenceTests(unittest.TestCase):
                 results=(result, *base.results[1:]),
             )
             repository._connection.execute(
-                "INSERT INTO proposal_sets(proposal_set_id,report_id,document) "
-                "VALUES(?,?,?)",
+                "INSERT INTO proposal_sets("
+                "proposal_set_id,report_id,policy_version,document"
+                ") VALUES(?,?,?,?)",
                 (
                     synthetic.proposal_set_id,
                     report.report_id,
+                    synthetic.policy_version,
                     synthetic.to_json(),
                 ),
             )
@@ -348,11 +350,13 @@ class ReviewCasePersistenceTests(unittest.TestCase):
                 results=exact.results,
             )
             repository._connection.execute(
-                "INSERT INTO proposal_sets(proposal_set_id,report_id,document) "
-                "VALUES(?,?,?)",
+                "INSERT INTO proposal_sets("
+                "proposal_set_id,report_id,policy_version,document"
+                ") VALUES(?,?,?,?)",
                 (
                     incompatible.proposal_set_id,
                     report.report_id,
+                    incompatible.policy_version,
                     incompatible.to_json(),
                 ),
             )

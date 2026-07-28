@@ -34,6 +34,7 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import (
+    POLICY_VERSION,
     ProposalAlternative,
     ProposalAssessment,
     ProposalOutcome,
@@ -200,6 +201,21 @@ class ProposalSetTests(unittest.TestCase):
             proposal_set.proposal_set_id,
             ProposalSet.from_json(proposal_set.to_json()).proposal_set_id,
         )
+        self.assertEqual("fixed-conservative-v2", POLICY_VERSION)
+        self.assertEqual(POLICY_VERSION, proposal_set.policy_version)
+
+    def test_prior_policy_document_is_rejected_and_current_replay_is_exact(
+        self,
+    ) -> None:
+        current = evaluate_report(_report())
+        prior = json.loads(current.to_json())
+        prior["policy_version"] = "fixed-conservative-v1"
+
+        with self.assertRaises(ProposalValueError):
+            ProposalSet.from_json(canonical_json(prior))
+
+        self.assertEqual(current, ProposalSet.from_json(current.to_json()))
+        self.assertEqual(current, evaluate_report(_report()))
 
     def test_linked_destinations_retain_fixed_dependencies(self) -> None:
         proposal_set = evaluate_report(_report())

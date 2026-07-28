@@ -14,7 +14,7 @@ mechanical-librarian proposal-set-create \
 Every option is required. The command reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v1` policy. It does not construct or contact a metadata or
+`fixed-conservative-v2` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline:
@@ -27,6 +27,12 @@ mechanical-librarian proposal-set-get \
 
 Success is exactly one canonical `proposal-set-v1` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
+
+Only `fixed-conservative-v2` proposal documents and the exact current
+`proposal_sets` table envelope are accepted. A database with the earlier
+`fixed-conservative-v1` table shape is incompatible and is rejected before
+mutation; there is no proposal migration, import, conversion, or compatibility
+parser.
 
 ## Fixed policy
 
