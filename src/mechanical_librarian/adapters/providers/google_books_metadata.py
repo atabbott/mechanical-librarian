@@ -408,6 +408,14 @@ class GoogleBooksMetadataProvider:
                 },
                 timeout=remaining,
             ) as response:
+                identity_encoding = (
+                    response.headers.get("content-encoding", "identity")
+                    .strip()
+                    .lower()
+                    in {"", "identity"}
+                )
+                if response.is_stream_consumed and not identity_encoding:
+                    raise _ProviderFailure(ProviderStatus.MALFORMED)
                 payload = _body(
                     response,
                     min(self._maximum_bytes, self._remaining_response_bytes),
@@ -415,12 +423,7 @@ class GoogleBooksMetadataProvider:
                     clock=self._clock,
                     consume=self._consume_response_bytes,
                 )
-                if (
-                    response.headers.get("content-encoding", "identity")
-                    .strip()
-                    .lower()
-                    not in {"", "identity"}
-                ):
+                if not identity_encoding:
                     raise _ProviderFailure(ProviderStatus.MALFORMED)
                 if response.status_code == 503:
                     raise _ProviderFailure(

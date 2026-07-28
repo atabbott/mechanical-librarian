@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import unittest
 
 import httpx
@@ -52,8 +53,11 @@ class _InterruptedStream(httpx.SyncByteStream):
 
 
 class _HostileEncodedStream(httpx.SyncByteStream):
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
     def __iter__(self):
-        yield b"not-gzip"
+        yield self._payload
 
 
 def _isbn(
@@ -1368,38 +1372,62 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             control._remaining_response_bytes - 1,
             interrupted._remaining_response_bytes,
         )
-        encoded_responses = [
-            httpx.Response(
-                503,
-                headers={"content-encoding": "gzip"},
-                stream=_HostileEncodedStream(),
-            ),
-            httpx.Response(
-                200,
-                headers={"content-type": "application/json"},
-                json={"docs": []},
-            ),
-        ]
-        encoded = OpenLibraryMetadataProvider(
-            "open_library",
-            httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda _: encoded_responses.pop(0)
+        for raw_body in (gzip.compress(b"error"), b"not-gzip"):
+            calls = 0
+
+            def encoded_error(_: httpx.Request) -> httpx.Response:
+                nonlocal calls
+                calls += 1
+                return httpx.Response(
+                    503,
+                    headers={"content-encoding": "gzip"},
+                    stream=_HostileEncodedStream(raw_body),
                 )
-            ),
-            1_024,
-            pacer=OpenLibraryPacer(sleep=lambda _: None),
-            sleep=lambda _: None,
-            jitter=lambda: 0.0,
-        )
-        self.assertEqual(
-            ProviderStatus.NO_MATCH,
-            encoded.observe(_isbn_lookup((_isbn(),))).status,
-        )
-        self.assertEqual(
-            control._remaining_response_bytes - len(b"not-gzip"),
-            encoded._remaining_response_bytes,
-        )
+
+            encoded = OpenLibraryMetadataProvider(
+                "open_library",
+                httpx.Client(
+                    transport=httpx.MockTransport(encoded_error)
+                ),
+                1_024,
+                pacer=OpenLibraryPacer(sleep=lambda _: None),
+                sleep=lambda _: self.fail(
+                    "non-identity encoding must not retry"
+                ),
+            )
+            with self.subTest(streamed_encoding=raw_body):
+                self.assertEqual(
+                    ProviderStatus.MALFORMED,
+                    encoded.observe(_isbn_lookup((_isbn(),))).status,
+                )
+                self.assertEqual(1, calls)
+                self.assertEqual(
+                    1_024 * 49 - len(raw_body),
+                    encoded._remaining_response_bytes,
+                )
+
+        for decoded_body in (b"error", b"not-gzip"):
+            response = httpx.Response(503, content=decoded_body)
+            response.headers["content-encoding"] = "gzip"
+            encoded = OpenLibraryMetadataProvider(
+                "open_library",
+                httpx.Client(
+                    transport=httpx.MockTransport(lambda _: response)
+                ),
+                1_024,
+                pacer=OpenLibraryPacer(sleep=lambda _: None),
+                sleep=lambda _: self.fail(
+                    "preloaded non-identity response must not retry"
+                ),
+            )
+            with self.subTest(preloaded_encoding=decoded_body):
+                self.assertEqual(
+                    ProviderStatus.MALFORMED,
+                    encoded.observe(_isbn_lookup((_isbn(),))).status,
+                )
+                self.assertEqual(
+                    1_024 * 49, encoded._remaining_response_bytes
+                )
 
     def test_retry_budget_is_four_across_required_request_chain(
         self,

@@ -462,17 +462,32 @@ class HardcoverMetadataProvider:
                     response.headers.get("retry-after"),
                     now=self._wall_clock(),
                 )
-                if response.status_code != 200:
-                    _body(
-                        response,
-                        min(
-                            self._maximum_bytes,
-                            self._remaining_response_bytes,
-                        ),
-                        deadline=deadline,
-                        clock=self._clock,
-                        consume=self._consume_response_bytes,
-                        allow_empty=True,
+                identity_encoding = (
+                    response.headers.get("content-encoding", "identity")
+                    .strip()
+                    .lower()
+                    in {"", "identity"}
+                )
+                if response.is_stream_consumed and not identity_encoding:
+                    raise _ProviderFailure(
+                        ProviderStatus.MALFORMED,
+                        category="response_malformed",
+                    )
+                payload = _body(
+                    response,
+                    min(
+                        self._maximum_bytes,
+                        self._remaining_response_bytes,
+                    ),
+                    deadline=deadline,
+                    clock=self._clock,
+                    consume=self._consume_response_bytes,
+                    allow_empty=response.status_code != 200,
+                )
+                if not identity_encoding:
+                    raise _ProviderFailure(
+                        ProviderStatus.MALFORMED,
+                        category="response_malformed",
                     )
                 if response.status_code == 401:
                     raise _ProviderFailure(
@@ -518,26 +533,7 @@ class HardcoverMetadataProvider:
                         ProviderStatus.MALFORMED,
                         category="response_malformed",
                     )
-                if (
-                    response.headers.get("content-encoding", "identity")
-                    .strip()
-                    .lower()
-                    not in {"", "identity"}
-                ):
-                    raise _ProviderFailure(
-                        ProviderStatus.MALFORMED,
-                        category="response_malformed",
-                    )
-                return _body(
-                    response,
-                    min(
-                        self._maximum_bytes,
-                        self._remaining_response_bytes,
-                    ),
-                    deadline=deadline,
-                    clock=self._clock,
-                    consume=self._consume_response_bytes,
-                )
+                return payload
         except _DeadlineExpired:
             raise _ProviderFailure(
                 ProviderStatus.UNAVAILABLE,

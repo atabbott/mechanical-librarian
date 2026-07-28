@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 import hashlib
 import sqlite3
@@ -71,8 +72,11 @@ class _InterruptedProviderStream(httpx.SyncByteStream):
 
 
 class _HostileEncodedProviderStream(httpx.SyncByteStream):
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
     def __iter__(self):
-        yield b"not-gzip"
+        yield self._payload
 
 
 def _isbn_lookup(claims: tuple[LocalClaim, ...]) -> MetadataLookup:
@@ -1538,37 +1542,64 @@ class ProviderAdapterTests(unittest.TestCase):
             control._remaining_response_bytes - 1,
             interrupted._remaining_response_bytes,
         )
-        encoded_responses = [
-            httpx.Response(
-                503,
-                headers={"content-encoding": "gzip"},
-                stream=_HostileEncodedProviderStream(),
-            ),
-            httpx.Response(
-                200,
-                headers={"content-type": "application/json"},
-                json=self._envelope([], []),
-            ),
-        ]
-        encoded = HardcoverMetadataProvider(
-            "catalogue",
-            httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda _: encoded_responses.pop(0)
+        for raw_body in (gzip.compress(b"error"), b"not-gzip"):
+            calls = 0
+
+            def encoded_error(_: httpx.Request) -> httpx.Response:
+                nonlocal calls
+                calls += 1
+                return httpx.Response(
+                    503,
+                    headers={"content-encoding": "gzip"},
+                    stream=_HostileEncodedProviderStream(raw_body),
                 )
-            ),
-            1_024,
-            sleep=lambda _: None,
-            jitter=lambda: 0.0,
-        )
-        self.assertEqual(
-            ProviderStatus.NO_MATCH,
-            encoded.observe(_isbn_lookup((self._claim(),))).status,
-        )
-        self.assertEqual(
-            control._remaining_response_bytes - len(b"not-gzip"),
-            encoded._remaining_response_bytes,
-        )
+
+            encoded = HardcoverMetadataProvider(
+                "catalogue",
+                httpx.Client(
+                    transport=httpx.MockTransport(encoded_error)
+                ),
+                1_024,
+                sleep=lambda _: self.fail(
+                    "non-identity encoding must not retry"
+                ),
+            )
+            with self.subTest(streamed_encoding=raw_body):
+                self.assertEqual(
+                    ProviderStatus.MALFORMED,
+                    encoded.observe(
+                        _isbn_lookup((self._claim(),))
+                    ).status,
+                )
+                self.assertEqual(1, calls)
+                self.assertEqual(
+                    1_024 * 9 - len(raw_body),
+                    encoded._remaining_response_bytes,
+                )
+
+        for decoded_body in (b"error", b"not-gzip"):
+            response = httpx.Response(503, content=decoded_body)
+            response.headers["content-encoding"] = "gzip"
+            encoded = HardcoverMetadataProvider(
+                "catalogue",
+                httpx.Client(
+                    transport=httpx.MockTransport(lambda _: response)
+                ),
+                1_024,
+                sleep=lambda _: self.fail(
+                    "preloaded non-identity response must not retry"
+                ),
+            )
+            with self.subTest(preloaded_encoding=decoded_body):
+                self.assertEqual(
+                    ProviderStatus.MALFORMED,
+                    encoded.observe(
+                        _isbn_lookup((self._claim(),))
+                    ).status,
+                )
+                self.assertEqual(
+                    1_024 * 9, encoded._remaining_response_bytes
+                )
 
     def test_hardcover_429_retries_only_valid_retry_after_and_graphql_never(
         self,

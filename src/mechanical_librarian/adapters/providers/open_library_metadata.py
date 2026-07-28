@@ -554,17 +554,26 @@ class OpenLibraryMetadataProvider:
                     response.headers.get("retry-after"),
                     now=self._wall_clock(),
                 )
-                if response.status_code != 200:
-                    _body(
-                        response,
-                        min(
-                            self._maximum_bytes,
-                            self._remaining_response_bytes,
-                        ),
-                        deadline=deadline,
-                        clock=self._clock,
-                        consume=self._consume_response_bytes,
-                    )
+                identity_encoding = (
+                    response.headers.get("content-encoding", "identity")
+                    .strip()
+                    .lower()
+                    in {"", "identity"}
+                )
+                if response.is_stream_consumed and not identity_encoding:
+                    raise _ProviderFailure(ProviderStatus.MALFORMED)
+                payload = _body(
+                    response,
+                    min(
+                        self._maximum_bytes,
+                        self._remaining_response_bytes,
+                    ),
+                    deadline=deadline,
+                    clock=self._clock,
+                    consume=self._consume_response_bytes,
+                )
+                if not identity_encoding:
+                    raise _ProviderFailure(ProviderStatus.MALFORMED)
                 if response.status_code == 429:
                     raise _ProviderFailure(
                         ProviderStatus.RATE_LIMITED,
@@ -592,22 +601,8 @@ class OpenLibraryMetadataProvider:
                     .strip()
                     .lower()
                     != "application/json"
-                    or response.headers.get("content-encoding", "identity")
-                    .strip()
-                    .lower()
-                    not in {"", "identity"}
                 ):
                     raise _ProviderFailure(ProviderStatus.MALFORMED)
-                payload = _body(
-                    response,
-                    min(
-                        self._maximum_bytes,
-                        self._remaining_response_bytes,
-                    ),
-                    deadline=deadline,
-                    clock=self._clock,
-                    consume=self._consume_response_bytes,
-                )
         except _ProviderFailure as error:
             if error.status is ProviderStatus.OVERSIZED:
                 self._remaining_response_bytes = 0

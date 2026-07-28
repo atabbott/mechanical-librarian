@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 import tempfile
 import unittest
@@ -127,8 +128,11 @@ class _InterruptedStream(httpx.SyncByteStream):
 
 
 class _HostileEncodedStream(httpx.SyncByteStream):
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
     def __iter__(self):
-        yield b"not-gzip"
+        yield self._payload
 
 
 class GoogleBooksMetadataTests(unittest.TestCase):
@@ -320,34 +324,61 @@ class GoogleBooksMetadataTests(unittest.TestCase):
         self.assertEqual(9, interrupted_dispatches)
         self.assertEqual(9, len(interrupted_provider.attempt_records))
 
-    def test_hostile_encoded_error_body_is_charged_raw_and_terminal(
+    def test_encoded_error_bodies_are_raw_charged_or_fail_preloaded(
         self,
     ) -> None:
-        calls = 0
+        for raw_body in (gzip.compress(b"error"), b"not-gzip"):
+            calls = 0
 
-        def handler(_: httpx.Request) -> httpx.Response:
-            nonlocal calls
-            calls += 1
-            return httpx.Response(
-                503,
-                headers={"content-encoding": "gzip"},
-                stream=_HostileEncodedStream(),
+            def handler(_: httpx.Request) -> httpx.Response:
+                nonlocal calls
+                calls += 1
+                return httpx.Response(
+                    503,
+                    headers={"content-encoding": "gzip"},
+                    stream=_HostileEncodedStream(raw_body),
+                )
+
+            provider = GoogleBooksMetadataProvider(
+                "google_books",
+                httpx.Client(transport=httpx.MockTransport(handler)),
+                1_024,
+                sleep=lambda _: self.fail(
+                    "non-identity encoding must not retry"
+                ),
             )
+            with self.subTest(streamed=raw_body):
+                self.assertEqual(
+                    ProviderStatus.MALFORMED,
+                    provider.observe(_lookup()).status,
+                )
+                self.assertEqual(1, calls)
+                self.assertEqual(
+                    1_024 * 9 - len(raw_body),
+                    provider._remaining_response_bytes,
+                )
 
-        provider = GoogleBooksMetadataProvider(
-            "google_books",
-            httpx.Client(transport=httpx.MockTransport(handler)),
-            1_024,
-            sleep=lambda _: self.fail("malformed encoding must not retry"),
-        )
-        self.assertEqual(
-            ProviderStatus.MALFORMED, provider.observe(_lookup()).status
-        )
-        self.assertEqual(1, calls)
-        self.assertEqual(
-            1_024 * 9 - len(b"not-gzip"),
-            provider._remaining_response_bytes,
-        )
+        for decoded_body in (b"error", b"not-gzip"):
+            response = httpx.Response(503, content=decoded_body)
+            response.headers["content-encoding"] = "gzip"
+            provider = GoogleBooksMetadataProvider(
+                "google_books",
+                httpx.Client(
+                    transport=httpx.MockTransport(lambda _: response)
+                ),
+                1_024,
+                sleep=lambda _: self.fail(
+                    "preloaded non-identity response must not retry"
+                ),
+            )
+            with self.subTest(preloaded=decoded_body):
+                self.assertEqual(
+                    ProviderStatus.MALFORMED,
+                    provider.observe(_lookup()).status,
+                )
+                self.assertEqual(
+                    1_024 * 9, provider._remaining_response_bytes
+                )
 
     def test_retries_503_with_fresh_backoff_and_records_each_dispatch(
         self,
