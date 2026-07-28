@@ -254,7 +254,11 @@ def _inspect_bundle(
                             "rear_resource_limit",
                         ),
                     ),
-                    (),
+                    tuple(
+                        fact
+                        for fact in rejected.partial_facts
+                        if type(fact) is EpubInspectionFact
+                    ),
                 )
             return package_report, opening_report, rear_facts
     except _Rejected as rejected:

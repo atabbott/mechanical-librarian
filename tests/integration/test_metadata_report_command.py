@@ -1114,7 +1114,10 @@ class MetadataReportCommandTests(unittest.TestCase):
             self.assertEqual(successor_report.report_id, proposal_set.report_id)
             self.assertEqual((0, ""), (reopened_result, reopened_errors.getvalue()))
             self.assertEqual(proposal_output.getvalue(), reopened_output.getvalue())
-            self.assertEqual({claim.kind.value for claim in first_report.local_claims}, {"title", "isbn", "language"})
+            self.assertEqual(
+                {claim.kind.value for claim in first_report.local_claims},
+                {"title", "isbn", "language", "date_event"},
+            )
             isbn_claims = [claim for claim in first_report.local_claims if claim.kind.value == "isbn"]
             self.assertEqual({claim.checksum for claim in isbn_claims}, {"valid_isbn_13"})
             self.assertEqual({claim.applicability for claim in isbn_claims}, {"ebook", "print"})
@@ -1269,7 +1272,11 @@ class MetadataReportCommandTests(unittest.TestCase):
             self.assertEqual(primary.local_status, "no_candidate")
             self.assertEqual(
                 primary.local_reasons,
-                ("package_metadata_language", "package_metadata_title"),
+                (
+                    "package_metadata_date_event",
+                    "package_metadata_language",
+                    "package_metadata_title",
+                ),
             )
             self.assertEqual(primary.providers[0].status.value, "disabled")
             self.assertEqual(secondary.local_status, "no_candidate")

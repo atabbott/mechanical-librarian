@@ -129,14 +129,17 @@ source fingerprint, and fixed limits. It first captures one bounded immutable
 byte snapshot, verifies its digest, and uses that same snapshot for all EPUB
  parsing. It returns only bounded, source-attributed local metadata facts:
  explicit package fields, bounded opening matter, and an independent rear-spine
- copyright pass. The rear pass considers only the final eight accepted spine
+ indicia pass. The rear pass considers only the final eight accepted spine
  slots in reverse order, opens at most four XHTML/HTML resources, and never
  substitutes an excluded, missing, encrypted, image, unsupported, or duplicate
- slot. It admits only explicit title, creator, contributor, or byline cues and checksum-valid ISBNs when
- the same resource has a copyright marker; it is not whole-book mining.
- If that optional rear pass reaches its aggregate resource limit, it emits no
- rear facts and records a bounded warning while retaining already validated
- package and opening-matter evidence; package and opening resource limits
+ slot. It admits only explicit title, creator, controlled contributor role,
+ selected-manifestation publication date, distinct contextual date/production
+ credit, or checksum-valid ISBN evidence when the same resource has a copyright
+ marker; it is not whole-book mining. Production/tool credits never become
+ contributors.
+ If that optional rear pass reaches its aggregate resource or fact limit, it
+ records a bounded warning while retaining facts admitted before exhaustion as
+ well as already validated package and opening-matter evidence; package and opening resource limits
  remain terminal. The retained report exposes that condition as the static
  `rear_resource_limit` local reason.
  Across both pools there are at most nine content opens, 9 MiB of expanded

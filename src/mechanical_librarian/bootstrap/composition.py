@@ -102,12 +102,14 @@ from mechanical_librarian.domain.cover_evidence import (
     cover_source_id,
 )
 from mechanical_librarian.domain.epub_inspection import (
+    DateEvent,
     EpubInspectionOutcome,
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    ClaimScope,
     FieldState,
     LocalClaim,
     ProviderObservation,
@@ -163,11 +165,21 @@ class _IsolatedEpubInspector:
                     basis=fact.basis,
                     checksum=fact.checksum,
                     applicability_basis=fact.classification_basis,
-                    scope=claim_scope(ClaimKind(fact.field.value)),
+                    scope=(
+                        ClaimScope.WORK
+                        if fact.date_event
+                        in {
+                            DateEvent.WORK_FIRST_PUBLICATION,
+                            DateEvent.CREATION,
+                        }
+                        else claim_scope(ClaimKind(fact.field.value))
+                    ),
                     state=FieldState(fact.state),
                     role=fact.role,
                     rear_provenance=None if fact.rear_provenance is None else RearClaimProvenance(**fact.rear_provenance.to_data()),
                     occurrence=occurrence,
+                    date_event=fact.date_event,
+                    date_precision=fact.date_precision,
                 )
                 claims.append(claim)
             declared = read_declared_cover(opened.descriptor, digest)

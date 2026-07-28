@@ -11,6 +11,7 @@ import unicodedata
 import zipfile
 from contextlib import nullcontext
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from html.parser import HTMLParser
 from urllib.parse import unquote
 from xml.etree import ElementTree
@@ -28,6 +29,7 @@ from mechanical_librarian.domain.epub_opening import (
     OpeningResourceResult,
 )
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     EpubPackageDeclarationKind,
     EpubPackageCapability,
@@ -91,7 +93,99 @@ _BODY_SEMANTICS = {"bodymatter"}
 _CLAIM_SEMANTICS = {"title", "fulltitle", "subtitle", "publisher", "imprint", "contributor", "creator"}
 _SPACE = re.compile(r"\s+")
 _ISBN = re.compile(r"(?<![0-9Xx])(?:97[89][\s-]*)?[0-9][0-9Xx\s-]{8,20}[0-9Xx](?![0-9Xx])")
-_DATE = re.compile(r"\b(?:18|19|20|21)\d{2}(?:-[01]\d(?:-[0-3]\d)?)?\b")
+_DATE_TEXT = (
+    r"(?<!\d)(?:18|19|20|21)\d{2}"
+    r"(?:-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]\d|3[01]))?)?"
+    r"(?:T(?:[01]\d|2[0-3]):[0-5]\d"
+    r"(?::[0-5]\d(?:\.\d{1,6})?)?(?:Z|[+-](?:0\d|1[0-4]):[0-5]\d))?(?!\d)"
+)
+_DATE = re.compile(_DATE_TEXT)
+_DATE_EVENT_PATTERNS = (
+    (
+        DateEvent.MANIFESTATION_PUBLICATION,
+        re.compile(
+            rf"(?:\b(?:this\s+)?(?:e-?book|electronic|digital|epub)"
+            rf"(?:\s+edition)?\s+(?:was\s+)?published"
+            rf"|\b(?:e-?book|electronic|digital|epub)"
+            rf"(?:\s+edition)?\s+publication\s+date\s*[:\-]?"
+            rf"|\bthis\s+edition\s+(?:was\s+)?published"
+            rf"|\bpublication\s+date\s*(?:for\s+)?(?:this\s+)?"
+            rf"(?:e-?book|electronic|digital|epub)(?:\s+edition)?\s*[:\-]?)"
+            rf"[^.;|\n]{{0,96}}?(?P<date>{_DATE_TEXT})",
+            re.I,
+        ),
+    ),
+    (
+        DateEvent.WORK_FIRST_PUBLICATION,
+        re.compile(
+            rf"(?:\bfirst\s+published|\boriginally\s+published"
+            rf"|\boriginal\s+publication(?:\s+date)?\s*[:\-]?)"
+            rf"[^.;|\n]{{0,96}}?(?P<date>{_DATE_TEXT})",
+            re.I,
+        ),
+    ),
+    (
+        DateEvent.COPYRIGHT,
+        re.compile(
+            rf"(?:\bcopyright(?:ed)?\b|©)[^.;|\n]{{0,96}}?"
+            rf"(?P<date>{_DATE_TEXT})",
+            re.I,
+        ),
+    ),
+    (
+        DateEvent.CREATION,
+        re.compile(
+            rf"(?:\bcreated\b|\bcreation\s+date\s*[:\-]?)"
+            rf"[^.;|\n]{{0,96}}?(?P<date>{_DATE_TEXT})",
+            re.I,
+        ),
+    ),
+    (
+        DateEvent.MODIFICATION,
+        re.compile(
+            rf"(?:\blast\s+modified\b|\bmodified\b"
+            rf"|\bmodification\s+date\s*[:\-]?)"
+            rf"[^.;|\n]{{0,96}}?(?P<date>{_DATE_TEXT})",
+            re.I,
+        ),
+    ),
+    (
+        DateEvent.CONVERSION,
+        re.compile(
+            rf"(?:\bconverted\b|\bconversion\s+date\s*[:\-]?)"
+            rf"[^.;|\n]{{0,96}}?(?P<date>{_DATE_TEXT})",
+            re.I,
+        ),
+    ),
+)
+_BIBLIOGRAPHIC_CREDITS = (
+    (
+        re.compile(
+            r"\b(?:translated|translation)\s+and\s+"
+            r"(?:illustrated|illustrations)\s+by\s+"
+            r"(?P<name>[^;|\n]+)",
+            re.I,
+        ),
+        ("translator", "illustrator"),
+        EpubObservationApplicability.EDITION,
+    ),
+    (re.compile(r"\b(?:translated|translation)\s+by\s+(?P<name>[^;|\n]+)", re.I), ("translator",), EpubObservationApplicability.EDITION),
+    (re.compile(r"\b(?:illustrated|illustrations)\s+by\s+(?P<name>[^;|\n]+)", re.I), ("illustrator",), EpubObservationApplicability.EDITION),
+    (re.compile(r"\bedited\s+by\s+(?P<name>[^;|\n]+)", re.I), ("editor",), EpubObservationApplicability.WORK),
+    (re.compile(r"\b(?:foreword|introduction)\s+by\s+(?P<name>[^;|\n]+)", re.I), ("foreword",), EpubObservationApplicability.WORK),
+    (re.compile(r"\b(?:book|cover|interior)\s+design\s+by\s+(?P<name>[^;|\n]+)", re.I), ("designer",), EpubObservationApplicability.EDITION),
+    (re.compile(r"\b(?:photographs?|photography)\s+by\s+(?P<name>[^;|\n]+)", re.I), ("photographer",), EpubObservationApplicability.EDITION),
+    (re.compile(r"\b(?:maps?|cartography)\s+by\s+(?P<name>[^;|\n]+)", re.I), ("cartographer",), EpubObservationApplicability.EDITION),
+    (re.compile(r"\badapted\s+by\s+(?P<name>[^;|\n]+)", re.I), ("adapter",), EpubObservationApplicability.WORK),
+)
+_CONTEXTUAL_CREDITS = (
+    (re.compile(r"\b(?:epub|e-?book|digital)\s+conversion\s+by\s+(?P<name>[^;|\n]+)", re.I), "conversion"),
+    (re.compile(r"\bconverted\s+by\s+(?P<name>[^;|\n]+)", re.I), "conversion"),
+    (re.compile(r"\bscann(?:ed|ing)\s+by\s+(?P<name>[^;|\n]+)", re.I), "scanner"),
+    (re.compile(r"\b(?:produced|created)\s+(?:using|with)\s+(?P<name>[^;|\n]+)", re.I), "software"),
+    (re.compile(r"\b(?:distributed|retailed)\s+by\s+(?P<name>[^;|\n]+)", re.I), "retailer"),
+    (re.compile(r"\bworkflow\s*[:\-]\s*(?P<name>[^;|\n]+)", re.I), "workflow"),
+)
 _SERIES = re.compile(r"\b(?:book|volume)\s+([0-9]+(?:\.[0-9]+)?)\s+(?:of|in)\s+(?:the\s+)?(.+)", re.I)
 _EBOOK_LABEL = re.compile(
     r"(?<![\w])(?:e[\s-]?book|epub|electronic|digital)(?![\w])",
@@ -107,6 +201,10 @@ _HARDCOVER_LABEL = re.compile(
 )
 _NON_ISBN_IDENTIFIER = re.compile(
     r"(?i)(?P<scheme>urn:isbn|[a-z][a-z0-9+.-]{0,31}):\s*(?://)?[^\s|]+"
+)
+_INDICIA_EXCLUSION = re.compile(
+    r"\b(?:advertisement|preview|sample|also by|other works? by)\b",
+    re.I,
 )
 _CHARSET_PARAMETER = re.compile(
     rb"(?:^|;)\s*charset\s*=\s*([A-Za-z0-9._-]+)(?:\s*;|\s*$)", re.I
@@ -133,8 +231,13 @@ _PACKAGE_WARNING_CODES = {
 
 
 class _AggregateRejected(Exception):
-    def __init__(self, outcome: EpubInspectionOutcome) -> None:
+    def __init__(
+        self,
+        outcome: EpubInspectionOutcome,
+        partial_facts: tuple[object, ...] = (),
+    ) -> None:
         self.outcome = outcome
+        self.partial_facts = partial_facts
 
 
 class _ResourceRejected(Exception):
@@ -1800,7 +1903,114 @@ def _isbn_owned_by_non_isbn_identifier(
     return False
 
 
-def _claim(field: OpeningField, value: str, applicability: EpubObservationApplicability, element: _Element, projection: _Projection, source, resource_identity: str, resource_digest: str, selection_path: tuple[str, ...], lineage: str, excerpt_characters: int, *, normalized: str | None = None, identifier_type: str | None = None, applicability_label: str | None = None, citation_context: tuple[_Element, int, int] | None = None) -> OpeningClaim | None:
+def _date_precision(value: str) -> DatePrecision | None:
+    """Validate one exact ISO-like lexical date without inventing precision."""
+
+    try:
+        if "T" in value:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return DatePrecision.TIMESTAMP
+        pieces = value.split("-")
+        if len(pieces) == 1:
+            return DatePrecision.YEAR
+        if len(pieces) == 2:
+            date(int(pieces[0]), int(pieces[1]), 1)
+            return DatePrecision.MONTH
+        if len(pieces) == 3:
+            date(int(pieces[0]), int(pieces[1]), int(pieces[2]))
+            return DatePrecision.DAY
+    except ValueError:
+        return None
+    return None
+
+
+def _indicia_dates(
+    value: str,
+) -> tuple[tuple[str, DateEvent, DatePrecision], ...]:
+    """Recover only locally labelled date events from one bounded indicia span."""
+
+    found: list[tuple[int, str, DateEvent, DatePrecision]] = []
+    occupied: set[tuple[int, int, DateEvent]] = set()
+    for event, pattern in _DATE_EVENT_PATTERNS:
+        for match in pattern.finditer(value):
+            lexical = match.group("date")
+            precision = _date_precision(lexical)
+            key = (*match.span("date"), event)
+            if precision is None or key in occupied:
+                continue
+            occupied.add(key)
+            found.append((match.start("date"), lexical, event, precision))
+    return tuple(
+        (lexical, event, precision)
+        for _position, lexical, event, precision in sorted(
+            found, key=lambda item: (item[0], item[2].value)
+        )
+    )
+
+
+def _indicia_credits(
+    value: str,
+) -> tuple[
+    tuple[OpeningField, str, str, EpubObservationApplicability], ...
+]:
+    """Recover explicit controlled roles while keeping production credits separate."""
+
+    found: list[
+        tuple[
+            int,
+            OpeningField,
+            str,
+            str,
+            EpubObservationApplicability,
+            tuple[int, int],
+        ]
+    ] = []
+    occupied: list[tuple[int, int]] = []
+    for pattern, roles, applicability in _BIBLIOGRAPHIC_CREDITS:
+        for match in pattern.finditer(value):
+            if any(
+                start < match.end() and match.start() < end
+                for start, end in occupied
+            ):
+                continue
+            name = _SPACE.sub(" ", match.group("name")).strip(" ,:")
+            if not name:
+                continue
+            occupied.append(match.span())
+            found.append(
+                (
+                    match.start(),
+                    OpeningField.CONTRIBUTOR,
+                    name,
+                    "+".join(roles),
+                    applicability,
+                    match.span(),
+                )
+            )
+    for pattern, role in _CONTEXTUAL_CREDITS:
+        for match in pattern.finditer(value):
+            name = _SPACE.sub(" ", match.group("name")).strip(" ,:")
+            if not name:
+                continue
+            found.append(
+                (
+                    match.start(),
+                    OpeningField.CONTEXTUAL_CREDIT,
+                    name,
+                    role,
+                    EpubObservationApplicability.FILE,
+                    match.span(),
+                )
+            )
+    return tuple(
+        (field, name, role, applicability)
+        for _position, field, name, role, applicability, _span in sorted(
+            found, key=lambda item: (item[0], item[1].value, item[3])
+        )
+    )
+
+
+def _claim(field: OpeningField, value: str, applicability: EpubObservationApplicability, element: _Element, projection: _Projection, source, resource_identity: str, resource_digest: str, selection_path: tuple[str, ...], lineage: str, excerpt_characters: int, *, normalized: str | None = None, identifier_type: str | None = None, applicability_label: str | None = None, citation_context: tuple[_Element, int, int] | None = None, date_event: DateEvent | None = None, date_precision: DatePrecision | None = None, role: str | None = None) -> OpeningClaim | None:
     original = _SPACE.sub(" ", value).strip()
     if not original:
         return None
@@ -1882,6 +2092,9 @@ def _claim(field: OpeningField, value: str, applicability: EpubObservationApplic
             identifier_type,
             applicability_label,
             state,
+            date_event,
+            date_precision,
+            role,
         )
     except EvidenceValueError:
         return None
@@ -2127,6 +2340,8 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
         if not text or element.end <= element.start:
             continue
         lowered = text.casefold()
+        if _INDICIA_EXCLUSION.search(text):
+            continue
         if element.name not in claim_elements and not semantic & _CLAIM_SEMANTICS:
             continue
         title_context = any(
@@ -2147,6 +2362,9 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                 str | None,
                 str | None,
                 tuple[_Element, int, int] | None,
+                DateEvent | None,
+                DatePrecision | None,
+                str | None,
             ]
         ] = []
 
@@ -2158,6 +2376,9 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             identifier_type: str | None = None,
             applicability_label: str | None = None,
             citation_context: tuple[_Element, int, int] | None = None,
+            date_event: DateEvent | None = None,
+            date_precision: DatePrecision | None = None,
+            role: str | None = None,
         ) -> None:
             candidates.append(
                 (
@@ -2168,6 +2389,9 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                     identifier_type,
                     applicability_label,
                     citation_context,
+                    date_event,
+                    date_precision,
+                    role,
                 )
             )
 
@@ -2183,34 +2407,54 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             add(OpeningField.IMPRINT, text, EpubObservationApplicability.EDITION)
         if lowered.startswith(("by ", "author: ", "written by ")):
             value = re.sub(r"^(?:by|author:|written by)\s+", "", text, flags=re.I)
-            add(OpeningField.CREATOR, value, EpubObservationApplicability.WORK)
-            add(OpeningField.CREATOR_ROLE, text, EpubObservationApplicability.WORK, "author")
-        elif lowered.startswith("edited by "):
-            add(OpeningField.CONTRIBUTOR, text[10:], EpubObservationApplicability.WORK)
-            add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.WORK, "editor")
-        elif "translated by" in lowered:
-            add(OpeningField.TRANSLATION, text, EpubObservationApplicability.EDITION)
-            translator = re.split(r"translated by", text, flags=re.I, maxsplit=1)[-1].strip()
-            add(OpeningField.CONTRIBUTOR, translator, EpubObservationApplicability.EDITION)
-            add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.EDITION, "translator")
-        elif "illustrated by" in lowered or "illustrations by" in lowered:
-            add(OpeningField.ILLUSTRATION, text, EpubObservationApplicability.EDITION)
-            illustrator = re.split(r"illustrat(?:ed|ions) by", text, flags=re.I, maxsplit=1)[-1].strip()
-            add(OpeningField.CONTRIBUTOR, illustrator, EpubObservationApplicability.EDITION)
-            add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.EDITION, "illustrator")
-        elif lowered.startswith("adapted by "):
-            add(OpeningField.CONTRIBUTOR, text[11:], EpubObservationApplicability.WORK)
-            add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.WORK, "adapter")
-        elif lowered.startswith(("contributions by ", "contributor: ")):
-            value = re.sub(
-                r"^(?:contributions by|contributor:)\s+", "", text, flags=re.I
+            add(
+                OpeningField.CREATOR,
+                value,
+                EpubObservationApplicability.WORK,
+                role="author",
             )
-            add(OpeningField.CONTRIBUTOR, value, EpubObservationApplicability.WORK)
-            add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.WORK, "other")
+            add(OpeningField.CREATOR_ROLE, text, EpubObservationApplicability.WORK, "author")
+        recovered_credits = _indicia_credits(text)
+        bibliographic_credit = False
+        for credit_field, credit_value, credit_role, credit_applicability in recovered_credits:
+            if credit_field is OpeningField.CONTRIBUTOR:
+                bibliographic_credit = True
+                add(
+                    credit_field,
+                    credit_value,
+                    credit_applicability,
+                    role=credit_role,
+                )
+                add(
+                    OpeningField.CONTRIBUTOR_ROLE,
+                    text,
+                    credit_applicability,
+                    credit_role,
+                )
+                role_parts = credit_role.split("+")
+                if "translator" in role_parts:
+                    add(
+                        OpeningField.TRANSLATION,
+                        text,
+                        EpubObservationApplicability.EDITION,
+                    )
+                if "illustrator" in role_parts:
+                    add(
+                        OpeningField.ILLUSTRATION,
+                        text,
+                        EpubObservationApplicability.EDITION,
+                    )
+            else:
+                add(
+                    OpeningField.CONTEXTUAL_CREDIT,
+                    credit_value,
+                    credit_applicability,
+                    role=credit_role,
+                )
         explicit_semantics = _tokens(element.attributes)
         if "creator" in explicit_semantics and not lowered.startswith(("by ", "author: ", "written by ")):
             add(OpeningField.CREATOR, text, EpubObservationApplicability.WORK)
-        elif "contributor" in explicit_semantics:
+        elif "contributor" in explicit_semantics and not bibliographic_credit:
             add(OpeningField.CONTRIBUTOR, text, EpubObservationApplicability.WORK)
         if "edition" in lowered:
             add(OpeningField.EDITION, text, EpubObservationApplicability.EDITION)
@@ -2218,12 +2462,35 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             add(OpeningField.PRINTING, text, EpubObservationApplicability.EDITION)
         if "revision" in lowered or "revised" in lowered:
             add(OpeningField.REVISION, text, EpubObservationApplicability.EDITION)
-        if "copyright" in lowered or "©" in text:
-            for match in _DATE.finditer(text):
-                add(OpeningField.COPYRIGHT_DATE, match.group(0), EpubObservationApplicability.EDITION)
-        elif lowered.startswith(("published ", "first published ", "publication date")):
-            for match in _DATE.finditer(text):
-                add(OpeningField.PUBLICATION_DATE, match.group(0), EpubObservationApplicability.EDITION)
+        for lexical, event, precision in _indicia_dates(text):
+            field = (
+                OpeningField.PUBLICATION_DATE
+                if event is DateEvent.MANIFESTATION_PUBLICATION
+                else OpeningField.DATE_EVENT
+            )
+            add(
+                field,
+                lexical,
+                (
+                    EpubObservationApplicability.EDITION
+                    if event
+                    in {
+                        DateEvent.MANIFESTATION_PUBLICATION,
+                        DateEvent.COPYRIGHT,
+                        DateEvent.MODIFICATION,
+                        DateEvent.CONVERSION,
+                    }
+                    else EpubObservationApplicability.WORK
+                ),
+                date_event=event,
+                date_precision=precision,
+            )
+            if event is DateEvent.COPYRIGHT:
+                add(
+                    OpeningField.COPYRIGHT_DATE,
+                    lexical,
+                    EpubObservationApplicability.EDITION,
+                )
         series = _SERIES.search(text)
         if series:
             add(OpeningField.SERIES_ORDER, series.group(1), EpubObservationApplicability.WORK)
@@ -2382,6 +2649,9 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             identifier_type,
             applicability_label,
             citation_context,
+            date_event,
+            date_precision,
+            role,
         ) in candidates:
             claim = _claim(
                 field,
@@ -2399,6 +2669,9 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                 identifier_type=identifier_type,
                 applicability_label=applicability_label,
                 citation_context=citation_context,
+                date_event=date_event,
+                date_precision=date_precision,
+                role=role,
             )
             if claim is None:
                 warnings.append("unsafe_claim_suppressed")
@@ -2636,8 +2909,11 @@ class EpubOpeningExtractor:
                     code = "malformed_selected_resource"
                     resources.append(OpeningResourceResult(candidate.identity, OpeningResourceDisposition.MALFORMED, candidate.selection_path, warnings=(code,), opened=True))
                     warnings.append(code)
+            if len(claims) > limits.facts:
+                claims = claims[: limits.facts]
+                warnings.append("opening_fact_limit")
             unique_warnings = tuple(sorted(set(warnings)))
-            if len(unique_warnings) > limits.warnings or len(claims) > limits.facts:
+            if len(unique_warnings) > limits.warnings:
                 raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
             usage = EpubOpeningUsage(selected, opened, expanded, text_characters, nodes, navigation_links, strict, recovered)
             outcome = EpubInspectionOutcome.SUCCESS if claims else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE

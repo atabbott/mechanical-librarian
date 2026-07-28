@@ -20,9 +20,10 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverEvidenceError, CoverProvenance, CoverSource, CoverSourceKind,
     CoverSourceState, CoverTruncationReason, publication_ready,
 )
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 
 
-REPORT_SCHEMA = "metadata-report-v11"
+REPORT_SCHEMA = "metadata-report-v12"
 COMPARISON_VERSION = "same-kind-v1"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -56,6 +57,8 @@ class ClaimKind(StrEnum):
     ISBN = "isbn"
     ASIN = "asin"
     PUBLICATION_DATE = "publication_date"
+    DATE_EVENT = "date_event"
+    CONTEXTUAL_CREDIT = "contextual_credit"
     PUBLISHER = "publisher"
     DESCRIPTION = "description"
     LANGUAGE = "language"
@@ -588,6 +591,8 @@ class LocalClaim:
     role: str | None = None
     rear_provenance: RearClaimProvenance | None = None
     occurrence: int = 0
+    date_event: DateEvent | None = None
+    date_precision: DatePrecision | None = None
 
     def __post_init__(self) -> None:
         if _REFERENCE.fullmatch(self.reference) is None or not self.reference.startswith("local_"):
@@ -597,7 +602,11 @@ class LocalClaim:
         if self.basis == "target_metadata" and self.kind is not ClaimKind.TITLE:
             raise ReportValueError("target metadata claim kind is invalid")
         if self.role is not None:
-            if self.kind not in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}:
+            if self.kind not in {
+                ClaimKind.CREATOR,
+                ClaimKind.CONTRIBUTOR,
+                ClaimKind.CONTEXTUAL_CREDIT,
+            }:
                 raise ReportValueError("local claim role is invalid")
             try:
                 validate_role_projection(self.role)
@@ -605,7 +614,7 @@ class LocalClaim:
                 raise ReportValueError("local claim role is invalid") from error
         if self.rear_provenance is not None and type(self.rear_provenance) is not RearClaimProvenance:
             raise ReportValueError("rear claim provenance is invalid")
-        if self.rear_provenance is not None and (self.basis != "opening_matter" or self.kind not in {ClaimKind.TITLE, ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR, ClaimKind.ISBN}):
+        if self.rear_provenance is not None and (self.basis != "opening_matter" or self.kind not in {ClaimKind.TITLE, ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR, ClaimKind.ISBN, ClaimKind.PUBLICATION_DATE, ClaimKind.DATE_EVENT, ClaimKind.CONTEXTUAL_CREDIT}):
             raise ReportValueError("rear claim provenance is inapplicable")
         if type(self.occurrence) is not int or not 0 <= self.occurrence <= 1_000_000:
             raise ReportValueError("local claim occurrence is invalid")
@@ -638,6 +647,20 @@ class LocalClaim:
             raise ReportValueError("ISBN claim typing is inconsistent")
         if self.kind is ClaimKind.ISBN and self.canonical is not None and not _valid_isbn(self.canonical, self.checksum):
             raise ReportValueError("ISBN claim checksum is inconsistent")
+        is_date = self.kind in {ClaimKind.PUBLICATION_DATE, ClaimKind.DATE_EVENT}
+        if is_date != (type(self.date_event) is DateEvent):
+            raise ReportValueError("local date claim typing is inconsistent")
+        if (
+            is_date
+            and self.state is FieldState.VALID
+            and type(self.date_precision) is not DatePrecision
+        ) or (not is_date and self.date_precision is not None):
+            raise ReportValueError("local date precision is inconsistent")
+        if (
+            self.kind is ClaimKind.PUBLICATION_DATE
+            and self.date_event is not DateEvent.MANIFESTATION_PUBLICATION
+        ):
+            raise ReportValueError("local publication date event is inconsistent")
         sentinel = _sentinel_state(self.observed)
         if sentinel is not None and (self.state is not sentinel or self.canonical is not None):
             raise ReportValueError("source sentinel claim is inconsistent")
@@ -664,6 +687,8 @@ class LocalClaim:
         role: str | None = None,
         rear_provenance: RearClaimProvenance | None = None,
         occurrence: int = 0,
+        date_event: DateEvent | None = None,
+        date_precision: DatePrecision | None = None,
     ) -> Self:
         value = {
             "applicability": applicability,
@@ -679,9 +704,13 @@ class LocalClaim:
             "role": role,
             "rear_provenance": None if rear_provenance is None else rear_provenance.to_data(),
             "occurrence": occurrence,
+            "date_event": None if date_event is None else date_event.value,
+            "date_precision": (
+                None if date_precision is None else date_precision.value
+            ),
         }
         resolved_scope = scope if scope is not None else claim_scope(kind)
-        return cls(stable_reference("local", value), kind, observed, canonical, excerpt, applicability, basis, checksum, applicability_basis, resolved_scope, state, role, rear_provenance, occurrence)
+        return cls(stable_reference("local", value), kind, observed, canonical, excerpt, applicability, basis, checksum, applicability_basis, resolved_scope, state, role, rear_provenance, occurrence, date_event, date_precision)
 
     def _reference_data(self) -> dict[str, object]:
         return {
@@ -698,6 +727,12 @@ class LocalClaim:
             "role": self.role,
             "rear_provenance": None if self.rear_provenance is None else self.rear_provenance.to_data(),
             "occurrence": self.occurrence,
+            "date_event": (
+                None if self.date_event is None else self.date_event.value
+            ),
+            "date_precision": (
+                None if self.date_precision is None else self.date_precision.value
+            ),
         }
 
     def to_data(self) -> dict[str, object]:
@@ -1550,7 +1585,7 @@ def _provider_reference_data(provider: str, candidate: str, kind: ClaimKind, val
 def claim_scope(kind: ClaimKind) -> ClaimScope:
     if type(kind) is not ClaimKind:
         raise ReportValueError("claim kind is invalid")
-    return ClaimScope.EDITION if kind in {ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLICATION_DATE, ClaimKind.PUBLISHER, ClaimKind.IMPRINT, ClaimKind.LANGUAGE} else ClaimScope.WORK
+    return ClaimScope.EDITION if kind in {ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLICATION_DATE, ClaimKind.DATE_EVENT, ClaimKind.CONTEXTUAL_CREDIT, ClaimKind.PUBLISHER, ClaimKind.IMPRINT, ClaimKind.LANGUAGE} else ClaimScope.WORK
 
 
 def comparison_links(provider: ProviderClaim, local: tuple[LocalClaim, ...]) -> tuple[ComparisonLink, ...]:
@@ -1767,9 +1802,9 @@ def _cover_source_from_data(value: object) -> CoverSource:
 
 
 def _local_claim_from_data(value: object) -> LocalClaim:
-    item = _object(value, {"applicability", "applicability_basis", "basis", "canonical", "checksum", "excerpt", "kind", "observed", "reference", "state", "scope", "role", "rear_provenance", "occurrence"})
+    item = _object(value, {"applicability", "applicability_basis", "basis", "canonical", "checksum", "date_event", "date_precision", "excerpt", "kind", "observed", "reference", "state", "scope", "role", "rear_provenance", "occurrence"})
     provenance = item["rear_provenance"]
-    return LocalClaim(item["reference"], ClaimKind(item["kind"]), item["observed"], item["canonical"], item["excerpt"], item["applicability"], item["basis"], item["checksum"], item["applicability_basis"], ClaimScope(item["scope"]), FieldState(item["state"]), item["role"], None if provenance is None else RearClaimProvenance(**_object(provenance, {"citation", "marker", "resource_identity", "spine_ordinal", "tail_slot"})), item["occurrence"])
+    return LocalClaim(item["reference"], ClaimKind(item["kind"]), item["observed"], item["canonical"], item["excerpt"], item["applicability"], item["basis"], item["checksum"], item["applicability_basis"], ClaimScope(item["scope"]), FieldState(item["state"]), item["role"], None if provenance is None else RearClaimProvenance(**_object(provenance, {"citation", "marker", "resource_identity", "spine_ordinal", "tail_slot"})), item["occurrence"], None if item["date_event"] is None else DateEvent(item["date_event"]), None if item["date_precision"] is None else DatePrecision(item["date_precision"]))
 
 
 def _provider_from_data(value: object) -> ProviderObservation:

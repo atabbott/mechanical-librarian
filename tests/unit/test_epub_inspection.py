@@ -6,6 +6,8 @@ import json
 import unittest
 
 from mechanical_librarian.domain.epub_inspection import (
+    DateEvent,
+    DatePrecision,
     EpubInspection,
     EpubInspectionFact,
     EpubInspectionField,
@@ -67,3 +69,39 @@ class EpubInspectionFactTests(unittest.TestCase):
 
         self.assertIsNone(fact.canonical_value)
         self.assertEqual(fact.checksum, "invalid")
+
+    def test_date_event_precision_and_contextual_credit_are_canonical(self) -> None:
+        source = Fingerprint("sha256", SchemaVersion("source-v1"), "d" * 64)
+        inspection = EpubInspection(
+            EpubInspectionOutcome.SUCCESS,
+            source,
+            (
+                EpubInspectionFact(
+                    EpubInspectionField.PUBLICATION_DATE,
+                    source,
+                    "2024-03",
+                    "2024-03",
+                    "This ebook edition published 2024-03",
+                    "not_applicable",
+                    "not_applicable",
+                    "not_applicable",
+                    "opening_matter",
+                    date_event=DateEvent.MANIFESTATION_PUBLICATION,
+                    date_precision=DatePrecision.MONTH,
+                ),
+                EpubInspectionFact(
+                    EpubInspectionField.CONTEXTUAL_CREDIT,
+                    source,
+                    "Tool House",
+                    "Tool House",
+                    "EPUB conversion by Tool House",
+                    "not_applicable",
+                    "not_applicable",
+                    "not_applicable",
+                    "opening_matter",
+                    role="conversion",
+                ),
+            ),
+        )
+        self.assertEqual(EpubInspection.from_json(inspection.to_json()), inspection)
+        self.assertIn('"schema":"epub-inspection-v3"', inspection.to_json())

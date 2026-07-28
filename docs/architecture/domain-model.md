@@ -19,8 +19,9 @@ EPUB. It contains:
   artifact facts, and explicit truncation; and
 - one derived ISBN relationship for every local and provider ISBN claim.
 
-The local field vocabulary is title/subtitle, creator/contributor and role,
-series/sequence, ISBN, date, publisher/imprint, description, language, and
+The local field vocabulary is title/subtitle, creator/contributor and controlled
+role, contextual production credit, series/sequence, manifestation publication
+date, other typed date event, publisher/imprint, description, language, and
 contextual subject evidence; typed field states remain evidence, not decisions.
 Edition and rights are not local report-claim kinds: edition identity and
 applicability may contextualize supported evidence, while rights observations
@@ -36,13 +37,19 @@ local fields remain source-attributed evidence, never decisions, and preserve
 their admitted source/DOM order and rear-spine provenance where present.
 An explicitly non-ISBN package scheme or URI owns its digit sequence, so a
 checksum-valid substring within it is not an ISBN fact.
-Publication package dates with an explicit standards-valid signed UTC offset
-retain their original lexical form and declared publication event. They are not
-converted to UTC or reclassified from creation, modification, copyright, or an
-unknown event.
-Package contributor observations retain their raw declared roles, while an
-exact normalized `bkp` book-producer role is omitted from the bibliographic
-contributor projection. Other declared roles are preserved unchanged.
+Local dates retain the exact lexical value and maximum stated `year`, `month`,
+`day`, or `timestamp` precision. The closed event vocabulary keeps selected-
+manifestation publication, work first publication, copyright, creation,
+modification, conversion, and unknown events distinct. Only an explicit
+selected-ebook/edition publication statement is a `publication_date`; the other
+events remain `date_event` evidence for later policy. Signed offsets are
+preserved and are never converted to UTC.
+Package contributor roles are projected to controlled author, translator,
+illustrator, editor, foreword, designer, photographer, cartographer, adapter,
+or structured-explicit `other` codes. Multiple declared roles remain one
+canonical `+`-delimited role set on the same contributor occurrence. Production
+roles such as exact `bkp` are retained as `contextual_credit`, never as a
+bibliographic contributor or author.
 An explicit package primary-identifier designation is projected as ebook
 applicability only when its value is a valid ISBN. A parser-inferred primary and
 other package ISBNs remain independently provenanced and unlabelled.

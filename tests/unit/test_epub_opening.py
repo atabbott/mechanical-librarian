@@ -26,6 +26,7 @@ from mechanical_librarian.domain.epub_opening import (
     OpeningResourceDisposition,
 )
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
     ConnectionId,
@@ -777,7 +778,7 @@ class EpubOpeningTests(unittest.TestCase):
                 for claim in roles.claims
                 if claim.field is OpeningField.CONTRIBUTOR_ROLE
             },
-            {"adapter", "other"},
+            {"adapter"},
         )
         self.assertEqual(
             {
@@ -788,13 +789,265 @@ class EpubOpeningTests(unittest.TestCase):
             {
                 "Casey Designer",
                 "Alex Adapter",
-                "Morgan Example",
             },
         )
         self.assertEqual(
             [claim.normalized_value for claim in roles.claims if claim.field is OpeningField.CREATOR],
             ["Chris Creator"],
         )
+
+    def test_indicia_roles_dates_and_production_credits_remain_typed_and_separate(
+        self,
+    ) -> None:
+        report = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page">'
+                    "<p>by Ada Author</p>"
+                    "<p>Translated and illustrated by Bea Artist</p>"
+                    "<p>Edited by Cara Editor; Foreword by Dev Writer</p>"
+                    "<p>Book design by Eli Designer; Photography by Fran Lens; "
+                    "Cartography by Gia Mapper; Adapted by Hal Adapter</p>"
+                    "<p>EPUB conversion by Tool House; Scanned by Archive Bot; "
+                    "Produced with Calibre; Distributed by Example Retailer</p>"
+                    "<p>First published 1998</p>"
+                    "<p>This ebook edition published 2024-03</p>"
+                    "<p>Copyright 2024-03-05</p>"
+                    "<p>Last modified 2024-03-05T10:30:00+01:00</p>"
+                    "</section>"
+                )
+            )
+        )
+
+        self.assertEqual(
+            [
+                (claim.normalized_value, claim.role)
+                for claim in report.claims
+                if claim.field is OpeningField.CREATOR
+            ],
+            [("Ada Author", "author")],
+        )
+        self.assertEqual(
+            {
+                (claim.normalized_value, claim.role)
+                for claim in report.claims
+                if claim.field is OpeningField.CONTRIBUTOR
+            },
+            {
+                ("Bea Artist", "translator+illustrator"),
+                ("Cara Editor", "editor"),
+                ("Dev Writer", "foreword"),
+                ("Eli Designer", "designer"),
+                ("Fran Lens", "photographer"),
+                ("Gia Mapper", "cartographer"),
+                ("Hal Adapter", "adapter"),
+            },
+        )
+        contextual = {
+            (claim.normalized_value, claim.role)
+            for claim in report.claims
+            if claim.field is OpeningField.CONTEXTUAL_CREDIT
+        }
+        self.assertEqual(
+            contextual,
+            {
+                ("Tool House", "conversion"),
+                ("Archive Bot", "scanner"),
+                ("Calibre", "software"),
+                ("Example Retailer", "retailer"),
+            },
+        )
+        self.assertFalse(
+            contextual
+            & {
+                (claim.normalized_value, claim.role)
+                for claim in report.claims
+                if claim.field is OpeningField.CONTRIBUTOR
+            }
+        )
+        self.assertEqual(
+            [
+                (
+                    claim.field,
+                    claim.normalized_value,
+                    claim.date_event,
+                    claim.date_precision,
+                )
+                for claim in report.claims
+                if claim.field
+                in {OpeningField.PUBLICATION_DATE, OpeningField.DATE_EVENT}
+            ],
+            [
+                (
+                    OpeningField.DATE_EVENT,
+                    "1998",
+                    DateEvent.WORK_FIRST_PUBLICATION,
+                    DatePrecision.YEAR,
+                ),
+                (
+                    OpeningField.PUBLICATION_DATE,
+                    "2024-03",
+                    DateEvent.MANIFESTATION_PUBLICATION,
+                    DatePrecision.MONTH,
+                ),
+                (
+                    OpeningField.DATE_EVENT,
+                    "2024-03-05",
+                    DateEvent.COPYRIGHT,
+                    DatePrecision.DAY,
+                ),
+                (
+                    OpeningField.DATE_EVENT,
+                    "2024-03-05T10:30:00+01:00",
+                    DateEvent.MODIFICATION,
+                    DatePrecision.TIMESTAMP,
+                ),
+            ],
+        )
+        self.assertEqual(EpubOpeningReport.from_json(report.to_json()), report)
+
+    def test_unlabelled_print_and_invalid_dates_never_become_manifestation_dates(
+        self,
+    ) -> None:
+        report = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page">'
+                    "<p>Published 2024</p>"
+                    "<p>Paperback edition published 2023-02-01</p>"
+                    "<p>This ebook edition published 2024-02-31</p>"
+                    "<p>First published 1999</p>"
+                    "</section>"
+                )
+            )
+        )
+        self.assertFalse(
+            any(
+                claim.field is OpeningField.PUBLICATION_DATE
+                for claim in report.claims
+            )
+        )
+        self.assertEqual(
+            [
+                (claim.normalized_value, claim.date_event)
+                for claim in report.claims
+                if claim.field is OpeningField.DATE_EVENT
+            ],
+            [("1999", DateEvent.WORK_FIRST_PUBLICATION)],
+        )
+
+    def test_synthetic_indicia_aggregate_has_exact_role_and_date_recovery(
+        self,
+    ) -> None:
+        role_cases = (
+            ("Translated by A Translator", {("A Translator", "translator")}),
+            ("Illustrations by B Artist", {("B Artist", "illustrator")}),
+            ("Edited by C Editor", {("C Editor", "editor")}),
+            ("Foreword by D Writer", {("D Writer", "foreword")}),
+            ("Cover design by E Designer", {("E Designer", "designer")}),
+            ("Photography by F Lens", {("F Lens", "photographer")}),
+            ("Maps by G Mapper", {("G Mapper", "cartographer")}),
+            ("Adapted by H Adapter", {("H Adapter", "adapter")}),
+            (
+                "Translated and illustrated by I Artist",
+                {("I Artist", "translator+illustrator")},
+            ),
+            ("EPUB conversion by Tool House", set()),
+            ("Scanned by Archive Bot", set()),
+            ("Contributions by Ambiguous Person", set()),
+            ("Retailer: Example Shop", set()),
+            ("ordinary prose by nobody in particular", set()),
+        )
+        date_cases = (
+            (
+                "This ebook edition published 2024",
+                {("2024", DatePrecision.YEAR)},
+            ),
+            (
+                "Digital edition published 2024-03",
+                {("2024-03", DatePrecision.MONTH)},
+            ),
+            (
+                "This edition published 2024-03-05",
+                {("2024-03-05", DatePrecision.DAY)},
+            ),
+            (
+                "EPUB publication date: 2024-03-05T10:30:00-04:00",
+                {("2024-03-05T10:30:00-04:00", DatePrecision.TIMESTAMP)},
+            ),
+            ("Published 2024", set()),
+            ("Paperback edition published 2024-03-05", set()),
+            ("First published 1998", set()),
+            ("Copyright 2024", set()),
+            ("Last modified 2024-03-05", set()),
+            ("This ebook edition published 2024-02-31", set()),
+        )
+
+        def aggregate(cases, recover):
+            true_positive = false_positive = false_negative = true_negative = 0
+            for text, expected in cases:
+                actual = recover(text)
+                true_positive += len(actual & expected)
+                false_positive += len(actual - expected)
+                false_negative += len(expected - actual)
+                true_negative += int(not expected and not actual)
+            return {
+                "explicit_negative_precision": (
+                    true_negative / (true_negative + false_positive)
+                ),
+                "false_positive": false_positive,
+                "recall": true_positive / (true_positive + false_negative),
+            }
+
+        role_aggregate = aggregate(
+            role_cases,
+            lambda text: {
+                (name, role)
+                for field, name, role, _applicability in opening._indicia_credits(
+                    text
+                )
+                if field is OpeningField.CONTRIBUTOR
+            },
+        )
+        date_aggregate = aggregate(
+            date_cases,
+            lambda text: {
+                (lexical, precision)
+                for lexical, event, precision in opening._indicia_dates(text)
+                if event is DateEvent.MANIFESTATION_PUBLICATION
+            },
+        )
+        self.assertEqual(
+            {"contributor_role": role_aggregate, "manifestation_date": date_aggregate},
+            {
+                "contributor_role": {
+                    "explicit_negative_precision": 1.0,
+                    "false_positive": 0,
+                    "recall": 1.0,
+                },
+                "manifestation_date": {
+                    "explicit_negative_precision": 1.0,
+                    "false_positive": 0,
+                    "recall": 1.0,
+                },
+            },
+        )
+
+    def test_fact_limit_retains_already_admitted_opening_evidence(self) -> None:
+        report = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page">'
+                    "<p>Translated by First Contributor</p>"
+                    "<p>Illustrated by Second Contributor</p>"
+                    "</section>"
+                )
+            ),
+            EpubOpeningLimits(facts=1),
+        )
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
+        self.assertEqual(len(report.claims), 1)
+        self.assertIn("opening_fact_limit", report.warnings)
 
     def test_trailing_series_cue_without_positive_structure_is_rejected(
         self,
