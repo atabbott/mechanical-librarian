@@ -1001,6 +1001,43 @@ class ProviderAdapterTests(unittest.TestCase):
             scope=ClaimScope.WORK,
         )
 
+    def _observe_contributions(
+        self,
+        contributions: list[dict[str, object]],
+    ) -> ProviderObservation:
+        payload = self._envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": "9780306406157",
+                    "contributions": contributions,
+                }
+            ],
+            [
+                {
+                    "id": 1,
+                    "title": "Synthetic title",
+                    "release_date": "2001-02-03",
+                    "contributions": contributions,
+                }
+            ],
+        )
+        return HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
+                )
+            ),
+            65_536,
+        ).observe(_isbn_lookup((self._claim(),)))
+
     def test_one_request_retains_all_candidates_in_identity_order(self) -> None:
         requests: list[httpx.Request] = []
 
@@ -1650,38 +1687,7 @@ class ProviderAdapterTests(unittest.TestCase):
             "contribution": None,
             "author": {"id": 1, "name": "Synthetic Contributor"},
         }
-        payload = self._envelope(
-            [
-                {
-                    "id": 1,
-                    "book_id": 1,
-                    "isbn_10": None,
-                    "isbn_13": "9780306406157",
-                    "contributions": [contribution],
-                }
-            ],
-            [
-                {
-                    "id": 1,
-                    "title": "Synthetic title",
-                    "release_date": "2001-02-03",
-                    "contributions": [contribution],
-                }
-            ],
-        )
-        observation = HardcoverMetadataProvider(
-            "catalogue",
-            httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda request: httpx.Response(
-                        200,
-                        headers={"content-type": "application/json"},
-                        json=payload,
-                    )
-                )
-            ),
-            65_536,
-        ).observe(_isbn_lookup((self._claim(),)))
+        observation = self._observe_contributions([contribution])
 
         self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
         malformed = [
@@ -1693,6 +1699,92 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(
             {ClaimScope.EDITION, ClaimScope.WORK},
             {claim.scope for claim in malformed},
+        )
+        self.assertEqual(
+            {ProviderEvidenceKind.FIRST_PUBLICATION_DATE},
+            {evidence.kind for evidence in observation.candidates[0].evidence},
+        )
+
+    def test_nullable_and_malformed_contribution_authors_are_field_local(self) -> None:
+        for label, role, author, expected_kind in (
+            ("both-null", None, None, ClaimKind.CONTRIBUTOR),
+            ("null-author", "Author", None, ClaimKind.CREATOR),
+            ("malformed-author", "Translator", "invalid", ClaimKind.CONTRIBUTOR),
+            ("malformed-role-and-author", {}, "invalid", ClaimKind.CONTRIBUTOR),
+        ):
+            with self.subTest(label=label):
+                contribution = {
+                    "id": 1,
+                    "contribution": role,
+                    "author": author,
+                }
+                observation = self._observe_contributions([contribution])
+
+                self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+                malformed = [
+                    claim
+                    for claim in observation.candidates[0].claims
+                    if claim.kind is expected_kind
+                    and claim.state is FieldState.MALFORMED
+                ]
+                self.assertEqual(
+                    {ClaimScope.EDITION, ClaimScope.WORK},
+                    {claim.scope for claim in malformed},
+                )
+                self.assertEqual(
+                    {ProviderEvidenceKind.FIRST_PUBLICATION_DATE},
+                    {
+                        evidence.kind
+                        for evidence in observation.candidates[0].evidence
+                    },
+                )
+
+    def test_malformed_author_identity_is_omitted_without_losing_valid_name_claims(self) -> None:
+        contribution = {
+            "id": 1,
+            "contribution": "Author",
+            "author": {"id": None, "name": "Synthetic Contributor"},
+        }
+        observation = self._observe_contributions([contribution])
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        creators = [
+            claim
+            for claim in observation.candidates[0].claims
+            if claim.kind is ClaimKind.CREATOR
+        ]
+        self.assertEqual(
+            {ClaimScope.EDITION, ClaimScope.WORK},
+            {claim.scope for claim in creators},
+        )
+        self.assertTrue(all(claim.state is FieldState.VALID for claim in creators))
+        self.assertEqual(
+            {ProviderEvidenceKind.FIRST_PUBLICATION_DATE},
+            {evidence.kind for evidence in observation.candidates[0].evidence},
+        )
+
+    def test_nullable_contribution_overflow_remains_bounded_without_author_inference(self) -> None:
+        contributions = [
+            {"id": index, "contribution": None, "author": None}
+            for index in range(1, 18)
+        ]
+        observation = self._observe_contributions(contributions)
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        contribution_claims = [
+            claim
+            for claim in observation.candidates[0].claims
+            if claim.kind in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}
+        ]
+        self.assertEqual(
+            {
+                (ClaimKind.CONTRIBUTOR, ClaimScope.EDITION, FieldState.OVERSIZED),
+                (ClaimKind.CONTRIBUTOR, ClaimScope.WORK, FieldState.OVERSIZED),
+            },
+            {
+                (claim.kind, claim.scope, claim.state)
+                for claim in contribution_claims
+            },
         )
         self.assertEqual(
             {ProviderEvidenceKind.FIRST_PUBLICATION_DATE},

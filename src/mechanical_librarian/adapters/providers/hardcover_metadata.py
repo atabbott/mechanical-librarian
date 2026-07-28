@@ -792,10 +792,6 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
             )
         )
     for contribution in contributions:
-        author = _closed_or_none(contribution["author"], {"id", "name"})
-        if author is None:
-            raise ValueError("provider author evidence is malformed")
-        author_id = _identifier(author["id"])
         try:
             role = validate_role_projection(
                 contribution["contribution"]
@@ -804,6 +800,13 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
             # The claim projection records the malformed role. It cannot
             # safely support identity evidence, but it must not discard the
             # otherwise valid candidate.
+            continue
+        author = _field_local_author(contribution["author"])
+        if author is None:
+            continue
+        try:
+            author_id = _identifier(author["id"])
+        except ValueError:
             continue
         if role == "author":
             evidence.add(
@@ -838,14 +841,17 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
 def _contributions(provider: str, identity: str, value: object, scope: ClaimScope, local: tuple[LocalClaim, ...], offset: int) -> list[ProviderClaim]:
     claims: list[ProviderClaim] = []
     contributions, overflow = _bounded_list(value, MAX_CONTRIBUTIONS, {"id", "contribution", "author"})
-    for item in contributions:
-        _closed_or_none(item["author"], {"id", "name"})
     if overflow:
+        for item in contributions:
+            _closed_or_none(item["author"], {"id", "name"})
         # The admitted max+1 probe preserves every role family present without
         # retaining an unbounded contribution list.
         kinds: set[ClaimKind] = set()
         for probe in contributions:
             role = probe["contribution"]
+            if role is None:
+                kinds.add(ClaimKind.CONTRIBUTOR)
+                continue
             try:
                 role = validate_role_projection(role).casefold()
             except EvidenceValueError:
@@ -853,15 +859,24 @@ def _contributions(provider: str, identity: str, value: object, scope: ClaimScop
             kinds.add(ClaimKind.CREATOR if role == "author" else ClaimKind.CONTRIBUTOR)
         return [_state_claim(provider, identity, kind, FieldState.OVERSIZED, scope, local, offset + index) for index, kind in enumerate(sorted(kinds, key=lambda value: value.value))]
     for item in contributions:
-        author = _closed_or_none(item["author"], {"id", "name"})
         try:
             role = validate_role_projection(item["contribution"]).casefold()
         except EvidenceValueError:
             claims.append(_state_claim(provider, identity, ClaimKind.CONTRIBUTOR, FieldState.MALFORMED, scope, local, offset + len(claims)))
             continue
         kind = ClaimKind.CREATOR if role == "author" else ClaimKind.CONTRIBUTOR
-        claims.append(_claim(provider, identity, kind, None if author is None else author["name"], scope, "not_applicable", "author" if kind is ClaimKind.CREATOR else role, local, offset + len(claims)))
+        author = _field_local_author(item["author"])
+        if author is None:
+            claims.append(_state_claim(provider, identity, kind, FieldState.MALFORMED, scope, local, offset + len(claims)))
+            continue
+        claims.append(_claim(provider, identity, kind, author["name"], scope, "not_applicable", "author" if kind is ClaimKind.CREATOR else role, local, offset + len(claims)))
     return claims
+
+
+def _field_local_author(value: object) -> dict[str, Any] | None:
+    if type(value) is not dict or set(value) != {"id", "name"}:
+        return None
+    return value
 
 
 def _claim(provider: str, identity: str, kind: ClaimKind, value: object, scope: ClaimScope, applicability: str, role: str | None, local: tuple[LocalClaim, ...], raw_order: int) -> ProviderClaim:

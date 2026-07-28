@@ -8,9 +8,9 @@
   declare bounded GraphQL errors now yield `unavailable` with no candidates or
   cover descriptors; malformed or over-bound error envelopes remain
   `malformed`, and no provider diagnostic or credential enters retained
-  evidence. Nullable Hardcover contribution roles now remain typed malformed
-  claims without discarding an otherwise valid candidate or being inferred as
-  author identity evidence. (#378)
+  evidence. Nullable or malformed Hardcover contribution roles and authors now
+  remain field-local typed claims without discarding an otherwise valid
+  candidate or being inferred as author identity evidence. (#378)
 
 - Add Google Books as an ordinary report-only metadata provider with
   credential-free and optional controller-owned API-key modes, fixed bounded
