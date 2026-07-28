@@ -82,7 +82,7 @@
       "const": "shadow-review-result-v1"
     },
     "packet_version": {
-      "const": "shadow-review-packet-v1"
+      "const": "shadow-review-packet-v2"
     },
     "policy_version": {
       "const": "qualification-only-policy-v1"

@@ -63,7 +63,7 @@ provider call.
 
 - The database path is absent for the first invocation or already contains the
   exact current schema required by the installed increment.
-- `metadata-report-v1` through `metadata-report-v10`, and all earlier development
+- `metadata-report-v1` through `metadata-report-v13`, and all earlier development
   schemas are rejected before mutation. There is no migration, import,
   preservation, or compatibility parser. Keep an old database offline if
   required, initialize a clean database, and rerun the supported report command.
@@ -176,7 +176,7 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v13`; earlier development reports and
+discriminator is `metadata-report-v14`; earlier development reports and
 databases remain offline and require a clean current database under ADR-0013.
 
 The credential-bearing parent combines those facts with the target projection.
@@ -254,6 +254,12 @@ use the shared discovery plan. Volume-level format, page-count, revision,
 subject, and publication text remain typed evidence. In particular,
 `publishedDate` strings are evidence-only and never become selectable
 publication-date claims without safe event/manifestation linkage.
+All provider date facts retain the original lexical string, normalized value
+when safe, maximum stated precision, closed event, scope, and explicit or
+unresolved linkage confidence. Candidate edition/work identity, provider
+authority and query kind, and sibling identifier/format facts supply the
+bounded source/access/linkage context; no observation timestamp or numerical
+provider-truth score is manufactured.
 Malformed or oversized scalar claim fields remain explicit field-local states,
 so valid sibling claims and evidence survive. Every identifier entry must be
 one exact bounded `type`/`identifier` object; structurally malformed entries

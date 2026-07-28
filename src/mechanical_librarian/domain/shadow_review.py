@@ -12,9 +12,9 @@ from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
 from mechanical_librarian.domain.review_case import ReviewCase
 
-PACKET_SCHEMA = "shadow-review-packet-v1"
+PACKET_SCHEMA = "shadow-review-packet-v2"
 RESULT_SCHEMA = "shadow-review-result-v1"
-REQUEST_SCHEMA = "shadow-review-request-v2"
+REQUEST_SCHEMA = "shadow-review-request-v3"
 PROFILE_IDENTITY_SCHEMA = "reviewer-profile-identity-v1"
 QUALIFICATION_MODE = "qualification_only"
 MAX_PACKET_BYTES = 1_048_576
@@ -213,10 +213,39 @@ class ShadowReviewPacket:
             candidates = proposal.get("candidates")
             if type(candidates) is not list or not candidates:
                 raise ShadowReviewValueError("shadow-review packet is invalid")
-            candidate_ids = [value.get("candidate_id") for value in candidates if type(value) is dict]
+            candidate_ids: list[object] = []
+            for candidate in candidates:
+                if (
+                    type(candidate) is not dict
+                    or set(candidate)
+                    != {
+                        "assessment",
+                        "candidate_id",
+                        "correlations",
+                        "date_event",
+                        "date_precision",
+                        "evidence_references",
+                        "scope",
+                        "value",
+                    }
+                    or (candidate["date_event"] is None)
+                    != (candidate["date_precision"] is None)
+                    or (
+                        candidate["date_event"] is not None
+                        and (
+                            candidate["date_event"]
+                            not in {
+                                "manifestation_publication",
+                                "work_first_publication",
+                            }
+                            or candidate["date_precision"] not in {"day", "year"}
+                        )
+                    )
+                ):
+                    raise ShadowReviewValueError("shadow-review packet is invalid")
+                candidate_ids.append(candidate.get("candidate_id"))
             if (
-                len(candidate_ids) != len(candidates)
-                or any(type(value) is not str or _ALTERNATIVE_ID.fullmatch(value) is None for value in candidate_ids)
+                any(type(value) is not str or _ALTERNATIVE_ID.fullmatch(value) is None for value in candidate_ids)
                 or candidate_ids != sorted(set(candidate_ids))
             ):
                 raise ShadowReviewValueError("shadow-review packet is invalid")
@@ -296,6 +325,8 @@ class ShadowReviewPacket:
                         "assessment": alternative["assessment"],
                         "candidate_id": alternative["alternative_id"],
                         "correlations": alternative["correlations"],
+                        "date_event": alternative["date_event"],
+                        "date_precision": alternative["date_precision"],
                         "evidence_references": alternative["evidence_references"],
                         "scope": alternative["scope"],
                         "value": alternative["value"],
@@ -491,6 +522,8 @@ class ShadowReviewRequest:
                             },
                             "candidate_id": candidate_id,
                             "correlations": [],
+                            "date_event": None,
+                            "date_precision": None,
                             "evidence_references": [citation_id],
                             "scope": "field",
                             "value": "Synthetic title",
@@ -713,20 +746,91 @@ def _evidence_index(value: object) -> dict[str, dict[str, object]]:
                         if type(evidence) is not dict:
                             continue
                         rich = {
+                            "access": {
+                                "authority": provider.get("authority"),
+                                "query_kind": provider.get("query_kind"),
+                            },
+                            "candidate": candidate["identity"],
+                            "evidence": evidence,
+                            "linkage": _provider_linkage(candidate),
+                            "provider": provider.get("provider"),
+                            "work_identity": candidate.get("work_identity"),
+                        }
+                        rich_identity = {
                             "candidate": candidate["identity"],
                             "evidence": evidence,
                             "provider": provider.get("provider"),
                         }
                         rich_id = "evidence_" + hashlib.sha256(
-                            canonical_json(rich).encode("utf-8")
+                            canonical_json(rich_identity).encode("utf-8")
                         ).hexdigest()
                         result[rich_id] = rich
         for item in value.values():
             result.update(_evidence_index(item))
+        if type(providers) is list:
+            for provider in providers:
+                if (
+                    type(provider) is not dict
+                    or type(provider.get("candidates")) is not list
+                ):
+                    continue
+                for candidate in provider["candidates"]:
+                    if (
+                        type(candidate) is not dict
+                        or type(candidate.get("claims")) is not list
+                        or type(candidate.get("identity")) is not str
+                        or type(candidate.get("work_identity")) is not str
+                    ):
+                        continue
+                    for claim in candidate["claims"]:
+                        if (
+                            type(claim) is not dict
+                            or type(claim.get("reference")) is not str
+                            or claim.get("date_event") is None
+                        ):
+                            continue
+                        result[claim["reference"]] = {
+                            "access": {
+                                "authority": provider.get("authority"),
+                                "query_kind": provider.get("query_kind"),
+                            },
+                            "candidate": candidate["identity"],
+                            "fact": _copy_json(claim),
+                            "linkage": _provider_linkage(candidate),
+                            "provider": provider.get("provider"),
+                            "work_identity": candidate["work_identity"],
+                        }
     elif type(value) is list:
         for item in value:
             result.update(_evidence_index(item))
     return result
+
+
+def _provider_linkage(candidate: dict[str, object]) -> dict[str, object]:
+    claims = candidate.get("claims")
+    evidence = candidate.get("evidence")
+    identifier_references = sorted(
+        claim["reference"]
+        for claim in claims
+        if (
+            type(claim) is dict
+            and claim.get("kind") in {"asin", "isbn"}
+            and claim.get("state") == "valid"
+            and type(claim.get("reference")) is str
+        )
+    ) if type(claims) is list else []
+    format_facts = sorted(
+        (
+            _copy_json(fact)
+            for fact in evidence
+            if type(fact) is dict and fact.get("kind") == "physical_format"
+        ),
+        key=canonical_json,
+    ) if type(evidence) is list else []
+    return {
+        "format_facts": format_facts,
+        "identifier_references": identifier_references,
+    }
 
 
 def _copy_json(value: object) -> object:

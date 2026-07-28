@@ -53,6 +53,7 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     Comparison,
     ComparisonLink,
+    DateLinkConfidence,
     FieldResult,
     FieldSource,
     FieldSourceResult,
@@ -144,6 +145,45 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_provider_dates_preserve_lexical_normalized_precision_and_linkage(
+        self,
+    ) -> None:
+        lexical = "2024-03-05T10:30:00-04:00"
+        claim = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.PUBLICATION_DATE,
+            value=lexical,
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="not_applicable",
+        )
+        self.assertEqual(lexical, claim.date_lexical)
+        self.assertEqual(lexical, claim.value)
+        self.assertEqual(DatePrecision.TIMESTAMP, claim.date_precision)
+        self.assertEqual(DateEvent.MANIFESTATION_PUBLICATION, claim.date_event)
+        self.assertEqual(DateLinkConfidence.EXPLICIT, claim.date_confidence)
+
+        unresolved = ProviderEvidence(
+            ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+            "2024-03",
+            ClaimScope.EDITION,
+        )
+        self.assertEqual("2024-03", unresolved.date_normalized)
+        self.assertEqual(DatePrecision.MONTH, unresolved.date_precision)
+        self.assertEqual(DateEvent.UNKNOWN, unresolved.date_event)
+        self.assertEqual(DateLinkConfidence.UNRESOLVED, unresolved.date_confidence)
+        with self.assertRaises(ReportValueError):
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition-1",
+                kind=ClaimKind.PUBLICATION_DATE,
+                value="2024-03-05T10:30:00+14:01",
+                state=FieldState.VALID,
+                scope=ClaimScope.EDITION,
+                applicability="not_applicable",
+            )
+
     def test_local_date_event_scope_is_event_aware_and_replay_rejects_mismatch(
         self,
     ) -> None:
@@ -573,9 +613,9 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v13", report.schema_version)
+        self.assertEqual("metadata-report-v14", report.schema_version)
         previous = report.to_data()
-        previous["schema_version"] = "metadata-report-v12"
+        previous["schema_version"] = "metadata-report-v13"
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(previous))
 

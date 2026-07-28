@@ -142,7 +142,8 @@ claim references and those already-admitted bounded identities. The
 relationship projection does not duplicate observations or excerpts. Report
 generation performs no decision and grants no write authority. The separate
 ProposalSet contains only bounded alternatives, assessments, stable evidence
-references, hashed correlation groups, and policy/version bindings; it does
+references, hashed correlation groups, closed date event/precision context,
+and policy/version bindings; it does
 not duplicate report excerpts or provider/cover payloads. These documents
 contain no credentials, private paths, raw provider bodies, or arbitrary EPUB
 text. Target and provider titles pass the same closed public-safe projection

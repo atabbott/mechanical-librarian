@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Preserve provider publication evidence with the same closed event and
+  year/month/day/timestamp precision vocabulary as local EPUB evidence.
+  Provider claims retain lexical and normalized values plus explicit or
+  unresolved event/manifestation linkage; Google Books publication strings
+  remain visible but non-selectable. Proposal and reviewer candidates expose
+  their event and target precision, while citations retain source precision,
+  candidate/work identity, provider authority, query access, and sibling
+  identifier/format context. Year and month evidence can derive only
+  `publishedYear`; day and signed-offset timestamp evidence can derive an exact
+  day without converting offsets; work-first dates cannot replace populated
+  manifestation values; and conflicts remain unresolved choices. Advance the
+  exact-current contracts to `metadata-report-v14`, `proposal-set-v2`,
+  `shadow-review-packet-v2`, and `shadow-review-request-v3`; earlier
+  development state is rejected without migration under ADR-0013. (#382)
+
 - Admit source-explicit target-work subtitle, publisher, and imprint from the
   existing bounded rear EPUB indicia pass under the same structural-semantic or
   exact-label rules as front matter. Reports preserve publisher versus imprint,

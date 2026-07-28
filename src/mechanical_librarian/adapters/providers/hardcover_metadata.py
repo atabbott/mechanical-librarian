@@ -7,7 +7,6 @@ import json
 import random
 import time
 import unicodedata
-from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
@@ -44,7 +43,7 @@ from mechanical_librarian.domain.metadata_report import (
     MAX_SERIES, MAX_TAGS, ProviderCandidate, ProviderClaim,
     ProviderEvidence, ProviderEvidenceKind, ProviderObservation,
     ProviderQueryKind, ProviderStatus, canonical_json, comparison_links,
-    isbn_family,
+    isbn_family, normalize_date_value,
 )
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text, validate_role_projection
 
@@ -916,7 +915,7 @@ def _work_cover_context(book: dict[str, Any]) -> tuple[CoverContext, ...]:
     if book["release_date"] is None:
         return ()
     value = _text(book["release_date"], MAX_SCALAR_CHARACTERS)
-    date.fromisoformat(value)
+    normalize_date_value(value)
     return (CoverContext(CoverContextField.PUBLICATION_DATE, value),)
 
 
@@ -955,7 +954,7 @@ def _edition_cover_context(row: dict[str, Any]) -> tuple[CoverContext, ...]:
         )
     if row["release_date"] is not None:
         value = _text(row["release_date"], MAX_SCALAR_CHARACTERS)
-        date.fromisoformat(value)
+        normalize_date_value(value)
         values.add(
             CoverContext(CoverContextField.PUBLICATION_DATE, value)
         )
@@ -1089,7 +1088,7 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
     release_date = book["release_date"]
     if release_date is not None:
         value = _text(release_date, MAX_SCALAR_CHARACTERS)
-        date.fromisoformat(value)
+        normalize_date_value(value)
         evidence.add(
             ProviderEvidence(
                 ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
@@ -1226,7 +1225,7 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
         if kind is ClaimKind.ASIN and (len(text) != 10 or not text.isascii() or not text.isalnum()):
             raise ValueError("provider ASIN invalid")
         if kind is ClaimKind.PUBLICATION_DATE:
-            date.fromisoformat(text)
+            normalize_date_value(text)
         if kind is ClaimKind.SERIES_SEQUENCE:
             text = _position(text)
         return FieldState.VALID, text

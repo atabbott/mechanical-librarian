@@ -31,6 +31,23 @@ from mechanical_librarian.application.shadow_reviews import (
     preview_shadow_review,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    FieldState,
+    FileFacts,
+    MetadataReport,
+    ProviderCandidate,
+    ProviderClaim,
+    ProviderEvidence,
+    ProviderEvidenceKind,
+    ProviderObservation,
+    ProviderQueryKind,
+    ProviderStatus,
+    TargetFacts,
+    default_target_fields,
+)
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_review import (
     MAX_PACKET_BYTES,
     MAX_PROFILE_IDENTITY_BYTES,
@@ -58,7 +75,7 @@ def _identity() -> ReviewerProfileIdentity:
         "medium",
         "shadow-review-prompt-v2",
         "codex-shadow-profile-v1",
-        "shadow-review-packet-v1",
+        "shadow-review-packet-v2",
         "shadow-review-result-v1",
         "qualification-only-policy-v1",
         120,
@@ -136,6 +153,93 @@ class _Runner:
 
 
 class ShadowReviewTests(unittest.TestCase):
+    def test_publication_candidate_projects_typed_source_and_access_context(
+        self,
+    ) -> None:
+        lexical = "2024-03-05T10:30:00-04:00"
+        claim = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.PUBLICATION_DATE,
+            value=lexical,
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="not_applicable",
+            raw_order=1,
+        )
+        identifier = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.ISBN,
+            value="9780061120084",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="ebook",
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    (
+                        ProviderCandidate(
+                            "edition-1",
+                            "work-1",
+                            (identifier, claim),
+                            (
+                                ProviderEvidence(
+                                    ProviderEvidenceKind.PHYSICAL_FORMAT,
+                                    "ebook",
+                                    ClaimScope.EDITION,
+                                ),
+                            ),
+                        ),
+                    ),
+                    ProviderQueryKind.WORK,
+                    "hardcover",
+                ),
+            ),
+        )
+        proposal = evaluate_report(report)
+        case = ReviewCase.create(proposal, report)
+        packet = ShadowReviewPacket.create(case, proposal, report)
+        projected = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == "publishedDate"
+        )["candidates"][0]
+        self.assertEqual("manifestation_publication", projected["date_event"])
+        self.assertEqual("day", projected["date_precision"])
+        citation = next(
+            value
+            for value in packet.citations
+            if value["citation_id"] == claim.reference
+        )["fact"]
+        self.assertEqual("hardcover", citation["access"]["authority"])
+        self.assertEqual("work", citation["access"]["query_kind"])
+        self.assertEqual("edition-1", citation["candidate"])
+        self.assertEqual("work-1", citation["work_identity"])
+        self.assertEqual(
+            [identifier.reference],
+            citation["linkage"]["identifier_references"],
+        )
+        self.assertEqual(
+            "ebook",
+            citation["linkage"]["format_facts"][0]["value"],
+        )
+        self.assertEqual(lexical, citation["fact"]["date_lexical"])
+        self.assertEqual("timestamp", citation["fact"]["date_precision"])
+
     def _repository(self, directory: str):
         repository = open_repository(Path(directory) / "reports.sqlite")
         report = _report()
@@ -603,7 +707,7 @@ class ShadowReviewTests(unittest.TestCase):
                 "mode": "qualification_only",
                 "model": "gpt-5.6-sol",
                 "output_version": "shadow-review-result-v1",
-                "packet_version": "shadow-review-packet-v1",
+                "packet_version": "shadow-review-packet-v2",
                 "policy_version": "qualification-only-policy-v1",
                 "profile_version": "codex-shadow-profile-v1",
                     "prompt_version": "shadow-review-prompt-v2",
@@ -794,7 +898,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
             "medium",
             "shadow-review-prompt-v2",
             "codex-shadow-profile-v1",
-            "shadow-review-packet-v1",
+            "shadow-review-packet-v2",
             "shadow-review-result-v1",
             "qualification-only-policy-v1",
             120,

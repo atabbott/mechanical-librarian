@@ -10,7 +10,6 @@ import time
 from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass
-from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -64,6 +63,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     comparison_links,
     isbn_family,
+    normalize_date_value,
     normalize_title,
 )
 
@@ -1169,7 +1169,7 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
     try:
         text = validate_projection_text(value, "provider claim value", maximum)
         if kind is ClaimKind.PUBLICATION_DATE:
-            date.fromisoformat(text)
+            normalize_date_value(text)
         return FieldState.VALID, text
     except (ValueError, EvidenceValueError):
         return (

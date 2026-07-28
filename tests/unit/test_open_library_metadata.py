@@ -22,6 +22,7 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     Comparison,
+    FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
@@ -190,6 +191,22 @@ def _work(key: str = "/works/OL5W", *, cover: int | None = None) -> dict[str, ob
 
 
 class OpenLibraryMetadataTests(unittest.TestCase):
+    def test_publication_field_accepts_year_month_day_and_signed_offset(self) -> None:
+        for lexical in (
+            "2024",
+            "2024-03",
+            "2024-03-05",
+            "2024-03-05T10:30:00-04:00",
+        ):
+            with self.subTest(lexical=lexical):
+                self.assertEqual(
+                    (FieldState.VALID, lexical),
+                    open_library_metadata._field(
+                        ClaimKind.PUBLICATION_DATE,
+                        lexical,
+                    ),
+                )
+
     def test_work_plan_persists_ordered_qualified_creators_through_replay(
         self,
     ) -> None:

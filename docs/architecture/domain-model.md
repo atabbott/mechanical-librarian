@@ -52,6 +52,12 @@ modification, conversion, and unknown events distinct. Only an explicit
 selected-ebook/edition publication statement is a `publication_date`; the other
 events remain `date_event` evidence for later policy. Signed offsets are
 preserved and are never converted to UTC.
+Provider dates use the same closed event and precision vocabulary. A provider
+manifestation claim additionally retains its lexical and normalized values and
+explicit linkage confidence. Work-first, copyright, modification, and
+unresolved publication-text evidence remain distinct rich facts. Candidate
+edition/work identity and sibling identifier/format facts provide linkage
+context without converting provider assertions into truth.
 Package contributor roles are projected to controlled author, translator,
 illustrator, editor, foreword, designer, photographer, cartographer, adapter,
 or structured-explicit `other` codes. Multiple declared roles remain one
@@ -128,9 +134,10 @@ Results use the closed outcome vocabulary `propose_change`, `unresolved_choice`,
 `keep`, `reject`, `defer`, or `ineligible`. A `propose_change` has one selected
 alternative; an `unresolved_choice` retains bounded alternatives without a
 selection; `defer`, `reject`, and `ineligible` have no alternative. `keep`
-has one preservation alternative. An alternative contains one bounded typed value, its
-work/edition/cover scope, target assessment, stable evidence references, and
-hashed correlation identities. `reject` is reserved for future explicit policy
+has one preservation alternative. An alternative contains one bounded typed
+value, its work/edition/cover scope, target assessment, stable evidence
+references, hashed correlation identities, and a closed event/target precision
+for publication candidates. `reject` is reserved for future explicit policy
 rejection; the fixed evaluator never infers deletion or emits it. `keep`
 requires positive preservation evidence and never encodes a replacement. The
 ProposalSet references observations owned by the report rather than copying

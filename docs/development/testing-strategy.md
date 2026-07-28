@@ -142,10 +142,16 @@ cover nested single-emission, multiple exact sibling labels, mixed complete and
 split labels in one ancestor, repeated equal complete/split siblings, multiple
 assembled labels, scanning/production/workflow label values, promotion cues
 inside labels, the exact 16-fact rear cap, front/rear NFC and whitespace
-normalization, `metadata-report-v13`
-canonical replay, clean database creation, and byte-unchanged rejection of v12
+normalization, `metadata-report-v14`
+canonical replay, clean database creation, and byte-unchanged rejection of v13
 state. Only aggregate expected, found, and false-positive counts are asserted
 or exported; fixture rows and source text remain private.
+
+Provider-date regressions use synthetic year, month, day, and signed-offset
+timestamp values. They prove lexical/normalized replay, closed event and
+linkage typing, no precision invention, consistent date/year projection,
+non-selectability of unresolved publication text, explicit conflict choices,
+and reviewer citation coverage without exporting real-library values.
 
 Hostile-input tests name a supported external actor and reachable boundary.
 Typed in-process collaborators are not attacker-controlled unless the product

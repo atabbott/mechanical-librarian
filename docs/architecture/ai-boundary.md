@@ -8,14 +8,17 @@ change policy, construct service requests, or execute writes.
 
 ## Reviewer contract
 
-The current qualification-only `shadow-review-packet-v1` contains:
+The current qualification-only `shadow-review-packet-v2` contains:
 
 - only the opaque content-addressed ReviewCase ID, never the connection,
   library, item, file identity, path, or service identifier;
 - the exact bounded normalized current snapshot for the reviewed target and an
   explicit loaded, missing, or unavailable state for each applicable field;
-- explicit candidate values;
-- supporting and contradicting evidence summaries;
+- explicit candidate values, including closed date event and target precision
+  when applicable;
+- supporting and contradicting evidence summaries, with provider date
+  citations retaining lexical/normalized values, source precision,
+  candidate/work linkage, authority, and query kind;
 - bounded excerpts labelled as untrusted content;
 - no images or operator-authored intent; and
 - the fixed prompt/profile/packet/output/policy identities bound by the

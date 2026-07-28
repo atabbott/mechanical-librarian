@@ -151,7 +151,7 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v13'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v14'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -165,7 +165,7 @@ def _create_prior_schema(
 ) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v13'", f"= '{version}'"
+            "= 'metadata-report-v14'", f"= '{version}'"
         ),
         metadata_persistence._CURRENT_SQL,
         metadata_persistence._CURRENT_LINEAGE_SQL,
@@ -339,7 +339,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
-            self.assertEqual(schema_version, ("metadata-report-v13",))
+            self.assertEqual(schema_version, ("metadata-report-v14",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)
@@ -944,6 +944,22 @@ class MetadataPersistenceTests(unittest.TestCase):
 
 
 class ProviderAdapterTests(unittest.TestCase):
+    def test_hardcover_publication_field_preserves_supported_precision(self) -> None:
+        for lexical in (
+            "2024",
+            "2024-03",
+            "2024-03-05",
+            "2024-03-05T10:30:00-04:00",
+        ):
+            with self.subTest(lexical=lexical):
+                self.assertEqual(
+                    (FieldState.VALID, lexical),
+                    hardcover_metadata._field(
+                        ClaimKind.PUBLICATION_DATE,
+                        lexical,
+                    ),
+                )
+
     @staticmethod
     def _envelope(rows: list[dict[str, object]], books: list[dict[str, object]]) -> dict[str, object]:
         editions = [
