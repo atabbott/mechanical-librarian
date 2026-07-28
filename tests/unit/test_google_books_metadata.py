@@ -15,6 +15,8 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
 from mechanical_librarian.application.metadata_report import (
+    MetadataDiscoveryLane,
+    MetadataDiscoveryPlan,
     MetadataLookup,
     qualify_provider_observation,
 )
@@ -84,7 +86,213 @@ def _lookup() -> MetadataLookup:
     )
 
 
+def _discovery_plan() -> MetadataDiscoveryPlan:
+    values = (
+        "9780306406157",
+        "9780140328721",
+        "9780439023528",
+        "9780061120084",
+        "9780743273565",
+        "9780316769488",
+        "9780451524935",
+        "9780547928227",
+    )
+    claims = tuple(_isbn(value) for value in values)
+    lanes = [
+        MetadataDiscoveryLane(
+            f"lane_{index:064x}",
+            ProviderQueryKind.ISBN,
+            (claim.reference,),
+            matched_family=value,
+            canonical_isbns=(value,),
+        )
+        for index, (claim, value) in enumerate(zip(claims, values))
+    ]
+    lanes.append(
+        MetadataDiscoveryLane(
+            f"lane_{len(lanes):064x}",
+            ProviderQueryKind.WORK,
+            (claims[0].reference,),
+            title="Example Book",
+            authors=("Ada Example",),
+        )
+    )
+    return MetadataDiscoveryPlan(claims, tuple(lanes))
+
+
+class _InterruptedStream(httpx.SyncByteStream):
+    def __iter__(self):
+        yield b"x"
+        raise httpx.ReadTimeout("synthetic interrupted body")
+
+
 class GoogleBooksMetadataTests(unittest.TestCase):
+    def test_retry_after_deadline_and_cancellation_are_fail_closed(
+        self,
+    ) -> None:
+        responses = [
+            httpx.Response(
+                503,
+                headers={
+                    "content-type": "application/json",
+                    "retry-after": "3",
+                },
+                json={"error": {}},
+            ),
+            httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"totalItems": 1, "items": [_volume()]},
+            ),
+        ]
+        delays: list[float] = []
+        provider = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(lambda _: responses.pop(0))
+            ),
+            65_536,
+            sleep=delays.append,
+            jitter=lambda: 0.5,
+        )
+        self.assertEqual(
+            ProviderStatus.CANDIDATES, provider.observe(_lookup()).status
+        )
+        self.assertEqual([3.0], delays)
+
+        dispatches = 0
+
+        def unavailable(_: httpx.Request) -> httpx.Response:
+            nonlocal dispatches
+            dispatches += 1
+            return httpx.Response(
+                503,
+                headers={
+                    "content-type": "application/json",
+                    "retry-after": "3",
+                },
+                json={"error": {}},
+            )
+
+        deadline_provider = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(unavailable)),
+            65_536,
+            clock=lambda: 0.0,
+            sleep=lambda _: self.fail("deadline must refuse sleep"),
+        )
+        self.assertEqual(
+            ProviderStatus.UNAVAILABLE,
+            deadline_provider.observe(_lookup(), deadline=3.0).status,
+        )
+        self.assertEqual(1, dispatches)
+        self.assertEqual(
+            "exhausted", deadline_provider.attempt_records[-1].outcome
+        )
+
+        cancelled = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: (_ for _ in ()).throw(KeyboardInterrupt())
+                )
+            ),
+            65_536,
+        )
+        with self.assertRaises(KeyboardInterrupt):
+            cancelled.observe(_lookup())
+        self.assertEqual(1, len(cancelled.attempt_records))
+        self.assertEqual("cancelled", cancelled.attempt_records[0].outcome)
+
+    def test_narrow_transport_failure_retries_but_unknown_does_not(
+        self,
+    ) -> None:
+        responses = 0
+
+        def transient(_: httpx.Request) -> httpx.Response:
+            nonlocal responses
+            responses += 1
+            if responses == 1:
+                raise httpx.ReadTimeout("synthetic timeout")
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"totalItems": 1, "items": [_volume()]},
+            )
+
+        recovered = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(transient)),
+            65_536,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        ).observe(_lookup())
+        self.assertEqual(ProviderStatus.CANDIDATES, recovered.status)
+        self.assertEqual(2, responses)
+
+        responses = 0
+
+        def unknown(_: httpx.Request) -> httpx.Response:
+            nonlocal responses
+            responses += 1
+            raise httpx.ConnectError("connection reset by peer")
+
+        failed = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(unknown)),
+            65_536,
+            sleep=lambda _: self.fail("unknown failure must not retry"),
+        ).observe(_lookup())
+        self.assertEqual(ProviderStatus.UNAVAILABLE, failed.status)
+        self.assertEqual(1, responses)
+
+    def test_observation_and_interrupted_body_budgets_are_aggregate(
+        self,
+    ) -> None:
+        dispatches = 0
+
+        def unavailable(_: httpx.Request) -> httpx.Response:
+            nonlocal dispatches
+            dispatches += 1
+            return httpx.Response(
+                503,
+                headers={"content-type": "application/json"},
+                content=b"",
+            )
+
+        provider = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(unavailable)),
+            65_536,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        provider.observe(_discovery_plan())
+        self.assertEqual(54, dispatches)
+        self.assertEqual(54, len(provider.attempt_records))
+
+        interrupted_dispatches = 0
+
+        def interrupted(_: httpx.Request) -> httpx.Response:
+            nonlocal interrupted_dispatches
+            interrupted_dispatches += 1
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                stream=_InterruptedStream(),
+            )
+
+        interrupted_provider = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(interrupted)),
+            1,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        interrupted_provider.observe(_discovery_plan())
+        self.assertEqual(9, interrupted_dispatches)
+        self.assertEqual(9, len(interrupted_provider.attempt_records))
+
     def test_retries_503_with_fresh_backoff_and_records_each_dispatch(
         self,
     ) -> None:

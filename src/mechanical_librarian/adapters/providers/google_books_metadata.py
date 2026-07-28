@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import random
 import re
@@ -13,6 +14,8 @@ import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderAttemptRecord,
+    bounded_attempt_elapsed,
+    bounded_retry_after,
     transient_transport_failure,
 )
 from mechanical_librarian.application.metadata_report import (
@@ -75,6 +78,7 @@ class GoogleBooksMetadataProvider:
         *,
         api_key: str | None = None,
         clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
         jitter: Callable[[], float] = random.random,
     ) -> None:
@@ -102,6 +106,7 @@ class GoogleBooksMetadataProvider:
         self._timeout_seconds = float(timeout_seconds)
         self._api_key = api_key
         self._clock = clock
+        self._wall_clock = wall_clock
         self._sleep = sleep
         self._jitter = jitter
         self._attempt_count = 0
@@ -284,6 +289,16 @@ class GoogleBooksMetadataProvider:
             attempts_before_dispatch = self._attempt_count
             try:
                 value = self._request_once(query, deadline=deadline)
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                if self._attempt_count != attempts_before_dispatch:
+                    self._record_attempt(
+                        started,
+                        category="cancellation",
+                        retryable=False,
+                        delay=None,
+                        outcome="cancelled",
+                    )
+                raise
             except _ProviderFailure as error:
                 if self._attempt_count == attempts_before_dispatch:
                     raise
@@ -292,30 +307,50 @@ class GoogleBooksMetadataProvider:
                     and retry_index + 1 < _MAX_ATTEMPTS_PER_QUERY
                     and self._attempt_count < _MAX_ATTEMPTS_PER_OBSERVATION
                 )
-                delay = self._retry_delay(retry_index) if can_retry else None
+                delay = (
+                    (
+                        error.retry_after
+                        if error.retry_after is not None
+                        else self._retry_delay(retry_index)
+                    )
+                    if can_retry
+                    else None
+                )
                 if delay is not None and not self._delay_fits(
                     delay, deadline=deadline
                 ):
                     delay = None
                     can_retry = False
+                if not can_retry or delay is None:
+                    self._record_attempt(
+                        started,
+                        category=error.category,
+                        retryable=error.retryable,
+                        delay=delay,
+                        outcome=(
+                            "exhausted"
+                            if error.retryable
+                            else "terminal"
+                        ),
+                    )
+                    raise
+                self._sleep(delay)
+                if deadline is not None and self._clock() >= deadline:
+                    self._record_attempt(
+                        started,
+                        category=error.category,
+                        retryable=error.retryable,
+                        delay=delay,
+                        outcome="deadline_exhausted",
+                    )
+                    raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
                 self._record_attempt(
                     started,
                     category=error.category,
                     retryable=error.retryable,
                     delay=delay,
-                    outcome=(
-                        "retry"
-                        if can_retry
-                        else "exhausted"
-                        if error.retryable
-                        else "terminal"
-                    ),
+                    outcome="retry",
                 )
-                if not can_retry or delay is None:
-                    raise
-                self._sleep(delay)
-                if deadline is not None and self._clock() >= deadline:
-                    raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
                 continue
             self._record_attempt(
                 started,
@@ -382,6 +417,10 @@ class GoogleBooksMetadataProvider:
                         ProviderStatus.UNAVAILABLE,
                         category="http_503",
                         retryable=True,
+                        retry_after=bounded_retry_after(
+                            response.headers.get("retry-after"),
+                            now=self._wall_clock(),
+                        ),
                     )
                 if response.status_code != 200:
                     raise _ProviderFailure(
@@ -455,9 +494,10 @@ class GoogleBooksMetadataProvider:
                 provider=self._name,
                 ordinal=self._attempt_count,
                 category=category,
-                retryable=retryable,
                 delay_seconds=delay,
-                elapsed_seconds=max(0.0, self._clock() - started),
+                elapsed_seconds=bounded_attempt_elapsed(
+                    started, self._clock()
+                ),
                 outcome=outcome,
             )
         )
@@ -806,11 +846,13 @@ class _ProviderFailure(Exception):
         *,
         category: str = "provider_failure",
         retryable: bool = False,
+        retry_after: float | None = None,
     ) -> None:
         super().__init__(status.value)
         self.status = status
         self.category = category
         self.retryable = retryable
+        self.retry_after = retry_after
 
 
 __all__ = ["GOOGLE_BOOKS_URL", "GoogleBooksMetadataProvider"]
