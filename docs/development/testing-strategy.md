@@ -155,8 +155,12 @@ invention, destination-exact manifestation date/year projection,
 non-selectability of unresolved publication text, explicit conflict choices,
 and reviewer citation coverage without exporting real-library values.
 Reviewer replay cases reject missing or opaque-only linkage, identifier
-fact/reference disagreement, malformed identifier and format shapes, and
-context beyond either 16-fact bound. Access-
+fact/reference disagreement, forged kind/value/applicability/scope/raw-order
+or provider/candidate membership, invalid ISBN/ASIN syntax, private or
+credential-shaped context, missing rich-date-evidence linkage, malformed
+identifier and format shapes, duplicate/reordered facts, and context beyond
+either 16-fact bound. Request-v3 replay exercises the same packet validator.
+Access-
 time regressions inject fixed clocks at every metadata-provider boundary,
 exercise successful and terminal post-dispatch statuses, prove absent time for
 no-input, overflow, invalid-clock, and expired pre-dispatch paths, and verify

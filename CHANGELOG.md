@@ -12,7 +12,10 @@
   identifier/format fact context with exact bounded membership. Constructed
   and replayed reports, proposals, and reviewer packets reject source
   precision disagreement, destination/date disagreement, opaque-only linkage,
-  malformed context, and context over its fixed limits. ADR-0016 supersedes
+  malformed context, and context over its fixed limits. Identifier fact
+  references are recomputed from exact public-safe provider/candidate
+  membership and raw claim identity with ISBN/ASIN validation; cited typed
+  claims and rich date evidence cannot omit linkage. ADR-0016 supersedes
   ADR-0015 to freeze the packet-v2/request-v3 trust boundary. The first actual
   provider dispatch now records
   one strict canonical UTC access time from the adapter's injected clock;

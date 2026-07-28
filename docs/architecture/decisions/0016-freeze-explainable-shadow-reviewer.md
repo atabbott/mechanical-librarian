@@ -41,21 +41,28 @@ normalized values, exact inferred source precision, source event, linkage
 confidence, provider and candidate/work identities, authority, query kind, and
 immutable access time.
 
-Every cited provider publication fact carries a `linkage` object. It contains
-at most 16 sibling valid ISBN/ASIN fact objects and at most 16 sibling physical
-format fact objects. Identifier facts expose only the already-admitted bounded
-`reference`, `kind`, `value`, `applicability`, and `scope`; their reference list
-must be a sorted, duplicate-free, exact one-to-one projection of those objects.
-Format facts use the existing closed provider-evidence projection. Unknown
-keys, invalid closed values, missing linkage, opaque-only identifier
-references, noncanonical order, membership disagreement, or a limit breach are
-rejected.
+Every cited typed provider date claim or rich date evidence carries a
+`linkage` object. It contains at most 16 sibling valid ISBN/ASIN fact objects
+and at most 16 sibling physical-format fact objects. Identifier facts expose
+only the already-admitted bounded `reference`, `kind`, `value`,
+`applicability`, `scope`, and `raw_order`. The packet validates public-safe
+provider/candidate membership, reconstructs the exact fixed valid
+edition-scoped ProviderClaim, enforces ISBN checksum or the closed uppercase
+ASIN syntax, and requires its content-addressed reference to match. Its
+reference list must be a sorted, duplicate-free, exact one-to-one projection
+of those objects. Rich evidence citation IDs are likewise recomputed from
+their exact provider, candidate, and closed evidence projection. Format facts
+use the existing closed provider-evidence projection. Unknown keys, invalid or
+private/credential-shaped values, missing linkage, opaque-only identifier
+references, noncanonical order, membership disagreement, identity
+disagreement, or a limit breach are rejected.
 
 `shadow-review-request-v3` binds the exact canonical packet, qualification
 profile, and generated result-schema bytes and digest. Profile tuple drift,
 packet-v1, request-v2, malformed or noncanonical documents, destination/date
-disagreement, provider date precision disagreement, incomplete linkage, and
-over-bound context fail closed at their existing validation boundary before
+disagreement, provider date precision disagreement, missing typed-claim or
+rich-evidence linkage, incomplete content-addressed membership, and over-bound
+context fail closed at their existing validation boundary before
 reviewer invocation or persistence can grant dispatch authority. Stored
 exact-current documents are validated the same way when reopened. Earlier
 development state is rejected rather than migrated, imported, converted, or
@@ -116,6 +123,8 @@ remain separate.
 
 Focused construction and canonical-replay tests cover exact provider date
 precision, the complete destination/date matrix, packet candidate validation,
-identifier fact/reference membership, format fact shape, missing linkage, and
-both 16-fact limits. The full unit suite, architecture-boundary suite, and exact
-artifact qualifier must pass at the delivered head.
+provider claim and rich-evidence linkage, ISBN/ASIN syntax, recomputed
+identifier fact/reference identity and membership, provider/candidate privacy,
+format fact shape, missing/duplicate/reordered/forged linkage, request replay,
+and both 16-fact limits. The full unit suite, architecture-boundary suite, and
+exact artifact qualifier must pass at the delivered head.

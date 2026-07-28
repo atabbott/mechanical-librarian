@@ -205,7 +205,11 @@ ADR-0016 freezes that tuple at packet-v2/request-v3. Provider publication
 citations expose only bounded allowlisted identifier and physical-format fact
 objects already admitted to the report; exact reference membership, closed
 shape, ordering, and limits are revalidated so opaque-only or malformed
-linkage cannot cross the reviewer boundary.
+linkage cannot cross the reviewer boundary. Identifier references are
+recomputed from public-safe provider/candidate membership and the exact fixed
+valid claim projection, including raw order, ISBN checksum, or closed ASIN
+syntax. Typed provider claims and rich date evidence both require linkage;
+rich evidence citation identities are recomputed from their closed content.
 All auth and reviewer processes serialize on one owner-only auth-store lock.
 Only the exact canonical ChatGPT subscription status on one process stream is
 accepted when the other stream is empty and the command succeeds. Mixed,

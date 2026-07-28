@@ -67,7 +67,12 @@ report `accessed_at` value alongside authority and query kind, or explicit
 request, restart, and reevaluation never access a provider or refresh the
 stored time. They also carry at most 16 bounded sibling ISBN/ASIN fact objects
 and 16 physical-format facts. Identifier references must match those fact
-objects exactly; missing, opaque-only, malformed, noncanonical, or over-bound
+objects exactly after the runtime reconstructs each fixed valid sibling claim
+from its public-safe provider/candidate context, kind, value, applicability,
+edition scope, and raw order. ISBN checksums and closed uppercase ASIN syntax
+are mandatory. Missing linkage on either a typed provider date claim or rich
+date evidence, opaque-only references, content-address mismatch, private or
+credential-shaped context, malformed/noncanonical facts, or over-bound
 linkage rejects the packet before invocation. Candidate date typing describes
 the target destination (`manifestation_publication` plus `year` or `day`);
 source event and precision remain in the citation. This exact packet/request

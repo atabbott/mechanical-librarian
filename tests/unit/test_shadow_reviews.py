@@ -167,7 +167,7 @@ class ShadowReviewTests(unittest.TestCase):
             state=FieldState.VALID,
             scope=ClaimScope.EDITION,
             applicability="not_applicable",
-            raw_order=1,
+            raw_order=2,
         )
         identifier = ProviderClaim.create(
             provider="catalogue",
@@ -177,6 +177,16 @@ class ShadowReviewTests(unittest.TestCase):
             state=FieldState.VALID,
             scope=ClaimScope.EDITION,
             applicability="ebook",
+        )
+        asin = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.ASIN,
+            value="B000000001",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="ebook",
+            raw_order=1,
         )
         report = MetadataReport.create(
             target=TargetFacts(
@@ -197,7 +207,7 @@ class ShadowReviewTests(unittest.TestCase):
                         ProviderCandidate(
                             "edition-1",
                             "work-1",
-                            (identifier, claim),
+                            (identifier, asin, claim),
                             (
                                 ProviderEvidence(
                                     ProviderEvidenceKind.PHYSICAL_FORMAT,
@@ -237,20 +247,33 @@ class ShadowReviewTests(unittest.TestCase):
         )
         self.assertEqual("edition-1", citation["candidate"])
         self.assertEqual("work-1", citation["work_identity"])
-        self.assertEqual(
-            [identifier.reference],
-            citation["linkage"]["identifier_references"],
-        )
-        self.assertEqual(
+        expected_identifier_facts = sorted(
             [
                 {
                     "applicability": "ebook",
                     "kind": "isbn",
+                    "raw_order": 0,
                     "reference": identifier.reference,
                     "scope": "edition",
                     "value": "9780061120084",
-                }
+                },
+                {
+                    "applicability": "ebook",
+                    "kind": "asin",
+                    "raw_order": 1,
+                    "reference": asin.reference,
+                    "scope": "edition",
+                    "value": "B000000001",
+                },
             ],
+            key=lambda fact: fact["reference"],
+        )
+        self.assertEqual(
+            [fact["reference"] for fact in expected_identifier_facts],
+            citation["linkage"]["identifier_references"],
+        )
+        self.assertEqual(
+            expected_identifier_facts,
             citation["linkage"]["identifier_facts"],
         )
         self.assertEqual(
@@ -270,48 +293,231 @@ class ShadowReviewTests(unittest.TestCase):
         with self.assertRaises(ShadowReviewValueError):
             ShadowReviewPacket.from_json(canonical_json(document))
 
+        def provider_date(document: dict[str, object]) -> dict[str, object]:
+            return next(
+                value
+                for value in document["citations"]
+                if value["citation_id"] == claim.reference
+            )["fact"]
+
+        for field, invalid in (
+            ("applicability", "print"),
+            ("kind", "title"),
+            ("raw_order", 99),
+            ("reference", "provider_" + "0" * 64),
+            ("scope", "work"),
+            ("value", "9780061120085"),
+            ("value", "sk-proj-credential-shaped"),
+        ):
+            document = json.loads(packet.to_json())
+            linked = provider_date(document)["linkage"]
+            fact = next(
+                value
+                for value in linked["identifier_facts"]
+                if value["kind"] == "isbn"
+            )
+            fact[field] = invalid
+            with self.subTest(field=field, invalid=invalid):
+                with self.assertRaises(ShadowReviewValueError):
+                    ShadowReviewPacket.from_json(canonical_json(document))
+
         document = json.loads(packet.to_json())
-        linked = next(
+        linked = provider_date(document)["linkage"]
+        next(
             value
-            for value in document["citations"]
-            if value["citation_id"] == claim.reference
-        )["fact"]["linkage"]
-        linked["identifier_references"] = []
+            for value in linked["identifier_facts"]
+            if value["kind"] == "asin"
+        )["value"] = "A000000001"
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(document))
+
+        for extra in ("role", "state"):
+            document = json.loads(packet.to_json())
+            provider_date(document)["linkage"]["identifier_facts"][0][extra] = (
+                None if extra == "role" else "malformed"
+            )
+            with self.subTest(extra=extra):
+                with self.assertRaises(ShadowReviewValueError):
+                    ShadowReviewPacket.from_json(canonical_json(document))
+
+        for field, invalid in (
+            ("candidate", "edition-2"),
+            ("provider", "other"),
+            ("candidate", "/private/library/edition"),
+            ("work_identity", "api_key=private"),
+        ):
+            document = json.loads(packet.to_json())
+            provider_date(document)[field] = invalid
+            with self.subTest(context=field, invalid=invalid):
+                with self.assertRaises(ShadowReviewValueError):
+                    ShadowReviewPacket.from_json(canonical_json(document))
+
+        document = json.loads(packet.to_json())
+        provider_date(document)["linkage"]["identifier_facts"].pop()
         with self.assertRaises(ShadowReviewValueError):
             ShadowReviewPacket.from_json(canonical_json(document))
 
         document = json.loads(packet.to_json())
-        linked = next(
-            value
-            for value in document["citations"]
-            if value["citation_id"] == claim.reference
-        )["fact"]["linkage"]
-        linked["identifier_facts"][0]["kind"] = "title"
+        provider_date(document)["linkage"]["identifier_references"].pop()
         with self.assertRaises(ShadowReviewValueError):
             ShadowReviewPacket.from_json(canonical_json(document))
 
         document = json.loads(packet.to_json())
-        linked = next(
-            value
-            for value in document["citations"]
-            if value["citation_id"] == claim.reference
-        )["fact"]["linkage"]
+        linked = provider_date(document)["linkage"]
+        linked["identifier_facts"].append(linked["identifier_facts"][0].copy())
+        linked["identifier_references"].append(
+            linked["identifier_references"][0]
+        )
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(document))
+
+        document = json.loads(packet.to_json())
+        linked = provider_date(document)["linkage"]
+        linked["identifier_facts"].extend(
+            linked["identifier_facts"][0].copy()
+            for _ in range(MAX_LINKAGE_IDENTIFIER_FACTS - 1)
+        )
+        linked["identifier_references"].extend(
+            linked["identifier_references"][0]
+            for _ in range(MAX_LINKAGE_IDENTIFIER_FACTS - 1)
+        )
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(document))
+
+        document = json.loads(packet.to_json())
+        linked = provider_date(document)["linkage"]
+        linked["identifier_facts"].reverse()
+        linked["identifier_references"].reverse()
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(document))
+
+        document = json.loads(packet.to_json())
+        linked = provider_date(document)["linkage"]
         linked["format_facts"][0]["role"] = "narrator"
         with self.assertRaises(ShadowReviewValueError):
             ShadowReviewPacket.from_json(canonical_json(document))
 
+        for invalid in (
+            "/private/library/format",
+            "api_key=private",
+        ):
+            document = json.loads(packet.to_json())
+            provider_date(document)["linkage"]["format_facts"][0][
+                "value"
+            ] = invalid
+            with self.subTest(format_value=invalid):
+                with self.assertRaises(ShadowReviewValueError):
+                    ShadowReviewPacket.from_json(canonical_json(document))
+
         document = json.loads(packet.to_json())
-        provider_date = next(
-            value
-            for value in document["citations"]
-            if value["citation_id"] == claim.reference
-        )["fact"]
-        del provider_date["linkage"]
+        del provider_date(document)["linkage"]
         with self.assertRaises(ShadowReviewValueError):
             ShadowReviewPacket.from_json(canonical_json(document))
 
+        request = ShadowReviewRequest.create_from_packet(_identity(), packet)
+        request_document = json.loads(request.to_json())
+        provider_date(request_document["packet"])["linkage"][
+            "identifier_facts"
+        ][0]["raw_order"] = 99
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewRequest.from_json(canonical_json(request_document))
+
         self.assertEqual(16, MAX_LINKAGE_IDENTIFIER_FACTS)
         self.assertEqual(16, MAX_LINKAGE_FORMAT_FACTS)
+
+    def test_provider_rich_date_evidence_requires_content_bound_linkage(
+        self,
+    ) -> None:
+        identifier = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.ISBN,
+            value="9780061120084",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="ebook",
+        )
+        first_publication = ProviderEvidence(
+            ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+            "2001-02-03",
+            ClaimScope.WORK,
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    (
+                        ProviderCandidate(
+                            "edition-1",
+                            "work-1",
+                            (identifier,),
+                            (first_publication,),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        proposal = evaluate_report(report)
+        case = ReviewCase.create(proposal, report)
+        packet = ShadowReviewPacket.create(case, proposal, report)
+        replayed = ShadowReviewPacket.from_json(packet.to_json())
+        rich = next(
+            citation["fact"]
+            for citation in replayed.citations
+            if "evidence" in citation["fact"]
+            and citation["fact"]["evidence"]["kind"]
+            == "first_publication_date"
+        )
+        self.assertEqual(
+            [identifier.reference],
+            rich["linkage"]["identifier_references"],
+        )
+        self.assertEqual(0, rich["linkage"]["identifier_facts"][0]["raw_order"])
+
+        def rich_date(document: dict[str, object]) -> dict[str, object]:
+            return next(
+                citation["fact"]
+                for citation in document["citations"]
+                if "evidence" in citation["fact"]
+                and citation["fact"]["evidence"]["kind"]
+                == "first_publication_date"
+            )
+
+        document = json.loads(packet.to_json())
+        del rich_date(document)["linkage"]
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(document))
+
+        document = json.loads(packet.to_json())
+        rich_date(document)["linkage"] = {"identifier_references": []}
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(document))
+
+        for field, invalid in (
+            ("candidate", "edition-2"),
+            ("provider", "other"),
+        ):
+            document = json.loads(packet.to_json())
+            rich_date(document)[field] = invalid
+            with self.subTest(field=field):
+                with self.assertRaises(ShadowReviewValueError):
+                    ShadowReviewPacket.from_json(canonical_json(document))
+
+        document = json.loads(packet.to_json())
+        rich_date(document)["evidence"]["kind"] = "copyright_date"
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(document))
 
     def test_publication_linkage_construction_rejects_context_over_limits(
         self,
@@ -397,6 +603,46 @@ class ShadowReviewTests(unittest.TestCase):
         packet_for((publication,), formats[:-1])
         with self.assertRaises(ShadowReviewValueError):
             packet_for((publication,), formats)
+
+        private_candidate = "/private/library/edition-1"
+        private_publication = ProviderClaim.create(
+            provider="catalogue",
+            candidate=private_candidate,
+            kind=ClaimKind.PUBLICATION_DATE,
+            value="2024-03-05",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="not_applicable",
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    (
+                        ProviderCandidate(
+                            private_candidate,
+                            "work-1",
+                            (private_publication,),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        proposal = evaluate_report(report)
+        case = ReviewCase.create(proposal, report)
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.create(case, proposal, report)
 
     def _repository(self, directory: str):
         repository = open_repository(Path(directory) / "reports.sqlite")
