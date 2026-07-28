@@ -31,6 +31,7 @@ from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtif
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
+    HardcoverPacer,
 )
 from mechanical_librarian.adapters.providers.google_books_metadata import (
     GoogleBooksMetadataProvider,
@@ -480,7 +481,7 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
     return run_metadata_report_loaded(configuration, database_path, artifact_store_path, connection_name, library_name, item, file_index, expected_file_identity)
 
 
-def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None) -> str:
+def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None) -> str:
     """Compose one report solely from an already validated configuration snapshot."""
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if mount is None:
@@ -499,6 +500,11 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
         for provider in provider_configs
     ):
         open_library_pacer = OpenLibraryPacer()
+    if hardcover_pacer is None and any(
+        provider.enabled and provider.adapter == "hardcover"
+        for provider in provider_configs
+    ):
+        hardcover_pacer = HardcoverPacer()
     bindings: list[ProviderBinding] = []
     for provider in provider_configs:
         def factory(value=provider):
@@ -527,6 +533,7 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
                     hardcover_client(value.secret_file, configuration.limits.timeout_seconds) if credentials is None else hardcover_client_token(credentials["provider:" + value.name], configuration.limits.timeout_seconds),
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
+                    pacer=hardcover_pacer,
                 )
             if value.adapter == "open_library" and value.contact_email is not None:
                 return OpenLibraryMetadataProvider(
@@ -852,6 +859,9 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
     open_library_pacer = (
         OpenLibraryPacer() if "open_library" in actual_adapters else None
     )
+    hardcover_pacer = (
+        HardcoverPacer() if "hardcover" in actual_adapters else None
+    )
     def current_entry(generation: int, fingerprint: str, key: tuple[str, str, str, str]):
         repository = open_catalogue(catalogue_path, create=False)
         try:
@@ -859,7 +869,21 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
         finally:
             repository.close()
     def report(entry):
-        serialized = run_metadata_report_loaded(configuration, database_path, artifact_store_path, entry.connection, entry.library, entry.item_id, 0, entry.file_identity, credentials, repository_identity, artifact_identity, open_library_pacer)
+        serialized = run_metadata_report_loaded(
+            configuration,
+            database_path,
+            artifact_store_path,
+            entry.connection,
+            entry.library,
+            entry.item_id,
+            0,
+            expected_file_identity=entry.file_identity,
+            credentials=credentials,
+            repository_identity=repository_identity,
+            artifact_identity=artifact_identity,
+            open_library_pacer=open_library_pacer,
+            hardcover_pacer=hardcover_pacer,
+        )
         from mechanical_librarian.domain.metadata_report import MetadataReport
         report = MetadataReport.from_json(serialized)
         return report.report_id, tuple(item.status for item in report.providers)
