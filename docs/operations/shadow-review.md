@@ -211,9 +211,12 @@ exposed, and the marker does not enter canonical result JSON, persistence,
 identity, or replay.
 
 `shadow-review-inspect-v2` is an offline aggregate status projection. It emits
-the request identity, currentness, final status, bounded total attempt count,
-and canonical aggregated diagnostics. It emits no request, packet, result,
-attempt ID/number, PID/process-group/start token, raw output, digest, or timing.
+the case and request identities, currentness, final status, bounded total
+attempt count, and sorted unique canonical diagnostic aggregates. The case
+identity binds `shadow-review-request` output to its requested case. Duplicate,
+split, or out-of-order aggregates fail closed. The projection emits no request,
+packet, result, attempt ID/number, PID/process-group/start token, raw output,
+digest, or timing.
 A dispatched attempt without a durable terminal outcome reopens as `unknown`
 with one bounded reviewer/unknown/execution diagnostic; `unknown` and `failed`
 inspection states therefore never carry an empty diagnostic list.

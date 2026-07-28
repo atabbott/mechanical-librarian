@@ -20,6 +20,16 @@ class _Attempt:
     private_body: str = "credential=/private/library/secret"
 
 
+class _MalformedAttempt:
+    @property
+    def category(self):
+        raise RuntimeError("credential=/private/library/secret")
+
+    @property
+    def outcome(self):
+        raise RuntimeError("credential=/private/library/secret")
+
+
 class FailureDiagnosticTests(unittest.TestCase):
     def test_category_vocabulary_is_exact_and_closed(self) -> None:
         self.assertEqual(
@@ -118,6 +128,35 @@ class FailureDiagnosticTests(unittest.TestCase):
         serialized = "".join(value.to_json() for value in diagnostics)
         for forbidden in ("credential", "private", "secret", "body", "ordinal"):
             self.assertNotIn(forbidden, serialized)
+
+    def test_malformed_optional_attempt_records_fail_closed_to_unknown(self) -> None:
+        diagnostics = provider_attempt_diagnostics(
+            (
+                object(),
+                _MalformedAttempt(),
+                _Attempt("http_503", "terminal"),
+            )
+        )
+
+        self.assertEqual(
+            (
+                FailureCategory.HTTP_NON_SUCCESS,
+                FailureCategory.UNKNOWN,
+            ),
+            tuple(value.category for value in diagnostics),
+        )
+        self.assertEqual((1, 2), tuple(value.count for value in diagnostics))
+        malformed_collection = provider_attempt_diagnostics(
+            [_Attempt("http_503", "terminal")]
+        )
+        self.assertEqual(1, len(malformed_collection))
+        self.assertEqual(
+            FailureCategory.UNKNOWN, malformed_collection[0].category
+        )
+        self.assertNotIn(
+            "credential",
+            "".join(value.to_json() for value in diagnostics),
+        )
 
     def test_reviewer_codes_map_to_same_closed_contract_and_unknown_fails_closed(
         self,

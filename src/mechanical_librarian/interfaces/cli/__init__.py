@@ -15,6 +15,7 @@ from typing import TextIO
 from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.application.failure_diagnostics import (
     FailureDiagnostic,
+    diagnostics_are_canonical,
     reviewer_failure_diagnostic,
 )
 from mechanical_librarian.application.metadata_report import (
@@ -352,6 +353,7 @@ def _validated_shadow_output(
                 "current",
                 "diagnostics",
                 "mode",
+                "review_case_id",
                 "review_request_id",
                 "schema_version",
                 "status",
@@ -363,6 +365,15 @@ def _validated_shadow_output(
             or not 1 <= raw["attempt_count"] <= 32
             or type(raw["diagnostics"]) is not list
             or len(raw["diagnostics"]) > 20
+            or (
+                review_case_id is not None
+                and raw["review_case_id"] != review_case_id
+            )
+            or type(raw["review_case_id"]) is not str
+            or re.fullmatch(
+                r"review_case_[0-9a-f]{64}", raw["review_case_id"]
+            )
+            is None
             or (
                 review_request_id is not None
                 and raw["review_request_id"] != review_request_id
@@ -383,6 +394,7 @@ def _validated_shadow_output(
         if (
             tuple(value.to_data() for value in diagnostics)
             != tuple(raw["diagnostics"])
+            or not diagnostics_are_canonical(diagnostics)
             or (
                 raw["status"] in {"failed", "unknown"}
                 and not diagnostics
@@ -527,7 +539,7 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
             )
             return 1
         except Exception:
-            errors.write(_shadow_failure(reviewer_failure_diagnostic("runtime")) + "\n")
+            errors.write(_shadow_failure(reviewer_failure_diagnostic("unknown")) + "\n")
             return 1
         output.write(serialized + "\n")
         return 0

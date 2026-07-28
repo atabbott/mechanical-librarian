@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Protocol
 
 from mechanical_librarian.domain.failure_diagnostics import (
     MAX_DIAGNOSTIC_COUNT,
@@ -11,12 +10,8 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureComponent,
     FailureDiagnostic,
     FailureStage,
+    diagnostics_are_canonical,
 )
-
-
-class ProviderAttempt(Protocol):
-    category: str
-    outcome: str
 
 
 _REVIEWER_FAILURES = {
@@ -102,7 +97,7 @@ def reviewer_failure_diagnostic(code: str, *, count: int = 0) -> FailureDiagnost
 
 
 def provider_attempt_diagnostics(
-    attempts: tuple[ProviderAttempt, ...],
+    attempts: object,
     *,
     status: str | None = None,
 ) -> tuple[FailureDiagnostic, ...]:
@@ -111,28 +106,35 @@ def provider_attempt_diagnostics(
     counts: Counter[
         tuple[FailureCategory, FailureStage, bool | None]
     ] = Counter()
-    if type(attempts) is not tuple:
-        attempts = ()
+    if type(attempts) is tuple:
+        bounded_attempts: tuple[object, ...] = attempts
+    else:
+        bounded_attempts = ()
         status = "unknown"
-    for attempt in attempts:
-        if type(attempt.category) is not str or type(attempt.outcome) is not str:
+    for attempt in bounded_attempts:
+        try:
+            category = getattr(attempt, "category", None)
+            outcome = getattr(attempt, "outcome", None)
+        except Exception:
+            category = None
+            outcome = None
+        if type(category) is not str or type(outcome) is not str:
             key = (
                 FailureCategory.UNKNOWN,
                 FailureStage.RESPONSE,
                 None,
             )
         else:
-            mapped = _provider_attempt_category(attempt.category)
+            mapped = _provider_attempt_category(category)
             if mapped is None:
                 continue
             category, stage = mapped
             retryable = (
                 True
-                if attempt.outcome in {"retry", "exhausted"}
+                if outcome in {"retry", "exhausted"}
                 else (
                     False
-                    if attempt.outcome
-                    in {"terminal", "cancelled", "deadline_exhausted"}
+                    if outcome in {"terminal", "cancelled", "deadline_exhausted"}
                     else None
                 )
             )
@@ -251,6 +253,7 @@ __all__ = [
     "FailureDiagnostic",
     "FailureStage",
     "MAX_DIAGNOSTIC_COUNT",
+    "diagnostics_are_canonical",
     "provider_attempt_diagnostics",
     "reviewer_failure_diagnostic",
 ]

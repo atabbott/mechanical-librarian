@@ -115,7 +115,10 @@ report-v15 diagnostic aggregates; provider, ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
-provider.
+provider. Missing, malformed, or exception-raising optional attempt records map
+to a bounded provider/unknown/response aggregate. Provider observations admit
+only sorted unique provider-component aggregates whose category and stage are
+one supported provider combination.
 
 The fixed Hardcover selections stay within three relationship levels. Typed
 taxonomy is joined from bounded sibling-root tag rows by exact provider IDs;
@@ -271,9 +274,10 @@ group is absent.
 Shadow outcome rows persist one canonical ADR-0017 diagnostic document, not a
 legacy code, exception digest, raw stream, path, prompt, packet, process fact,
 or malformed value. Offline `shadow-review-inspect-v2` aggregates identical
-documents and exposes no per-attempt or request/result content. CLI failures use
-the same object in `shadow-review-failure-v2`; unknown exceptions map to
-`unknown` without inspecting their text.
+documents, rejects duplicate/split/out-of-order aggregates, binds the case and
+request identities, and exposes no per-attempt or request/result content. CLI
+failures use the same object in `shadow-review-failure-v2`; unknown exceptions
+map to `unknown` without inspecting their text.
 
 The final report database, `catalogue-v1` database, `config-v5`, artifact
 records, and `batch-manifest-v5` each accept only absent or their exact current

@@ -1230,6 +1230,7 @@ class SQLiteMetadataReportRepository:
                         )
                     ],
                     "mode": QUALIFICATION_MODE,
+                    "review_case_id": request.review_case_id,
                     "review_request_id": request.review_request_id,
                     "schema_version": "shadow-review-inspect-v2",
                     "status": top_status,

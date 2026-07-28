@@ -140,9 +140,9 @@ changes a predecessor.
 Provider observations also retain application-classified, aggregate-only
 failure diagnostics. Raw process-local attempt records are not persisted.
 Shadow outcomes store the same canonical bounded diagnostic object, while
-`shadow-review-inspect-v2` projects only aggregate attempt count, currentness,
-status, and diagnostics; it does not expose request/packet/result content or
-process and attempt identities.
+`shadow-review-inspect-v2` projects only case/request identities, aggregate
+attempt count, currentness, status, and canonical diagnostics; it does not
+expose request/packet/result content or process and attempt identities.
 
 On supported Linux deployments, the repository retains a no-follow,
 identity-checked directory chain from the filesystem root, holds an exclusive

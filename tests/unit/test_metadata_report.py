@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,6 +49,12 @@ from mechanical_librarian.domain.cover_evidence import (
     cover_source_id,
 )
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
+from mechanical_librarian.domain.failure_diagnostics import (
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -146,6 +153,90 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_provider_diagnostics_reject_foreign_and_noncanonical_aggregates(
+        self,
+    ) -> None:
+        valid = FailureDiagnostic(
+            FailureCategory.UNKNOWN,
+            FailureComponent.PROVIDER,
+            FailureStage.RESPONSE,
+        )
+        invalid = (
+            FailureDiagnostic(
+                FailureCategory.UNKNOWN,
+                FailureComponent.REVIEWER,
+                FailureStage.RESPONSE,
+            ),
+            FailureDiagnostic(
+                FailureCategory.UNKNOWN,
+                FailureComponent.PROVIDER,
+                FailureStage.REQUEST,
+            ),
+            FailureDiagnostic(
+                FailureCategory.CITATION_MEMBERSHIP,
+                FailureComponent.PROVIDER,
+                FailureStage.RESPONSE,
+            ),
+        )
+        for diagnostic in invalid:
+            with self.subTest(diagnostic=diagnostic):
+                with self.assertRaises(ReportValueError):
+                    ProviderObservation(
+                        "catalogue",
+                        ProviderStatus.UNAVAILABLE,
+                        diagnostics=(diagnostic,),
+                    )
+        for diagnostics in (
+            (valid, valid),
+            (
+                valid,
+                FailureDiagnostic(
+                    FailureCategory.UNKNOWN,
+                    FailureComponent.PROVIDER,
+                    FailureStage.RESPONSE,
+                    count=2,
+                ),
+            ),
+            (
+                valid,
+                FailureDiagnostic(
+                    FailureCategory.HTTP_NON_SUCCESS,
+                    FailureComponent.PROVIDER,
+                    FailureStage.RESPONSE,
+                ),
+            ),
+        ):
+            with self.subTest(diagnostics=diagnostics):
+                with self.assertRaises(ReportValueError):
+                    ProviderObservation(
+                        "catalogue",
+                        ProviderStatus.UNAVAILABLE,
+                        diagnostics=diagnostics,
+                    )
+
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.UNAVAILABLE,
+                    diagnostics=(valid,),
+                ),
+            ),
+        )
+        raw = json.loads(report.to_json())
+        raw["providers"][0]["diagnostics"][0]["component"] = "reviewer"
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(raw))
+
     def test_provider_access_time_is_canonical_bounded_and_replay_stable(
         self,
     ) -> None:
@@ -2606,6 +2697,57 @@ class MetadataReportTests(unittest.TestCase):
             ["metadata", "cover"], [boundary for boundary, _ in observed]
         )
         self.assertEqual(observed[0][1], observed[1][1])
+
+    def test_malformed_optional_attempt_record_property_is_unknown(self) -> None:
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        snapshot = TargetSnapshot("ebook", "Current title", (selected,))
+        target = _Target([snapshot, snapshot])
+        inspector = _Inspector(InspectionResult("c" * 64, ()))
+        repository = _Repository()
+
+        class Provider:
+            @property
+            def attempt_records(self):
+                raise RuntimeError("credential=/private/library/secret")
+
+            def observe(self, _plan, *, deadline):
+                return ProviderObservation(
+                    "catalogue", ProviderStatus.NO_MATCH
+                )
+
+        service = GenerateMetadataReport(
+            target=target,
+            inspector=inspector,
+            repository_factory=lambda: repository,
+            providers=(ProviderBinding("catalogue", True, Provider),),
+            connection=TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/target"
+            ),
+            library=LibraryConfiguration(
+                "ebooks",
+                "primary",
+                "library-id",
+                "ebook",
+                "books",
+                ("catalogue",),
+            ),
+            mount=MediaMountConfiguration(
+                "books", "/media", "/library", True
+            ),
+            limits=ReportLimits(),
+        )
+
+        report = MetadataReport.from_json(service.run("item-1", 0))
+
+        self.assertEqual(
+            [FailureCategory.UNKNOWN],
+            [
+                diagnostic.category
+                for diagnostic in report.providers[0].diagnostics
+            ],
+        )
+        self.assertNotIn("credential", report.to_json())
+        self.assertNotIn("/private/library", report.to_json())
 
     def test_application_preserves_inspector_occurrence_order_after_target_title(self) -> None:
         claims = tuple(

@@ -41,6 +41,10 @@ Provider adapters retain `ProviderAttemptRecord` only in process memory. The
 application maps its category and outcome to bounded deterministic aggregates
 and drops provider identity, attempt ordinal, delay, elapsed time, and every
 raw response detail before adding diagnostics to `metadata-report-v15`.
+Missing or malformed optional attempt-record collections and entries map to a
+bounded `unknown` aggregate rather than aborting report generation. Report
+construction and replay accept only sorted, unique provider aggregates with a
+provider component and the category's supported provider stage.
 Provider status remains the existing neutral `ProviderStatus`; diagnostics
 explain failure shape without changing candidate or availability semantics.
 An HTTP 200 Hardcover response with a valid GraphQL `errors` envelope is a
@@ -53,9 +57,11 @@ Reviewer adapters may retain bounded raw job evidence inside their existing
 owner-private lifetime. Before persistence, their legacy internal signals map
 to the same diagnostic value. The exact-current shadow outcome table stores
 only its canonical document. `shadow-review-inspect-v2` aggregates those
-documents across attempts and emits no request, packet, result, process
-identity, attempt identifier, or ordinal. `shadow-review-failure-v2` emits the
-same object on stderr. A zero-exit process becomes a successful result only
+documents across attempts, binds the case and request identities, and emits no
+request, packet, result, process identity, attempt identifier, or ordinal.
+Duplicate, split, or out-of-order diagnostic aggregates are rejected.
+`shadow-review-failure-v2` emits the same object on stderr. A zero-exit process
+becomes a successful result only
 after canonical parsing plus exact request identity, citation membership, and
 semantic validation. The pinned ordinary reviewer runs in JSONL mode and emits
 its internal `response_format` signal only for exit status 1 with empty stderr
@@ -72,7 +78,9 @@ Exact repository faults map to persistence/persistence/persistence rather than
 runtime at both application and CLI-runner boundaries. A dispatched
 attempt with no durable terminal outcome reopens as `unknown` with one bounded
 reviewer/unknown/execution diagnostic per such attempt; inspection never emits
-an unknown or failed status with an empty diagnostic set.
+an unknown or failed status with an empty diagnostic set. Untyped exceptions
+crossing the CLI runner boundary map to reviewer/unknown/execution; typed
+reviewer runtime remains reviewer/spawn_runtime/execution.
 
 The report database accepts only the exact new schema. ADR-0013 applies: prior
 development state is rejected before mutation and has no migration, import, or

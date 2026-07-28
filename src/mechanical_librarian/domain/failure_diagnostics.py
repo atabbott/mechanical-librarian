@@ -149,6 +149,33 @@ class FailureDiagnostic:
         return value
 
 
+def diagnostic_aggregate_key(
+    diagnostic: FailureDiagnostic,
+) -> tuple[str, str, str, int, int]:
+    """Return the canonical identity and ordering key for one aggregate."""
+
+    return (
+        diagnostic.category.value,
+        diagnostic.component.value,
+        diagnostic.stage.value,
+        -1 if diagnostic.retryable is None else int(diagnostic.retryable),
+        -1 if diagnostic.current is None else int(diagnostic.current),
+    )
+
+
+def diagnostics_are_canonical(
+    diagnostics: tuple[FailureDiagnostic, ...],
+) -> bool:
+    """Require one sorted aggregate per category/component/stage state."""
+
+    if type(diagnostics) is not tuple or any(
+        type(value) is not FailureDiagnostic for value in diagnostics
+    ):
+        return False
+    keys = tuple(diagnostic_aggregate_key(value) for value in diagnostics)
+    return keys == tuple(sorted(set(keys)))
+
+
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
@@ -168,4 +195,6 @@ __all__ = [
     "FailureDiagnostic",
     "FailureStage",
     "MAX_DIAGNOSTIC_COUNT",
+    "diagnostic_aggregate_key",
+    "diagnostics_are_canonical",
 ]

@@ -1693,6 +1693,30 @@ class ShadowReviewTests(unittest.TestCase):
             ),
         )
         self.assertEqual("", errors.getvalue())
+        wrong_case = json.loads(serialized)
+        wrong_case["review_case_id"] = "review_case_" + "f" * 64
+        output, errors = io.StringIO(), io.StringIO()
+        self.assertEqual(
+            1,
+            main(
+                [
+                    "shadow-review-request",
+                    "--database",
+                    "/db",
+                    "--review-case-id",
+                    case_id,
+                    "--qualification-profile",
+                    "/profile",
+                ],
+                shadow_request_runner=lambda *_: canonical_json(wrong_case),
+                stdout=output,
+                stderr=errors,
+            ),
+        )
+        self.assertEqual("", output.getvalue())
+        self.assertEqual(
+            _failure_output("malformed_output"), errors.getvalue()
+        )
         output, errors = io.StringIO(), io.StringIO()
         self.assertEqual(
             1,
@@ -1778,6 +1802,30 @@ class ShadowReviewTests(unittest.TestCase):
             )
             self.assertNotIn(private, errors.getvalue())
 
+        output, errors = io.StringIO(), io.StringIO()
+        self.assertEqual(
+            1,
+            main(
+                [
+                    "shadow-review-inspect",
+                    "--database",
+                    "/private/database",
+                    "--review-request-id",
+                    request_id,
+                    "--qualification-profile",
+                    "/private/profile",
+                ],
+                shadow_inspect_runner=lambda *_: (_ for _ in ()).throw(
+                    RuntimeError(private)
+                ),
+                stdout=output,
+                stderr=errors,
+            ),
+        )
+        self.assertEqual("", output.getvalue())
+        self.assertEqual(_failure_output("unknown"), errors.getvalue())
+        self.assertNotIn(private, errors.getvalue())
+
     def test_cli_rejects_zero_exit_private_and_diagnostic_drift(
         self,
     ) -> None:
@@ -1795,9 +1843,22 @@ class ShadowReviewTests(unittest.TestCase):
         invalid_request["request"] = {"private": "packet"}
         invalid_result = json.loads(serialized)
         invalid_result["diagnostics"] = [{"category": "unknown"}]
+        timeout = reviewer_failure_diagnostic("timeout").to_data()
+        unknown = reviewer_failure_diagnostic("unknown").to_data()
+        duplicate_diagnostics = json.loads(serialized)
+        duplicate_diagnostics["diagnostics"] = [timeout, timeout]
+        unaggregated_diagnostics = json.loads(serialized)
+        second_timeout = dict(timeout)
+        second_timeout["count"] = 2
+        unaggregated_diagnostics["diagnostics"] = [timeout, second_timeout]
+        out_of_order_diagnostics = json.loads(serialized)
+        out_of_order_diagnostics["diagnostics"] = [unknown, timeout]
         for name, document in (
             ("request", invalid_request),
             ("result", invalid_result),
+            ("duplicate_diagnostics", duplicate_diagnostics),
+            ("unaggregated_diagnostics", unaggregated_diagnostics),
+            ("out_of_order_diagnostics", out_of_order_diagnostics),
         ):
             output, errors = io.StringIO(), io.StringIO()
             with self.subTest(document=name):

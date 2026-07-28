@@ -1016,6 +1016,10 @@ class GenerateMetadataReport:
             if observation.provider != binding.name:
                 repository.close()
                 raise MetadataReportError("provider result is invalid")
+            try:
+                attempt_records = getattr(provider, "attempt_records", ())
+            except Exception:
+                attempt_records = None
             observation = ProviderObservation(
                 observation.provider,
                 observation.status,
@@ -1027,7 +1031,7 @@ class GenerateMetadataReport:
                 observation.convergence,
                 observation.accessed_at,
                 provider_attempt_diagnostics(
-                    getattr(provider, "attempt_records", ()),
+                    attempt_records,
                     status=observation.status.value,
                 ),
             )

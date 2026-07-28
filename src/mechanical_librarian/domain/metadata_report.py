@@ -22,7 +22,13 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverEvidenceError, CoverProvenance, CoverSource, CoverSourceKind,
     CoverSourceState, CoverTruncationReason, publication_ready,
 )
-from mechanical_librarian.domain.failure_diagnostics import FailureDiagnostic
+from mechanical_librarian.domain.failure_diagnostics import (
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
+    diagnostics_are_canonical,
+)
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 
 
@@ -1277,6 +1283,21 @@ class ProviderConvergence:
         }
 
 
+_PROVIDER_DIAGNOSTIC_STAGES = {
+    FailureCategory.AUTHENTICATION: FailureStage.RESPONSE,
+    FailureCategory.CANCELLATION: FailureStage.EXECUTION,
+    FailureCategory.EMPTY_NO_MATCH: FailureStage.RESPONSE,
+    FailureCategory.HTTP_NON_SUCCESS: FailureStage.RESPONSE,
+    FailureCategory.LOOKUP_CONSTRUCTION: FailureStage.LOOKUP,
+    FailureCategory.MALFORMED_OVER_BOUND_RESPONSE: FailureStage.RESPONSE,
+    FailureCategory.PROVIDER_DECLARED_ERROR: FailureStage.RESPONSE,
+    FailureCategory.QUOTA_RATE_LIMIT: FailureStage.RESPONSE,
+    FailureCategory.TIMEOUT: FailureStage.REQUEST,
+    FailureCategory.TRANSPORT: FailureStage.REQUEST,
+    FailureCategory.UNKNOWN: FailureStage.RESPONSE,
+}
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderObservation:
     provider: str
@@ -1305,23 +1326,11 @@ class ProviderObservation:
             raise ReportValueError("provider status is invalid")
         if self.accessed_at is not None:
             validate_provider_access_time(self.accessed_at)
-        if (
-            type(self.diagnostics) is not tuple
-            or any(type(value) is not FailureDiagnostic for value in self.diagnostics)
-            or self.diagnostics
-            != tuple(
-                sorted(
-                    set(self.diagnostics),
-                    key=lambda value: (
-                        value.category.value,
-                        value.component.value,
-                        value.stage.value,
-                        -1 if value.retryable is None else int(value.retryable),
-                        -1 if value.current is None else int(value.current),
-                        value.count,
-                    ),
-                )
-            )
+        if not diagnostics_are_canonical(self.diagnostics) or any(
+            value.component is not FailureComponent.PROVIDER
+            or _PROVIDER_DIAGNOSTIC_STAGES.get(value.category) is not value.stage
+            or value.current is not None
+            for value in self.diagnostics
         ):
             raise ReportValueError("provider diagnostics are invalid")
         if type(self.input_references) is not tuple or tuple(sorted(set(self.input_references))) != self.input_references or any(

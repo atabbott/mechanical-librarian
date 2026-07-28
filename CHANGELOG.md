@@ -19,7 +19,11 @@
   repository faults at application and CLI-runner boundaries are
   typed `persistence`. Outcome-less dispatched attempts reopen with one bounded
   `unknown` reviewer diagnostic, and discovery-plan overflow records
-  `lookup_construction` in each affected provider observation.
+  `lookup_construction` in each affected provider observation. Malformed
+  optional provider attempt records fail closed to `unknown`; report replay
+  admits only canonical provider diagnostic aggregates. Inspection binds both
+  case and request identities, rejects duplicate or out-of-order aggregates,
+  and untyped CLI runner exceptions map to `unknown`.
   Malformed output and every other nonzero exit remain separate. Advance clean
   exact-current contracts to
   `metadata-report-v15`, `shadow-review-inspect-v2`, and

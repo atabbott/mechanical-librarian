@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
 from mechanical_librarian.application.failure_diagnostics import (
     FailureDiagnostic,
+    diagnostics_are_canonical,
     reviewer_failure_diagnostic,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -310,12 +312,18 @@ def _validate_projection(
                 "current",
                 "diagnostics",
                 "mode",
+                "review_case_id",
                 "review_request_id",
                 "schema_version",
                 "status",
             }
             or raw["schema_version"] != "shadow-review-inspect-v2"
             or raw["mode"] != QUALIFICATION_MODE
+            or type(raw["review_case_id"]) is not str
+            or re.fullmatch(
+                r"review_case_[0-9a-f]{64}", raw["review_case_id"]
+            )
+            is None
             or raw["review_request_id"] != review_request_id
             or type(raw["attempt_count"]) is not int
             or not 1 <= raw["attempt_count"] <= 32
@@ -333,6 +341,7 @@ def _validate_projection(
         if (
             tuple(value.to_data() for value in diagnostics)
             != tuple(raw["diagnostics"])
+            or not diagnostics_are_canonical(diagnostics)
             or (
                 raw["status"] in {"failed", "unknown"}
                 and not diagnostics
