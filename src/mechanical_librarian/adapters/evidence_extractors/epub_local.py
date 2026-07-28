@@ -406,6 +406,7 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
                 continue
             field = canonical = None; role = None
             byline = _BYLINE.match(value)
+            bibliographic_label = opening._is_bibliographic_indicia_label(value)
             bibliographic_indicia = opening._bibliographic_indicia(
                 element.semantics,
                 value,
@@ -422,7 +423,14 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             dates = () if is_ancestor else opening._indicia_dates(value)
             admitted_cue = admitted_cue or bool(credits) or bool(dates)
             if is_ancestor and not admitted_cue: continue
-            if element.semantics & {"title", "fulltitle"}: field, canonical = EpubInspectionField.TITLE, normalize_title(value)
+            if (
+                element.semantics & {"title", "fulltitle"}
+                and not bibliographic_label
+            ):
+                field, canonical = (
+                    EpubInspectionField.TITLE,
+                    normalize_title(value),
+                )
             elif element.semantics & {"contributor"} and not any(
                 credit[0] is opening.OpeningField.CONTRIBUTOR
                 for credit in credits
@@ -430,7 +438,7 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             elif byline is not None and len(byline.group(1)) <= 280: field, canonical, role = EpubInspectionField.CREATOR, byline.group(1), "author"
             elif element.semantics & {"creator"}: field, canonical, role = EpubInspectionField.CREATOR, value, "author"
             if field is not None: facts.append(EpubInspectionFact(field, report.source_fingerprint, value, canonical, value, "not_applicable", "not_applicable", "not_applicable", "opening_matter", rear_provenance=provenance, role=role))
-            for indicia_field, indicia_value in bibliographic_indicia:
+            for indicia_field, indicia_value, _labelled in bibliographic_indicia:
                 try:
                     indicia_value = validate_projection_text(
                         indicia_value,

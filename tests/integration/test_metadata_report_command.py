@@ -26,8 +26,11 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.bootstrap.composition import reopen_metadata_report, run_metadata_report
 from mechanical_librarian.bootstrap.composition import reopen_cover_preview
 from mechanical_librarian.domain.epub_inspection import DateEvent
-from mechanical_librarian.domain.metadata_report import MetadataReport
-from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+)
+from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.cover_evidence import PREVIEW_VARIANT
 from mechanical_librarian.infrastructure.security.credentials import (
     hardcover_client as real_hardcover_client,
@@ -1315,7 +1318,18 @@ class MetadataReportCommandTests(unittest.TestCase):
                                     "<p>Imprint: Conversion Press</p>"
                                 )
                                 if index == 8
-                                else _xhtml("<p>ordinary synthetic prose</p>")
+                                else (
+                                    _xhtml(
+                                        '<section epub:type="titlepage">'
+                                        '<h1 epub:type="fulltitle">'
+                                        "Publisher: Front Label House"
+                                        "</h1></section>"
+                                    )
+                                    if index == 0
+                                    else _xhtml(
+                                        "<p>ordinary synthetic prose</p>"
+                                    )
+                                )
                             ),
                             zipfile.ZIP_STORED,
                         )
@@ -1351,6 +1365,50 @@ class MetadataReportCommandTests(unittest.TestCase):
                 reopen_metadata_report(database, report.report_id)
             )
             self.assertEqual(reopened, report)
+            front_publisher = next(
+                claim
+                for claim in report.local_claims
+                if claim.basis == "opening_matter"
+                and claim.rear_provenance is None
+                and claim.kind.value == "publisher"
+                and claim.observed == "Front Label House"
+            )
+            self.assertEqual(
+                front_publisher.excerpt,
+                "Publisher: Front Label House",
+            )
+            self.assertFalse(
+                any(
+                    claim.basis == "opening_matter"
+                    and claim.kind.value == "title"
+                    for claim in report.local_claims
+                )
+            )
+            proposal_set = evaluate_report(report)
+            title_result = next(
+                result
+                for result in proposal_set.results
+                if result.destination is TargetDestination.TITLE
+            )
+            self.assertNotIn(
+                "Front Label House",
+                {
+                    alternative.value.value
+                    for alternative in title_result.alternatives
+                },
+            )
+            publisher_result = next(
+                result
+                for result in proposal_set.results
+                if result.destination is TargetDestination.PUBLISHER
+            )
+            self.assertIn(
+                "Front Label House",
+                {
+                    alternative.value.value
+                    for alternative in publisher_result.alternatives
+                },
+            )
             rear_claims = tuple(
                 claim
                 for claim in report.local_claims

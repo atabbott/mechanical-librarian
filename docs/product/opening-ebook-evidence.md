@@ -378,6 +378,10 @@ item.
 A changed file fingerprint supersedes prior extraction work. Cached evidence is
 reused only when the source fingerprint, extractor version, configuration, and
 selection contract remain applicable.
+The current material-recognition contract is `epub-opening-v3`. Opening
+citations produced by `epub-opening-v2` are incompatible and fail closed rather
+than entering cache reuse or report replay. This compatibility change does not
+alter the persisted inspection or metadata-report schema versions.
 
 ## Qualification plan
 

@@ -96,7 +96,12 @@ _BIBLIOGRAPHIC_INDICIA_LABEL = re.compile(
     re.I,
 )
 _NON_BIBLIOGRAPHIC_INDICIA = re.compile(
-    r"^(?:copyright(?:\s+holder)?\s*[:\-]"
+    r"^(?:(?:©|\(c\))\s*"
+    r"|copyright(?:(?:\s+|-)holder\b"
+    r"|\s*(?:©|\(c\))"
+    r"|\s+(?:18|19|20|21)\d{2}\b"
+    r"|\s+by\b"
+    r"|\s*[:\-])"
     r"|(?:printed|printing|distributed|retailed|converted)\s+by\b"
     r"|(?:epub|e-?book|digital)\s+conversion\s+by\b"
     r"|(?:printer|distributor|retailer|conversion)\s*[:\-])",
@@ -1949,7 +1954,7 @@ def _normal(value: str, field: OpeningField) -> str:
 def _bibliographic_indicia(
     semantics: set[str],
     text: str,
-) -> tuple[tuple[OpeningField, str], ...]:
+) -> tuple[tuple[OpeningField, str, bool], ...]:
     """Admit only structurally explicit or exactly labelled target indicia."""
 
     if _NON_BIBLIOGRAPHIC_INDICIA.match(text) is not None:
@@ -1964,9 +1969,9 @@ def _bibliographic_indicia(
             "publisher": OpeningField.PUBLISHER,
             "imprint": OpeningField.IMPRINT,
         }[labelled.group("label").casefold()]
-        return ((field, value),)
+        return ((field, value, True),)
     return tuple(
-        (field, text)
+        (field, text, False)
         for token, field in (
             ("subtitle", OpeningField.SUBTITLE),
             ("publisher", OpeningField.PUBLISHER),
@@ -1974,6 +1979,10 @@ def _bibliographic_indicia(
         )
         if token in semantics
     )
+
+
+def _is_bibliographic_indicia_label(text: str) -> bool:
+    return _BIBLIOGRAPHIC_INDICIA_LABEL.fullmatch(text) is not None
 
 
 def _isbn_valid(value: str) -> bool:
@@ -2664,8 +2673,9 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                 )
             )
 
+        bibliographic_label = _is_bibliographic_indicia_label(text)
         bibliographic_indicia = _bibliographic_indicia(semantic, text)
-        for field, value in bibliographic_indicia:
+        for field, value, labelled in bibliographic_indicia:
             add(
                 field,
                 value,
@@ -2674,20 +2684,20 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                     if field is OpeningField.SUBTITLE
                     else EpubObservationApplicability.EDITION
                 ),
+                citation_context=(
+                    (element, element.start, element.end)
+                    if labelled
+                    else None
+                ),
             )
-        if not any(
-            field is OpeningField.SUBTITLE
-            for field, _value in bibliographic_indicia
-        ) and (
+        if not bibliographic_label and not bibliographic_indicia and (
             semantic & {"fulltitle", "title"}
             or (element.name == "h1" and (title_context or title_ancestor))
         ):
             add(OpeningField.TITLE, text, EpubObservationApplicability.WORK)
         if (
-            not any(
-                field is OpeningField.IMPRINT
-                for field, _value in bibliographic_indicia
-            )
+            not bibliographic_label
+            and not bibliographic_indicia
             and lowered.endswith(" imprint")
         ):
             add(OpeningField.IMPRINT, text, EpubObservationApplicability.EDITION)

@@ -38,7 +38,8 @@ The suite covers:
   paired source-explicit subtitle/publisher/imprint recognition across front
   and rear indicia, distinct publisher/imprint kinds, exact excerpts and rear
   provenance, conflict/repetition retention, exact bounds, hostile-context
-  isolation, canonical replay, and installed database reopen;
+  isolation, canonical replay, installed database reopen, and rejection of
+  prior `epub-opening-v2` citations under `epub-opening-v3`;
 - strict configuration, duplicate/reference rejection, and no implicit inputs;
 - scoped Audiobookshelf item reading, response bounds, root mounts,
   `relPath`/`path` agreement, all 16 destination states/currentness, multiple

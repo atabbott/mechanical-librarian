@@ -10,7 +10,10 @@
   and database reopen. Copyright holders, printers, distributors, retailers,
   conversion credits, advertisements, previews, and other-work material remain
   excluded, while rear position supplies no candidate authority or write
-  capability. Existing report and inspection schema versions remain unchanged.
+  capability. Advance material-recognition and citation compatibility from
+  `epub-opening-v2` to `epub-opening-v3`; earlier opening citations are rejected
+  instead of being reused. Existing report and inspection schema versions
+  remain unchanged.
   (#377)
 
 - Recover source-explicit contributor roles and selected-manifestation
