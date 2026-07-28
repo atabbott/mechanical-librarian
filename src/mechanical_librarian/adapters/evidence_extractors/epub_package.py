@@ -1499,7 +1499,7 @@ def _package_report(
                             else EpubPackageField.IDENTIFIER_SCHEME
                         ),
                         applicability=EpubObservationApplicability.EDITION,
-                        selector=resolved_property,
+                        selector=f"{resolved_property}-{node.ordinal}",
                     )
                 )
             elif resolved_property in {

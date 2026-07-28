@@ -133,7 +133,8 @@ never the remote URL.
 
 Successful output and persisted documents contain only bounded target names,
 item identity, opaque file identity/digest, current title, fact-local opening
-excerpts, typed claims, provider candidate edition and provider-local work
+excerpts, controlled contributor/production roles, typed date event and
+precision claims, provider candidate edition and provider-local work
 identities, comparison facts, and derived ISBN relationships containing only
 claim references and those already-admitted bounded identities. The
 relationship projection does not duplicate observations or excerpts. Report
@@ -144,6 +145,9 @@ not duplicate report excerpts or provider/cover payloads. These documents
 contain no credentials, private paths, raw provider bodies, or arbitrary EPUB
 text. Target and provider titles pass the same closed public-safe projection
 before they can enter a report. Failure output is fixed and value-free.
+Production, conversion, scanning, software, retailer, and workflow credits
+remain a separate contextual claim kind and therefore cannot cross the
+bibliographic contributor or author candidate boundary.
 
 Report and current-pointer publication is one SQLite transaction. Immutable
 report rows have update/delete triggers. The transaction runs the bounded

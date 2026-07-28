@@ -31,7 +31,10 @@ The suite covers:
 - closed reports, canonical serialization, stable claim/report references,
   title normalization, and occurrence-local ISBN applicability, including
   explicit non-ISBN scheme and URI controls across package, opening, and rear
-  evidence;
+  evidence; controlled contributor-role separation, compound roles, contextual
+  production-credit negatives, and typed manifestation/work/copyright/
+  creation/modification/conversion date events at exact year/month/day/signed-
+  timestamp precision across package, front, and rear evidence;
 - strict configuration, duplicate/reference rejection, and no implicit inputs;
 - scoped Audiobookshelf item reading, response bounds, root mounts,
   `relPath`/`path` agreement, all 16 destination states/currentness, multiple
@@ -112,6 +115,17 @@ without mutation, then prove exact deterministic replay under the current
 policy. Every synthetic EPUB member has a fixed timestamp so the probe identity
 does not depend on the qualification wall clock. No live library or provider is
 used in development or CI.
+
+The #374 synthetic indicia aggregate reports contributor-role and
+manifestation-date recall separately from explicit-negative precision. Its
+rows are generated fixtures only; qualification output contains aggregate
+counts/rates and no EPUB text, private corpus rows, paths, or credentials.
+Adversarial regressions additionally cover unsigned date-time prefix
+truncation, mixed work-first/selected-edition wording across front, rear, and
+installed-report paths in both cue orders and case/punctuation variants,
+same-statement versus unrelated-sentence bounds, adjacent independent credits
+versus initials and same-person compound roles, and event-aware local-claim
+scope replay.
 
 Hostile-input tests name a supported external actor and reachable boundary.
 Typed in-process collaborators are not attacker-controlled unless the product

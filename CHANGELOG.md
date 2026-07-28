@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Recover source-explicit contributor roles and selected-manifestation
+  publication dates from bounded package, front, and rear EPUB indicia.
+  Compound bibliographic roles remain attached to their contributor occurrence;
+  production, conversion, software, retailer, scanning, and workflow credits
+  remain contextual-only. Date events retain their exact
+  year/month/day/timestamp precision and signed offsets without conflating work
+  first publication, copyright, creation, modification, or conversion with the
+  selected ebook. Advance clean exact-current opening, child, and report
+  contracts to `epub-opening-report-v2`, `epub-inspection-v3`, and
+  `metadata-report-v12`; earlier development state remains incompatible under
+  ADR-0013. Unsigned date-times and mixed work-first/selected-edition wording
+  now fail closed without lower-precision truncation or cue-order-dependent
+  event guessing,
+  adjacent explicit contributor credits remain independent, and durable local
+  date-event scope must agree with the event. (#374)
+
 - Recover from narrowly classified transient metadata-provider failures within
   provider-local fixed retry, pacing, byte, deadline, and dispatch bounds.
   Google Books permits at most 54 attempts, Hardcover 27, and Open Library 49;

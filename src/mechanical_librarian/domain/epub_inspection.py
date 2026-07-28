@@ -140,6 +140,27 @@ class EpubObservationApplicability(StrEnum):
     INAPPLICABLE = "inapplicable"
 
 
+class DateEvent(StrEnum):
+    """Closed local date-event vocabulary retained for later policy."""
+
+    MANIFESTATION_PUBLICATION = "manifestation_publication"
+    WORK_FIRST_PUBLICATION = "work_first_publication"
+    COPYRIGHT = "copyright"
+    CREATION = "creation"
+    MODIFICATION = "modification"
+    CONVERSION = "conversion"
+    UNKNOWN = "unknown"
+
+
+class DatePrecision(StrEnum):
+    """Maximum precision stated by one source date."""
+
+    YEAR = "year"
+    MONTH = "month"
+    DAY = "day"
+    TIMESTAMP = "timestamp"
+
+
 def epub_file_lineage(source: Fingerprint) -> str:
     if type(source) is not Fingerprint:
         raise EvidenceValueError("EPUB lineage source is malformed")
@@ -157,6 +178,8 @@ class EpubInspectionField(StrEnum):
     SERIES_SEQUENCE = "series_sequence"
     ISBN = "isbn"
     PUBLICATION_DATE = "publication_date"
+    DATE_EVENT = "date_event"
+    CONTEXTUAL_CREDIT = "contextual_credit"
     PUBLISHER = "publisher"
     IMPRINT = "imprint"
     DESCRIPTION = "description"
@@ -205,6 +228,8 @@ class EpubInspectionFact:
     state: str = "valid"
     role: str | None = None
     rear_provenance: EpubRearProvenance | None = None
+    date_event: DateEvent | None = None
+    date_precision: DatePrecision | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -225,8 +250,30 @@ class EpubInspectionFact:
             or self.state not in _FIELD_STATES
             or (self.role is not None and not _valid_role(self.role))
             or (self.rear_provenance is not None and type(self.rear_provenance) is not EpubRearProvenance)
+            or (self.date_event is not None and type(self.date_event) is not DateEvent)
+            or (
+                self.date_precision is not None
+                and type(self.date_precision) is not DatePrecision
+            )
         ):
             raise ValueError("EPUB inspection fact is malformed")
+        is_date = self.field in {
+            EpubInspectionField.PUBLICATION_DATE,
+            EpubInspectionField.DATE_EVENT,
+        }
+        if is_date != (self.date_event is not None):
+            raise ValueError("EPUB inspection date typing is inconsistent")
+        if (
+            is_date
+            and self.state == "valid"
+            and self.date_precision is None
+        ) or (not is_date and self.date_precision is not None):
+            raise ValueError("EPUB inspection date precision is inconsistent")
+        if (
+            self.field is EpubInspectionField.PUBLICATION_DATE
+            and self.date_event is not DateEvent.MANIFESTATION_PUBLICATION
+        ):
+            raise ValueError("EPUB publication date event is inconsistent")
         if self.field is not EpubInspectionField.ISBN and (
             (self.state == "valid" and self.canonical_value is None)
             or self.checksum != "not_applicable"
@@ -289,6 +336,8 @@ class EpubInspection:
             OpeningField.SERIES: EpubInspectionField.SERIES,
             OpeningField.SERIES_ORDER: EpubInspectionField.SERIES_SEQUENCE,
             OpeningField.PUBLICATION_DATE: EpubInspectionField.PUBLICATION_DATE,
+            OpeningField.DATE_EVENT: EpubInspectionField.DATE_EVENT,
+            OpeningField.CONTEXTUAL_CREDIT: EpubInspectionField.CONTEXTUAL_CREDIT,
             OpeningField.PUBLISHER: EpubInspectionField.PUBLISHER,
             OpeningField.IMPRINT: EpubInspectionField.IMPRINT,
         }
@@ -298,7 +347,7 @@ class EpubInspection:
             if claim.field is OpeningField.TITLE and (claim.normalized_value is not None or claim.state != "valid") and claim.applicability not in {EpubObservationApplicability.INAPPLICABLE, EpubObservationApplicability.UNKNOWN}:
                 facts.append(EpubInspectionFact(EpubInspectionField.TITLE, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "not_applicable", "opening_matter", state=claim.state))
             elif claim.field in fields and (claim.normalized_value is not None or claim.state != "valid"):
-                facts.append(EpubInspectionFact(fields[claim.field], source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "not_applicable", "opening_matter", state=claim.state))
+                facts.append(EpubInspectionFact(fields[claim.field], source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "not_applicable", "opening_matter", state=claim.state, role=claim.role, date_event=claim.date_event, date_precision=claim.date_precision))
                 contributor_index = len(facts) - 1 if claim.field is OpeningField.CONTRIBUTOR else contributor_index
                 creator_index = len(facts) - 1 if claim.field is OpeningField.CREATOR else creator_index
             elif claim.field is OpeningField.CONTRIBUTOR_ROLE and contributor_index is not None:
@@ -338,6 +387,14 @@ class EpubInspection:
                         "outcome": fact.outcome.value,
                         "rear_provenance": None if fact.rear_provenance is None else fact.rear_provenance.to_data(),
                         "role": fact.role,
+                        "date_event": (
+                            None if fact.date_event is None else fact.date_event.value
+                        ),
+                        "date_precision": (
+                            None
+                            if fact.date_precision is None
+                            else fact.date_precision.value
+                        ),
                         "support": fact.supporting_context,
                         "state": fact.state,
                     }
@@ -345,7 +402,7 @@ class EpubInspection:
                 ],
                 "outcome": self.outcome.value,
                 "rear_resource_limit": self.rear_resource_limit,
-                "schema": "epub-inspection-v2",
+                "schema": "epub-inspection-v3",
                 "source": None if self.source is None else {
                     "algorithm": self.source.algorithm,
                     "digest": self.source.digest,
@@ -363,13 +420,13 @@ class EpubInspection:
             raise ValueError("EPUB inspection protocol is invalid")
         try:
             value = json.loads(serialized)
-            if type(value) is not dict or set(value) != {"facts", "outcome", "rear_resource_limit", "schema", "source"} or value["schema"] != "epub-inspection-v2":
+            if type(value) is not dict or set(value) != {"facts", "outcome", "rear_resource_limit", "schema", "source"} or value["schema"] != "epub-inspection-v3":
                 raise ValueError
             source_data = value["source"]
             source = None if source_data is None else Fingerprint(source_data["algorithm"], SchemaVersion(source_data["schema"]), source_data["digest"])
             facts = tuple(
                 EpubInspectionFact(
-                    EpubInspectionField(item["field"]), source, item["observed"], item["canonical"], item["support"], item["checksum"], item["media"], item["applicability_basis"], item["basis"], EpubInspectionOutcome(item["outcome"]), item["state"], item["role"], None if item["rear_provenance"] is None else EpubRearProvenance(**item["rear_provenance"])
+                    EpubInspectionField(item["field"]), source, item["observed"], item["canonical"], item["support"], item["checksum"], item["media"], item["applicability_basis"], item["basis"], EpubInspectionOutcome(item["outcome"]), item["state"], item["role"], None if item["rear_provenance"] is None else EpubRearProvenance(**item["rear_provenance"]), None if item["date_event"] is None else DateEvent(item["date_event"]), None if item["date_precision"] is None else DatePrecision(item["date_precision"])
                 )
                 for item in value["facts"]
             )
@@ -384,4 +441,4 @@ class EpubInspection:
         return "EpubInspection(<redacted>)"
 
 
-__all__ = ["EpubInspection", "EpubInspectionFact", "EpubInspectionField", "EpubInspectionOutcome", "EpubPackageLimits", "MAX_PUBLIC_REPORT_BYTES", "epub_file_lineage"]
+__all__ = ["DateEvent", "DatePrecision", "EpubInspection", "EpubInspectionFact", "EpubInspectionField", "EpubInspectionOutcome", "EpubPackageLimits", "MAX_PUBLIC_REPORT_BYTES", "epub_file_lineage"]

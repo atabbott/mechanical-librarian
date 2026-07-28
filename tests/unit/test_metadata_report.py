@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import io
 import tempfile
 import unittest
@@ -46,6 +47,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -142,6 +144,99 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_local_date_event_scope_is_event_aware_and_replay_rejects_mismatch(
+        self,
+    ) -> None:
+        claims = tuple(
+            LocalClaim.create(
+                kind=ClaimKind.DATE_EVENT,
+                observed="1998",
+                canonical="1998",
+                excerpt="First published 1998",
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                date_event=event,
+                date_precision=DatePrecision.YEAR,
+            )
+            for event in (
+                DateEvent.WORK_FIRST_PUBLICATION,
+                DateEvent.CREATION,
+                DateEvent.COPYRIGHT,
+            )
+        )
+        self.assertEqual(
+            [claim.scope for claim in claims],
+            [ClaimScope.WORK, ClaimScope.WORK, ClaimScope.EDITION],
+        )
+        with self.assertRaises(ReportValueError):
+            replace(claims[0], scope=ClaimScope.EDITION)
+
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields("Example"),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=claims,
+            local_reasons=("opening_date_event",),
+            providers=(),
+        )
+        replay_data = report.to_data()
+        replay_data["local"]["claims"][0]["scope"] = "edition"
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(replay_data))
+
+    def test_local_dates_and_contextual_credits_replay_without_candidate_conflation(
+        self,
+    ) -> None:
+        publication = LocalClaim.create(
+            kind=ClaimKind.PUBLICATION_DATE,
+            observed="2024-03",
+            canonical="2024-03",
+            excerpt="This ebook edition published 2024-03",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            date_event=DateEvent.MANIFESTATION_PUBLICATION,
+            date_precision=DatePrecision.MONTH,
+            occurrence=1,
+        )
+        conversion = LocalClaim.create(
+            kind=ClaimKind.CONTEXTUAL_CREDIT,
+            observed="Tool House",
+            canonical="Tool House",
+            excerpt="EPUB conversion by Tool House",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            role="conversion",
+            occurrence=2,
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields("Example"),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(publication, conversion),
+            local_reasons=("not_applicable",),
+            providers=(),
+        )
+        replayed = MetadataReport.from_json(report.to_json())
+        self.assertEqual(replayed, report)
+        self.assertEqual(
+            replayed.local_claims[0].date_event,
+            DateEvent.MANIFESTATION_PUBLICATION,
+        )
+        self.assertIs(replayed.local_claims[0].date_precision, DatePrecision.MONTH)
+        self.assertIs(replayed.local_claims[1].kind, ClaimKind.CONTEXTUAL_CREDIT)
+        self.assertNotEqual(replayed.local_claims[1].kind, ClaimKind.CONTRIBUTOR)
+
     def test_exhausted_provider_reopens_as_typed_terminal_without_attempts(
         self,
     ) -> None:
@@ -478,7 +573,7 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v11", report.schema_version)
+        self.assertEqual("metadata-report-v12", report.schema_version)
 
     def test_aggregate_candidate_failures_preserve_independent_lane_statuses(
         self,
@@ -891,7 +986,9 @@ class MetadataReportTests(unittest.TestCase):
                 "series_sequence",
                 "isbn",
                 "asin",
-                "publication_date",
+            "publication_date",
+            "date_event",
+            "contextual_credit",
                 "publisher",
                 "description",
                 "language",

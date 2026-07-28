@@ -97,10 +97,12 @@ instant to another offset. Signed-offset creation, modification, copyright, and
 unknown events remain inapplicable, as do unsigned or malformed date-times.
 
 Declared contributor roles remain present in the raw package report. The local
-bibliographic projection excludes a contributor whose normalized MARC relator
-code is exactly `bkp` (book producer), because that production credit is not an
-authorship or editorial contribution. Other creator and contributor roles are
-projected unchanged.
+projection maps supported MARC relators to controlled bibliographic roles;
+multiple explicit roles remain attached to their contributor occurrence.
+An exact `bkp` book-producer role and other controlled production roles become
+typed contextual credits because they are not authorship or editorial
+contributions. An explicit safe but otherwise unsupported structured role may
+be retained as `other`; prose ambiguity never produces that fallback.
 
 ### Opening matter
 
@@ -111,10 +113,12 @@ semantic role. Use landmarks and navigation before filename guesses.
 F07a opening matter supports:
 
 - displayed title and subtitle;
-- author, editor, translator, illustrator, adapter, and other contributor
-  roles;
+- author, editor, translator, illustrator, foreword, designer, photographer,
+  cartographer, adapter, and structured-explicit other contributor roles;
 - publisher and imprint;
-- copyright and publication years;
+- selected-manifestation publication dates plus distinct work-first-
+  publication, copyright, creation, modification, and conversion events at
+  their original year/month/day/timestamp precision;
 - explicit edition, revision, printing, translation, or regional statements;
 - ISBNs and other typed identifiers with nearby applicability labels;
 - original title and original language;
@@ -123,6 +127,34 @@ F07a opening matter supports:
 - abridgement, illustration, commentary, or supplemental-content statements;
   and
 - production notices that distinguish this file from another edition.
+
+The same admission rules apply to already-selected front and rear copyright
+pages, colophons, credits, and other indicia. Position is provenance, not
+authority. Advertisements, previews, other-work notices, generic `published`
+dates, and print-edition dates do not become selected-ebook manifestation
+facts. Conversion, scanning, software, retailer, and workflow credits remain
+typed contextual evidence and never enter contributor candidates.
+
+Date-time evidence requires either `Z` or an explicit signed offset; an
+unsigned date-time is rejected as a whole and cannot fall back to its valid
+year, month, or day prefix. Wording that mixes a work-first cue with the
+selected ebook edition, such as `First published as this ebook edition 2024`
+or `This ebook edition first published 2024`, is unresolved regardless of cue
+order or case: the opening report records `ambiguous_date_event`, while neither
+front nor rear projection emits a typed date claim. Sentence, semicolon, pipe,
+newline, and resource boundaries prevent unrelated cues from being combined.
+The retained metadata report currently has no separate unresolved-date field,
+so this condition is represented there by the absence of either date event
+rather than by guessing.
+Work-first-publication and creation events are work-scoped; manifestation,
+copyright, modification, conversion, and unknown events are edition-scoped,
+and durable local-claim construction and replay reject a mismatched scope.
+
+Adjacent explicit contributor credits are split only at another controlled
+role cue after sentence punctuation or `and`. This keeps initials such as
+`A. B. Carter` intact, recovers separate people from `Translated by Alice.
+Illustrated by Bob`, and retains `Translated and illustrated by Bea Artist` as
+one compound role on one contributor.
 
 Only the minimum supporting text is retained. Story prose adjacent to front
 matter is not automatically evidence of title, author, edition, or series.
@@ -353,8 +385,11 @@ Cover at minimum:
 - ebook and print ISBN lists with clear and ambiguous labels;
 - translations, illustrated editions, revised editions, regional editions,
   omnibuses, anthologies, and collected works;
-- multiple contributors and role vocabularies, including production-role
-  exclusion from the bibliographic projection;
+- multiple contributors and role vocabularies, including compound roles and
+  production-role exclusion from the bibliographic projection;
+- contributor-role and manifestation-publication-date recall plus explicit-
+  negative precision over deterministic synthetic year/month/day/timestamp,
+  signed-offset, print/original-work, conflict, repetition, and bound cases;
 - series names and integer, decimal, labelled, missing, and strictly bounded
   trailing sequence values;
 - image-only title or copyright pages without OCR fallback;

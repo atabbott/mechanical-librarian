@@ -12,9 +12,16 @@ from types import MappingProxyType
 from typing import Any, ClassVar, Mapping, Self
 from xml.parsers import expat
 
-from .evidence_bounds import EvidenceValueError, validate_code, validate_projection_text
+from .evidence_bounds import (
+    EvidenceValueError,
+    validate_code,
+    validate_projection_text,
+    validate_role_projection,
+)
 from .identifiers import Fingerprint, SchemaVersion
 from .epub_inspection import (
+    DateEvent,
+    DatePrecision,
     EpubInspectionOutcome,
     EpubObservationApplicability,
     EpubPackageLimits,
@@ -23,10 +30,10 @@ from .epub_inspection import (
 )
 
 
-EPUB_OPENING_REPORT_SCHEMA = SchemaVersion("epub-opening-report-v1")
+EPUB_OPENING_REPORT_SCHEMA = SchemaVersion("epub-opening-report-v2")
 EPUB_OPENING_CITATION_SCHEMA = SchemaVersion("epub-opening-citation-v1")
 EPUB_OPENING_LIMIT_PROFILE = "epub-opening-limits-v1"
-EPUB_OPENING_EXTRACTOR_VERSION = "epub-opening-v1"
+EPUB_OPENING_EXTRACTOR_VERSION = "epub-opening-v2"
 EPUB_OPENING_NORMALIZER_VERSION = "epub-opening-normalizer-v1"
 EPUB_OPENING_PARSER_VERSION = (
     f"cpython-{platform.python_version()}-expat-{expat.EXPAT_VERSION}-htmlparser-v1"
@@ -90,6 +97,8 @@ class OpeningField(StrEnum):
     PUBLISHER = "publisher"
     IMPRINT = "imprint"
     PUBLICATION_DATE = "publication_date"
+    DATE_EVENT = "date_event"
+    CONTEXTUAL_CREDIT = "contextual_credit"
     COPYRIGHT_DATE = "copyright_date"
     EDITION = "edition"
     PRINTING = "printing"
@@ -268,6 +277,9 @@ class OpeningClaim:
     identifier_type: str | None = None
     applicability_label: str | None = None
     state: str = "valid"
+    date_event: DateEvent | None = None
+    date_precision: DatePrecision | None = None
+    role: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -292,6 +304,25 @@ class OpeningClaim:
                 validate_code(self.applicability_label, "opening applicability label")
         elif self.identifier_type is not None or self.applicability_label is not None:
             raise EvidenceValueError("non-identifier claim has identifier typing")
+        is_date = self.field in {OpeningField.PUBLICATION_DATE, OpeningField.DATE_EVENT}
+        if is_date != (
+            type(self.date_event) is DateEvent
+            and type(self.date_precision) is DatePrecision
+        ):
+            raise EvidenceValueError("opening date claim typing is inconsistent")
+        if (
+            self.field is OpeningField.PUBLICATION_DATE
+            and self.date_event is not DateEvent.MANIFESTATION_PUBLICATION
+        ):
+            raise EvidenceValueError("opening publication date event is inconsistent")
+        if self.role is not None:
+            if self.field not in {
+                OpeningField.CREATOR,
+                OpeningField.CONTRIBUTOR,
+                OpeningField.CONTEXTUAL_CREDIT,
+            }:
+                raise EvidenceValueError("opening claim role is inapplicable")
+            validate_role_projection(self.role)
 
 
 @dataclass(frozen=True)
@@ -697,12 +728,12 @@ def _citation_from_data(value: object) -> OpeningCitation:
 
 
 def _claim_data(value: OpeningClaim) -> dict[str, object]:
-    return {"applicability": value.applicability.value, "applicability_label": value.applicability_label, "citation": _citation_data(value.citation), "field": value.field.value, "identifier_type": value.identifier_type, "normalized_value": value.normalized_value, "raw_value": value.raw_value, "state": value.state}
+    return {"applicability": value.applicability.value, "applicability_label": value.applicability_label, "citation": _citation_data(value.citation), "date_event": None if value.date_event is None else value.date_event.value, "date_precision": None if value.date_precision is None else value.date_precision.value, "field": value.field.value, "identifier_type": value.identifier_type, "normalized_value": value.normalized_value, "raw_value": value.raw_value, "role": value.role, "state": value.state}
 
 
 def _claim_from_data(value: object) -> OpeningClaim:
-    item = _object(value, {"applicability", "applicability_label", "citation", "field", "identifier_type", "normalized_value", "raw_value", "state"})
-    return OpeningClaim(OpeningField(item["field"]), item["raw_value"], item["normalized_value"], EpubObservationApplicability(item["applicability"]), _citation_from_data(item["citation"]), item["identifier_type"], item["applicability_label"], item["state"])
+    item = _object(value, {"applicability", "applicability_label", "citation", "date_event", "date_precision", "field", "identifier_type", "normalized_value", "raw_value", "role", "state"})
+    return OpeningClaim(OpeningField(item["field"]), item["raw_value"], item["normalized_value"], EpubObservationApplicability(item["applicability"]), _citation_from_data(item["citation"]), item["identifier_type"], item["applicability_label"], item["state"], None if item["date_event"] is None else DateEvent(item["date_event"]), None if item["date_precision"] is None else DatePrecision(item["date_precision"]), item["role"])
 
 
 def _resource_data(value: OpeningResourceResult) -> dict[str, object]:

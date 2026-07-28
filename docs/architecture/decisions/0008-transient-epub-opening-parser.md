@@ -110,7 +110,8 @@ child report must not survive if its source provenance is stripped or forged.
    envelope remain empty of parser state.
 9. The opening capability retains the transient child controls from ADR-0007,
    uses its closed `epub-opening-limits-v1` profile, emits one canonical
-   `epub-opening-report-v1` object, and treats a parsed navigation document as a
+   versioned opening-report object (currently `epub-opening-report-v2`), and
+   treats a parsed navigation document as a
    valid sole resource without requiring content selection.
 
 ## Consequences
