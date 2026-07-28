@@ -2222,6 +2222,50 @@ def _scope_contains(scope: int | None, element: _Element) -> bool:
     return scope is None or scope == element.ordinal or scope in element.ancestors
 
 
+def _promotion_excluded_ordinals(projection: _Projection) -> frozenset[int]:
+    """Bound promotional notices to their forward structural scope."""
+
+    by_ordinal = {element.ordinal: element for element in projection.elements}
+    structural = {"section", "article", "aside", "nav"}
+    excluded: set[int] = set()
+    semantic_scopes = [
+        element.ordinal
+        for element in projection.elements
+        if (
+            _is_html_namespace(element.namespace)
+            and not element.active
+            and element.semantics & _EXCLUDED_SEMANTICS
+        )
+    ]
+    for element in projection.elements:
+        if any(_scope_contains(scope, element) for scope in semantic_scopes):
+            excluded.add(element.ordinal)
+    for notice in projection.elements:
+        if (
+            notice.active
+            or not _is_html_namespace(notice.namespace)
+            or _INDICIA_PROMOTION_NOTICE.fullmatch(notice.exact_text) is None
+        ):
+            continue
+        container = next(
+            (
+                ancestor
+                for ancestor in reversed(notice.ancestors)
+                if (
+                    _is_html_namespace(by_ordinal[ancestor].namespace)
+                    and by_ordinal[ancestor].name in structural
+                )
+            ),
+            None,
+        )
+        for element in projection.elements:
+            if element.ordinal < notice.ordinal:
+                continue
+            if container is None or container in element.ancestors:
+                excluded.add(element.ordinal)
+    return frozenset(excluded)
+
+
 def _recognition_context(
     projection: _Projection,
     candidate: _Candidate,
@@ -2382,12 +2426,14 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
     if excluded or context.suppress_claims:
         return [], warnings, body_transition, excluded
     by_ordinal = {element.ordinal: element for element in projection.elements}
+    promotion_exclusions = _promotion_excluded_ordinals(projection)
 
     def admissible_context_element(candidate: _Element) -> bool:
         return not (
             candidate.active
             or not candidate.exact_text
             or not _is_html_namespace(candidate.namespace)
+            or candidate.ordinal in promotion_exclusions
             or (
                 context.body_ordinal is not None
                 and candidate.ordinal >= context.body_ordinal
@@ -2410,6 +2456,8 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
     for element in projection.elements:
         text = element.exact_text
         if element.active or not _is_html_namespace(element.namespace):
+            continue
+        if element.ordinal in promotion_exclusions:
             continue
         if (
             context.body_ordinal is not None
@@ -2434,8 +2482,6 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
         if not text or element.end <= element.start:
             continue
         lowered = text.casefold()
-        if _INDICIA_PROMOTION_NOTICE.fullmatch(text):
-            continue
         if element.name not in claim_elements and not semantic & _CLAIM_SEMANTICS:
             continue
         title_context = any(

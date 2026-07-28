@@ -873,6 +873,55 @@ class EpubChildRearSpineTests(unittest.TestCase):
         )
         self.assertFalse(any(fact.date_event is not None for fact in facts))
 
+    def test_rear_promotion_notice_is_bounded_to_its_forward_sibling_scope(
+        self,
+    ) -> None:
+        request, (package, opening, _) = self._bundle(
+            _xhtml(
+                '<section epub:type="copyright-page">'
+                "<p>All rights reserved</p>"
+                "<p>Edited by Earlier Editor</p>"
+                '<section epub:type="preview">'
+                "<p>Copyright 2022</p>"
+                "<p>Edited by Semantic Promo Editor</p>"
+                "</section>"
+                "<h2>Preview of Another Work</h2>"
+                "<p>Copyright 2024</p>"
+                "<p>Edited by Promo Editor</p>"
+                "</section>"
+                '<section epub:type="copyright-page">'
+                '<h1 epub:type="fulltitle">A Sample of Life</h1>'
+                "<p>Copyright 2023</p>"
+                "<p>Edited by Sibling Editor</p>"
+                "</section>"
+            )
+        )
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package, opening, archive)
+        self.assertEqual(
+            {
+                (fact.canonical_value, fact.role)
+                for fact in facts
+                if fact.field is EpubInspectionField.CONTRIBUTOR
+            },
+            {
+                ("Earlier Editor", "editor"),
+                ("Sibling Editor", "editor"),
+            },
+        )
+        self.assertEqual(
+            {
+                fact.canonical_value
+                for fact in facts
+                if fact.date_event is DateEvent.COPYRIGHT
+            },
+            {"2023"},
+        )
+        self.assertIn(
+            (EpubInspectionField.TITLE, "A Sample of Life"),
+            {(fact.field, fact.canonical_value) for fact in facts},
+        )
+
     def test_rear_colophon_is_admitted_but_advertisement_and_preview_are_not(
         self,
     ) -> None:

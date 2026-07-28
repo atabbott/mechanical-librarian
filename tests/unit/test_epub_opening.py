@@ -1119,6 +1119,54 @@ class EpubOpeningTests(unittest.TestCase):
             {(claim.field, claim.normalized_value) for claim in report.claims},
         )
 
+    def test_promotion_notice_suppresses_only_later_claims_in_its_front_scope(
+        self,
+    ) -> None:
+        report = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page">'
+                    "<p>Edited by Earlier Editor</p>"
+                    '<section epub:type="preview">'
+                    "<p>Copyright 2022</p>"
+                    "<p>Edited by Semantic Promo Editor</p>"
+                    "</section>"
+                    "<h2>Preview of Another Work</h2>"
+                    "<p>Copyright 2024</p>"
+                    "<p>Edited by Promo Editor</p>"
+                    "</section>"
+                    '<section epub:type="copyright-page">'
+                    '<h1 epub:type="fulltitle">A Sample of Life</h1>'
+                    "<p>Copyright 2023</p>"
+                    "<p>Edited by Sibling Editor</p>"
+                    "</section>"
+                )
+            )
+        )
+        self.assertEqual(
+            {
+                (claim.normalized_value, claim.role)
+                for claim in report.claims
+                if claim.field is OpeningField.CONTRIBUTOR
+            },
+            {
+                ("Earlier Editor", "editor"),
+                ("Sibling Editor", "editor"),
+            },
+        )
+        self.assertEqual(
+            {
+                claim.normalized_value
+                for claim in report.claims
+                if claim.date_event is DateEvent.COPYRIGHT
+            },
+            {"2023"},
+        )
+        self.assertIn(
+            (OpeningField.TITLE, "A Sample of Life"),
+            {(claim.field, claim.normalized_value) for claim in report.claims},
+        )
+
     def test_synthetic_indicia_aggregate_has_exact_role_and_date_recovery(
         self,
     ) -> None:

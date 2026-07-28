@@ -340,22 +340,31 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             raise opening._AggregateRejected(report.outcome.RESOURCE_LIMIT, tuple(facts)) from None
         except (opening._MalformedMarkup, opening._UnsafeConstruct, opening._UnsupportedEncoding, ValueError):
             raise opening._AggregateRejected(report.outcome.MALFORMED) from None
-        by_ordinal = {element.ordinal: element for element in projection.elements}
-        if any(
-            opening._INDICIA_PROMOTION_NOTICE.fullmatch(element.exact_text)
-            or bool(element.semantics & opening._EXCLUDED_SEMANTICS)
-            or any(
-                by_ordinal[ancestor].semantics & opening._EXCLUDED_SEMANTICS
-                for ancestor in element.ancestors
-            )
+        promotion_exclusions = opening._promotion_excluded_ordinals(projection)
+        parents = {
+            ancestor
             for element in projection.elements
-        ):
-            continue
-        marker = _MARKER.search(projection.text)
+            for ancestor in element.ancestors
+        }
+        marker = next(
+            (
+                match
+                for element in projection.elements
+                if (
+                    element.ordinal not in promotion_exclusions
+                    and element.ordinal not in parents
+                )
+                for match in [_MARKER.search(element.exact_text)]
+                if match is not None
+            ),
+            None,
+        )
         if marker is None: continue
         provenance = EpubRearProvenance(identity, spine_item.spine_position or tail_slot, tail_slot, marker.group(0).lower(), marker.group(0))
-        parents = {a for element in projection.elements for a in element.ancestors}; resource_isbns = 0
+        resource_isbns = 0
         for element in projection.elements:
+            if element.ordinal in promotion_exclusions:
+                continue
             is_ancestor = element.ordinal in parents
             value = " ".join(element.exact_text.split())
             if not value or len(value) > 280: continue
