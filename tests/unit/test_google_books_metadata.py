@@ -85,6 +85,79 @@ def _lookup() -> MetadataLookup:
 
 
 class GoogleBooksMetadataTests(unittest.TestCase):
+    def test_retries_503_with_fresh_backoff_and_records_each_dispatch(
+        self,
+    ) -> None:
+        responses = [
+            httpx.Response(
+                503,
+                headers={"content-type": "application/json"},
+                json={"error": {}},
+            ),
+            httpx.Response(
+                503,
+                headers={"content-type": "application/json"},
+                json={"error": {}},
+            ),
+            httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"totalItems": 1, "items": [_volume()]},
+            ),
+        ]
+        delays: list[float] = []
+        jitters = iter((0.25, 0.75))
+        provider = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(lambda _: responses.pop(0))
+            ),
+            65_536,
+            sleep=delays.append,
+            jitter=lambda: next(jitters),
+        )
+
+        observation = provider.observe(_lookup())
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        self.assertEqual([1.25, 2.75], delays)
+        self.assertEqual(3, len(provider.attempt_records))
+        self.assertEqual(
+            ["retry", "retry", "success"],
+            [record.outcome for record in provider.attempt_records],
+        )
+        self.assertEqual(
+            ["http_503", "http_503", "none"],
+            [record.category for record in provider.attempt_records],
+        )
+
+    def test_503_retry_authority_is_capped_at_six_dispatches(self) -> None:
+        requests = 0
+
+        def handler(_: httpx.Request) -> httpx.Response:
+            nonlocal requests
+            requests += 1
+            return httpx.Response(
+                503,
+                headers={"content-type": "application/json"},
+                json={"error": {}},
+            )
+
+        provider = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+
+        observation = provider.observe(_lookup())
+
+        self.assertEqual(ProviderStatus.UNAVAILABLE, observation.status)
+        self.assertEqual(6, requests)
+        self.assertEqual(6, len(provider.attempt_records))
+        self.assertEqual("exhausted", provider.attempt_records[-1].outcome)
+
     def test_keyless_and_keyed_requests_are_fixed_and_credentials_never_persist(
         self,
     ) -> None:
@@ -308,6 +381,8 @@ class GoogleBooksMetadataTests(unittest.TestCase):
                         )
                     ),
                     65_536,
+                    sleep=lambda _: None,
+                    jitter=lambda: 0.0,
                 ).observe(_lookup())
                 self.assertEqual(expected, observation.status)
 
@@ -449,6 +524,8 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             "google_books",
             httpx.Client(transport=httpx.MockTransport(timeout)),
             65_536,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
         ).observe(_lookup())
         self.assertEqual(ProviderStatus.UNAVAILABLE, unavailable.status)
 
