@@ -1644,6 +1644,61 @@ class ProviderAdapterTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())
 
+    def test_nullable_contribution_roles_preserve_candidate_with_typed_malformed_claims(self) -> None:
+        contribution = {
+            "id": 1,
+            "contribution": None,
+            "author": {"id": 1, "name": "Synthetic Contributor"},
+        }
+        payload = self._envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": "9780306406157",
+                    "contributions": [contribution],
+                }
+            ],
+            [
+                {
+                    "id": 1,
+                    "title": "Synthetic title",
+                    "release_date": "2001-02-03",
+                    "contributions": [contribution],
+                }
+            ],
+        )
+        observation = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
+                )
+            ),
+            65_536,
+        ).observe(_isbn_lookup((self._claim(),)))
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        malformed = [
+            claim
+            for claim in observation.candidates[0].claims
+            if claim.kind is ClaimKind.CONTRIBUTOR
+            and claim.state is FieldState.MALFORMED
+        ]
+        self.assertEqual(
+            {ClaimScope.EDITION, ClaimScope.WORK},
+            {claim.scope for claim in malformed},
+        )
+        self.assertEqual(
+            {ProviderEvidenceKind.FIRST_PUBLICATION_DATE},
+            {evidence.kind for evidence in observation.candidates[0].evidence},
+        )
+
     def test_nested_overflow_probe_objects_are_structurally_validated(self) -> None:
         cases = []
         contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": "A"}} for index in range(17)]

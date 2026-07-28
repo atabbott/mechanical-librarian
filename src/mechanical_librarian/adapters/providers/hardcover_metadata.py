@@ -801,7 +801,10 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
                 contribution["contribution"]
             ).casefold()
         except EvidenceValueError:
-            raise ValueError("provider contribution role invalid") from None
+            # The claim projection records the malformed role. It cannot
+            # safely support identity evidence, but it must not discard the
+            # otherwise valid candidate.
+            continue
         if role == "author":
             evidence.add(
                 ProviderEvidence(
