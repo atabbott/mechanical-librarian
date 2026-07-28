@@ -1429,6 +1429,111 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(3, dispatches)
         self.assertEqual("exhausted", exhausted.attempt_records[-1].outcome)
 
+    def test_hardcover_recovers_at_every_permitted_retry_ordinal(
+        self,
+    ) -> None:
+        for prior_failures in range(3):
+            responses = [
+                httpx.Response(503) for _ in range(prior_failures)
+            ]
+            responses.append(
+                httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=self._envelope([], []),
+                )
+            )
+            provider = HardcoverMetadataProvider(
+                "catalogue",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _, values=responses: values.pop(0)
+                    )
+                ),
+                65_536,
+                sleep=lambda _: None,
+                jitter=lambda: 0.0,
+            )
+            with self.subTest(prior_failures=prior_failures):
+                self.assertEqual(
+                    ProviderStatus.NO_MATCH,
+                    provider.observe(
+                        _isbn_lookup((self._claim(),))
+                    ).status,
+                )
+                self.assertEqual(
+                    prior_failures + 1, len(provider.attempt_records)
+                )
+                self.assertEqual(
+                    ["retry"] * prior_failures + ["response_received"],
+                    [record.outcome for record in provider.attempt_records],
+                )
+
+    def test_hardcover_charges_error_bodies_before_status_retry(self) -> None:
+        oversized_calls = 0
+
+        def oversized(_: httpx.Request) -> httpx.Response:
+            nonlocal oversized_calls
+            oversized_calls += 1
+            return httpx.Response(503, content=b"x" * 2_000)
+
+        oversized_provider = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(oversized)),
+            1_024,
+            sleep=lambda _: self.fail("oversized body must not retry"),
+        )
+        self.assertEqual(
+            ProviderStatus.OVERSIZED,
+            oversized_provider.observe(
+                _isbn_lookup((self._claim(),))
+            ).status,
+        )
+        self.assertEqual(1, oversized_calls)
+        self.assertEqual(0, oversized_provider._remaining_response_bytes)
+
+        success = httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=self._envelope([], []),
+        )
+        control = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(lambda _: success)
+            ),
+            1_024,
+        )
+        self.assertEqual(
+            ProviderStatus.NO_MATCH,
+            control.observe(_isbn_lookup((self._claim(),))).status,
+        )
+        responses = [
+            httpx.Response(503, stream=_InterruptedProviderStream()),
+            httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=self._envelope([], []),
+            ),
+        ]
+        interrupted = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(lambda _: responses.pop(0))
+            ),
+            1_024,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        self.assertEqual(
+            ProviderStatus.NO_MATCH,
+            interrupted.observe(_isbn_lookup((self._claim(),))).status,
+        )
+        self.assertEqual(
+            control._remaining_response_bytes - 1,
+            interrupted._remaining_response_bytes,
+        )
+
     def test_hardcover_429_retries_only_valid_retry_after_and_graphql_never(
         self,
     ) -> None:

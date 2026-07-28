@@ -1259,6 +1259,111 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         )
         self.assertEqual(1, deadline_calls)
 
+    def test_recovers_at_every_permitted_status_retry_ordinal(self) -> None:
+        for prior_failures in range(2):
+            responses = [
+                httpx.Response(503) for _ in range(prior_failures)
+            ]
+            responses.append(
+                httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"docs": []},
+                )
+            )
+            provider = OpenLibraryMetadataProvider(
+                "open_library",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _, values=responses: values.pop(0)
+                    )
+                ),
+                65_536,
+                pacer=OpenLibraryPacer(sleep=lambda _: None),
+                sleep=lambda _: None,
+                jitter=lambda: 0.0,
+            )
+            with self.subTest(prior_failures=prior_failures):
+                self.assertEqual(
+                    ProviderStatus.NO_MATCH,
+                    provider.observe(_isbn_lookup((_isbn(),))).status,
+                )
+                self.assertEqual(
+                    prior_failures + 1, len(provider.attempt_records)
+                )
+                self.assertEqual(
+                    ["retry"] * prior_failures + ["response_received"],
+                    [record.outcome for record in provider.attempt_records],
+                )
+
+    def test_error_response_bodies_are_charged_before_status_retry(
+        self,
+    ) -> None:
+        oversized_calls = 0
+
+        def oversized(_: httpx.Request) -> httpx.Response:
+            nonlocal oversized_calls
+            oversized_calls += 1
+            return httpx.Response(503, content=b"x" * 2_000)
+
+        oversized_provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(oversized)),
+            1_024,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+            sleep=lambda _: self.fail("oversized body must not retry"),
+        )
+        self.assertEqual(
+            ProviderStatus.OVERSIZED,
+            oversized_provider.observe(_isbn_lookup((_isbn(),))).status,
+        )
+        self.assertEqual(1, oversized_calls)
+        self.assertEqual(0, oversized_provider._remaining_response_bytes)
+
+        success = httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"docs": []},
+        )
+        control = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(lambda _: success)
+            ),
+            1_024,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        self.assertEqual(
+            ProviderStatus.NO_MATCH,
+            control.observe(_isbn_lookup((_isbn(),))).status,
+        )
+        responses = [
+            httpx.Response(503, stream=_InterruptedStream()),
+            httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"docs": []},
+            ),
+        ]
+        interrupted = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(lambda _: responses.pop(0))
+            ),
+            1_024,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        self.assertEqual(
+            ProviderStatus.NO_MATCH,
+            interrupted.observe(_isbn_lookup((_isbn(),))).status,
+        )
+        self.assertEqual(
+            control._remaining_response_bytes - 1,
+            interrupted._remaining_response_bytes,
+        )
+
     def test_retry_budget_is_four_across_required_request_chain(
         self,
     ) -> None:

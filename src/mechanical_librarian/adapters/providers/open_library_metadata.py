@@ -554,6 +554,17 @@ class OpenLibraryMetadataProvider:
                     response.headers.get("retry-after"),
                     now=self._wall_clock(),
                 )
+                if response.status_code != 200:
+                    _body(
+                        response,
+                        min(
+                            self._maximum_bytes,
+                            self._remaining_response_bytes,
+                        ),
+                        deadline=deadline,
+                        clock=self._clock,
+                        consume=self._consume_response_bytes,
+                    )
                 if response.status_code == 429:
                     raise _ProviderFailure(
                         ProviderStatus.RATE_LIMITED,

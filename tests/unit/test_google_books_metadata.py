@@ -361,6 +361,47 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             [record.category for record in provider.attempt_records],
         )
 
+    def test_recovers_at_every_permitted_503_retry_ordinal(self) -> None:
+        for prior_failures in range(6):
+            responses = [
+                httpx.Response(
+                    503,
+                    headers={"content-type": "application/json"},
+                    json={"error": {}},
+                )
+                for _ in range(prior_failures)
+            ]
+            responses.append(
+                httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"totalItems": 1, "items": [_volume()]},
+                )
+            )
+            provider = GoogleBooksMetadataProvider(
+                "google_books",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _, values=responses: values.pop(0)
+                    )
+                ),
+                65_536,
+                sleep=lambda _: None,
+                jitter=lambda: 0.0,
+            )
+            with self.subTest(prior_failures=prior_failures):
+                self.assertEqual(
+                    ProviderStatus.CANDIDATES,
+                    provider.observe(_lookup()).status,
+                )
+                self.assertEqual(
+                    prior_failures + 1, len(provider.attempt_records)
+                )
+                self.assertEqual(
+                    ["retry"] * prior_failures + ["response_received"],
+                    [record.outcome for record in provider.attempt_records],
+                )
+
     def test_503_retry_authority_is_capped_at_six_dispatches(self) -> None:
         requests = 0
 

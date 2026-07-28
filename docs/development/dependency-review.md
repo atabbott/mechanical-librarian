@@ -28,7 +28,7 @@ F04 adds pinned HTTPX 0.28.1 target-service transport and its locked graph:
 | Package | Version | Relationship | SPDX licence | Product authority |
 | --- | --- | --- | --- | --- |
 | httpx | 0.28.1 | direct | BSD-3-Clause | bounded target-only status/authorization HTTP |
-| httpcore | 1.0.9 | transitive | BSD-3-Clause | HTTP transport core |
+| httpcore | 1.0.9 | direct | BSD-3-Clause | HTTP transport core and exact typed cause authority for narrowly retryable remote disconnects |
 | anyio | 4.14.2 | transitive | MIT | timeout/network compatibility |
 | certifi | 2026.6.17 | transitive | MPL-2.0 | default TLS CA bundle |
 | h11 | 0.16.0 | transitive | MIT | HTTP/1.1 protocol |
@@ -40,6 +40,10 @@ bound, and streams into a hard response cap. Composition supplies only a
 target-service scoped credential-bearing client. HTTPX receives no persistence,
 media, provider, reviewer, or mutation authority. These licences are compatible
 with AGPL-3.0-or-later distribution; MPL-2.0 applies at file level to Certifi.
+The bounded provider retry policy imports the pinned HTTPcore exception type
+only to recognize HTTPX's exact wrapped remote-disconnect cause without parsing
+exception text. HTTPcore receives no additional authority through that direct
+classification dependency.
 
 F06 adds no direct or transitive runtime dependency and changes no lockfile. It
 targets the CPython 3.13/3.14 standard-library boundary, with these

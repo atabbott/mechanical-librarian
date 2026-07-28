@@ -462,6 +462,18 @@ class HardcoverMetadataProvider:
                     response.headers.get("retry-after"),
                     now=self._wall_clock(),
                 )
+                if response.status_code != 200:
+                    _body(
+                        response,
+                        min(
+                            self._maximum_bytes,
+                            self._remaining_response_bytes,
+                        ),
+                        deadline=deadline,
+                        clock=self._clock,
+                        consume=self._consume_response_bytes,
+                        allow_empty=True,
+                    )
                 if response.status_code == 401:
                     raise _ProviderFailure(
                         ProviderStatus.AUTHENTICATION,
@@ -603,7 +615,18 @@ def _body(
     deadline: float | None = None,
     clock: Callable[[], float] = time.monotonic,
     consume: Callable[[int], None] = lambda _: None,
+    allow_empty: bool = False,
 ) -> bytes:
+    length = response.headers.get("content-length")
+    if length is not None:
+        try:
+            declared = int(length)
+        except ValueError:
+            raise ValueError("provider response length is invalid") from None
+        if declared < 0:
+            raise ValueError("provider response length is invalid")
+        if declared > maximum:
+            raise _ResponseOversized
     chunks: list[bytes] = []
     size = 0
     for chunk in response.iter_bytes():
@@ -614,7 +637,7 @@ def _body(
         chunks.append(chunk)
         if deadline is not None and clock() >= deadline:
             raise _DeadlineExpired
-    if not chunks:
+    if not chunks and not allow_empty:
         raise ValueError("provider response empty")
     return b"".join(chunks)
 
