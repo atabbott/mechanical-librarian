@@ -558,11 +558,21 @@ class MetadataReportCommandTests(unittest.TestCase):
 
             self.assertEqual([first[0], replay[0], second[0]], [0, 0, 0])
             self.assertEqual([first[2], replay[2], second[2]], ["", "", ""])
-            self.assertEqual(first[1], replay[1])
             reports = [
                 MetadataReport.from_json(value[1].removesuffix("\n"))
                 for value in (first, replay, second)
             ]
+            self.assertNotEqual(
+                reports[0].providers[0].accessed_at,
+                reports[1].providers[0].accessed_at,
+            )
+            first_data = reports[0].to_data()
+            replay_data = reports[1].to_data()
+            first_data.pop("report_id")
+            replay_data.pop("report_id")
+            first_data["providers"][0]["accessed_at"] = None  # type: ignore[index]
+            replay_data["providers"][0]["accessed_at"] = None  # type: ignore[index]
+            self.assertEqual(first_data, replay_data)
             self.assertEqual(
                 [report.target.library for report in reports], ["books", "books", "other"]
             )
@@ -609,7 +619,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                 connection.execute(
                     "SELECT COUNT(*) FROM metadata_reports"
                 ).fetchone(),
-                (2,),
+                (3,),
             )
             self.assertEqual(
                 connection.execute(
@@ -950,10 +960,27 @@ class MetadataReportCommandTests(unittest.TestCase):
                     )
 
                 self.assertEqual((0, "", 0, ""), (first[0], first[2], second[0], second[2]))
-                self.assertEqual(first[1], second[1])
                 self.assertNotIn("first@example.invalid", first[1])
                 self.assertNotIn("second@example.invalid", second[1])
                 report = MetadataReport.from_json(first[1].removesuffix("\n"))
+                reordered = MetadataReport.from_json(
+                    second[1].removesuffix("\n")
+                )
+                self.assertTrue(
+                    all(
+                        provider.accessed_at is not None
+                        for provider in (*report.providers, *reordered.providers)
+                    )
+                )
+                first_data = report.to_data()
+                second_data = reordered.to_data()
+                first_data.pop("report_id")
+                second_data.pop("report_id")
+                for provider in first_data["providers"]:  # type: ignore[union-attr]
+                    provider["accessed_at"] = None
+                for provider in second_data["providers"]:  # type: ignore[union-attr]
+                    provider["accessed_at"] = None
+                self.assertEqual(first_data, second_data)
                 self.assertEqual(
                     [("catalogue", "candidates"), ("open", "candidates")],
                     [
@@ -1371,7 +1398,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                 reopen_metadata_report(database, report.report_id)
             )
             self.assertEqual(reopened, report)
-            self.assertEqual(report.schema_version, "metadata-report-v13")
+            self.assertEqual(report.schema_version, "metadata-report-v14")
             front_publisher = next(
                 claim
                 for claim in report.local_claims

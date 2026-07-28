@@ -824,7 +824,7 @@ def _require_identifier(
 def _proposal_identifier(value: dict[str, object]) -> str:
     if (
         set(value) != {"policy_version", "report", "results", "schema_version"}
-        or value.get("schema_version") != "proposal-set-v1"
+        or value.get("schema_version") != "proposal-set-v2"
         or value.get("policy_version") != "fixed-conservative-v2"
     ):
         raise QualificationFailure("installed_review_case_failed")

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Any, Mapping, Self
 
@@ -23,7 +25,7 @@ from mechanical_librarian.domain.cover_evidence import (
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 
 
-REPORT_SCHEMA = "metadata-report-v13"
+REPORT_SCHEMA = "metadata-report-v14"
 COMPARISON_VERSION = "same-kind-v1"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -38,13 +40,51 @@ MAX_DESCRIPTION_CHARACTERS = 16_384
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
 _REFERENCE = re.compile(r"^(?:local|provider)_[0-9a-f]{64}$")
+_ASIN = re.compile(r"^B[0-9A-Z]{9}$")
 _LANE_IDENTITY = re.compile(r"^lane_[0-9a-f]{64}$")
 _LANE_CANDIDATE_REFERENCE = re.compile(r"^lane_candidate_[0-9a-f]{64}$")
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+_PROVIDER_ACCESS_TIME = re.compile(
+    r"^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])"
+    r"T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\.[0-9]{6}Z$"
+)
 
 
 class ReportValueError(ValueError):
     """A report or report input is outside the closed 0.4 contract."""
+
+
+def provider_access_time(timestamp: float) -> str:
+    """Return one canonical UTC access time from an injected epoch clock."""
+    if type(timestamp) not in {int, float} or isinstance(timestamp, bool):
+        raise ReportValueError("provider access clock is invalid")
+    try:
+        finite = math.isfinite(timestamp)
+    except OverflowError:
+        finite = False
+    if not finite:
+        raise ReportValueError("provider access clock is invalid")
+    try:
+        observed = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        raise ReportValueError("provider access clock is invalid") from None
+    return observed.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def validate_provider_access_time(value: object) -> str:
+    """Validate the exact persisted provider-access timestamp language."""
+    if type(value) is not str or _PROVIDER_ACCESS_TIME.fullmatch(value) is None:
+        raise ReportValueError("provider access time is invalid")
+    try:
+        observed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        raise ReportValueError("provider access time is invalid") from None
+    if (
+        observed.isoformat(timespec="microseconds").replace("+00:00", "Z")
+        != value
+    ):
+        raise ReportValueError("provider access time is invalid")
+    return value
 
 
 class ClaimKind(StrEnum):
@@ -92,6 +132,13 @@ class ProviderEvidenceKind(StrEnum):
     FIRST_PUBLICATION_DATE = "first_publication_date"
     EDITION_COVER_ID = "edition_cover_id"
     WORK_COVER_ID = "work_cover_id"
+
+
+class DateLinkConfidence(StrEnum):
+    """Whether a provider date is safely linked to its stated event and scope."""
+
+    EXPLICIT = "explicit"
+    UNRESOLVED = "unresolved"
 
 
 class FieldState(StrEnum):
@@ -467,6 +514,37 @@ def normalize_title(value: str) -> str:
     return normalized
 
 
+def normalize_date_value(value: str) -> tuple[str, DatePrecision]:
+    """Validate one ISO-like lexical date without increasing its precision."""
+    _projection_text(value, "date lexical value", MAX_SCALAR_CHARACTERS)
+    if re.fullmatch(r"\d{4}", value):
+        year = int(value)
+        if not 1 <= year <= 9999:
+            raise ReportValueError("date lexical value is invalid")
+        return value, DatePrecision.YEAR
+    if re.fullmatch(r"\d{4}-\d{2}", value):
+        try:
+            date(int(value[:4]), int(value[5:7]), 1)
+        except ValueError as error:
+            raise ReportValueError("date lexical value is invalid") from error
+        return value, DatePrecision.MONTH
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        try:
+            return date.fromisoformat(value).isoformat(), DatePrecision.DAY
+        except ValueError as error:
+            raise ReportValueError("date lexical value is invalid") from error
+    if "T" not in value:
+        raise ReportValueError("date lexical value is invalid")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ReportValueError("date lexical value is invalid") from error
+    offset = parsed.utcoffset()
+    if offset is not None and abs(offset) > timedelta(hours=14):
+        raise ReportValueError("date lexical value is invalid")
+    return parsed.isoformat(), DatePrecision.TIMESTAMP
+
+
 def validate_observed_title(value: object) -> str:
     try:
         exact = validate_projection_text(value, "observed title", 512)
@@ -772,6 +850,10 @@ class ProviderClaim:
     role: str | None = None
     raw_order: int = 0
     links: tuple[ComparisonLink, ...] = ()
+    date_event: DateEvent | None = None
+    date_precision: DatePrecision | None = None
+    date_lexical: str | None = None
+    date_confidence: DateLinkConfidence | None = None
 
     def __post_init__(self) -> None:
         if _REFERENCE.fullmatch(self.reference) is None or not self.reference.startswith("provider_"):
@@ -802,6 +884,37 @@ class ProviderClaim:
             or _valid_isbn(self.value, "valid_isbn_13")
         ):
             raise ReportValueError("provider ISBN claim is invalid")
+        if (
+            self.kind is ClaimKind.ASIN
+            and self.value is not None
+            and _ASIN.fullmatch(self.value) is None
+        ):
+            raise ReportValueError("provider ASIN claim is invalid")
+        is_date = self.kind is ClaimKind.PUBLICATION_DATE
+        if is_date != (type(self.date_event) is DateEvent):
+            raise ReportValueError("provider date claim typing is inconsistent")
+        if is_date != (type(self.date_confidence) is DateLinkConfidence):
+            raise ReportValueError("provider date claim confidence is inconsistent")
+        if (
+            is_date
+            and self.state is FieldState.VALID
+            and (
+                type(self.date_precision) is not DatePrecision
+                or type(self.date_lexical) is not str
+                or (self.value, self.date_precision)
+                != normalize_date_value(self.date_lexical)
+            )
+        ) or (
+            (not is_date or self.state is not FieldState.VALID)
+            and (self.date_precision is not None or self.date_lexical is not None)
+        ):
+            raise ReportValueError("provider date claim precision is inconsistent")
+        if is_date and (
+            self.date_event is not DateEvent.MANIFESTATION_PUBLICATION
+            or self.scope is not ClaimScope.EDITION
+            or self.date_confidence is not DateLinkConfidence.EXPLICIT
+        ):
+            raise ReportValueError("provider publication date linkage is inconsistent")
         if tuple(link.local_reference for link in self.links) != tuple(sorted(link.local_reference for link in self.links)) or len({link.local_reference for link in self.links}) != len(self.links):
             raise ReportValueError("provider comparison links are invalid")
 
@@ -819,9 +932,65 @@ class ProviderClaim:
         role: str | None = None,
         raw_order: int = 0,
         links: tuple[ComparisonLink, ...] = (),
+        date_event: DateEvent | None = None,
+        date_precision: DatePrecision | None = None,
+        date_lexical: str | None = None,
+        date_confidence: DateLinkConfidence | None = None,
     ) -> Self:
-        data = _provider_reference_data(provider, candidate, kind, value, state, scope, applicability, role, raw_order)
-        return cls(stable_reference("provider", data), kind, value, state, scope, applicability, role, raw_order, links)
+        if (
+            kind is ClaimKind.ASIN
+            and state is FieldState.VALID
+            and type(value) is str
+        ):
+            value = value.upper()
+        if kind is ClaimKind.PUBLICATION_DATE:
+            date_event = (
+                DateEvent.MANIFESTATION_PUBLICATION
+                if date_event is None
+                else date_event
+            )
+            date_confidence = (
+                DateLinkConfidence.EXPLICIT
+                if date_confidence is None
+                else date_confidence
+            )
+            if state is FieldState.VALID and value is not None:
+                date_lexical = value if date_lexical is None else date_lexical
+                normalized, inferred_precision = normalize_date_value(date_lexical)
+                value = normalized
+                date_precision = (
+                    inferred_precision if date_precision is None else date_precision
+                )
+        data = _provider_reference_data(
+            provider,
+            candidate,
+            kind,
+            value,
+            state,
+            scope,
+            applicability,
+            role,
+            raw_order,
+            date_event,
+            date_precision,
+            date_lexical,
+            date_confidence,
+        )
+        return cls(
+            stable_reference("provider", data),
+            kind,
+            value,
+            state,
+            scope,
+            applicability,
+            role,
+            raw_order,
+            links,
+            date_event,
+            date_precision,
+            date_lexical,
+            date_confidence,
+        )
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -834,6 +1003,16 @@ class ProviderClaim:
             "scope": self.scope.value,
             "links": [link.to_data() for link in self.links],
             "value": self.value,
+            "date_event": (
+                None if self.date_event is None else self.date_event.value
+            ),
+            "date_precision": (
+                None if self.date_precision is None else self.date_precision.value
+            ),
+            "date_lexical": self.date_lexical,
+            "date_confidence": (
+                None if self.date_confidence is None else self.date_confidence.value
+            ),
         }
 
 
@@ -843,6 +1022,10 @@ class ProviderEvidence:
     value: str
     scope: ClaimScope
     role: str | None = None
+    date_event: DateEvent | None = None
+    date_precision: DatePrecision | None = None
+    date_normalized: str | None = None
+    date_confidence: DateLinkConfidence | None = None
 
     def __post_init__(self) -> None:
         if type(self.kind) is not ProviderEvidenceKind or type(self.scope) is not ClaimScope:
@@ -857,6 +1040,64 @@ class ProviderEvidence:
                 raise ReportValueError("provider rich evidence role is invalid") from error
         elif self.role is not None:
             raise ReportValueError("provider rich evidence role is invalid")
+        date_events = {
+            ProviderEvidenceKind.COPYRIGHT_DATE: DateEvent.COPYRIGHT,
+            ProviderEvidenceKind.FIRST_PUBLICATION_DATE: (
+                DateEvent.WORK_FIRST_PUBLICATION
+            ),
+            ProviderEvidenceKind.LAST_MODIFIED: DateEvent.MODIFICATION,
+            ProviderEvidenceKind.PUBLICATION_DATE_TEXT: DateEvent.UNKNOWN,
+        }
+        expected_event = date_events.get(self.kind)
+        if expected_event is not None and self.date_event is None:
+            object.__setattr__(self, "date_event", expected_event)
+        if expected_event is not None and self.date_confidence is None:
+            object.__setattr__(
+                self,
+                "date_confidence",
+                (
+                    DateLinkConfidence.UNRESOLVED
+                    if self.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                    else DateLinkConfidence.EXPLICIT
+                ),
+            )
+        if expected_event is not None and self.date_normalized is None:
+            try:
+                normalized, precision = normalize_date_value(self.value)
+            except ReportValueError:
+                pass
+            else:
+                object.__setattr__(self, "date_normalized", normalized)
+                if self.date_precision is None:
+                    object.__setattr__(self, "date_precision", precision)
+        if (expected_event is None) != (self.date_event is None):
+            raise ReportValueError("provider date evidence typing is inconsistent")
+        if expected_event is not None:
+            expected_confidence = (
+                DateLinkConfidence.UNRESOLVED
+                if self.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                else DateLinkConfidence.EXPLICIT
+            )
+            if (
+                self.date_event is not expected_event
+                or self.date_confidence is not expected_confidence
+                or (self.date_precision is None) != (self.date_normalized is None)
+                or (
+                    self.date_normalized is not None
+                    and normalize_date_value(self.value)
+                    != (self.date_normalized, self.date_precision)
+                )
+            ):
+                raise ReportValueError("provider date evidence is inconsistent")
+        elif any(
+            value is not None
+            for value in (
+                self.date_precision,
+                self.date_normalized,
+                self.date_confidence,
+            )
+        ):
+            raise ReportValueError("provider date evidence is inconsistent")
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -864,6 +1105,16 @@ class ProviderEvidence:
             "role": self.role,
             "scope": self.scope.value,
             "value": self.value,
+            "date_event": (
+                None if self.date_event is None else self.date_event.value
+            ),
+            "date_precision": (
+                None if self.date_precision is None else self.date_precision.value
+            ),
+            "date_normalized": self.date_normalized,
+            "date_confidence": (
+                None if self.date_confidence is None else self.date_confidence.value
+            ),
         }
 
 
@@ -898,6 +1149,22 @@ class ProviderCandidate:
                         value.kind.value,
                         value.value,
                         value.role or "",
+                        (
+                            ""
+                            if value.date_event is None
+                            else value.date_event.value
+                        ),
+                        (
+                            ""
+                            if value.date_precision is None
+                            else value.date_precision.value
+                        ),
+                        value.date_normalized or "",
+                        (
+                            ""
+                            if value.date_confidence is None
+                            else value.date_confidence.value
+                        ),
                     ),
                 )
             )
@@ -1019,6 +1286,7 @@ class ProviderObservation:
     authority: str | None = None
     lanes: tuple[ProviderLaneObservation, ...] = ()
     convergence: tuple[ProviderConvergence, ...] = ()
+    accessed_at: str | None = None
 
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
@@ -1033,6 +1301,8 @@ class ProviderObservation:
             }
         ):
             raise ReportValueError("provider status is invalid")
+        if self.accessed_at is not None:
+            validate_provider_access_time(self.accessed_at)
         if type(self.input_references) is not tuple or tuple(sorted(set(self.input_references))) != self.input_references or any(
             _REFERENCE.fullmatch(value) is None or not value.startswith("local_")
             for value in self.input_references
@@ -1051,7 +1321,21 @@ class ProviderObservation:
             claim.reference
             != stable_reference(
                 "provider",
-                _provider_reference_data(self.provider, candidate.identity, claim.kind, claim.value, claim.state, claim.scope, claim.applicability, claim.role, claim.raw_order),
+                _provider_reference_data(
+                    self.provider,
+                    candidate.identity,
+                    claim.kind,
+                    claim.value,
+                    claim.state,
+                    claim.scope,
+                    claim.applicability,
+                    claim.role,
+                    claim.raw_order,
+                    claim.date_event,
+                    claim.date_precision,
+                    claim.date_lexical,
+                    claim.date_confidence,
+                ),
             )
             for candidate in self.candidates
             for claim in candidate.claims
@@ -1143,6 +1427,7 @@ class ProviderObservation:
             "query_kind": self.query_kind.value,
             "status": self.status.value,
             "authority": self.authority,
+            "accessed_at": self.accessed_at,
             "convergence": [value.to_data() for value in self.convergence],
             "lanes": [value.to_data() for value in self.lanes],
         }
@@ -1590,7 +1875,21 @@ def isbn_family(value: str | None) -> str | None:
     return stem + str(checksum)
 
 
-def _provider_reference_data(provider: str, candidate: str, kind: ClaimKind, value: str | None, state: FieldState, scope: ClaimScope, applicability: str, role: str | None, raw_order: int) -> dict[str, object]:
+def _provider_reference_data(
+    provider: str,
+    candidate: str,
+    kind: ClaimKind,
+    value: str | None,
+    state: FieldState,
+    scope: ClaimScope,
+    applicability: str,
+    role: str | None,
+    raw_order: int,
+    date_event: DateEvent | None,
+    date_precision: DatePrecision | None,
+    date_lexical: str | None,
+    date_confidence: DateLinkConfidence | None,
+) -> dict[str, object]:
     return {
         "applicability": applicability,
         "candidate": candidate,
@@ -1601,6 +1900,12 @@ def _provider_reference_data(provider: str, candidate: str, kind: ClaimKind, val
         "scope": scope.value,
         "state": state.value,
         "value": value,
+        "date_event": None if date_event is None else date_event.value,
+        "date_precision": None if date_precision is None else date_precision.value,
+        "date_lexical": date_lexical,
+        "date_confidence": (
+            None if date_confidence is None else date_confidence.value
+        ),
     }
 
 
@@ -1653,6 +1958,16 @@ def comparison_links(provider: ProviderClaim, local: tuple[LocalClaim, ...]) -> 
 def _comparison_value(kind: ClaimKind, value: str) -> str:
     if kind is ClaimKind.ISBN:
         return "".join(character for character in value if character.isdigit() or character in "Xx").upper()
+    if kind is ClaimKind.PUBLICATION_DATE:
+        normalized, precision = normalize_date_value(value)
+        if precision is DatePrecision.TIMESTAMP:
+            instant = datetime.fromisoformat(normalized)
+            if instant.utcoffset() is None:
+                raise ReportValueError(
+                    "comparison timestamp requires an explicit offset"
+                )
+            return instant.astimezone(timezone.utc).isoformat()
+        return normalized
     if kind is ClaimKind.DESCRIPTION:
         _projection_text(value, "comparison description", MAX_DESCRIPTION_CHARACTERS)
         return " ".join(unicodedata.normalize("NFC", value).split()).casefold()
@@ -1847,6 +2162,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
     item = _object(
         value,
         {
+            "accessed_at",
             "authority",
             "candidates",
             "convergence",
@@ -1870,6 +2186,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
             _provider_convergence_from_data(value)
             for value in _list(item["convergence"])
         ),
+        item["accessed_at"],
     )
 
 
@@ -1925,18 +2242,44 @@ def _candidate_from_data(value: object) -> ProviderCandidate:
 
 
 def _provider_claim_from_data(value: object) -> ProviderClaim:
-    item = _object(value, {"applicability", "kind", "links", "raw_order", "reference", "role", "scope", "state", "value"})
+    item = _object(value, {"applicability", "date_confidence", "date_event", "date_lexical", "date_precision", "kind", "links", "raw_order", "reference", "role", "scope", "state", "value"})
     links = tuple(ComparisonLink(_object(link, {"local_reference", "outcome"})["local_reference"], Comparison(_object(link, {"local_reference", "outcome"})["outcome"])) for link in _list(item["links"]))
-    return ProviderClaim(item["reference"], ClaimKind(item["kind"]), item["value"], FieldState(item["state"]), ClaimScope(item["scope"]), item["applicability"], item["role"], item["raw_order"], links)
+    return ProviderClaim(
+        item["reference"],
+        ClaimKind(item["kind"]),
+        item["value"],
+        FieldState(item["state"]),
+        ClaimScope(item["scope"]),
+        item["applicability"],
+        item["role"],
+        item["raw_order"],
+        links,
+        None if item["date_event"] is None else DateEvent(item["date_event"]),
+        None if item["date_precision"] is None else DatePrecision(item["date_precision"]),
+        item["date_lexical"],
+        (
+            None
+            if item["date_confidence"] is None
+            else DateLinkConfidence(item["date_confidence"])
+        ),
+    )
 
 
 def _provider_evidence_from_data(value: object) -> ProviderEvidence:
-    item = _object(value, {"kind", "role", "scope", "value"})
+    item = _object(value, {"date_confidence", "date_event", "date_normalized", "date_precision", "kind", "role", "scope", "value"})
     return ProviderEvidence(
         ProviderEvidenceKind(item["kind"]),
         item["value"],
         ClaimScope(item["scope"]),
         item["role"],
+        None if item["date_event"] is None else DateEvent(item["date_event"]),
+        None if item["date_precision"] is None else DatePrecision(item["date_precision"]),
+        item["date_normalized"],
+        (
+            None
+            if item["date_confidence"] is None
+            else DateLinkConfidence(item["date_confidence"])
+        ),
     )
 
 
@@ -2010,14 +2353,14 @@ __all__ = [
     "ClaimKind", "ClaimScope", "COMPARISON_VERSION", "Comparison", "ComparisonLink", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
     "IdentifierEvidence", "IdentifierEvidenceBasis", "IdentifierRelation",
     "MAX_REPORT_BYTES", "MetadataReport", "ProviderCandidate", "ProviderClaim",
-    "ProviderEvidence", "ProviderEvidenceKind",
+    "ProviderEvidence", "ProviderEvidenceKind", "DateLinkConfidence",
     "ProviderConvergence", "ProviderLaneCandidate", "ProviderLaneObservation",
     "ProviderObservation", "ProviderQueryKind", "ProviderStatus",
     "REPORT_SCHEMA", "ReportValueError",
     "TargetDestination", "TargetFacts", "TargetField", "TargetFieldState",
     "TargetSeries", "canonical_json", "claim_scope", "comparison_links",
     "default_target_fields",
-    "derive_identifier_evidence", "isbn_family", "normalize_title",
+    "derive_identifier_evidence", "isbn_family", "normalize_date_value", "normalize_title",
     "provider_lane_candidate_reference", "stable_reference",
     "validate_observed_title",
 ]

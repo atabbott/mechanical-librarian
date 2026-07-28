@@ -39,6 +39,7 @@ from mechanical_librarian.domain.metadata_report import (
     isbn_family,
     normalize_title,
     provider_lane_candidate_reference,
+    validate_provider_access_time,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -243,6 +244,7 @@ class ProviderLaneResult:
     lane: MetadataDiscoveryLane
     status: ProviderStatus
     candidates: tuple[ProviderCandidate, ...] = ()
+    accessed_at: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -253,6 +255,8 @@ class ProviderLaneResult:
             or (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates)
         ):
             raise MetadataReportError("provider lane result is invalid")
+        if self.accessed_at is not None:
+            validate_provider_access_time(self.accessed_at)
 
 
 def _lane_identity(payload: dict[str, object]) -> str:
@@ -350,6 +354,12 @@ def provider_observation(
     *,
     authority: str | None = None,
 ) -> ProviderObservation:
+    access_times = {
+        result.accessed_at for result in results if result.accessed_at is not None
+    }
+    if len(access_times) > 1:
+        raise MetadataReportError("provider lane access times disagree")
+    accessed_at = next(iter(access_times), None)
     candidates_by_identity: dict[str, ProviderCandidate] = {}
     conflict = False
     aggregate_failure: ProviderStatus | None = None
@@ -386,7 +396,11 @@ def provider_observation(
         )
         results = tuple(
             (
-                ProviderLaneResult(result.lane, aggregate_failure)
+                ProviderLaneResult(
+                    result.lane,
+                    aggregate_failure,
+                    accessed_at=result.accessed_at,
+                )
                 if result.status is ProviderStatus.CANDIDATES
                 else result
             )
@@ -480,6 +494,7 @@ def provider_observation(
         kind,
         authority,
         tuple(sorted(lanes, key=lambda value: value.identity)),
+        accessed_at=accessed_at,
     )
 
 
@@ -692,6 +707,7 @@ def qualify_provider_observation(
             observation.candidates,
             lookup.kind,
             observation.authority,
+            accessed_at=observation.accessed_at,
         )
     if observation.status is not ProviderStatus.CANDIDATES:
         return ProviderObservation(
@@ -701,6 +717,7 @@ def qualify_provider_observation(
             (),
             ProviderQueryKind.WORK,
             observation.authority,
+            accessed_at=observation.accessed_at,
         )
     expected_title = normalize_title(lookup.title or "").casefold()
     expected_authors = tuple(
@@ -765,6 +782,7 @@ def qualify_provider_observation(
             (),
             ProviderQueryKind.WORK,
             observation.authority,
+            accessed_at=observation.accessed_at,
         )
     candidate = min(next(iter(qualified.values())), key=lambda value: value.identity)
     allowed_claims = {
@@ -803,6 +821,7 @@ def qualify_provider_observation(
         (filtered,),
         ProviderQueryKind.WORK,
         observation.authority,
+        accessed_at=observation.accessed_at,
     )
 
 
@@ -978,7 +997,11 @@ class GenerateMetadataReport:
                 observation = provider_observation(
                     binding.name,
                     tuple(
-                        ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE)
+                        ProviderLaneResult(
+                            lane,
+                            ProviderStatus.UNAVAILABLE,
+                            accessed_at=getattr(provider, "accessed_at", None),
+                        )
                         for lane in plan.lanes
                     ),
                     authority=binding.authority,
@@ -995,6 +1018,7 @@ class GenerateMetadataReport:
                 binding.authority,
                 observation.lanes,
                 observation.convergence,
+                observation.accessed_at,
             )
             observations.append(observation)
             candidate_descriptors = getattr(provider, "cover_descriptors", ())

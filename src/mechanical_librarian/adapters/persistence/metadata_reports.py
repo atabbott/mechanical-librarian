@@ -56,7 +56,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v13'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v14'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -871,6 +871,37 @@ class SQLiteMetadataReportRepository:
         ) as error:
             raise MetadataReportError("shadow review preview failed") from error
 
+    def validate_shadow_request(self, serialized: str) -> ShadowReviewRequest:
+        """Decode a request against its immutable authoritative source report."""
+        try:
+            if (
+                type(serialized) is not str
+                or not serialized
+                or len(serialized.encode("utf-8")) > MAX_REQUEST_BYTES
+            ):
+                raise ShadowReviewValueError("shadow-review request is invalid")
+            raw = json.loads(serialized)
+            if (
+                type(raw) is not dict
+                or type(raw.get("review_case_id")) is not str
+            ):
+                raise ShadowReviewValueError("shadow-review request is invalid")
+            report = self._source_report_for_review_case(
+                raw["review_case_id"]
+            )
+            return ShadowReviewRequest.from_json(serialized, report)
+        except MetadataReportError:
+            raise
+        except (
+            json.JSONDecodeError,
+            RecursionError,
+            ShadowReviewValueError,
+            TypeError,
+            UnicodeError,
+            ValueError,
+        ) as error:
+            raise MetadataReportError("shadow review request is invalid") from error
+
     def prepare_shadow_request(
         self,
         exact_id: str,
@@ -1296,7 +1327,9 @@ class SQLiteMetadataReportRepository:
         ).fetchone()
         if row is None:
             raise MetadataReportError("shadow review request is unavailable")
-        request = ShadowReviewRequest.from_json(row[3])
+        request = ShadowReviewRequest.from_json(
+            row[3], self._source_report_for_review_case(row[0])
+        )
         if (
             request.review_request_id != review_request_id
             or request.review_case_id != row[0]
@@ -1305,6 +1338,21 @@ class SQLiteMetadataReportRepository:
         ):
             raise MetadataReportError("shadow review request is invalid")
         return request
+
+    def _source_report_for_review_case(
+        self, review_case_id: str
+    ) -> MetadataReport:
+        row = self._connection.execute(
+            "SELECT r.report_id,r.connection_name,r.library_name,r.item_id,"
+            "r.file_identity,r.content_digest,r.schema_version,"
+            "r.document_digest,r.document "
+            "FROM review_cases c JOIN metadata_reports r "
+            "ON r.report_id=c.report_id WHERE c.review_case_id=?",
+            (review_case_id,),
+        ).fetchone()
+        if row is None:
+            raise MetadataReportError("shadow review source is unavailable")
+        return MetadataReport.from_json(_validate_report_row(row))
 
     def _request_for_attempt(self, attempt_id: str) -> ShadowReviewRequest:
         row = self._connection.execute(

@@ -334,7 +334,7 @@ def _validated_shadow_output(
                 or type(raw["request"]) is not dict
             ):
                 raise ValueError
-            request = ShadowReviewRequest.from_json(
+            request = ShadowReviewRequest.from_source_validated_json(
                 shadow_canonical_json(raw["request"])
             )
             if request.review_case_id != review_case_id:
@@ -359,7 +359,7 @@ def _validated_shadow_output(
             or not 1 <= len(raw["attempts"]) <= 32
         ):
             raise ValueError
-        request = ShadowReviewRequest.from_json(
+        request = ShadowReviewRequest.from_source_validated_json(
             shadow_canonical_json(raw["request"])
         )
         if (

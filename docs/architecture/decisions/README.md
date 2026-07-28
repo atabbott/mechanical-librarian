@@ -29,7 +29,8 @@ context and consequences rather than reproducing code.
 | [0012](0012-metadata-report-activation.md) | accepted; pre-release schema policy superseded by 0013 | Activate the 0.4 clean-state two-table DELETE-mode metadata-report runtime; 0.5 later amended it |
 | [0013](0013-pre-release-clean-schema.md) | accepted | Require clean schemas until the first production release |
 | [0014](0014-review-case-admission.md) | accepted | Atomically admit immutable review cases from current ProposalSets |
-| [0015](0015-isolated-shadow-reviewer.md) | accepted | Isolate one exact qualification-only Codex shadow reviewer |
+| [0015](0015-isolated-shadow-reviewer.md) | superseded by 0016 | Isolate one exact qualification-only Codex shadow reviewer |
+| [0016](0016-freeze-explainable-shadow-reviewer.md) | accepted | Freeze explainable publication-date shadow review |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

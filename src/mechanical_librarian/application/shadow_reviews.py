@@ -91,6 +91,7 @@ class ShadowReviewRunner(Protocol):
 
 
 class ShadowReviewRepository(Protocol):
+    def validate_shadow_request(self, serialized: str) -> ShadowReviewRequest: ...
     def preview_shadow_request(
         self, review_case_id: str, profile_identity: str
     ) -> str: ...
@@ -132,7 +133,7 @@ def preview_shadow_review(
     identity: ReviewerProfileIdentity,
 ) -> str:
     try:
-        request = ShadowReviewRequest.from_json(
+        request = repository.validate_shadow_request(
             repository.preview_shadow_request(review_case_id, identity.to_json())
         )
         return canonical_json(
@@ -156,6 +157,7 @@ def inspect_shadow_review(
 ) -> str:
     try:
         return _validate_projection(
+            repository,
             repository.inspect_shadow_request(
                 review_request_id, identity.to_json()
             ),
@@ -214,7 +216,9 @@ def execute_shadow_review(
             or type(prepared["request"]) is not dict
         ):
             raise ValueError
-        request = ShadowReviewRequest.from_json(canonical_json(prepared["request"]))
+        request = repository.validate_shadow_request(
+            canonical_json(prepared["request"])
+        )
         if not prepared["run"]:
             return inspect_shadow_review(
                 repository, request.review_request_id, identity
@@ -259,7 +263,11 @@ def execute_shadow_review(
         raise ShadowReviewError("runtime") from error
 
 
-def _validate_projection(serialized: str, review_request_id: str) -> str:
+def _validate_projection(
+    repository: ShadowReviewRepository,
+    serialized: str,
+    review_request_id: str,
+) -> str:
     try:
         raw = json.loads(serialized)
         if (
@@ -283,7 +291,9 @@ def _validate_projection(serialized: str, review_request_id: str) -> str:
             not in {"pending", "unknown", "failed", "qualification_only"}
         ):
             raise ValueError
-        request = ShadowReviewRequest.from_json(canonical_json(raw["request"]))
+        request = repository.validate_shadow_request(
+            canonical_json(raw["request"])
+        )
         if request.review_request_id != review_request_id:
             raise ValueError
         canonical = canonical_json(raw)

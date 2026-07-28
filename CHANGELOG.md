@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+- Preserve provider publication evidence with the same closed event and
+  year/month/day/timestamp precision vocabulary as local EPUB evidence.
+  Provider claims retain lexical and normalized values plus explicit or
+  unresolved event/manifestation linkage; Google Books publication strings
+  remain visible but non-selectable. Proposal and reviewer candidates expose
+  their event and target precision, while citations retain source precision,
+  candidate/work identity, provider authority, query access, and sibling
+  identifier/format fact context with exact bounded membership. Constructed
+  and replayed reports, proposals, and reviewer packets reject source
+  precision disagreement, destination/date disagreement, opaque-only linkage,
+  malformed context, and context over its fixed limits. Identifier fact
+  references are recomputed from exact public-safe provider/candidate
+  membership and raw claim identity with ISBN/ASIN validation; cited typed
+  claims and rich date evidence cannot omit linkage. Provider-linked packet
+  and request replay now also requires the authoritative immutable report and
+  rejects invented checksum-valid identifiers or physical formats even when
+  all internal identities are recomputed; non-provider replay remains
+  self-contained. Lowercase provider ASIN input is canonicalized to the closed
+  uppercase form before its content identity is constructed, and date
+  comparison maps aware timestamp operands to their exact UTC instant so
+  equivalent nonzero offsets agree without discarding either source lexical
+  value or precision; naive timestamps fail closed.
+  ADR-0016 supersedes ADR-0015 to freeze the
+  packet-v2/request-v3 trust boundary. The first actual provider dispatch now
+  records
+  one strict canonical UTC access time from the adapter's injected clock;
+  retries and replay do not refresh it, and pre-egress outcomes retain an
+  explicit absence. A fresh accessed observation is therefore a new immutable
+  report successor even when its bibliographic facts are unchanged. Year and
+  month evidence can derive only
+  `publishedYear`; day and signed-offset timestamp evidence can derive an exact
+  day without converting offsets; work-first dates cannot replace populated
+  manifestation values; and conflicts remain unresolved choices. Advance the
+  exact-current contracts to `metadata-report-v14`, `proposal-set-v2`,
+  `shadow-review-packet-v2`, and `shadow-review-request-v3`; earlier
+  development state is rejected without migration under ADR-0013. (#382)
+
 - Admit source-explicit target-work subtitle, publisher, and imprint from the
   existing bounded rear EPUB indicia pass under the same structural-semantic or
   exact-label rules as front matter. Reports preserve publisher versus imprint,

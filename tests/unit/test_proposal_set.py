@@ -11,6 +11,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -213,6 +214,10 @@ class ProposalSetTests(unittest.TestCase):
 
         with self.assertRaises(ProposalValueError):
             ProposalSet.from_json(canonical_json(prior))
+        prior = json.loads(current.to_json())
+        prior["schema_version"] = "proposal-set-v1"
+        with self.assertRaises(ProposalValueError):
+            ProposalSet.from_json(canonical_json(prior))
 
         self.assertEqual(current, ProposalSet.from_json(current.to_json()))
         self.assertEqual(current, evaluate_report(_report()))
@@ -387,6 +392,22 @@ class ProposalSetTests(unittest.TestCase):
                         ("local_" + "a" * 64,),
                         ("correlation_" + "a" * 64,),
                         scope,
+                        date_event=(
+                            DateEvent.MANIFESTATION_PUBLICATION
+                            if destination
+                            in {
+                                TargetDestination.PUBLISHED_YEAR,
+                                TargetDestination.PUBLISHED_DATE,
+                            }
+                            else None
+                        ),
+                        date_precision=(
+                            DatePrecision.YEAR
+                            if destination is TargetDestination.PUBLISHED_YEAR
+                            else DatePrecision.DAY
+                            if destination is TargetDestination.PUBLISHED_DATE
+                            else None
+                        ),
                     )
                     arguments = (
                         destination,
@@ -463,6 +484,93 @@ class ProposalSetTests(unittest.TestCase):
             with self.subTest(outcome=outcome, reasons=reasons):
                 with self.assertRaises(ProposalValueError):
                     ProposalSet.from_json(canonical_json(document))
+
+    def test_destination_date_semantics_reject_constructed_and_replayed_mismatch(
+        self,
+    ) -> None:
+        reference = "provider_" + "a" * 64
+        correlation = "correlation_" + "b" * 64
+        invalid = (
+            (
+                TargetDestination.TITLE,
+                DateEvent.MANIFESTATION_PUBLICATION,
+                DatePrecision.DAY,
+            ),
+            (
+                TargetDestination.PUBLISHED_YEAR,
+                DateEvent.WORK_FIRST_PUBLICATION,
+                DatePrecision.YEAR,
+            ),
+            (
+                TargetDestination.PUBLISHED_DATE,
+                DateEvent.MANIFESTATION_PUBLICATION,
+                DatePrecision.YEAR,
+            ),
+        )
+        for destination, event, precision in invalid:
+            alternative = ProposalAlternative.create(
+                ProposalValue(ProposalValueKind.TEXT, "2001"),
+                ProposalAssessment.FILLS_EMPTY,
+                (reference,),
+                (correlation,),
+                ProposalScope.WORK,
+                date_event=event,
+                date_precision=precision,
+            )
+            with self.subTest(destination=destination):
+                with self.assertRaises(ProposalValueError):
+                    ProposalResult(
+                        destination,
+                        ProposalOutcome.PROPOSE_CHANGE,
+                        (alternative,),
+                        alternative.alternative_id,
+                        ("unique_typed_candidate",),
+                    )
+
+        proposal_set = evaluate_report(
+            _report(
+                title=None,
+                fields=_fields(
+                    None,
+                    title=TargetField(
+                        TargetDestination.TITLE, TargetFieldState.MISSING
+                    ),
+                ),
+                providers=(
+                    _provider(
+                        "catalogue",
+                        "edition-1",
+                        (
+                            _claim(
+                                "catalogue",
+                                "edition-1",
+                                ClaimKind.TITLE,
+                                "A title",
+                                scope=ClaimScope.WORK,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        )
+        document = json.loads(proposal_set.to_json())
+        result = next(
+            value for value in document["results"] if value["destination"] == "title"
+        )
+        original = _result(proposal_set, TargetDestination.TITLE).alternatives[0]
+        forged = ProposalAlternative.create(
+            original.value,
+            original.assessment,
+            original.evidence_references,
+            original.correlations,
+            original.scope,
+            date_event=DateEvent.MANIFESTATION_PUBLICATION,
+            date_precision=DatePrecision.DAY,
+        )
+        result["alternatives"] = [forged.to_data()]
+        result["selected_alternative_id"] = forged.alternative_id
+        with self.assertRaises(ProposalValueError):
+            ProposalSet.from_json(canonical_json(document))
 
     def test_unique_empty_fill_and_positive_preservation_are_explainable(self) -> None:
         title_claim = _claim(
@@ -1632,6 +1740,144 @@ class ProposalSetTests(unittest.TestCase):
         )
         self.assertEqual(ProposalOutcome.UNRESOLVED_CHOICE, date_result.outcome)
         self.assertIn("date_year_conflict", date_result.reasons)
+
+    def test_month_precision_derives_only_the_stated_year(self) -> None:
+        claim = _claim(
+            "catalogue",
+            "edition-1",
+            ClaimKind.PUBLICATION_DATE,
+            "2001-02",
+            scope=ClaimScope.EDITION,
+        )
+        proposal = evaluate_report(
+            _report(
+                fields=_fields(
+                    published_year=TargetField(
+                        TargetDestination.PUBLISHED_YEAR,
+                        TargetFieldState.MISSING,
+                    ),
+                    published_date=TargetField(
+                        TargetDestination.PUBLISHED_DATE,
+                        TargetFieldState.MISSING,
+                    ),
+                ),
+                providers=(_provider("catalogue", "edition-1", (claim,)),),
+            )
+        )
+        year = _result(proposal, TargetDestination.PUBLISHED_YEAR)
+        published_date = _result(proposal, TargetDestination.PUBLISHED_DATE)
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, year.outcome)
+        self.assertEqual("2001", year.alternatives[0].value.value)
+        self.assertEqual(DateEvent.MANIFESTATION_PUBLICATION, year.alternatives[0].date_event)
+        self.assertEqual(DatePrecision.YEAR, year.alternatives[0].date_precision)
+        self.assertEqual(ProposalOutcome.INELIGIBLE, published_date.outcome)
+
+    def test_signed_offset_timestamp_reduces_to_day_without_losing_source_precision(
+        self,
+    ) -> None:
+        lexical = "2001-02-03T04:05:06-04:00"
+        claim = _claim(
+            "catalogue",
+            "edition-1",
+            ClaimKind.PUBLICATION_DATE,
+            lexical,
+            scope=ClaimScope.EDITION,
+        )
+        proposal = evaluate_report(
+            _report(
+                fields=_fields(
+                    published_year=TargetField(
+                        TargetDestination.PUBLISHED_YEAR,
+                        TargetFieldState.MISSING,
+                    ),
+                    published_date=TargetField(
+                        TargetDestination.PUBLISHED_DATE,
+                        TargetFieldState.MISSING,
+                    ),
+                ),
+                providers=(_provider("catalogue", "edition-1", (claim,)),),
+            )
+        )
+        published_date = _result(proposal, TargetDestination.PUBLISHED_DATE)
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, published_date.outcome)
+        self.assertEqual("2001-02-03", published_date.alternatives[0].value.value)
+        self.assertEqual(DatePrecision.DAY, published_date.alternatives[0].date_precision)
+        self.assertEqual(lexical, claim.date_lexical)
+        self.assertEqual(DatePrecision.TIMESTAMP, claim.date_precision)
+
+    def test_unresolved_provider_publication_text_is_visible_but_nonselectable(
+        self,
+    ) -> None:
+        evidence = (
+            ProviderEvidence(
+                ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+                "2001-02-03",
+                ClaimScope.EDITION,
+            ),
+        )
+        proposal = evaluate_report(
+            _report(
+                title=None,
+                fields=_fields(
+                    None,
+                    published_year=TargetField(
+                        TargetDestination.PUBLISHED_YEAR,
+                        TargetFieldState.MISSING,
+                    ),
+                    published_date=TargetField(
+                        TargetDestination.PUBLISHED_DATE,
+                        TargetFieldState.MISSING,
+                    ),
+                ),
+                providers=(_provider("catalogue", "edition-1", (), evidence),),
+            )
+        )
+        self.assertEqual(
+            ProposalOutcome.INELIGIBLE,
+            _result(proposal, TargetDestination.PUBLISHED_YEAR).outcome,
+        )
+        self.assertEqual(
+            DateEvent.UNKNOWN,
+            evidence[0].date_event,
+        )
+
+    def test_conflicting_manifestation_dates_remain_explicit_choices(self) -> None:
+        providers = tuple(
+            _provider(
+                provider,
+                f"{provider}-edition",
+                (
+                    _claim(
+                        provider,
+                        f"{provider}-edition",
+                        ClaimKind.PUBLICATION_DATE,
+                        value,
+                        scope=ClaimScope.EDITION,
+                    ),
+                ),
+                authority=provider,
+            )
+            for provider, value in (
+                ("hardcover", "2001-02-03"),
+                ("open_library", "2002-03-04"),
+            )
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(
+                        published_date=TargetField(
+                            TargetDestination.PUBLISHED_DATE,
+                            TargetFieldState.MISSING,
+                        )
+                    ),
+                    providers=providers,
+                )
+            ),
+            TargetDestination.PUBLISHED_DATE,
+        )
+        self.assertEqual(ProposalOutcome.UNRESOLVED_CHOICE, result.outcome)
+        self.assertEqual(2, len(result.alternatives))
 
     def test_full_date_refining_a_populated_year_needs_independent_sources(
         self,

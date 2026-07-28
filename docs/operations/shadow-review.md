@@ -16,8 +16,8 @@ material are never stored in the application database. The tuple is fixed to:
 - model `gpt-5.6-sol`, reasoning `medium`;
 - prompt `shadow-review-prompt-v2`;
 - profile `codex-shadow-profile-v1`;
-- packet `shadow-review-packet-v1`;
-- request `shadow-review-request-v2`;
+- packet `shadow-review-packet-v2`;
+- request `shadow-review-request-v3`;
 - output `shadow-review-result-v1`;
 - policy `qualification-only-policy-v1`; and
 - sandbox `bubblewrap-v1`.
@@ -60,6 +60,28 @@ mechanical-librarian shadow-review-preview --database reports.sqlite \
 Preview is not fresh eligibility proof. Request atomically revalidates the
 current persisted case/report/proposal/profile/packet, persists the request and
 attempt, then performs at most one foreground invocation:
+
+Provider date citations in the sanitized packet carry the exact immutable
+report `accessed_at` value alongside authority and query kind, or explicit
+`null` when the report records that no provider dispatch occurred. Preview,
+request, restart, and reevaluation never access a provider or refresh the
+stored time. They also carry at most 16 bounded sibling ISBN/ASIN fact objects
+and 16 physical-format facts. Identifier references must match those fact
+objects exactly after the runtime reconstructs each fixed valid sibling claim
+from its public-safe provider/candidate context, kind, value, applicability,
+edition scope, and raw order. ISBN checksums and closed uppercase ASIN syntax
+are mandatory. Missing linkage on either a typed provider date claim or rich
+date evidence, opaque-only references, content-address mismatch, private or
+credential-shaped context, malformed/noncanonical facts, or over-bound
+linkage rejects the packet before invocation. Candidate date typing describes
+the target destination (`manifestation_publication` plus `year` or `day`);
+source event and precision remain in the citation. This exact packet/request
+freeze is governed by ADR-0016. Provider-linked packet/request replay is not a
+standalone operation: persistence reopens the immutable source report,
+rebuilds the complete provider citation from the actual candidate, and
+requires exact equality before dispatch or inspection. Missing report context
+and invented or omitted identifier/format siblings fail closed. The report
+itself never enters the reviewer request.
 
 ```sh
 mechanical-librarian shadow-review-request --database reports.sqlite \
@@ -149,7 +171,7 @@ parser, semantic validator, and cleanup as an ordinary request, and therefore
 uses the exact ordinary wrapped command from empty `/job`, including
 `--skip-git-repo-check`. It never sends a holdout and blocks the cohort on
 failure. Each request binds the canonical structured-output schema bytes and
-SHA-256 into `shadow-review-request-v2` and its identity; the executor uses
+SHA-256 into `shadow-review-request-v3` and its identity; the executor uses
 those exact bytes. The complete canonical request envelope is bounded at
 3,227,648 bytes, and the exact-current SQLite column has the same byte capacity;
 there is no truncation. The generated schema is restricted to the pinned

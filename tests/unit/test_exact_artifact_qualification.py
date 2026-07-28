@@ -37,7 +37,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                 "target_fingerprint": "b" * 64,
             },
             "results": [],
-            "schema_version": "proposal-set-v1",
+            "schema_version": "proposal-set-v2",
         }
         self.assertTrue(_proposal_identifier(proposal).startswith("proposal_set_"))
         proposal["policy_version"] = "fixed-conservative-v1"

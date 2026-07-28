@@ -70,7 +70,8 @@ The suite covers:
   batch envelope;
 - Google Books keyed and credential-free fixed-origin requests, disabled
   zero-egress, exact ISBN/work qualification, unresolved work linkage,
-  evidence-only publication strings, deterministic replay and provider order,
+  evidence-only publication strings, deterministic exact-ID replay and
+  provider order apart from their independently captured access times,
   response/candidate/request/aggregate bounds including six attempts per query
   and 54 per observation, quota/4xx/503/no-match typing, canonical
   `Retry-After`, accepted/rejected transport classes, deadline and partial-byte
@@ -142,10 +143,29 @@ cover nested single-emission, multiple exact sibling labels, mixed complete and
 split labels in one ancestor, repeated equal complete/split siblings, multiple
 assembled labels, scanning/production/workflow label values, promotion cues
 inside labels, the exact 16-fact rear cap, front/rear NFC and whitespace
-normalization, `metadata-report-v13`
-canonical replay, clean database creation, and byte-unchanged rejection of v12
+normalization, `metadata-report-v14`
+canonical replay, clean database creation, and byte-unchanged rejection of v13
 state. Only aggregate expected, found, and false-positive counts are asserted
 or exported; fixture rows and source text remain private.
+
+Provider-date regressions use synthetic year, month, day, and signed-offset
+timestamp values. They prove lexical/normalized replay, closed event and
+linkage typing, exact declared-versus-inferred source precision, no precision
+invention, destination-exact manifestation date/year projection,
+non-selectability of unresolved publication text, explicit conflict choices,
+and reviewer citation coverage without exporting real-library values.
+Reviewer replay cases reject missing or opaque-only linkage, identifier
+fact/reference disagreement, forged kind/value/applicability/scope/raw-order
+or provider/candidate membership, invalid ISBN/ASIN syntax, private or
+credential-shaped context, missing rich-date-evidence linkage, malformed
+identifier and format shapes, duplicate/reordered facts, and context beyond
+either 16-fact bound. Request-v3 replay exercises the same packet validator.
+Access-
+time regressions inject fixed clocks at every metadata-provider boundary,
+exercise successful and terminal post-dispatch statuses, prove absent time for
+no-input, overflow, invalid-clock, and expired pre-dispatch paths, and verify
+canonical serialization, database/report reopen, proposal derivation, and
+reviewer projection never refresh the stored value.
 
 Hostile-input tests name a supported external actor and reachable boundary.
 Typed in-process collaborators are not attacker-controlled unless the product

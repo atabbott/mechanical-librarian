@@ -7,7 +7,6 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date
 from enum import StrEnum
 from typing import Any, Self
 
@@ -19,6 +18,7 @@ from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
 )
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -35,11 +35,12 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     TargetSeries,
     canonical_json,
+    normalize_date_value,
     normalize_title,
 )
 
 
-PROPOSAL_SCHEMA = "proposal-set-v1"
+PROPOSAL_SCHEMA = "proposal-set-v2"
 POLICY_VERSION = "fixed-conservative-v2"
 MAX_PROPOSAL_BYTES = 2_097_152
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -133,6 +134,19 @@ _DESTINATION_VALUE_SCOPES: dict[
     TargetDestination.COVER: frozenset({(ProposalValueKind.COVER, ProposalScope.COVER)}),
 }
 
+_DESTINATION_DATE_SEMANTICS: dict[
+    TargetDestination, tuple[DateEvent | None, DatePrecision | None]
+] = {
+    destination: (
+        (DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.YEAR)
+        if destination is TargetDestination.PUBLISHED_YEAR
+        else (DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.DAY)
+        if destination is TargetDestination.PUBLISHED_DATE
+        else (None, None)
+    )
+    for destination in TargetDestination
+}
+
 _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.PROPOSE_CHANGE: frozenset(
         {("unique_safe_cover",), ("unique_typed_candidate",)}
@@ -219,6 +233,8 @@ class ProposalAlternative:
     evidence_references: tuple[str, ...]
     correlations: tuple[str, ...]
     scope: ProposalScope
+    date_event: DateEvent | None = None
+    date_precision: DatePrecision | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -238,6 +254,14 @@ class ProposalAlternative:
             or not self.correlations
             or self.correlations != tuple(sorted(set(self.correlations)))
             or any(_CORRELATION.fullmatch(value) is None for value in self.correlations)
+            or (self.date_event is None) != (self.date_precision is None)
+            or (
+                self.date_event is not None
+                and (
+                    type(self.date_event) is not DateEvent
+                    or type(self.date_precision) is not DatePrecision
+                )
+            )
         ):
             raise ProposalValueError("proposal alternative is invalid")
         if self.alternative_id != _alternative_id(
@@ -246,6 +270,8 @@ class ProposalAlternative:
             self.evidence_references,
             self.correlations,
             self.scope,
+            self.date_event,
+            self.date_precision,
         ):
             raise ProposalValueError("proposal alternative identity is inconsistent")
 
@@ -257,16 +283,28 @@ class ProposalAlternative:
         evidence_references: tuple[str, ...],
         correlations: tuple[str, ...],
         scope: ProposalScope,
+        date_event: DateEvent | None = None,
+        date_precision: DatePrecision | None = None,
     ) -> Self:
         references = tuple(sorted(set(evidence_references)))
         grouped = tuple(sorted(set(correlations)))
         return cls(
-            _alternative_id(value, assessment, references, grouped, scope),
+            _alternative_id(
+                value,
+                assessment,
+                references,
+                grouped,
+                scope,
+                date_event,
+                date_precision,
+            ),
             value,
             assessment,
             references,
             grouped,
             scope,
+            date_event,
+            date_precision,
         )
 
     def to_data(self) -> dict[str, object]:
@@ -277,6 +315,12 @@ class ProposalAlternative:
             "evidence_references": list(self.evidence_references),
             "scope": self.scope.value,
             "value": self.value.to_data(),
+            "date_event": (
+                None if self.date_event is None else self.date_event.value
+            ),
+            "date_precision": (
+                None if self.date_precision is None else self.date_precision.value
+            ),
         }
 
 
@@ -317,6 +361,14 @@ class ProposalResult:
             for alternative in self.alternatives
         ):
             raise ProposalValueError("proposal alternative is incompatible with destination")
+        expected_date = _DESTINATION_DATE_SEMANTICS[self.destination]
+        if any(
+            (alternative.date_event, alternative.date_precision) != expected_date
+            for alternative in self.alternatives
+        ):
+            raise ProposalValueError(
+                "proposal alternative date is incompatible with destination"
+            )
         if self.reasons not in _OUTCOME_REASON_SETS[self.outcome]:
             raise ProposalValueError("proposal reasons are incompatible with outcome")
         selected = {value.alternative_id for value in self.alternatives}
@@ -460,6 +512,8 @@ class _Observed:
     references: tuple[str, ...]
     correlation: str
     scope: ProposalScope
+    date_event: DateEvent | None = None
+    source_precision: DatePrecision | None = None
 
 
 def evaluate_report(report: MetadataReport) -> ProposalSet:
@@ -832,15 +886,22 @@ def _date_observations(
             and claim.scope is ClaimScope.EDITION
             and claim.state is FieldState.VALID
             and claim.canonical is not None
+            and claim.date_event is DateEvent.MANIFESTATION_PUBLICATION
+            and type(claim.date_precision) is DatePrecision
         ):
-            parsed = _date(claim.canonical)
-            if parsed is not None:
+            try:
+                parsed, precision = normalize_date_value(claim.canonical)
+            except ValueError:
+                continue
+            if precision is claim.date_precision:
                 values.append(
                     _Observed(
                         ProposalValue(ProposalValueKind.TEXT, parsed),
                         (claim.reference,),
                         _correlation("local:selected_epub"),
                         ProposalScope.EDITION,
+                        claim.date_event,
+                        precision,
                     )
                 )
     for provider in report.providers:
@@ -851,17 +912,19 @@ def _date_observations(
                     and claim.scope is ClaimScope.EDITION
                     and claim.state is FieldState.VALID
                     and claim.value is not None
+                    and claim.date_event is DateEvent.MANIFESTATION_PUBLICATION
+                    and type(claim.date_precision) is DatePrecision
                 ):
-                    parsed = _date(claim.value)
-                    if parsed is not None:
-                        values.append(
-                            _Observed(
-                                ProposalValue(ProposalValueKind.TEXT, parsed),
-                                (claim.reference,),
-                                _provider_correlation(provider),
-                                ProposalScope.EDITION,
-                            )
+                    values.append(
+                        _Observed(
+                            ProposalValue(ProposalValueKind.TEXT, claim.value),
+                            (claim.reference,),
+                            _provider_correlation(provider),
+                            ProposalScope.EDITION,
+                            claim.date_event,
+                            claim.date_precision,
                         )
+                    )
     if values or target.state is TargetFieldState.VALUE:
         return tuple(values)
     for provider in report.providers:
@@ -870,21 +933,27 @@ def _date_observations(
                 if (
                     evidence.kind is ProviderEvidenceKind.FIRST_PUBLICATION_DATE
                     and evidence.scope is ClaimScope.WORK
+                    and evidence.date_event is DateEvent.WORK_FIRST_PUBLICATION
+                    and type(evidence.date_precision) is DatePrecision
+                    and evidence.date_normalized is not None
                 ):
-                    parsed = _date(evidence.value)
-                    if parsed is not None:
-                        values.append(
-                            _Observed(
-                                ProposalValue(ProposalValueKind.TEXT, parsed),
-                                (
-                                    _rich_reference(
-                                        provider.provider, candidate, evidence.to_data()
-                                    ),
+                    values.append(
+                        _Observed(
+                            ProposalValue(
+                                ProposalValueKind.TEXT,
+                                evidence.date_normalized,
+                            ),
+                            (
+                                _rich_reference(
+                                    provider.provider, candidate, evidence.to_data()
                                 ),
-                                _provider_correlation(provider),
-                                ProposalScope.WORK,
-                            )
+                            ),
+                            _provider_correlation(provider),
+                            ProposalScope.WORK,
+                            evidence.date_event,
+                            evidence.date_precision,
                         )
+                    )
     return tuple(values)
 
 
@@ -895,9 +964,25 @@ def _publication_results(
     year_target = targets[TargetDestination.PUBLISHED_YEAR]
     publication_values = _date_observations(report, date_target)
     dates = tuple(
-        value
+        _Observed(
+            ProposalValue(
+                ProposalValueKind.TEXT,
+                str(value.value.value)[:10],
+            ),
+            value.references,
+            value.correlation,
+            value.scope,
+            value.date_event,
+            value.source_precision,
+        )
         for value in publication_values
-        if type(value.value.value) is str and len(value.value.value) == 10
+        if (
+            type(value.value.value) is str
+            and value.source_precision in {
+                DatePrecision.DAY,
+                DatePrecision.TIMESTAMP,
+            }
+        )
     )
     years = tuple(
         _Observed(
@@ -905,6 +990,8 @@ def _publication_results(
             value.references,
             value.correlation,
             value.scope,
+            value.date_event,
+            value.source_precision,
         )
         for value in publication_values
     )
@@ -1215,6 +1302,7 @@ def _alternatives(
         else:
             assessment = ProposalAssessment.FILLS_EMPTY
         scope = values[0].scope
+        date_event, date_precision = _DESTINATION_DATE_SEMANTICS[destination]
         alternatives.append(
             ProposalAlternative.create(
                 proposal_value,
@@ -1226,6 +1314,8 @@ def _alternatives(
                 ),
                 tuple(value.correlation for value in values),
                 scope,
+                date_event,
+                date_precision,
             )
         )
     return tuple(sorted(alternatives, key=lambda value: value.alternative_id))
@@ -1356,17 +1446,6 @@ def _dependencies(
     return ()
 
 
-def _date(value: str) -> str | None:
-    if re.fullmatch(r"[0-9]{4}", value) is not None:
-        year = int(value)
-        return value if 1 <= year <= 9999 else None
-    try:
-        parsed = date.fromisoformat(value)
-    except ValueError:
-        return None
-    return parsed.isoformat()
-
-
 def _unresolved(result: ProposalResult, reason: str) -> ProposalResult:
     return ProposalResult(
         result.destination,
@@ -1406,6 +1485,8 @@ def _alternative_id(
     references: tuple[str, ...],
     correlations: tuple[str, ...],
     scope: ProposalScope,
+    date_event: DateEvent | None,
+    date_precision: DatePrecision | None,
 ) -> str:
     return "alternative_" + hashlib.sha256(
         canonical_json(
@@ -1415,6 +1496,12 @@ def _alternative_id(
                 "evidence_references": list(references),
                 "scope": scope.value,
                 "value": value.to_data(),
+                "date_event": (
+                    None if date_event is None else date_event.value
+                ),
+                "date_precision": (
+                    None if date_precision is None else date_precision.value
+                ),
             }
         ).encode("utf-8")
     ).hexdigest()
@@ -1499,6 +1586,8 @@ def _alternative_from_data(raw: object) -> ProposalAlternative:
             "alternative_id",
             "assessment",
             "correlations",
+            "date_event",
+            "date_precision",
             "evidence_references",
             "scope",
             "value",
@@ -1511,6 +1600,12 @@ def _alternative_from_data(raw: object) -> ProposalAlternative:
         tuple(_strings(value["evidence_references"])),
         tuple(_strings(value["correlations"])),
         ProposalScope(value["scope"]),
+        None if value["date_event"] is None else DateEvent(value["date_event"]),
+        (
+            None
+            if value["date_precision"] is None
+            else DatePrecision(value["date_precision"])
+        ),
     )
 
 

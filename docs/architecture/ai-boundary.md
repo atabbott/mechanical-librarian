@@ -8,18 +8,37 @@ change policy, construct service requests, or execute writes.
 
 ## Reviewer contract
 
-The current qualification-only `shadow-review-packet-v1` contains:
+The current qualification-only `shadow-review-packet-v2` contains:
 
 - only the opaque content-addressed ReviewCase ID, never the connection,
   library, item, file identity, path, or service identifier;
 - the exact bounded normalized current snapshot for the reviewed target and an
   explicit loaded, missing, or unavailable state for each applicable field;
-- explicit candidate values;
-- supporting and contradicting evidence summaries;
+- explicit candidate values, including closed date event and target precision
+  when applicable;
+- supporting and contradicting evidence summaries, with provider date
+  citations retaining lexical/normalized values, source precision,
+  candidate/work linkage, authority, query kind, and the immutable provider
+  access time when an actual request occurred, plus at most 16 allowlisted
+  sibling identifier fact objects and 16 physical-format facts whose
+  references are recomputed from their public-safe provider/candidate context,
+  exact value, kind, applicability, edition scope, and raw order;
 - bounded excerpts labelled as untrusted content;
 - no images or operator-authored intent; and
 - the fixed prompt/profile/packet/output/policy identities bound by the
   qualification profile.
+
+ADR-0016 freezes this projection and `shadow-review-request-v3`. Missing,
+opaque-only, malformed, noncanonical, or over-bound provider date linkage
+fails before reviewer invocation. This applies to cited typed provider claims
+and rich date evidence; rich evidence citation IDs are also recomputed from
+their exact closed content. Replaying provider-linked packet or request bytes
+also requires the authoritative immutable report: the runtime rebuilds each
+complete citation from the actual provider candidate and requires exact
+equality. A syntactically valid invented ISBN or physical format therefore
+cannot become source evidence merely by recomputing packet/request identities.
+The report stays inside the trusted persistence boundary and is never added to
+the reviewer projection.
 
 Packet assembly records candidate and policy versions, source completeness, and
 the join provenance for every authoritative row. If the current snapshot,

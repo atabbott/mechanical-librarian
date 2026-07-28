@@ -10,7 +10,6 @@ import time
 from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass
-from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -64,7 +63,9 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     comparison_links,
     isbn_family,
+    normalize_date_value,
     normalize_title,
+    provider_access_time,
 )
 
 
@@ -161,6 +162,7 @@ class OpenLibraryMetadataProvider:
         self._attempt_count = 0
         self._retry_count = 0
         self._attempt_records: list[ProviderAttemptRecord] = []
+        self._accessed_at: str | None = None
         self._called = False
         self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         self.cover_pacer = self._pacer
@@ -171,6 +173,10 @@ class OpenLibraryMetadataProvider:
     @property
     def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
         return tuple(self._attempt_records)
+
+    @property
+    def accessed_at(self) -> str | None:
+        return self._accessed_at
 
     def observe(
         self,
@@ -218,7 +224,10 @@ class OpenLibraryMetadataProvider:
                 )
                 results.append(
                     ProviderLaneResult(
-                        lane, observation.status, observation.candidates
+                        lane,
+                        observation.status,
+                        observation.candidates,
+                        observation.accessed_at,
                     )
                 )
                 merged = merge_provider_cover_descriptors(
@@ -231,7 +240,9 @@ class OpenLibraryMetadataProvider:
                 )
                 if merged is None:
                     results[-1] = ProviderLaneResult(
-                        lane, ProviderStatus.MALFORMED
+                        lane,
+                        ProviderStatus.MALFORMED,
+                        accessed_at=observation.accessed_at,
                     )
                 else:
                     descriptors = merged
@@ -315,6 +326,7 @@ class OpenLibraryMetadataProvider:
                 references,
                 candidates,
                 lookup.kind,
+                accessed_at=self._accessed_at,
             )
         try:
             with nullcontext():
@@ -537,6 +549,8 @@ class OpenLibraryMetadataProvider:
         try:
             if deadline is not None and self._clock() >= deadline:
                 raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            if self._accessed_at is None:
+                self._accessed_at = provider_access_time(self._wall_clock())
             self._attempt_count += 1
             if is_retry:
                 self._retry_count += 1
@@ -1113,6 +1127,7 @@ def _canonical_discovery_results(
                 merged.get(candidate.identity, candidate)
                 for candidate in result.candidates
             ),
+            result.accessed_at,
         )
         for result in results
     )
@@ -1169,7 +1184,7 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
     try:
         text = validate_projection_text(value, "provider claim value", maximum)
         if kind is ClaimKind.PUBLICATION_DATE:
-            date.fromisoformat(text)
+            normalize_date_value(text)
         return FieldState.VALID, text
     except (ValueError, EvidenceValueError):
         return (

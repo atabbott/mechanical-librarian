@@ -81,6 +81,13 @@ exists. More than eight ISBN families return `query_limit_exceeded` before
 provider client construction and permits no subset egress. With neither an ISBN
 lane nor a complete work lane, title-only or incomplete-author input returns
 `insufficient_input` without a provider request.
+The first actual metadata-provider dispatch captures one bounded canonical UTC
+access time from the adapter's injected wall clock. Invalid, non-finite, or
+out-of-range clock output fails before egress. Disabled, insufficient-input,
+query-overflow, repeated-call, and pre-dispatch deadline or budget outcomes do
+not read that clock and retain an explicit absent time. Later lanes, retries,
+report reopen, proposal derivation, and reviewer projection reuse the original
+value; none refreshes it.
 
 Each referenced enabled Hardcover provider makes one fixed GraphQL query per
 admitted lane, with at most two bounded retries and 27 aggregate attempts.
@@ -137,12 +144,14 @@ excerpts, source-explicit target-work subtitle/publisher/imprint observations
 with closed rear resource/spine/tail/marker provenance, controlled
 contributor/production roles, typed date event and precision claims, provider
 candidate edition and provider-local work
-identities, comparison facts, and derived ISBN relationships containing only
+identities, canonical provider access time when egress occurred, comparison
+facts, and derived ISBN relationships containing only
 claim references and those already-admitted bounded identities. The
 relationship projection does not duplicate observations or excerpts. Report
 generation performs no decision and grants no write authority. The separate
 ProposalSet contains only bounded alternatives, assessments, stable evidence
-references, hashed correlation groups, and policy/version bindings; it does
+references, hashed correlation groups, closed date event/precision context,
+and policy/version bindings; it does
 not duplicate report excerpts or provider/cover payloads. These documents
 contain no credentials, private paths, raw provider bodies, or arbitrary EPUB
 text. Target and provider titles pass the same closed public-safe projection
@@ -192,6 +201,21 @@ sanitized packet and attempt. Preview reads only profile bytes and application
 state; it constructs no executable, auth, target, provider, reviewer, or other
 network client and is not fresh eligibility proof. Request may invoke only the
 exact declared Codex/model/reasoning/prompt/profile/packet/output/policy tuple.
+ADR-0016 freezes that tuple at packet-v2/request-v3. Provider publication
+citations expose only bounded allowlisted identifier and physical-format fact
+objects already admitted to the report; exact reference membership, closed
+shape, ordering, and limits are revalidated so opaque-only or malformed
+linkage cannot cross the reviewer boundary. Identifier references are
+recomputed from public-safe provider/candidate membership and the exact fixed
+valid claim projection, including raw order, ISBN checksum, or closed ASIN
+syntax. Typed provider claims and rich date evidence both require linkage;
+rich evidence citation identities are recomputed from their closed content.
+Those internal identities do not by themselves prove that a sibling occurred
+in the source candidate. Provider-linked packet/request decode therefore
+requires the immutable persisted report and compares each complete citation
+with the projection rebuilt from that exact candidate. Missing source context
+or any invented/omitted sibling fails closed without exposing the report to
+the reviewer.
 All auth and reviewer processes serialize on one owner-only auth-store lock.
 Only the exact canonical ChatGPT subscription status on one process stream is
 accepted when the other stream is empty and the command succeeds. Mixed,

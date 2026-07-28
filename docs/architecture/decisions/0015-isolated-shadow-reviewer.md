@@ -1,7 +1,10 @@
 # ADR-0015: Isolate qualification-only Codex shadow review
 
-- Status: accepted
+- Status: superseded
 - Date: 2026-07-26
+- Owners: project maintainers
+- Supersedes: none
+- Superseded by: ADR-0016
 
 ## Decision
 

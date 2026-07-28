@@ -25,7 +25,7 @@ mechanical-librarian proposal-set-get \
   --proposal-set-id proposal_set_<64-lowercase-hex-characters>
 ```
 
-Success is exactly one canonical `proposal-set-v1` JSON document plus a
+Success is exactly one canonical `proposal-set-v2` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
 Only `fixed-conservative-v2` proposal documents and the exact current
@@ -47,9 +47,17 @@ The canonical document does not serialize its content-addressed ProposalSet ID;
 the ID is derived from those canonical bytes and remains the exact-get input.
 
 Alternatives retain only their bounded candidate value, work/edition/cover
-scope, assessment, stable evidence references, and hashed correlation groups.
+scope, assessment, stable evidence references, hashed correlation groups, and,
+for publication candidates, the closed event and target precision.
+`publishedYear` alternatives always carry target semantics
+`manifestation_publication` plus `year`; `publishedDate` alternatives always
+carry `manifestation_publication` plus `day`; every other destination carries
+neither. The exact source event and precision remain separately available
+through the evidence reference in the immutable report.
 They do not copy report excerpts, raw provider evidence, responses, URLs,
-paths, or image bytes.
+paths, or image bytes. Provider access time remains in the exact immutable
+report addressed by each evidence reference; proposal derivation performs no
+provider access and does not refresh or manufacture that time.
 
 `propose_change` carries exactly one selected safe candidate. `unresolved_choice`
 carries one or more bounded candidates but selects none. `defer` carries no
@@ -81,6 +89,12 @@ The policy is deliberately conservative:
   cannot replace a valid populated edition value;
 - direct year-only edition evidence can fill `publishedYear` but is not
   promoted into a full `publishedDate`;
+- month-only evidence likewise derives only its stated year; day evidence may
+  fill `publishedDate`, while a signed-offset timestamp may reduce to that
+  exact stated day without offset conversion. Its source precision remains in
+  the cited report fact;
+- provider publication text whose event or manifestation linkage is unresolved
+  remains visible evidence and never becomes a selectable candidate;
 - local work subtitles and exact-edition provider subtitles remain in their
   respective evidence scopes;
 - populated description, genres, and tags are never merged, replaced, or

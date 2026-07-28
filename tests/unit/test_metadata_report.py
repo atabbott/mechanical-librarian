@@ -53,6 +53,7 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     Comparison,
     ComparisonLink,
+    DateLinkConfidence,
     FieldResult,
     FieldSource,
     FieldSourceResult,
@@ -89,6 +90,7 @@ from mechanical_librarian.domain.metadata_report import (
     derive_identifier_evidence,
     derive_field_results,
     normalize_title,
+    provider_access_time,
     stable_reference,
 )
 from mechanical_librarian.interfaces.cli import main
@@ -144,6 +146,196 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_provider_access_time_is_canonical_bounded_and_replay_stable(
+        self,
+    ) -> None:
+        accessed_at = provider_access_time(1_700_000_000.125)
+        self.assertEqual("2023-11-14T22:13:20.125000Z", accessed_at)
+        observation = ProviderObservation(
+            "catalogue",
+            ProviderStatus.NO_MATCH,
+            query_kind=ProviderQueryKind.WORK,
+            authority="hardcover",
+            accessed_at=accessed_at,
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(observation,),
+        )
+        reopened = MetadataReport.from_json(report.to_json())
+        self.assertEqual(accessed_at, reopened.providers[0].accessed_at)
+        self.assertEqual(report.to_json(), reopened.to_json())
+        missing = report.to_data()
+        missing["providers"][0].pop("accessed_at")  # type: ignore[index]
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(missing))
+        self.assertIsNone(
+            ProviderObservation(
+                "catalogue", ProviderStatus.INSUFFICIENT_INPUT
+            ).to_data()["accessed_at"]
+        )
+
+        for invalid in (
+            True,
+            float("nan"),
+            float("inf"),
+            10**1000,
+        ):
+            with self.subTest(clock=invalid):
+                with self.assertRaises(ReportValueError):
+                    provider_access_time(invalid)  # type: ignore[arg-type]
+        for invalid in (
+            "",
+            "2023-11-14T22:13:20Z",
+            "2023-11-14T22:13:20.125000+00:00",
+            "2023-02-29T22:13:20.125000Z",
+            "2023-11-14T22:13:60.125000Z",
+        ):
+            with self.subTest(accessed_at=invalid):
+                with self.assertRaises(ReportValueError):
+                    ProviderObservation(
+                        "catalogue",
+                        ProviderStatus.NO_MATCH,
+                        accessed_at=invalid,
+                    )
+
+    def test_provider_dates_preserve_lexical_normalized_precision_and_linkage(
+        self,
+    ) -> None:
+        lexical = "2024-03-05T10:30:00-04:00"
+        claim = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.PUBLICATION_DATE,
+            value=lexical,
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="not_applicable",
+        )
+        self.assertEqual(lexical, claim.date_lexical)
+        self.assertEqual(lexical, claim.value)
+        self.assertEqual(DatePrecision.TIMESTAMP, claim.date_precision)
+        self.assertEqual(DateEvent.MANIFESTATION_PUBLICATION, claim.date_event)
+        self.assertEqual(DateLinkConfidence.EXPLICIT, claim.date_confidence)
+        with self.assertRaises(ReportValueError):
+            replace(claim, date_precision=DatePrecision.DAY)
+
+        unresolved = ProviderEvidence(
+            ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+            "2024-03",
+            ClaimScope.EDITION,
+        )
+        self.assertEqual("2024-03", unresolved.date_normalized)
+        self.assertEqual(DatePrecision.MONTH, unresolved.date_precision)
+        self.assertEqual(DateEvent.UNKNOWN, unresolved.date_event)
+        self.assertEqual(DateLinkConfidence.UNRESOLVED, unresolved.date_confidence)
+        with self.assertRaises(ReportValueError):
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition-1",
+                kind=ClaimKind.PUBLICATION_DATE,
+                value="2024-03-05T10:30:00+14:01",
+                state=FieldState.VALID,
+                scope=ClaimScope.EDITION,
+                applicability="not_applicable",
+            )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    (
+                        ProviderCandidate(
+                            "edition-1",
+                            "work-1",
+                            (claim,),
+                            (),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        replay_data = report.to_data()
+        replay_data["providers"][0]["candidates"][0]["claims"][0][
+            "date_precision"
+        ] = "day"
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(replay_data))
+
+    def test_provider_asin_is_canonical_before_reference_and_report_replay(
+        self,
+    ) -> None:
+        claim = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.ASIN,
+            value="b012345678",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="not_applicable",
+        )
+        canonical = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.ASIN,
+            value="B012345678",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="not_applicable",
+        )
+        self.assertEqual("B012345678", claim.value)
+        self.assertEqual(canonical.reference, claim.reference)
+        with self.assertRaises(ReportValueError):
+            replace(claim, value="b012345678")
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    (
+                        ProviderCandidate(
+                            "edition-1",
+                            "work-1",
+                            (claim,),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        replayed = MetadataReport.from_json(report.to_json())
+        self.assertEqual(
+            "B012345678",
+            replayed.providers[0].candidates[0].claims[0].value,
+        )
+
     def test_local_date_event_scope_is_event_aware_and_replay_rejects_mismatch(
         self,
     ) -> None:
@@ -573,9 +765,9 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v13", report.schema_version)
+        self.assertEqual("metadata-report-v14", report.schema_version)
         previous = report.to_data()
-        previous["schema_version"] = "metadata-report-v12"
+        previous["schema_version"] = "metadata-report-v13"
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(previous))
 
@@ -1397,6 +1589,104 @@ class MetadataReportTests(unittest.TestCase):
         data["providers"][0]["candidates"][0]["claims"][0]["links"][0]["outcome"] = "disagreement"
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(data))
+
+    def test_date_comparison_normalizes_both_lexicals_without_losing_precision(
+        self,
+    ) -> None:
+        def local(value: str, precision: DatePrecision) -> LocalClaim:
+            return LocalClaim.create(
+                kind=ClaimKind.PUBLICATION_DATE,
+                observed=value,
+                canonical=value,
+                excerpt=value,
+                applicability="not_applicable",
+                basis="package_metadata",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.EDITION,
+                date_event=DateEvent.MANIFESTATION_PUBLICATION,
+                date_precision=precision,
+            )
+
+        zulu = local("2024-03-05T14:30:00Z", DatePrecision.TIMESTAMP)
+        positive_offset = local(
+            "2024-03-05T11:30:00+01:00",
+            DatePrecision.TIMESTAMP,
+        )
+        rollover = local(
+            "2024-03-05T23:30:00Z",
+            DatePrecision.TIMESTAMP,
+        )
+        different = local(
+            "2024-03-05T14:30:01Z",
+            DatePrecision.TIMESTAMP,
+        )
+        day = local("2024-03-05", DatePrecision.DAY)
+        naive = local(
+            "2024-03-05T14:30:00",
+            DatePrecision.TIMESTAMP,
+        )
+        invalid = local(
+            "2024-02-30T14:30:00Z",
+            DatePrecision.TIMESTAMP,
+        )
+
+        def provider(value: str) -> ProviderClaim:
+            return ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition-1",
+                kind=ClaimKind.PUBLICATION_DATE,
+                value=value,
+                state=FieldState.VALID,
+                scope=ClaimScope.EDITION,
+                applicability="not_applicable",
+            )
+
+        negative_offset = provider("2024-03-05T10:30:00-04:00")
+        self.assertEqual(
+            {
+                zulu.reference: Comparison.AGREEMENT,
+                different.reference: Comparison.DISAGREEMENT,
+                day.reference: Comparison.DISAGREEMENT,
+            },
+            {
+                link.local_reference: link.outcome
+                for link in comparison_links(
+                    negative_offset,
+                    (zulu, different, day),
+                )
+            },
+        )
+        self.assertEqual(
+            (ComparisonLink(positive_offset.reference, Comparison.AGREEMENT),),
+            comparison_links(
+                provider("2024-03-05T10:30:00Z"),
+                (positive_offset,),
+            ),
+        )
+        self.assertEqual(
+            (ComparisonLink(rollover.reference, Comparison.AGREEMENT),),
+            comparison_links(
+                provider("2024-03-06T00:30:00+01:00"),
+                (rollover,),
+            ),
+        )
+        for malformed in (naive, invalid):
+            with (
+                self.subTest(value=malformed.canonical),
+                self.assertRaises(ReportValueError),
+            ):
+                comparison_links(negative_offset, (malformed,))
+        with self.assertRaises(ReportValueError):
+            comparison_links(
+                provider("2024-03-05T14:30:00"),
+                (zulu,),
+            )
+        self.assertEqual("2024-03-05T14:30:00Z", zulu.canonical)
+        self.assertEqual(
+            "2024-03-05T10:30:00-04:00",
+            negative_offset.date_lexical,
+        )
 
     def test_identifier_evidence_classifies_provider_local_work_relations(self) -> None:
         def local(

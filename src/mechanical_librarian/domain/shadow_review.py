@@ -8,13 +8,30 @@ import re
 from dataclasses import dataclass
 from typing import Self
 
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
+from mechanical_librarian.domain.evidence_bounds import (
+    EvidenceValueError,
+    validate_projection_text,
+)
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    DateLinkConfidence,
+    FieldState,
+    MAX_SCALAR_CHARACTERS,
+    MetadataReport,
+    ProviderClaim,
+    ProviderEvidence,
+    ProviderEvidenceKind,
+    ReportValueError,
+    TargetDestination,
+)
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
 from mechanical_librarian.domain.review_case import ReviewCase
 
-PACKET_SCHEMA = "shadow-review-packet-v1"
+PACKET_SCHEMA = "shadow-review-packet-v2"
 RESULT_SCHEMA = "shadow-review-result-v1"
-REQUEST_SCHEMA = "shadow-review-request-v2"
+REQUEST_SCHEMA = "shadow-review-request-v3"
 PROFILE_IDENTITY_SCHEMA = "reviewer-profile-identity-v1"
 QUALIFICATION_MODE = "qualification_only"
 MAX_PACKET_BYTES = 1_048_576
@@ -33,11 +50,27 @@ MAX_REQUEST_BYTES = (
 MAX_REASON_CHARACTERS = 1_024
 MAX_PROBLEMS = 32
 MAX_CITATIONS = 256
+MAX_LINKAGE_IDENTIFIER_FACTS = 16
+MAX_LINKAGE_FORMAT_FACTS = 16
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _REQUEST_ID = re.compile(r"^review_request_[0-9a-f]{64}$")
 _PROPOSAL_ID = re.compile(r"^review_proposal_[0-9a-f]{64}$")
 _ALTERNATIVE_ID = re.compile(r"^alternative_[0-9a-f]{64}$")
+_PROVIDER_REFERENCE = re.compile(r"^provider_[0-9a-f]{64}$")
+_PROVIDER_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+_ASIN = re.compile(r"^B[0-9A-Z]{9}$")
+_PROVIDER_DATE_EVIDENCE = frozenset(
+    {
+        ProviderEvidenceKind.COPYRIGHT_DATE,
+        ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+        ProviderEvidenceKind.LAST_MODIFIED,
+        ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+    }
+)
+_PROVIDER_DATE_EVIDENCE_VALUES = frozenset(
+    kind.value for kind in _PROVIDER_DATE_EVIDENCE
+)
 _RECOMMENDATIONS = frozenset(
     {"recommend_candidate", "recommend_keep_current", "manual"}
 )
@@ -196,6 +229,7 @@ class ShadowReviewPacket:
             raise ShadowReviewValueError("shadow-review packet is invalid")
         proposal_ids: list[str] = []
         citation_ids: list[str] = []
+        provider_date_references: set[str] = set()
         for proposal in self.proposals:
             if type(proposal) is not dict or set(proposal) != {
                 "candidates",
@@ -207,16 +241,64 @@ class ShadowReviewPacket:
             }:
                 raise ShadowReviewValueError("shadow-review packet is invalid")
             proposal_id = proposal.get("proposal_id")
-            if type(proposal_id) is not str or _PROPOSAL_ID.fullmatch(proposal_id) is None:
+            destination = proposal.get("destination")
+            if (
+                type(proposal_id) is not str
+                or _PROPOSAL_ID.fullmatch(proposal_id) is None
+                or destination
+                not in {value.value for value in TargetDestination}
+            ):
                 raise ShadowReviewValueError("shadow-review packet is invalid")
             proposal_ids.append(proposal_id)
             candidates = proposal.get("candidates")
             if type(candidates) is not list or not candidates:
                 raise ShadowReviewValueError("shadow-review packet is invalid")
-            candidate_ids = [value.get("candidate_id") for value in candidates if type(value) is dict]
+            candidate_ids: list[object] = []
+            expected_date = (
+                ("manifestation_publication", "year")
+                if destination == TargetDestination.PUBLISHED_YEAR.value
+                else ("manifestation_publication", "day")
+                if destination == TargetDestination.PUBLISHED_DATE.value
+                else (None, None)
+            )
+            for candidate in candidates:
+                if (
+                    type(candidate) is not dict
+                    or set(candidate)
+                    != {
+                        "assessment",
+                        "candidate_id",
+                        "correlations",
+                        "date_event",
+                        "date_precision",
+                        "evidence_references",
+                        "scope",
+                        "value",
+                    }
+                    or (
+                        candidate["date_event"],
+                        candidate["date_precision"],
+                    )
+                    != expected_date
+                    or type(candidate["evidence_references"]) is not list
+                    or any(
+                        type(reference) is not str
+                        for reference in candidate["evidence_references"]
+                    )
+                ):
+                    raise ShadowReviewValueError("shadow-review packet is invalid")
+                candidate_ids.append(candidate.get("candidate_id"))
+                if destination in {
+                    TargetDestination.PUBLISHED_YEAR.value,
+                    TargetDestination.PUBLISHED_DATE.value,
+                }:
+                    provider_date_references.update(
+                        reference
+                        for reference in candidate["evidence_references"]
+                        if reference.startswith(("provider_", "evidence_"))
+                    )
             if (
-                len(candidate_ids) != len(candidates)
-                or any(type(value) is not str or _ALTERNATIVE_ID.fullmatch(value) is None for value in candidate_ids)
+                any(type(value) is not str or _ALTERNATIVE_ID.fullmatch(value) is None for value in candidate_ids)
                 or candidate_ids != sorted(set(candidate_ids))
             ):
                 raise ShadowReviewValueError("shadow-review packet is invalid")
@@ -230,7 +312,21 @@ class ShadowReviewPacket:
                 or type(citation.get("fact")) is not dict
             ):
                 raise ShadowReviewValueError("shadow-review packet is invalid")
-            citation_ids.append(citation["citation_id"])  # type: ignore[arg-type]
+            citation_id = citation["citation_id"]
+            fact = citation["fact"]
+            if (
+                citation_id in provider_date_references
+                or citation_id.startswith("evidence_")
+                or "provider" in fact
+                or "linkage" in fact
+                or _contains_provider_date(fact)
+            ):
+                _validate_provider_citation(
+                    citation_id,
+                    fact,
+                    require_date=citation_id in provider_date_references,
+                )
+            citation_ids.append(citation_id)
         if citation_ids != sorted(set(citation_ids)):
             raise ShadowReviewValueError("shadow-review packet is invalid")
         correlation_ids: list[str] = []
@@ -296,6 +392,8 @@ class ShadowReviewPacket:
                         "assessment": alternative["assessment"],
                         "candidate_id": alternative["alternative_id"],
                         "correlations": alternative["correlations"],
+                        "date_event": alternative["date_event"],
+                        "date_precision": alternative["date_precision"],
                         "evidence_references": alternative["evidence_references"],
                         "scope": alternative["scope"],
                         "value": alternative["value"],
@@ -328,12 +426,14 @@ class ShadowReviewPacket:
             }
             for correlation_id, values in sorted(correlations.items())
         )
-        return cls(
+        value = cls(
             case.review_case_id,
             tuple(sorted(proposals, key=lambda value: value["proposal_id"])),
             citations,
             correlation_facts,
         )
+        value.validate_source(report)
+        return value
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -348,7 +448,24 @@ class ShadowReviewPacket:
         return canonical_json(self.to_data())
 
     @classmethod
-    def from_json(cls, serialized: str) -> Self:
+    def from_json(
+        cls, serialized: str, source_report: MetadataReport | None = None
+    ) -> Self:
+        return cls._from_json(serialized, source_report, source_validated=False)
+
+    @classmethod
+    def from_source_validated_json(cls, serialized: str) -> Self:
+        """Decode same-process bytes already validated with their source report."""
+        return cls._from_json(serialized, None, source_validated=True)
+
+    @classmethod
+    def _from_json(
+        cls,
+        serialized: str,
+        source_report: MetadataReport | None,
+        *,
+        source_validated: bool,
+    ) -> Self:
         raw = _canonical_object(serialized, MAX_PACKET_BYTES)
         if set(raw) != {
             "citations",
@@ -376,7 +493,25 @@ class ShadowReviewPacket:
             raise ShadowReviewValueError("shadow-review packet is invalid") from error
         if value.to_json() != serialized:
             raise ShadowReviewValueError("shadow-review packet is not canonical")
+        if _requires_provider_source(value) and not source_validated:
+            value.validate_source(source_report)
         return value
+
+    def validate_source(self, source_report: MetadataReport | None) -> None:
+        """Bind provider citations to exact candidates in an authoritative report."""
+        if type(source_report) is not MetadataReport:
+            raise ShadowReviewValueError(
+                "shadow-review provider source is unavailable"
+            )
+        evidence = _evidence_index(source_report.to_data())
+        for citation in self.citations:
+            citation_id = citation["citation_id"]
+            fact = citation["fact"]
+            if _is_provider_citation(citation_id, fact):
+                if evidence.get(citation_id) != fact:
+                    raise ShadowReviewValueError(
+                        "shadow-review provider source binding is invalid"
+                    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -491,6 +626,8 @@ class ShadowReviewRequest:
                             },
                             "candidate_id": candidate_id,
                             "correlations": [],
+                            "date_event": None,
+                            "date_precision": None,
                             "evidence_references": [citation_id],
                             "scope": "field",
                             "value": "Synthetic title",
@@ -543,7 +680,24 @@ class ShadowReviewRequest:
         return canonical_json(self.to_data())
 
     @classmethod
-    def from_json(cls, serialized: str) -> Self:
+    def from_json(
+        cls, serialized: str, source_report: MetadataReport | None = None
+    ) -> Self:
+        return cls._from_json(serialized, source_report, source_validated=False)
+
+    @classmethod
+    def from_source_validated_json(cls, serialized: str) -> Self:
+        """Decode same-process bytes already validated with their source report."""
+        return cls._from_json(serialized, None, source_validated=True)
+
+    @classmethod
+    def _from_json(
+        cls,
+        serialized: str,
+        source_report: MetadataReport | None,
+        *,
+        source_validated: bool,
+    ) -> Self:
         raw = _canonical_object(serialized, MAX_REQUEST_BYTES)
         if set(raw) != {
             "mode",
@@ -563,7 +717,11 @@ class ShadowReviewRequest:
                 raw["review_request_id"],  # type: ignore[arg-type]
                 raw["review_case_id"],  # type: ignore[arg-type]
                 ReviewerProfileIdentity.from_json(profile_json),
-                ShadowReviewPacket.from_json(packet_json),
+                (
+                    ShadowReviewPacket.from_source_validated_json(packet_json)
+                    if source_validated
+                    else ShadowReviewPacket.from_json(packet_json, source_report)
+                ),
                 raw["output_schema"],  # type: ignore[arg-type]
                 raw["output_schema_digest"],  # type: ignore[arg-type]
                 raw["mode"],  # type: ignore[arg-type]
@@ -713,20 +871,468 @@ def _evidence_index(value: object) -> dict[str, dict[str, object]]:
                         if type(evidence) is not dict:
                             continue
                         rich = {
+                            "access": {
+                                "accessed_at": provider.get("accessed_at"),
+                                "authority": provider.get("authority"),
+                                "query_kind": provider.get("query_kind"),
+                            },
+                            "candidate": candidate["identity"],
+                            "evidence": evidence,
+                            "linkage": _provider_linkage(candidate),
+                            "provider": provider.get("provider"),
+                            "work_identity": candidate.get("work_identity"),
+                        }
+                        rich_identity = {
                             "candidate": candidate["identity"],
                             "evidence": evidence,
                             "provider": provider.get("provider"),
                         }
                         rich_id = "evidence_" + hashlib.sha256(
-                            canonical_json(rich).encode("utf-8")
+                            canonical_json(rich_identity).encode("utf-8")
                         ).hexdigest()
                         result[rich_id] = rich
         for item in value.values():
             result.update(_evidence_index(item))
+        if type(providers) is list:
+            for provider in providers:
+                if (
+                    type(provider) is not dict
+                    or type(provider.get("candidates")) is not list
+                ):
+                    continue
+                for candidate in provider["candidates"]:
+                    if (
+                        type(candidate) is not dict
+                        or type(candidate.get("claims")) is not list
+                        or type(candidate.get("identity")) is not str
+                        or type(candidate.get("work_identity")) is not str
+                    ):
+                        continue
+                    for claim in candidate["claims"]:
+                        if (
+                            type(claim) is not dict
+                            or type(claim.get("reference")) is not str
+                            or claim.get("date_event") is None
+                        ):
+                            continue
+                        result[claim["reference"]] = {
+                            "access": {
+                                "accessed_at": provider.get("accessed_at"),
+                                "authority": provider.get("authority"),
+                                "query_kind": provider.get("query_kind"),
+                            },
+                            "candidate": candidate["identity"],
+                            "fact": _copy_json(claim),
+                            "linkage": _provider_linkage(candidate),
+                            "provider": provider.get("provider"),
+                            "work_identity": candidate["work_identity"],
+                        }
     elif type(value) is list:
         for item in value:
             result.update(_evidence_index(item))
     return result
+
+
+def _provider_linkage(candidate: dict[str, object]) -> dict[str, object]:
+    claims = candidate.get("claims")
+    evidence = candidate.get("evidence")
+    identifier_facts = (
+        sorted(
+            (
+                {
+                    "applicability": claim["applicability"],
+                    "kind": claim["kind"],
+                    "raw_order": claim["raw_order"],
+                    "reference": claim["reference"],
+                    "scope": claim["scope"],
+                    "value": claim["value"],
+                }
+                for claim in claims
+                if (
+                    type(claim) is dict
+                    and claim.get("kind") in {"asin", "isbn"}
+                    and claim.get("state") == "valid"
+                    and type(claim.get("reference")) is str
+                    and type(claim.get("value")) is str
+                )
+            ),
+            key=lambda fact: fact["reference"],
+        )
+        if type(claims) is list
+        else []
+    )
+    if len(identifier_facts) > MAX_LINKAGE_IDENTIFIER_FACTS:
+        raise ShadowReviewValueError(
+            "shadow-review provider identifier linkage exceeds its limit"
+        )
+    format_facts = sorted(
+        (
+            _copy_json(fact)
+            for fact in evidence
+            if type(fact) is dict and fact.get("kind") == "physical_format"
+        ),
+        key=canonical_json,
+    ) if type(evidence) is list else []
+    if len(format_facts) > MAX_LINKAGE_FORMAT_FACTS:
+        raise ShadowReviewValueError(
+            "shadow-review provider format linkage exceeds its limit"
+        )
+    return {
+        "format_facts": format_facts,
+        "identifier_facts": identifier_facts,
+        "identifier_references": [
+            fact["reference"] for fact in identifier_facts
+        ],
+    }
+
+
+def _validate_provider_citation(
+    citation_id: str,
+    value: dict[str, object],
+    *,
+    require_date: bool,
+) -> None:
+    claim_keys = {
+        "access",
+        "candidate",
+        "fact",
+        "linkage",
+        "provider",
+        "work_identity",
+    }
+    evidence_keys = {
+        "access",
+        "candidate",
+        "evidence",
+        "linkage",
+        "provider",
+        "work_identity",
+    }
+    value_keys = set(value)
+    if value_keys != claim_keys and value_keys != evidence_keys:
+        raise ShadowReviewValueError("shadow-review provider citation is invalid")
+    provider = value["provider"]
+    candidate = value["candidate"]
+    work_identity = value["work_identity"]
+    if (
+        type(provider) is not str
+        or _PROVIDER_NAME.fullmatch(provider) is None
+        or type(candidate) is not str
+        or type(work_identity) is not str
+    ):
+        raise ShadowReviewValueError("shadow-review provider citation is invalid")
+    try:
+        validate_projection_text(candidate, "provider candidate identity", 128)
+        validate_projection_text(work_identity, "provider work identity", 128)
+    except EvidenceValueError as error:
+        raise ShadowReviewValueError(
+            "shadow-review provider citation is invalid"
+        ) from error
+    _validate_provider_linkage(value["linkage"], provider, candidate)
+    if "fact" in value:
+        fact = value["fact"]
+        if type(fact) is not dict or set(fact) != {
+            "applicability",
+            "date_confidence",
+            "date_event",
+            "date_lexical",
+            "date_precision",
+            "kind",
+            "links",
+            "raw_order",
+            "reference",
+            "role",
+            "scope",
+            "state",
+            "value",
+        }:
+            raise ShadowReviewValueError(
+                "shadow-review provider citation is invalid"
+            )
+        try:
+            reconstructed = ProviderClaim.create(
+                provider=provider,
+                candidate=candidate,
+                kind=ClaimKind(fact["kind"]),
+                value=fact["value"],
+                state=FieldState(fact["state"]),
+                scope=ClaimScope(fact["scope"]),
+                applicability=fact["applicability"],
+                role=fact["role"],
+                raw_order=fact["raw_order"],
+                date_event=(
+                    None
+                    if fact["date_event"] is None
+                    else DateEvent(fact["date_event"])
+                ),
+                date_precision=(
+                    None
+                    if fact["date_precision"] is None
+                    else DatePrecision(fact["date_precision"])
+                ),
+                date_lexical=fact["date_lexical"],
+                date_confidence=(
+                    None
+                    if fact["date_confidence"] is None
+                    else DateLinkConfidence(fact["date_confidence"])
+                ),
+            )
+        except (ReportValueError, TypeError, ValueError) as error:
+            raise ShadowReviewValueError(
+                "shadow-review provider citation is invalid"
+            ) from error
+        if (
+            reconstructed.reference != citation_id
+            or fact["reference"] != citation_id
+            or reconstructed.kind is not ClaimKind.PUBLICATION_DATE
+            or reconstructed.date_event is None
+        ):
+            raise ShadowReviewValueError(
+                "shadow-review provider citation is invalid"
+            )
+        return
+    evidence_data = value["evidence"]
+    if type(evidence_data) is not dict or set(evidence_data) != {
+        "date_confidence",
+        "date_event",
+        "date_normalized",
+        "date_precision",
+        "kind",
+        "role",
+        "scope",
+        "value",
+    }:
+        raise ShadowReviewValueError("shadow-review provider citation is invalid")
+    try:
+        evidence = ProviderEvidence(
+            ProviderEvidenceKind(evidence_data["kind"]),
+            evidence_data["value"],
+            ClaimScope(evidence_data["scope"]),
+            evidence_data["role"],
+            (
+                None
+                if evidence_data["date_event"] is None
+                else DateEvent(evidence_data["date_event"])
+            ),
+            (
+                None
+                if evidence_data["date_precision"] is None
+                else DatePrecision(evidence_data["date_precision"])
+            ),
+            evidence_data["date_normalized"],
+            (
+                None
+                if evidence_data["date_confidence"] is None
+                else DateLinkConfidence(evidence_data["date_confidence"])
+            ),
+        )
+    except (ReportValueError, TypeError, ValueError) as error:
+        raise ShadowReviewValueError(
+            "shadow-review provider citation is invalid"
+        ) from error
+    expected_id = "evidence_" + hashlib.sha256(
+        canonical_json(
+            {
+                "candidate": candidate,
+                "evidence": evidence.to_data(),
+                "provider": provider,
+            }
+        ).encode("utf-8")
+    ).hexdigest()
+    if (
+        evidence.to_data() != evidence_data
+        or citation_id != expected_id
+        or (
+            require_date
+            and (
+                evidence.kind not in _PROVIDER_DATE_EVIDENCE
+                or evidence.date_event is None
+            )
+        )
+    ):
+        raise ShadowReviewValueError("shadow-review provider citation is invalid")
+
+
+def _contains_provider_date(value: dict[str, object]) -> bool:
+    claim = value.get("fact")
+    evidence = value.get("evidence")
+    return (
+        type(claim) is dict
+        and (
+            claim.get("kind") == ClaimKind.PUBLICATION_DATE.value
+            or claim.get("date_event") is not None
+        )
+    ) or (
+        type(evidence) is dict
+        and (
+            evidence.get("kind") in _PROVIDER_DATE_EVIDENCE_VALUES
+            or evidence.get("date_event") is not None
+        )
+    )
+
+
+def _is_provider_citation(citation_id: str, fact: dict[str, object]) -> bool:
+    return (
+        citation_id.startswith(("provider_", "evidence_"))
+        or "provider" in fact
+        or "linkage" in fact
+        or _contains_provider_date(fact)
+    )
+
+
+def _requires_provider_source(packet: ShadowReviewPacket) -> bool:
+    return any(
+        _is_provider_citation(citation["citation_id"], citation["fact"])
+        for citation in packet.citations
+    )
+
+
+def _validate_provider_linkage(
+    value: object,
+    provider: str,
+    candidate: str,
+) -> None:
+    if type(value) is not dict or set(value) != {
+        "format_facts",
+        "identifier_facts",
+        "identifier_references",
+    }:
+        raise ShadowReviewValueError("shadow-review provider linkage is invalid")
+    identifiers = value["identifier_facts"]
+    references = value["identifier_references"]
+    formats = value["format_facts"]
+    if (
+        type(identifiers) is not list
+        or len(identifiers) > MAX_LINKAGE_IDENTIFIER_FACTS
+        or type(references) is not list
+        or any(
+            type(reference) is not str
+            or _PROVIDER_REFERENCE.fullmatch(reference) is None
+            for reference in references
+        )
+        or type(formats) is not list
+        or len(formats) > MAX_LINKAGE_FORMAT_FACTS
+        or formats != sorted(formats, key=canonical_json)
+    ):
+        raise ShadowReviewValueError("shadow-review provider linkage is invalid")
+    expected_references: list[str] = []
+    for fact in identifiers:
+        if (
+            type(fact) is not dict
+            or set(fact)
+            != {
+                "applicability",
+                "kind",
+                "raw_order",
+                "reference",
+                "scope",
+                "value",
+            }
+            or type(fact["kind"]) is not str
+            or fact["kind"] not in {"asin", "isbn"}
+            or type(fact["applicability"]) is not str
+            or fact["applicability"]
+            not in {"ebook", "print", "unknown", "ambiguous", "not_applicable"}
+            or type(fact["scope"]) is not str
+            or fact["scope"] != "edition"
+            or type(fact["raw_order"]) is not int
+            or fact["raw_order"] < 0
+            or type(fact["reference"]) is not str
+            or _PROVIDER_REFERENCE.fullmatch(fact["reference"]) is None
+            or type(fact["value"]) is not str
+            or not _bounded_scalar(fact["value"])
+        ):
+            raise ShadowReviewValueError(
+                "shadow-review provider linkage is invalid"
+            )
+        try:
+            kind = ClaimKind(fact["kind"])
+            reconstructed = ProviderClaim.create(
+                provider=provider,
+                candidate=candidate,
+                kind=kind,
+                value=fact["value"],
+                state=FieldState.VALID,
+                scope=ClaimScope.EDITION,
+                applicability=fact["applicability"],
+                raw_order=fact["raw_order"],
+            )
+        except (ReportValueError, TypeError, ValueError) as error:
+            raise ShadowReviewValueError(
+                "shadow-review provider linkage is invalid"
+            ) from error
+        if (
+            (kind is ClaimKind.ASIN and _ASIN.fullmatch(fact["value"]) is None)
+            or reconstructed.reference != fact["reference"]
+        ):
+            raise ShadowReviewValueError(
+                "shadow-review provider linkage is invalid"
+            )
+        expected_references.append(fact["reference"])
+    if (
+        identifiers
+        != sorted(identifiers, key=lambda fact: fact["reference"])
+        or references != expected_references
+        or references != sorted(set(references))
+    ):
+        raise ShadowReviewValueError("shadow-review provider linkage is invalid")
+    for fact in formats:
+        if (
+            type(fact) is not dict
+            or set(fact)
+            != {
+                "date_confidence",
+                "date_event",
+                "date_normalized",
+                "date_precision",
+                "kind",
+                "role",
+                "scope",
+                "value",
+            }
+            or type(fact["kind"]) is not str
+            or fact["kind"] != "physical_format"
+            or fact["role"] is not None
+            or type(fact["scope"]) is not str
+            or fact["scope"] not in {"work", "edition"}
+            or any(
+                fact[key] is not None
+                for key in (
+                    "date_confidence",
+                    "date_event",
+                    "date_normalized",
+                    "date_precision",
+                )
+            )
+            or type(fact["value"]) is not str
+            or not _bounded_scalar(fact["value"])
+        ):
+            raise ShadowReviewValueError(
+                "shadow-review provider linkage is invalid"
+            )
+        try:
+            projected = ProviderEvidence(
+                ProviderEvidenceKind.PHYSICAL_FORMAT,
+                fact["value"],
+                ClaimScope(fact["scope"]),
+            )
+        except (ReportValueError, TypeError, ValueError) as error:
+            raise ShadowReviewValueError(
+                "shadow-review provider linkage is invalid"
+            ) from error
+        if projected.to_data() != fact:
+            raise ShadowReviewValueError(
+                "shadow-review provider linkage is invalid"
+            )
+
+
+def _bounded_scalar(value: object) -> bool:
+    return (
+        type(value) is str
+        and 1 <= len(value) <= MAX_SCALAR_CHARACTERS
+        and value.strip() == value
+        and not any(ord(character) < 0x20 for character in value)
+    )
 
 
 def _copy_json(value: object) -> object:
@@ -796,6 +1402,8 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 __all__ = [
     "MAX_CITATIONS",
+    "MAX_LINKAGE_FORMAT_FACTS",
+    "MAX_LINKAGE_IDENTIFIER_FACTS",
     "MAX_OUTPUT_SCHEMA_BYTES",
     "MAX_PACKET_BYTES",
     "MAX_PROFILE_IDENTITY_BYTES",
