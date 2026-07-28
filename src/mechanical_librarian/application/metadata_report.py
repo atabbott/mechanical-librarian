@@ -599,7 +599,12 @@ class EpubInspector(Protocol):
 
 
 class MetadataProvider(Protocol):
-    def observe(self, plan: MetadataDiscoveryPlan) -> ProviderObservation: ...
+    def observe(
+        self,
+        plan: MetadataDiscoveryPlan,
+        *,
+        deadline: float | None = None,
+    ) -> ProviderObservation: ...
 
 
 class CoverObserver(Protocol):
@@ -966,10 +971,8 @@ class GenerateMetadataReport:
                 repository.close()
                 raise CredentialError("provider credential unavailable") from error
             try:
-                observation = (
-                    provider.observe(plan, deadline=cover_aggregate_deadline)
-                    if hasattr(provider, "cover_descriptors")
-                    else provider.observe(plan)
+                observation = provider.observe(
+                    plan, deadline=cover_aggregate_deadline
                 )
             except Exception:
                 observation = provider_observation(
