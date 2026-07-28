@@ -9,7 +9,12 @@
   remain visible but non-selectable. Proposal and reviewer candidates expose
   their event and target precision, while citations retain source precision,
   candidate/work identity, provider authority, query access, and sibling
-  identifier/format context. The first actual provider dispatch now records
+  identifier/format fact context with exact bounded membership. Constructed
+  and replayed reports, proposals, and reviewer packets reject source
+  precision disagreement, destination/date disagreement, opaque-only linkage,
+  malformed context, and context over its fixed limits. ADR-0016 supersedes
+  ADR-0015 to freeze the packet-v2/request-v3 trust boundary. The first actual
+  provider dispatch now records
   one strict canonical UTC access time from the adapter's injected clock;
   retries and replay do not refresh it, and pre-egress outcomes retain an
   explicit absence. A fresh accessed observation is therefore a new immutable

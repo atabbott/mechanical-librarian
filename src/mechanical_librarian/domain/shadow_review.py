@@ -8,7 +8,11 @@ import re
 from dataclasses import dataclass
 from typing import Self
 
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_report import (
+    MAX_SCALAR_CHARACTERS,
+    MetadataReport,
+    TargetDestination,
+)
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
 from mechanical_librarian.domain.review_case import ReviewCase
 
@@ -33,11 +37,14 @@ MAX_REQUEST_BYTES = (
 MAX_REASON_CHARACTERS = 1_024
 MAX_PROBLEMS = 32
 MAX_CITATIONS = 256
+MAX_LINKAGE_IDENTIFIER_FACTS = 16
+MAX_LINKAGE_FORMAT_FACTS = 16
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _REQUEST_ID = re.compile(r"^review_request_[0-9a-f]{64}$")
 _PROPOSAL_ID = re.compile(r"^review_proposal_[0-9a-f]{64}$")
 _ALTERNATIVE_ID = re.compile(r"^alternative_[0-9a-f]{64}$")
+_PROVIDER_REFERENCE = re.compile(r"^provider_[0-9a-f]{64}$")
 _RECOMMENDATIONS = frozenset(
     {"recommend_candidate", "recommend_keep_current", "manual"}
 )
@@ -207,13 +214,26 @@ class ShadowReviewPacket:
             }:
                 raise ShadowReviewValueError("shadow-review packet is invalid")
             proposal_id = proposal.get("proposal_id")
-            if type(proposal_id) is not str or _PROPOSAL_ID.fullmatch(proposal_id) is None:
+            destination = proposal.get("destination")
+            if (
+                type(proposal_id) is not str
+                or _PROPOSAL_ID.fullmatch(proposal_id) is None
+                or destination
+                not in {value.value for value in TargetDestination}
+            ):
                 raise ShadowReviewValueError("shadow-review packet is invalid")
             proposal_ids.append(proposal_id)
             candidates = proposal.get("candidates")
             if type(candidates) is not list or not candidates:
                 raise ShadowReviewValueError("shadow-review packet is invalid")
             candidate_ids: list[object] = []
+            expected_date = (
+                ("manifestation_publication", "year")
+                if destination == TargetDestination.PUBLISHED_YEAR.value
+                else ("manifestation_publication", "day")
+                if destination == TargetDestination.PUBLISHED_DATE.value
+                else (None, None)
+            )
             for candidate in candidates:
                 if (
                     type(candidate) is not dict
@@ -228,19 +248,11 @@ class ShadowReviewPacket:
                         "scope",
                         "value",
                     }
-                    or (candidate["date_event"] is None)
-                    != (candidate["date_precision"] is None)
                     or (
-                        candidate["date_event"] is not None
-                        and (
-                            candidate["date_event"]
-                            not in {
-                                "manifestation_publication",
-                                "work_first_publication",
-                            }
-                            or candidate["date_precision"] not in {"day", "year"}
-                        )
+                        candidate["date_event"],
+                        candidate["date_precision"],
                     )
+                    != expected_date
                 ):
                     raise ShadowReviewValueError("shadow-review packet is invalid")
                 candidate_ids.append(candidate.get("candidate_id"))
@@ -259,6 +271,16 @@ class ShadowReviewPacket:
                 or type(citation.get("fact")) is not dict
             ):
                 raise ShadowReviewValueError("shadow-review packet is invalid")
+            fact = citation["fact"]
+            provider_fact = fact.get("fact")
+            if (
+                type(provider_fact) is dict
+                and provider_fact.get("kind") == "publication_date"
+                and "linkage" not in fact
+            ):
+                raise ShadowReviewValueError("shadow-review packet is invalid")
+            if "linkage" in fact:
+                _validate_provider_linkage(fact["linkage"])
             citation_ids.append(citation["citation_id"])  # type: ignore[arg-type]
         if citation_ids != sorted(set(citation_ids)):
             raise ShadowReviewValueError("shadow-review packet is invalid")
@@ -811,16 +833,34 @@ def _evidence_index(value: object) -> dict[str, dict[str, object]]:
 def _provider_linkage(candidate: dict[str, object]) -> dict[str, object]:
     claims = candidate.get("claims")
     evidence = candidate.get("evidence")
-    identifier_references = sorted(
-        claim["reference"]
-        for claim in claims
-        if (
-            type(claim) is dict
-            and claim.get("kind") in {"asin", "isbn"}
-            and claim.get("state") == "valid"
-            and type(claim.get("reference")) is str
+    identifier_facts = (
+        sorted(
+            (
+                {
+                    "applicability": claim["applicability"],
+                    "kind": claim["kind"],
+                    "reference": claim["reference"],
+                    "scope": claim["scope"],
+                    "value": claim["value"],
+                }
+                for claim in claims
+                if (
+                    type(claim) is dict
+                    and claim.get("kind") in {"asin", "isbn"}
+                    and claim.get("state") == "valid"
+                    and type(claim.get("reference")) is str
+                    and type(claim.get("value")) is str
+                )
+            ),
+            key=lambda fact: fact["reference"],
         )
-    ) if type(claims) is list else []
+        if type(claims) is list
+        else []
+    )
+    if len(identifier_facts) > MAX_LINKAGE_IDENTIFIER_FACTS:
+        raise ShadowReviewValueError(
+            "shadow-review provider identifier linkage exceeds its limit"
+        )
     format_facts = sorted(
         (
             _copy_json(fact)
@@ -829,10 +869,105 @@ def _provider_linkage(candidate: dict[str, object]) -> dict[str, object]:
         ),
         key=canonical_json,
     ) if type(evidence) is list else []
+    if len(format_facts) > MAX_LINKAGE_FORMAT_FACTS:
+        raise ShadowReviewValueError(
+            "shadow-review provider format linkage exceeds its limit"
+        )
     return {
         "format_facts": format_facts,
-        "identifier_references": identifier_references,
+        "identifier_facts": identifier_facts,
+        "identifier_references": [
+            fact["reference"] for fact in identifier_facts
+        ],
     }
+
+
+def _validate_provider_linkage(value: object) -> None:
+    if type(value) is not dict or set(value) != {
+        "format_facts",
+        "identifier_facts",
+        "identifier_references",
+    }:
+        raise ShadowReviewValueError("shadow-review provider linkage is invalid")
+    identifiers = value["identifier_facts"]
+    references = value["identifier_references"]
+    formats = value["format_facts"]
+    if (
+        type(identifiers) is not list
+        or len(identifiers) > MAX_LINKAGE_IDENTIFIER_FACTS
+        or type(references) is not list
+        or type(formats) is not list
+        or len(formats) > MAX_LINKAGE_FORMAT_FACTS
+        or formats != sorted(formats, key=canonical_json)
+    ):
+        raise ShadowReviewValueError("shadow-review provider linkage is invalid")
+    expected_references: list[str] = []
+    for fact in identifiers:
+        if (
+            type(fact) is not dict
+            or set(fact)
+            != {"applicability", "kind", "reference", "scope", "value"}
+            or fact["kind"] not in {"asin", "isbn"}
+            or fact["applicability"]
+            not in {"ebook", "print", "unknown", "ambiguous", "not_applicable"}
+            or fact["scope"] not in {"work", "edition"}
+            or type(fact["reference"]) is not str
+            or _PROVIDER_REFERENCE.fullmatch(fact["reference"]) is None
+            or type(fact["value"]) is not str
+            or not _bounded_scalar(fact["value"])
+        ):
+            raise ShadowReviewValueError(
+                "shadow-review provider linkage is invalid"
+            )
+        expected_references.append(fact["reference"])
+    if (
+        identifiers
+        != sorted(identifiers, key=lambda fact: fact["reference"])
+        or references != expected_references
+        or references != sorted(set(references))
+    ):
+        raise ShadowReviewValueError("shadow-review provider linkage is invalid")
+    for fact in formats:
+        if (
+            type(fact) is not dict
+            or set(fact)
+            != {
+                "date_confidence",
+                "date_event",
+                "date_normalized",
+                "date_precision",
+                "kind",
+                "role",
+                "scope",
+                "value",
+            }
+            or fact["kind"] != "physical_format"
+            or fact["role"] is not None
+            or fact["scope"] not in {"work", "edition"}
+            or any(
+                fact[key] is not None
+                for key in (
+                    "date_confidence",
+                    "date_event",
+                    "date_normalized",
+                    "date_precision",
+                )
+            )
+            or type(fact["value"]) is not str
+            or not _bounded_scalar(fact["value"])
+        ):
+            raise ShadowReviewValueError(
+                "shadow-review provider linkage is invalid"
+            )
+
+
+def _bounded_scalar(value: object) -> bool:
+    return (
+        type(value) is str
+        and 1 <= len(value) <= MAX_SCALAR_CHARACTERS
+        and value.strip() == value
+        and not any(ord(character) < 0x20 for character in value)
+    )
 
 
 def _copy_json(value: object) -> object:
@@ -902,6 +1037,8 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 __all__ = [
     "MAX_CITATIONS",
+    "MAX_LINKAGE_FORMAT_FACTS",
+    "MAX_LINKAGE_IDENTIFIER_FACTS",
     "MAX_OUTPUT_SCHEMA_BYTES",
     "MAX_PACKET_BYTES",
     "MAX_PROFILE_IDENTITY_BYTES",

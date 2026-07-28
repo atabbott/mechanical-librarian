@@ -225,6 +225,8 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(DatePrecision.TIMESTAMP, claim.date_precision)
         self.assertEqual(DateEvent.MANIFESTATION_PUBLICATION, claim.date_event)
         self.assertEqual(DateLinkConfidence.EXPLICIT, claim.date_confidence)
+        with self.assertRaises(ReportValueError):
+            replace(claim, date_precision=DatePrecision.DAY)
 
         unresolved = ProviderEvidence(
             ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
@@ -245,6 +247,38 @@ class MetadataReportTests(unittest.TestCase):
                 scope=ClaimScope.EDITION,
                 applicability="not_applicable",
             )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    (
+                        ProviderCandidate(
+                            "edition-1",
+                            "work-1",
+                            (claim,),
+                            (),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        replay_data = report.to_data()
+        replay_data["providers"][0]["candidates"][0]["claims"][0][
+            "date_precision"
+        ] = "day"
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(replay_data))
 
     def test_local_date_event_scope_is_event_aware_and_replay_rejects_mismatch(
         self,

@@ -150,9 +150,13 @@ or exported; fixture rows and source text remain private.
 
 Provider-date regressions use synthetic year, month, day, and signed-offset
 timestamp values. They prove lexical/normalized replay, closed event and
-linkage typing, no precision invention, consistent date/year projection,
+linkage typing, exact declared-versus-inferred source precision, no precision
+invention, destination-exact manifestation date/year projection,
 non-selectability of unresolved publication text, explicit conflict choices,
-and reviewer citation coverage without exporting real-library values. Access-
+and reviewer citation coverage without exporting real-library values.
+Reviewer replay cases reject missing or opaque-only linkage, identifier
+fact/reference disagreement, malformed identifier and format shapes, and
+context beyond either 16-fact bound. Access-
 time regressions inject fixed clocks at every metadata-provider boundary,
 exercise successful and terminal post-dispatch statuses, prove absent time for
 no-input, overflow, invalid-clock, and expired pre-dispatch paths, and verify

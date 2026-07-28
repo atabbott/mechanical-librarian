@@ -19,11 +19,17 @@ The current qualification-only `shadow-review-packet-v2` contains:
 - supporting and contradicting evidence summaries, with provider date
   citations retaining lexical/normalized values, source precision,
   candidate/work linkage, authority, query kind, and the immutable provider
-  access time when an actual request occurred;
+  access time when an actual request occurred, plus at most 16 allowlisted
+  sibling identifier fact objects and 16 physical-format facts whose
+  references and membership are validated exactly;
 - bounded excerpts labelled as untrusted content;
 - no images or operator-authored intent; and
 - the fixed prompt/profile/packet/output/policy identities bound by the
   qualification profile.
+
+ADR-0016 freezes this projection and `shadow-review-request-v3`. Missing,
+opaque-only, malformed, noncanonical, or over-bound provider date linkage
+fails before reviewer invocation.
 
 Packet assembly records candidate and policy versions, source completeness, and
 the join provenance for every authoritative row. If the current snapshot,

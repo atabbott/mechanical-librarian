@@ -134,6 +134,19 @@ _DESTINATION_VALUE_SCOPES: dict[
     TargetDestination.COVER: frozenset({(ProposalValueKind.COVER, ProposalScope.COVER)}),
 }
 
+_DESTINATION_DATE_SEMANTICS: dict[
+    TargetDestination, tuple[DateEvent | None, DatePrecision | None]
+] = {
+    destination: (
+        (DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.YEAR)
+        if destination is TargetDestination.PUBLISHED_YEAR
+        else (DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.DAY)
+        if destination is TargetDestination.PUBLISHED_DATE
+        else (None, None)
+    )
+    for destination in TargetDestination
+}
+
 _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.PROPOSE_CHANGE: frozenset(
         {("unique_safe_cover",), ("unique_typed_candidate",)}
@@ -348,6 +361,14 @@ class ProposalResult:
             for alternative in self.alternatives
         ):
             raise ProposalValueError("proposal alternative is incompatible with destination")
+        expected_date = _DESTINATION_DATE_SEMANTICS[self.destination]
+        if any(
+            (alternative.date_event, alternative.date_precision) != expected_date
+            for alternative in self.alternatives
+        ):
+            raise ProposalValueError(
+                "proposal alternative date is incompatible with destination"
+            )
         if self.reasons not in _OUTCOME_REASON_SETS[self.outcome]:
             raise ProposalValueError("proposal reasons are incompatible with outcome")
         selected = {value.alternative_id for value in self.alternatives}
@@ -1281,19 +1302,7 @@ def _alternatives(
         else:
             assessment = ProposalAssessment.FILLS_EMPTY
         scope = values[0].scope
-        events = {value.date_event for value in values}
-        if len(events) != 1:
-            raise ProposalValueError("date candidate event is ambiguous")
-        date_event = values[0].date_event
-        date_precision = (
-            DatePrecision.YEAR
-            if destination is TargetDestination.PUBLISHED_YEAR
-            else DatePrecision.DAY
-            if destination is TargetDestination.PUBLISHED_DATE
-            else None
-        )
-        if (date_event is None) != (date_precision is None):
-            raise ProposalValueError("date candidate typing is inconsistent")
+        date_event, date_precision = _DESTINATION_DATE_SEMANTICS[destination]
         alternatives.append(
             ProposalAlternative.create(
                 proposal_value,

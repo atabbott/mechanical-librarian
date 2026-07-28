@@ -894,7 +894,8 @@ class ProviderClaim:
             and (
                 type(self.date_precision) is not DatePrecision
                 or type(self.date_lexical) is not str
-                or self.value != normalize_date_value(self.date_lexical)[0]
+                or (self.value, self.date_precision)
+                != normalize_date_value(self.date_lexical)
             )
         ) or (
             (not is_date or self.state is not FieldState.VALID)

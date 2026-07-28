@@ -65,7 +65,13 @@ Provider date citations in the sanitized packet carry the exact immutable
 report `accessed_at` value alongside authority and query kind, or explicit
 `null` when the report records that no provider dispatch occurred. Preview,
 request, restart, and reevaluation never access a provider or refresh the
-stored time.
+stored time. They also carry at most 16 bounded sibling ISBN/ASIN fact objects
+and 16 physical-format facts. Identifier references must match those fact
+objects exactly; missing, opaque-only, malformed, noncanonical, or over-bound
+linkage rejects the packet before invocation. Candidate date typing describes
+the target destination (`manifestation_publication` plus `year` or `day`);
+source event and precision remain in the citation. This exact packet/request
+freeze is governed by ADR-0016.
 
 ```sh
 mechanical-librarian shadow-review-request --database reports.sqlite \

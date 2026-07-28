@@ -49,6 +49,11 @@ the ID is derived from those canonical bytes and remains the exact-get input.
 Alternatives retain only their bounded candidate value, work/edition/cover
 scope, assessment, stable evidence references, hashed correlation groups, and,
 for publication candidates, the closed event and target precision.
+`publishedYear` alternatives always carry target semantics
+`manifestation_publication` plus `year`; `publishedDate` alternatives always
+carry `manifestation_publication` plus `day`; every other destination carries
+neither. The exact source event and precision remain separately available
+through the evidence reference in the immutable report.
 They do not copy report excerpts, raw provider evidence, responses, URLs,
 paths, or image bytes. Provider access time remains in the exact immutable
 report addressed by each evidence reference; proposal derivation performs no

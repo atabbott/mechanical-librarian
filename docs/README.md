@@ -22,6 +22,7 @@
 - [ADR-0013: pre-release clean schema](architecture/decisions/0013-pre-release-clean-schema.md)
 - [ADR-0014: review-case admission](architecture/decisions/0014-review-case-admission.md)
 - [ADR-0015: isolated qualification-only shadow review](architecture/decisions/0015-isolated-shadow-reviewer.md)
+- [ADR-0016: explainable publication-date shadow review](architecture/decisions/0016-freeze-explainable-shadow-reviewer.md)
 
 ## Development
 

@@ -392,6 +392,22 @@ class ProposalSetTests(unittest.TestCase):
                         ("local_" + "a" * 64,),
                         ("correlation_" + "a" * 64,),
                         scope,
+                        date_event=(
+                            DateEvent.MANIFESTATION_PUBLICATION
+                            if destination
+                            in {
+                                TargetDestination.PUBLISHED_YEAR,
+                                TargetDestination.PUBLISHED_DATE,
+                            }
+                            else None
+                        ),
+                        date_precision=(
+                            DatePrecision.YEAR
+                            if destination is TargetDestination.PUBLISHED_YEAR
+                            else DatePrecision.DAY
+                            if destination is TargetDestination.PUBLISHED_DATE
+                            else None
+                        ),
                     )
                     arguments = (
                         destination,
@@ -468,6 +484,93 @@ class ProposalSetTests(unittest.TestCase):
             with self.subTest(outcome=outcome, reasons=reasons):
                 with self.assertRaises(ProposalValueError):
                     ProposalSet.from_json(canonical_json(document))
+
+    def test_destination_date_semantics_reject_constructed_and_replayed_mismatch(
+        self,
+    ) -> None:
+        reference = "provider_" + "a" * 64
+        correlation = "correlation_" + "b" * 64
+        invalid = (
+            (
+                TargetDestination.TITLE,
+                DateEvent.MANIFESTATION_PUBLICATION,
+                DatePrecision.DAY,
+            ),
+            (
+                TargetDestination.PUBLISHED_YEAR,
+                DateEvent.WORK_FIRST_PUBLICATION,
+                DatePrecision.YEAR,
+            ),
+            (
+                TargetDestination.PUBLISHED_DATE,
+                DateEvent.MANIFESTATION_PUBLICATION,
+                DatePrecision.YEAR,
+            ),
+        )
+        for destination, event, precision in invalid:
+            alternative = ProposalAlternative.create(
+                ProposalValue(ProposalValueKind.TEXT, "2001"),
+                ProposalAssessment.FILLS_EMPTY,
+                (reference,),
+                (correlation,),
+                ProposalScope.WORK,
+                date_event=event,
+                date_precision=precision,
+            )
+            with self.subTest(destination=destination):
+                with self.assertRaises(ProposalValueError):
+                    ProposalResult(
+                        destination,
+                        ProposalOutcome.PROPOSE_CHANGE,
+                        (alternative,),
+                        alternative.alternative_id,
+                        ("unique_typed_candidate",),
+                    )
+
+        proposal_set = evaluate_report(
+            _report(
+                title=None,
+                fields=_fields(
+                    None,
+                    title=TargetField(
+                        TargetDestination.TITLE, TargetFieldState.MISSING
+                    ),
+                ),
+                providers=(
+                    _provider(
+                        "catalogue",
+                        "edition-1",
+                        (
+                            _claim(
+                                "catalogue",
+                                "edition-1",
+                                ClaimKind.TITLE,
+                                "A title",
+                                scope=ClaimScope.WORK,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        )
+        document = json.loads(proposal_set.to_json())
+        result = next(
+            value for value in document["results"] if value["destination"] == "title"
+        )
+        original = _result(proposal_set, TargetDestination.TITLE).alternatives[0]
+        forged = ProposalAlternative.create(
+            original.value,
+            original.assessment,
+            original.evidence_references,
+            original.correlations,
+            original.scope,
+            date_event=DateEvent.MANIFESTATION_PUBLICATION,
+            date_precision=DatePrecision.DAY,
+        )
+        result["alternatives"] = [forged.to_data()]
+        result["selected_alternative_id"] = forged.alternative_id
+        with self.assertRaises(ProposalValueError):
+            ProposalSet.from_json(canonical_json(document))
 
     def test_unique_empty_fill_and_positive_preservation_are_explainable(self) -> None:
         title_claim = _claim(
