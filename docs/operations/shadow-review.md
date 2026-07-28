@@ -157,12 +157,15 @@ contains only category, closed component/stage, optional
 retryability/currentness, and bounded count. Raw stdout, stderr, reasoning,
 malformed content, profile paths, auth data, exception text, and digests are
 discarded from those projections.
-The pinned CLI currently exposes no stable bounded diagnostic that specifically
-proves a live response-format rejection. Every nonzero ordinary-command exit,
-including exec failure, signal termination, resource/network/service failure,
-and an unknown status, is therefore durable `spawn_runtime`.
-`response_format` remains reserved until a pinned
-canonical signal can support that narrower causal claim.
+The pinned ordinary command runs with JSONL events enabled. Exit status 1 maps
+to `live_schema_rejection` only when stderr is empty and its bounded,
+strict-UTF-8 JSONL stream ends in the exact `turn.failed` shape whose sole
+message begins with the pinned service rejection for
+`response_format 'codex_output_schema'`. The message and the rest of both
+streams are discarded. A different exit status, over-bound or malformed
+stream, additional terminal fields, stderr output, or any other error message
+is conservatively `spawn_runtime`. Malformed result documents and zero-exit
+semantic or citation failures remain their own diagnostic categories.
 
 Offline parser-help probes remain no-network and use a temporary empty auth
 store. The one-case compatibility canary is a real synthetic,

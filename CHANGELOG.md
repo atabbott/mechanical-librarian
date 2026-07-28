@@ -10,7 +10,10 @@
   unchanged; Hardcover HTTP 200 GraphQL errors are terminal
   `provider_declared_error`, never success. Shadow failures persist the same
   canonical diagnostic object used by CLI failure output and offline restart
-  inspection. Advance clean exact-current contracts to
+  inspection. The pinned reviewer now runs in JSONL mode and maps only its
+  exact bounded terminal `codex_output_schema` rejection event to
+  `live_schema_rejection`; malformed output, semantic failures, and every
+  other nonzero exit remain separate. Advance clean exact-current contracts to
   `metadata-report-v15`, `shadow-review-inspect-v2`, and
   `shadow-review-failure-v2`; proposal, packet, request, and result bytes remain
   unchanged. Earlier development report databases are rejected without

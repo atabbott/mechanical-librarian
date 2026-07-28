@@ -54,7 +54,13 @@ documents across attempts and emits no request, packet, result, process
 identity, attempt identifier, or ordinal. `shadow-review-failure-v2` emits the
 same object on stderr. A zero-exit process becomes a successful result only
 after canonical parsing plus exact request identity, citation membership, and
-semantic validation.
+semantic validation. The pinned ordinary reviewer runs in JSONL mode and emits
+its internal `response_format` signal only for exit status 1 with empty stderr
+and the exact bounded terminal `turn.failed` service rejection for
+`response_format 'codex_output_schema'`; that signal maps to
+`live_schema_rejection`. Any wire variance or other nonzero exit maps to
+`spawn_runtime`, while malformed result documents and zero-exit semantic or
+citation failures remain separate.
 
 The report database accepts only the exact new schema. ADR-0013 applies: prior
 development state is rejected before mutation and has no migration, import, or
@@ -104,5 +110,6 @@ failures and force adapters to own public application semantics.
 Synthetic tests cover canonical round-trip and aggregate stability, redaction,
 malformed UTF-8 and JSON, HTTP non-success, HTTP 200 GraphQL errors,
 transport, timeout, cancellation, unknown failures, zero-exit invalid reviewer
-output, clean-schema rejection, restart, and exact offline replay. Architecture
-tests continue to enforce dependency direction.
+output, the exact live schema-rejection signal and its fail-closed variants,
+clean-schema rejection, restart, CLI redaction, and exact offline replay.
+Architecture tests continue to enforce dependency direction.

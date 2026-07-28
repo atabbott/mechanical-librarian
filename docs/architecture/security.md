@@ -242,9 +242,13 @@ truncated documents are distinct from canonical parsed results that violate
 their request semantics. Only the ADR-0017 diagnostic category, closed
 component/stage, optional retryability/currentness, and bounded aggregate count
 cross the trust boundary.
-No current pinned CLI diagnostic safely proves response-format rejection, so a
-nonzero ordinary-command exit is conservatively `runtime` whether caused by
-exec, signal, resource, network/service, or an unknown failure.
+The pinned ordinary command enables JSONL output. Only exit status 1 with empty
+stderr and a bounded, strict-UTF-8 stream ending in the exact terminal
+`turn.failed` response-format rejection for the controller-owned
+`codex_output_schema` maps to `live_schema_rejection`. The raw message is never
+retained. Every variant, other nonzero exit, and unrecognized failure remains
+conservatively `spawn_runtime`; malformed result documents and zero-exit
+semantic or citation failures remain distinct.
 Request, attempt,
 dispatch, and outcome facts are append-only. Raw streams and reasoning are
 discarded. Dispatched ambiguity is `unknown`; there is no automatic retry, and

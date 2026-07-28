@@ -127,6 +127,18 @@ class FailureDiagnosticTests(unittest.TestCase):
             reviewer_failure_diagnostic("semantic_validation").category,
         )
         self.assertEqual(
+            FailureCategory.LIVE_SCHEMA_REJECTION,
+            reviewer_failure_diagnostic("response_format").category,
+        )
+        self.assertEqual(
+            FailureStage.SCHEMA,
+            reviewer_failure_diagnostic("response_format").stage,
+        )
+        self.assertEqual(
+            FailureCategory.MALFORMED_OUTPUT,
+            reviewer_failure_diagnostic("malformed_output").category,
+        )
+        self.assertEqual(
             FailureCategory.CURRENTNESS,
             reviewer_failure_diagnostic("currentness").category,
         )

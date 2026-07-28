@@ -867,6 +867,47 @@ class ShadowReviewTests(unittest.TestCase):
             self.assertEqual(2, result["attempt_count"])
             repository.close()
 
+    def test_live_schema_rejection_survives_restart_as_bounded_diagnostic(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reports.sqlite"
+            repository, case_id = self._repository(directory)
+            with self.assertRaises(ShadowReviewerError) as raised:
+                execute_shadow_review(
+                    repository,
+                    case_id,
+                    _identity(),
+                    _Runner(fail="response_format"),
+                    claimant=(9001, "11"),
+                )
+            self.assertEqual("response_format", raised.exception.code)
+            request_id = repository._connection.execute(
+                "SELECT review_request_id FROM shadow_review_requests"
+            ).fetchone()[0]
+            repository.close()
+
+            reopened = open_repository(database, create=False)
+            inspected = reopened.inspect_shadow_request(
+                request_id, _identity().to_json()
+            )
+            self.assertEqual(
+                ["live_schema_rejection"],
+                [
+                    value["category"]
+                    for value in json.loads(inspected)["diagnostics"]
+                ],
+            )
+            for forbidden in (
+                "response_format",
+                "diagnostic_digest",
+                "/tmp/private",
+                "raw stderr",
+                "raw stdout",
+            ):
+                self.assertNotIn(forbidden, inspected)
+            reopened.close()
+
     def test_completed_success_cannot_be_reevaluated_or_append(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository, case_id = self._repository(directory)
@@ -1294,6 +1335,43 @@ class ShadowReviewTests(unittest.TestCase):
         self.assertEqual("", output.getvalue())
         self.assertEqual(_failure_output("profile"), errors.getvalue())
 
+        output, errors = io.StringIO(), io.StringIO()
+        self.assertEqual(
+            1,
+            main(
+                [
+                    "shadow-review-preview",
+                    "--database",
+                    "/db",
+                    "--review-case-id",
+                    case_id,
+                    "--qualification-profile",
+                    "/profile",
+                ],
+                shadow_preview_runner=lambda *_: (_ for _ in ()).throw(
+                    ShadowReviewerError(
+                        "response_format",
+                        count=999,
+                        digest=hashlib.sha256(
+                            b"/tmp/private raw stderr raw stdout"
+                        ).hexdigest(),
+                    )
+                ),
+                stdout=output,
+                stderr=errors,
+            ),
+        )
+        self.assertEqual("", output.getvalue())
+        cli_failure = json.loads(errors.getvalue())
+        self.assertEqual(
+            "live_schema_rejection",
+            cli_failure["diagnostic"]["category"],
+        )
+        self.assertEqual("schema", cli_failure["diagnostic"]["stage"])
+        self.assertEqual(999, cli_failure["diagnostic"]["count"])
+        for forbidden in ("/tmp/private", "raw stderr", "raw stdout"):
+            self.assertNotIn(forbidden, errors.getvalue())
+
     def test_cli_rejects_wrong_success_schema_and_exact_id(self) -> None:
         case_id = "review_case_" + "a" * 64
         wrong_case_id = "review_case_" + "b" * 64
@@ -1664,6 +1742,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
             bind = command.index("/runtime/codex")
             self.assertEqual("/proc/self/fd/10", command[bind - 1])
             self.assertIn("--skip-git-repo-check", command)
+            self.assertIn("--json", command)
 
     def test_production_runner_applies_profile_resource_limits(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1807,6 +1886,134 @@ class CodexShadowAdapterTests(unittest.TestCase):
                 self.assertFalse(
                     list(profile.job_root_path.glob("shadow-review-*"))
                 )
+
+    def test_pinned_jsonl_live_schema_rejection_has_distinct_failure_code(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex, sandbox = root / "codex", root / "bwrap"
+            codex.write_bytes(b"codex")
+            sandbox.write_bytes(b"bwrap")
+            os.chmod(codex, 0o700)
+            os.chmod(sandbox, 0o700)
+            profile = self._profile(root, codex, sandbox)
+            request = ShadowReviewRequest.synthetic_canary(profile.identity)
+            private_detail = "/tmp/private schema body"
+            message = (
+                "Invalid schema for response_format 'codex_output_schema': "
+                + private_detail
+            )
+            jsonl = (
+                canonical_json({"thread_id": "thread_1", "type": "thread.started"})
+                + "\n"
+                + canonical_json(
+                    {
+                        "error": {"message": message},
+                        "type": "turn.failed",
+                    }
+                )
+                + "\n"
+            ).encode()
+            reviewer = CodexShadowReviewer(profile)
+
+            def run_gated(*args) -> int:
+                os.write(args[4], jsonl)
+                args[6](1234, 1234, "5678")
+                return 1
+
+            with (
+                patch.object(codex_shadow.sys, "platform", "linux"),
+                patch.object(reviewer, "_verify_codex"),
+                patch.object(reviewer, "_require_chatgpt_auth"),
+                patch.object(reviewer, "_run_gated", side_effect=run_gated),
+                self.assertRaises(ShadowReviewerError) as raised,
+            ):
+                reviewer.run(request, lambda *_: None)
+            self.assertEqual("response_format", raised.exception.code)
+            self.assertEqual(len(jsonl), raised.exception.count)
+            self.assertEqual(
+                hashlib.sha256(jsonl).hexdigest(), raised.exception.digest
+            )
+            self.assertNotIn(private_detail, str(raised.exception))
+
+    def test_schema_rejection_signal_variance_fails_closed_to_runtime(
+        self,
+    ) -> None:
+        prefix = (
+            b"Invalid schema for response_format 'codex_output_schema': private"
+        )
+        variants = (
+            canonical_json(
+                {
+                    "error": {"message": "ordinary runtime failure"},
+                    "type": "turn.failed",
+                }
+            ).encode()
+            + b"\n",
+            canonical_json(
+                {
+                    "message": prefix.decode(),
+                    "type": "error",
+                }
+            ).encode()
+            + b"\n",
+            canonical_json(
+                {
+                    "error": {"message": prefix.decode(), "raw": "private"},
+                    "type": "turn.failed",
+                }
+            ).encode()
+            + b"\n",
+            b'{"error":{"message":"' + prefix + b'"},"type":"turn.failed"}',
+            b'{"error":{"message":"'
+            + prefix
+            + b'"},"type":"turn.failed","type":"turn.failed"}\n',
+            b"not-json\n"
+            + canonical_json(
+                {
+                    "error": {"message": prefix.decode()},
+                    "type": "turn.failed",
+                }
+            ).encode()
+            + b"\n",
+            b"\xff\n",
+        )
+        for payload in variants:
+            with self.subTest(payload=payload[:40]), tempfile.TemporaryFile(
+                "w+b"
+            ) as stdout_file, tempfile.TemporaryFile("w+b") as stderr_file:
+                stdout_file.write(payload)
+                code, count, digest = codex_shadow._nonzero_failure(
+                    stdout_file, stderr_file, returncode=1
+                )
+                self.assertEqual("runtime", code)
+                self.assertEqual(len(payload), count)
+                self.assertEqual(hashlib.sha256(payload).hexdigest(), digest)
+        canonical_signal = (
+            canonical_json(
+                {
+                    "error": {"message": prefix.decode()},
+                    "type": "turn.failed",
+                }
+            ).encode()
+            + b"\n"
+        )
+        private_stderr = b"/tmp/private raw stderr"
+        with tempfile.TemporaryFile("w+b") as stdout_file, tempfile.TemporaryFile(
+            "w+b"
+        ) as stderr_file:
+            stdout_file.write(canonical_signal)
+            stderr_file.write(private_stderr)
+            code, count, digest = codex_shadow._nonzero_failure(
+                stdout_file, stderr_file, returncode=1
+            )
+            self.assertEqual("runtime", code)
+            self.assertEqual(len(canonical_signal) + len(private_stderr), count)
+            self.assertEqual(
+                hashlib.sha256(canonical_signal + private_stderr).hexdigest(),
+                digest,
+            )
 
     def test_output_schema_is_typed_bound_and_digest_frozen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

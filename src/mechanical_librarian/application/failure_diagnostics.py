@@ -49,8 +49,8 @@ _REVIEWER_FAILURES = {
         FailureStage.SCHEMA,
     ),
     "response_format": (
-        FailureCategory.MALFORMED_OUTPUT,
-        FailureStage.RESPONSE,
+        FailureCategory.LIVE_SCHEMA_REJECTION,
+        FailureStage.SCHEMA,
     ),
     "malformed_output": (
         FailureCategory.MALFORMED_OUTPUT,
