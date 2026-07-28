@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Recover from narrowly classified transient metadata-provider failures within
+  provider-local fixed retry, pacing, byte, deadline, and dispatch bounds.
+  Google Books permits at most 54 attempts, Hardcover 27, and Open Library 49;
+  rate limits and provider-declared GraphQL errors remain fail-closed. Advance
+  the exact foreground batch artifact to `batch-manifest-v5`; `config-v5`,
+  `metadata-report-v11`, `fixed-conservative-v2`, and reviewer contracts remain
+  unchanged. (#391)
+
 - Restore current Hardcover ISBN and complete-title/author GraphQL operations
   within the provider's three-relationship-depth limit while preserving typed
   taxonomy through a bounded sibling-root join. HTTP-success responses that

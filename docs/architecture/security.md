@@ -10,14 +10,15 @@ background, retry, or cleanup authority.
 
 `metadata-report` may read one configured target item, one selected read-only
 EPUB, owner-only credential files, at most nine fixed credential-bearing
-Hardcover metadata requests, at most nine credential-free Open Library
-Search requests and 45 aggregate Open Library metadata requests, at most nine
-Google Books Volumes requests, and separately credential-free bounded cover
+Hardcover metadata queries and 27 aggregate attempts, at most nine
+credential-free Open Library Search queries and 49 aggregate Open Library
+metadata attempts, at most nine Google Books Volumes queries and 54 aggregate
+attempts, and separately credential-free bounded cover
 request chains for admitted descriptors. These
 metadata maxima apply only when their provider and corresponding discovery
 lanes are enabled and admitted. It may append a neutral report and update its
 current pointer. It has
-no target-write, media-write, review, decision, apply, background, retry,
+no target-write, media-write, review, decision, apply, background, durable retry,
 deletion, repair, import, schema-migration, or backward-compatibility authority.
 An existing database must match the installed increment's exact current schema
 before any writable connection or mutation.
@@ -81,15 +82,28 @@ provider client construction and permits no subset egress. With neither an ISBN
 lane nor a complete work lane, title-only or incomplete-author input returns
 `insufficient_input` without a provider request.
 
-Each referenced enabled Hardcover provider makes at most one fixed GraphQL
-request per admitted lane, for nine aggregate metadata requests. Each referenced
-enabled Open Library provider makes at most one fixed Search request per lane
-and at most two edition plus two distinct work detail requests per lane, for
-nine Search and 45 aggregate metadata requests. The lanes share one client,
-the response-byte aggregate and deadline, and, for Open Library, one
-request-start pacer. There is no automatic retry.
-Each referenced enabled Google Books provider makes one fixed Volumes request
-per admitted lane, for nine aggregate metadata requests.
+Each referenced enabled Hardcover provider makes one fixed GraphQL query per
+admitted lane, with at most two bounded retries and 27 aggregate attempts.
+Each referenced enabled Open Library provider makes at most one fixed Search
+query per lane and at most two edition plus two distinct work-detail queries per
+lane. An individual request may retry once, with at most four retries across the
+observation and 49 aggregate attempts. Each referenced enabled Google Books
+provider makes one fixed Volumes query per lane, with at most five retries and
+54 aggregate attempts. The lanes share one client, response-byte aggregate, and
+deadline; Hardcover and Open Library also use shared one-second request-start
+pacers.
+
+Retries are provider-local and fixed. Only HTTP 500, 502, 503, and 504 are
+transient for Hardcover and Open Library; Google Books retries only 503.
+Hardcover 429 retries only when one canonical, bounded `Retry-After` value fits
+the remaining deadline, while Open Library never retries 429. A valid bounded
+`Retry-After` may govern 503; otherwise fresh truncated exponential backoff and
+jitter applies. The transport classifier uses only a narrow HTTPX type and
+bounded typed-cause allowlist; it never inspects exception text and rejects TLS,
+proxy/configuration, invalid protocol/URL, local stream-state, decoding,
+pool/write-timeout, and unknown failures. Every retry remains inside pacing,
+deadline, byte, and request-count authority. Attempt diagnostics are bounded,
+aggregate-safe, process-local, and never persisted.
 
 The fixed Hardcover selections stay within three relationship levels. Typed
 taxonomy is joined from bounded sibling-root tag rows by exact provider IDs;
@@ -197,7 +211,7 @@ explicit reevaluation requires proof that the complete prior supervised process
 group is absent.
 
 The final report database, `catalogue-v1` database, `config-v5`, artifact
-records, and `batch-manifest-v4` each accept only absent or their exact current
+records, and `batch-manifest-v5` each accept only absent or their exact current
 schema. `metadata-report-v1` through `metadata-report-v10`, prior development
 schemas, extra objects, altered
 SQL, failed foreign-key/integrity checks, and other schemas fail closed before

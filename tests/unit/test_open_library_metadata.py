@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import unittest
 
 import httpx
@@ -43,6 +44,20 @@ from mechanical_librarian.domain.cover_evidence import (
 from mechanical_librarian.infrastructure.security.credentials import (
     open_library_client,
 )
+
+
+class _InterruptedStream(httpx.SyncByteStream):
+    def __iter__(self):
+        yield b"x"
+        raise httpx.ReadTimeout("synthetic interrupted body")
+
+
+class _HostileEncodedStream(httpx.SyncByteStream):
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def __iter__(self):
+        yield self._payload
 
 
 def _isbn(
@@ -1142,15 +1157,539 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 httpx.Client(transport=httpx.MockTransport(handler)),
                 maximum,
                 pacer=OpenLibraryPacer(sleep=lambda _: None),
+                sleep=lambda _: None,
+                jitter=lambda: 0.0,
             )
             with self.subTest(label=label):
                 observation = provider.observe(_isbn_lookup((_isbn(),)))
                 self.assertEqual(expected, observation.status)
                 self.assertEqual((), observation.candidates)
+                expected_paths = ["/search.json", "/books/OL1M.json"]
+                if label == "server":
+                    expected_paths.append("/books/OL1M.json")
                 self.assertEqual(
-                    ["/search.json", "/books/OL1M.json"],
+                    expected_paths,
                     [request.url.path for request in requests],
                 )
+
+    def test_transient_retries_use_exact_status_retry_after_and_pacing(
+        self,
+    ) -> None:
+        for status_code in (500, 502, 503, 504):
+            responses = [
+                httpx.Response(
+                    status_code,
+                    headers={"retry-after": "60"},
+                ),
+                httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"docs": []},
+                ),
+            ]
+            now = [0.0]
+            sleeps: list[float] = []
+            starts: list[float] = []
+
+            def sleep(delay: float) -> None:
+                sleeps.append(delay)
+                now[0] += delay
+
+            def handler(_: httpx.Request) -> httpx.Response:
+                starts.append(now[0])
+                return responses.pop(0)
+
+            provider = OpenLibraryMetadataProvider(
+                "open_library",
+                httpx.Client(transport=httpx.MockTransport(handler)),
+                65_536,
+                pacer=OpenLibraryPacer(
+                    clock=lambda: now[0],
+                    sleep=sleep,
+                ),
+                clock=lambda: now[0],
+                sleep=sleep,
+                jitter=lambda: 0.0,
+            )
+            with self.subTest(status_code=status_code):
+                self.assertEqual(
+                    ProviderStatus.NO_MATCH,
+                    provider.observe(_isbn_lookup((_isbn(),))).status,
+                )
+                expected_delay = 60.0 if status_code == 503 else 1.0
+                self.assertEqual([0.0, expected_delay], starts)
+                self.assertEqual([expected_delay], sleeps)
+
+        calls = 0
+
+        def rate_limited(_: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(429, headers={"retry-after": "1"})
+
+        terminal = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(rate_limited)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+            sleep=lambda _: self.fail("429 must never retry"),
+        )
+        self.assertEqual(
+            ProviderStatus.RATE_LIMITED,
+            terminal.observe(_isbn_lookup((_isbn(),))).status,
+        )
+        self.assertEqual(1, calls)
+
+        deadline_calls = 0
+
+        def deadline_failure(_: httpx.Request) -> httpx.Response:
+            nonlocal deadline_calls
+            deadline_calls += 1
+            return httpx.Response(503, headers={"retry-after": "2"})
+
+        deadline_provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(deadline_failure)
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(
+                clock=lambda: 0.0,
+                sleep=lambda _: None,
+            ),
+            clock=lambda: 0.0,
+            sleep=lambda _: self.fail("deadline must refuse delay"),
+        )
+        self.assertEqual(
+            ProviderStatus.UNAVAILABLE,
+            deadline_provider.observe(
+                _isbn_lookup((_isbn(),)), deadline=2.0
+            ).status,
+        )
+        self.assertEqual(1, deadline_calls)
+
+    def test_recovers_at_every_permitted_status_retry_ordinal(self) -> None:
+        for prior_failures in range(2):
+            responses = [
+                httpx.Response(503) for _ in range(prior_failures)
+            ]
+            responses.append(
+                httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"docs": []},
+                )
+            )
+            provider = OpenLibraryMetadataProvider(
+                "open_library",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _, values=responses: values.pop(0)
+                    )
+                ),
+                65_536,
+                pacer=OpenLibraryPacer(sleep=lambda _: None),
+                sleep=lambda _: None,
+                jitter=lambda: 0.0,
+            )
+            with self.subTest(prior_failures=prior_failures):
+                self.assertEqual(
+                    ProviderStatus.NO_MATCH,
+                    provider.observe(_isbn_lookup((_isbn(),))).status,
+                )
+                self.assertEqual(
+                    prior_failures + 1, len(provider.attempt_records)
+                )
+                self.assertEqual(
+                    ["retry"] * prior_failures + ["response_received"],
+                    [record.outcome for record in provider.attempt_records],
+                )
+
+    def test_error_response_bodies_are_charged_before_status_retry(
+        self,
+    ) -> None:
+        oversized_calls = 0
+
+        def oversized(_: httpx.Request) -> httpx.Response:
+            nonlocal oversized_calls
+            oversized_calls += 1
+            return httpx.Response(503, content=b"x" * 2_000)
+
+        oversized_provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(oversized)),
+            1_024,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+            sleep=lambda _: self.fail("oversized body must not retry"),
+        )
+        self.assertEqual(
+            ProviderStatus.OVERSIZED,
+            oversized_provider.observe(_isbn_lookup((_isbn(),))).status,
+        )
+        self.assertEqual(1, oversized_calls)
+        self.assertEqual(0, oversized_provider._remaining_response_bytes)
+
+        success = httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"docs": []},
+        )
+        control = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(lambda _: success)
+            ),
+            1_024,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        self.assertEqual(
+            ProviderStatus.NO_MATCH,
+            control.observe(_isbn_lookup((_isbn(),))).status,
+        )
+        responses = [
+            httpx.Response(503, stream=_InterruptedStream()),
+            httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"docs": []},
+            ),
+        ]
+        interrupted = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(lambda _: responses.pop(0))
+            ),
+            1_024,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        self.assertEqual(
+            ProviderStatus.NO_MATCH,
+            interrupted.observe(_isbn_lookup((_isbn(),))).status,
+        )
+        self.assertEqual(
+            control._remaining_response_bytes - 1,
+            interrupted._remaining_response_bytes,
+        )
+        for raw_body in (gzip.compress(b"error"), b"not-gzip"):
+            calls = 0
+
+            def encoded_error(_: httpx.Request) -> httpx.Response:
+                nonlocal calls
+                calls += 1
+                return httpx.Response(
+                    503,
+                    headers={"content-encoding": "gzip"},
+                    stream=_HostileEncodedStream(raw_body),
+                )
+
+            encoded = OpenLibraryMetadataProvider(
+                "open_library",
+                httpx.Client(
+                    transport=httpx.MockTransport(encoded_error)
+                ),
+                1_024,
+                pacer=OpenLibraryPacer(sleep=lambda _: None),
+                sleep=lambda _: self.fail(
+                    "non-identity encoding must not retry"
+                ),
+            )
+            with self.subTest(streamed_encoding=raw_body):
+                self.assertEqual(
+                    ProviderStatus.MALFORMED,
+                    encoded.observe(_isbn_lookup((_isbn(),))).status,
+                )
+                self.assertEqual(1, calls)
+                self.assertEqual(
+                    1_024 * 49 - len(raw_body),
+                    encoded._remaining_response_bytes,
+                )
+
+        for decoded_body in (b"error", b"not-gzip"):
+            response = httpx.Response(503, content=decoded_body)
+            response.headers["content-encoding"] = "gzip"
+            encoded = OpenLibraryMetadataProvider(
+                "open_library",
+                httpx.Client(
+                    transport=httpx.MockTransport(lambda _: response)
+                ),
+                1_024,
+                pacer=OpenLibraryPacer(sleep=lambda _: None),
+                sleep=lambda _: self.fail(
+                    "preloaded non-identity response must not retry"
+                ),
+            )
+            with self.subTest(preloaded_encoding=decoded_body):
+                self.assertEqual(
+                    ProviderStatus.MALFORMED,
+                    encoded.observe(_isbn_lookup((_isbn(),))).status,
+                )
+                self.assertEqual(
+                    1_024 * 49, encoded._remaining_response_bytes
+                )
+
+    def test_retry_budget_is_four_across_required_request_chain(
+        self,
+    ) -> None:
+        search = {
+            "docs": [
+                {
+                    "key": "/works/OL5W",
+                    "editions": {
+                        "docs": [
+                            {
+                                "key": "/books/OL1M",
+                                "isbn": ["9780306406157"],
+                            }
+                        ]
+                    },
+                },
+                {
+                    "key": "/works/OL9W",
+                    "editions": {
+                        "docs": [
+                            {
+                                "key": "/books/OL2M",
+                                "isbn": ["9780306406157"],
+                            }
+                        ]
+                    },
+                },
+            ]
+        }
+        success = {
+            "/search.json": search,
+            "/books/OL1M.json": _edition(
+                "/books/OL1M", work="/works/OL5W"
+            ),
+            "/works/OL5W.json": _work("/works/OL5W"),
+            "/books/OL2M.json": _edition(
+                "/books/OL2M", work="/works/OL9W"
+            ),
+            "/works/OL9W.json": _work("/works/OL9W"),
+        }
+        first_failures = {
+            "/search.json",
+            "/books/OL1M.json",
+            "/works/OL5W.json",
+            "/books/OL2M.json",
+        }
+        path_calls: dict[str, int] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            path_calls[path] = path_calls.get(path, 0) + 1
+            if path in first_failures and path_calls[path] == 1:
+                return httpx.Response(503)
+            if path == "/works/OL9W.json":
+                return httpx.Response(503)
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=success[path],
+            )
+
+        provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        self.assertEqual(
+            ProviderStatus.UNAVAILABLE,
+            provider.observe(_isbn_lookup((_isbn(),))).status,
+        )
+        self.assertEqual(9, sum(path_calls.values()))
+        self.assertEqual(9, len(provider.attempt_records))
+        self.assertEqual(
+            4,
+            sum(
+                record.outcome == "retry"
+                for record in provider.attempt_records
+            ),
+        )
+
+    def test_nine_lane_observation_is_capped_at_49_dispatches(
+        self,
+    ) -> None:
+        values = (
+            "9780306406157",
+            "9780140328721",
+            "9780439023528",
+            "9780061120084",
+            "9780743273565",
+            "9780316769488",
+            "9780451524935",
+            "9780547928227",
+        )
+        claims = tuple(_isbn(value) for value in values)
+        fields = tuple(
+            TargetField(
+                field.destination,
+                TargetFieldState.VALUE,
+                ("Ada Example",),
+            )
+            if field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields("Local work title")
+        )
+        plan = metadata_discovery_plan(
+            TargetSnapshot(
+                "ebook",
+                "Local work title",
+                (),
+                fields=fields,
+            ),
+            (_title(), *claims),
+        )
+        search_index = 0
+        request_count = 0
+        failed_paths: set[str] = set()
+        detail_context: dict[str, tuple[str, str | None]] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_count, search_index
+            request_count += 1
+            path = request.url.path
+            if len(failed_paths) < 4 and path not in failed_paths:
+                failed_paths.add(path)
+                return httpx.Response(503)
+            if path == "/search.json":
+                search_index += 1
+                ordinal = search_index * 10
+                family = request.url.params.get("q", "").removeprefix(
+                    "isbn:"
+                )
+                rows = []
+                for offset in (1, 2):
+                    edition_key = f"/books/OL{ordinal + offset}M"
+                    work_key = f"/works/OL{ordinal + offset}W"
+                    detail_context[edition_key + ".json"] = (
+                        work_key,
+                        family or None,
+                    )
+                    detail_context[work_key + ".json"] = (
+                        work_key,
+                        None,
+                    )
+                    edition_row: dict[str, object] = {
+                        "key": edition_key,
+                    }
+                    if family:
+                        edition_row["isbn"] = [family]
+                    rows.append(
+                        {
+                            "key": work_key,
+                            "author_name": ["Ada Example"],
+                            "editions": {"docs": [edition_row]},
+                        }
+                    )
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"docs": rows},
+                )
+            key = path.removesuffix(".json")
+            work_key, family = detail_context[path]
+            if key.startswith("/books/"):
+                payload = _edition(key, work=work_key)
+                if family is not None:
+                    payload["isbn_10"] = []
+                    payload["isbn_13"] = [family]
+            else:
+                payload = _work(key)
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=payload,
+            )
+
+        provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        observation = provider.observe(plan)
+        self.assertEqual(49, request_count)
+        self.assertEqual(49, len(provider.attempt_records))
+        self.assertEqual(
+            4,
+            sum(
+                record.outcome == "retry"
+                for record in provider.attempt_records
+            ),
+        )
+        self.assertEqual(9, len(observation.lanes))
+
+    def test_invalid_503_retry_after_falls_back_to_fresh_jitter(
+        self,
+    ) -> None:
+        for retry_after in ("61", "2, 3"):
+            responses = [
+                httpx.Response(
+                    503,
+                    headers={"retry-after": retry_after},
+                ),
+                httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"docs": []},
+                ),
+            ]
+            delays: list[float] = []
+            provider = OpenLibraryMetadataProvider(
+                "open_library",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _: responses.pop(0)
+                    )
+                ),
+                65_536,
+                pacer=OpenLibraryPacer(sleep=lambda _: None),
+                sleep=delays.append,
+                jitter=lambda: 0.25,
+            )
+            with self.subTest(retry_after=retry_after):
+                self.assertEqual(
+                    ProviderStatus.NO_MATCH,
+                    provider.observe(_isbn_lookup((_isbn(),))).status,
+                )
+                self.assertEqual([1.25], delays)
+
+    def test_interrupted_body_bytes_are_charged_before_retry(self) -> None:
+        calls = 0
+
+        def handler(_: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    stream=_InterruptedStream(),
+                )
+            return httpx.Response(429)
+
+        provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            1,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        self.assertEqual(
+            ProviderStatus.RATE_LIMITED,
+            provider.observe(_isbn_lookup((_isbn(),))).status,
+        )
+        self.assertEqual(2, calls)
+        self.assertEqual(48, provider._remaining_response_bytes)
 
     def test_malformed_optional_cover_ids_do_not_erase_metadata(self) -> None:
         values = {

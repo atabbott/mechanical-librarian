@@ -2,6 +2,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 from pathlib import Path
+from types import SimpleNamespace
 from mechanical_librarian.application.batch import BatchError
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.bootstrap.composition import run_batch
@@ -61,6 +62,64 @@ class BatchCompositionTests(unittest.TestCase):
   service=unittest.mock.Mock()
   service.run.return_value="report"
   with patch.object(composition,"CoverArtifactStore"),patch.object(composition,"AudiobookshelfItemReader"),patch.object(composition,"OpenLibraryPacer",return_value=shared) as pacer,patch.object(composition,"open_library_client",side_effect=(object(),object())),patch.object(composition,"OpenLibraryMetadataProvider",side_effect=lambda *args,**kwargs:constructed.append(kwargs["pacer"]) or object()),patch.object(composition,"GenerateMetadataReport",return_value=service) as generate:
+   self.assertEqual("report",composition.run_metadata_report_loaded(config,Path("/reports"),Path("/artifacts"),"primary","books","item",0))
+   bindings=generate.call_args.kwargs["providers"]
+   for binding in bindings:
+    binding.factory()
+  pacer.assert_called_once_with()
+  self.assertEqual([shared,shared],constructed)
+
+ def test_batch_shares_one_hardcover_pacer_across_entries(self):
+  config=ApplicationConfiguration(
+   (TargetConnectionConfiguration("primary","https://example.invalid","/target"),),
+   (LibraryConfiguration("books","primary","library","book",None,("hardcover",)),),
+   (),
+   (ProviderConnectionConfiguration("hardcover",True,False,"/provider","hardcover"),),
+  )
+  entries=tuple(
+   {"connection":"primary","library":"books","library_id":"library","item":f"item-{index}","file_identity":f"{index}"*64,"classification":"singular-supported","eligible":True}
+   for index in (1,2)
+  )
+  value={"id":"a"*64,"providers":["hardcover"],"provider_adapters":["hardcover"],"entries":list(entries),"batch_config_fingerprint":"b"*64,"catalogue_generation":1,"catalogue_fingerprint":"c"*64}
+  snapshot=SimpleNamespace(generation=1,fingerprint="c"*64)
+  catalogue=unittest.mock.Mock()
+  catalogue.snapshot.return_value=snapshot
+  artifacts=SimpleNamespace(identity=object())
+  repository=unittest.mock.Mock()
+  repository.identity=object()
+  shared=object()
+  loaded=unittest.mock.Mock(return_value="{}")
+  report_value=SimpleNamespace(providers=(),report_id="report")
+
+  def foreground(**kwargs):
+   runner=unittest.mock.Mock()
+   runner.run.side_effect=lambda: [
+    kwargs["report"](SimpleNamespace(connection="primary",library="books",item_id=f"item-{index}",file_identity=f"{index}"*64))
+    for index in (1,2)
+   ] and True
+   return runner
+
+  with patch.object(composition,"read_batch_manifest",return_value=b"x"),patch.object(composition,"parse_manifest",return_value=value),patch.object(composition,"load_configuration_file",return_value=config),patch.object(composition,"batch_fingerprint",return_value="b"*64),patch.object(composition,"_batch_provider_names",return_value=("hardcover",)),patch.object(composition,"_batch_provider_adapters",return_value=("hardcover",)),patch.object(composition,"_require_open_library_batch_envelope"),patch.object(composition,"open_catalogue",return_value=catalogue),patch.object(composition,"CoverArtifactStore",return_value=artifacts),patch.object(composition,"open_repository",return_value=repository),patch.object(composition,"_load_batch_credentials",return_value={}),patch.object(composition,"HardcoverPacer",return_value=shared) as pacer,patch.object(composition,"run_metadata_report_loaded",loaded),patch.object(composition,"ForegroundBatchRun",side_effect=foreground),patch("mechanical_librarian.domain.metadata_report.MetadataReport.from_json",return_value=report_value):
+   self.assertTrue(run_batch(Path("/config"),Path("/catalogue"),Path("/manifest"),"a"*64,Path("/reports"),Path("/artifacts"),lambda _:None))
+  pacer.assert_called_once_with()
+  self.assertEqual(2,loaded.call_count)
+  self.assertTrue(all(call.kwargs["hardcover_pacer"] is shared for call in loaded.call_args_list))
+
+ def test_foreground_report_shares_one_hardcover_pacer(self):
+  config=ApplicationConfiguration(
+   (TargetConnectionConfiguration("primary","https://example.invalid","/target"),),
+   (LibraryConfiguration("books","primary","library","book","media",("first","second")),),
+   (MediaMountConfiguration("media","/media","/books",True),),
+   (
+    ProviderConnectionConfiguration("first",True,False,"/first.secret","hardcover"),
+    ProviderConnectionConfiguration("second",True,False,"/second.secret","hardcover"),
+   ),
+  )
+  shared=object()
+  constructed=[]
+  service=unittest.mock.Mock()
+  service.run.return_value="report"
+  with patch.object(composition,"CoverArtifactStore"),patch.object(composition,"AudiobookshelfItemReader"),patch.object(composition,"HardcoverPacer",return_value=shared) as pacer,patch.object(composition,"hardcover_client",side_effect=(object(),object())),patch.object(composition,"HardcoverMetadataProvider",side_effect=lambda *args,**kwargs:constructed.append(kwargs["pacer"]) or object()),patch.object(composition,"GenerateMetadataReport",return_value=service) as generate:
    self.assertEqual("report",composition.run_metadata_report_loaded(config,Path("/reports"),Path("/artifacts"),"primary","books","item",0))
    bindings=generate.call_args.kwargs["providers"]
    for binding in bindings:

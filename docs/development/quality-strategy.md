@@ -21,6 +21,16 @@ rejected input may contain secrets, private paths, or media text. Synthetic
 fixtures are repository-authored and contain no personal or copyrighted
 material.
 
+Provider retry changes require deterministic proof of the fixed policy:
+accepted and rejected typed transport classes, status and canonical
+`Retry-After` handling, exact per-request and per-observation attempt limits,
+immediate aggregate-byte charging, pre/post-delay and pre-dispatch deadline
+gates, cumulative pacing, cancellation propagation, and diagnostic redaction.
+Tests also bind foreground-batch maxima and the exact installed command path.
+Where owner credentials are explicitly authorized, one owner-private canary
+may confirm that installed-path composition works without retaining a key,
+query, raw response, private path, or report.
+
 Functional slices are reviewed and qualified at the exact candidate head.
 Tier-2 work adds independent safety and challenger review plus receipt-bound
 aggregate qualification. Public CI is necessary but not merge authority; the

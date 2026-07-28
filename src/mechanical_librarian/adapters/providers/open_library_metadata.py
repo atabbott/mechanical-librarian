@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import random
 import re
 import time
 from collections.abc import Callable
@@ -14,6 +16,12 @@ from typing import Any
 
 import httpx
 
+from mechanical_librarian.adapters.providers.retry_safety import (
+    ProviderAttemptRecord,
+    bounded_attempt_elapsed,
+    bounded_retry_after,
+    transient_transport_failure,
+)
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
     MetadataLookup,
@@ -70,6 +78,9 @@ _LANGUAGE_KEY = re.compile(r"^/languages/([a-z]{2,3})$")
 _MAX_SEARCH_ROWS = 3
 _MAX_VALUES = 8
 _MAX_AGGREGATE_RESPONSE_BYTES = 2_097_152
+_MAX_ATTEMPTS_PER_REQUEST = 2
+_MAX_RETRIES_PER_OBSERVATION = 4
+_MAX_ATTEMPTS_PER_OBSERVATION = 49
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +128,10 @@ class OpenLibraryMetadataProvider:
         timeout_seconds: float = 5.0,
         *,
         pacer: OpenLibraryPacer | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
+        sleep: Callable[[float], None] = time.sleep,
+        jitter: Callable[[], float] = random.random,
     ) -> None:
         if (
             type(maximum_bytes) is not int
@@ -134,16 +149,28 @@ class OpenLibraryMetadataProvider:
         self._client = client
         self._maximum_bytes = maximum_bytes
         self._remaining_response_bytes = min(
-            maximum_bytes * 45, _MAX_AGGREGATE_RESPONSE_BYTES
+            maximum_bytes * _MAX_ATTEMPTS_PER_OBSERVATION,
+            _MAX_AGGREGATE_RESPONSE_BYTES,
         )
         self._timeout_seconds = float(timeout_seconds)
         self._pacer = pacer if pacer is not None else OpenLibraryPacer()
+        self._clock = clock
+        self._wall_clock = wall_clock
+        self._sleep = sleep
+        self._jitter = jitter
+        self._attempt_count = 0
+        self._retry_count = 0
+        self._attempt_records: list[ProviderAttemptRecord] = []
         self._called = False
         self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         self.cover_pacer = self._pacer
         self.cover_kind = CoverSourceKind.OPEN_LIBRARY
         self.cover_allow_redirects = False
         self.cover_user_agent = client.headers["User-Agent"]
+
+    @property
+    def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
+        return tuple(self._attempt_records)
 
     def observe(
         self,
@@ -397,16 +424,122 @@ class OpenLibraryMetadataProvider:
         params: dict[str, str] | None = None,
         deadline: float | None,
     ) -> dict[str, Any]:
+        for retry_index in range(_MAX_ATTEMPTS_PER_REQUEST):
+            started = self._clock()
+            attempts_before_dispatch = self._attempt_count
+            try:
+                value = self._request_once(
+                    url,
+                    params=params,
+                    deadline=deadline,
+                    is_retry=retry_index > 0,
+                )
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                if self._attempt_count != attempts_before_dispatch:
+                    self._record_attempt(
+                        started,
+                        category="cancellation",
+                        delay=None,
+                        outcome="cancelled",
+                    )
+                raise
+            except _ProviderFailure as error:
+                if self._attempt_count == attempts_before_dispatch:
+                    raise
+                can_retry = (
+                    error.retryable
+                    and retry_index + 1 < _MAX_ATTEMPTS_PER_REQUEST
+                    and self._retry_count < _MAX_RETRIES_PER_OBSERVATION
+                    and self._attempt_count
+                    < _MAX_ATTEMPTS_PER_OBSERVATION
+                )
+                delay = (
+                    (
+                        error.retry_after
+                        if error.retry_after is not None
+                        else self._retry_delay()
+                    )
+                    if can_retry
+                    else None
+                )
+                if delay is not None and not self._delay_fits(
+                    delay, deadline=deadline
+                ):
+                    delay = None
+                    can_retry = False
+                if not can_retry or delay is None:
+                    self._record_attempt(
+                        started,
+                        category=error.category,
+                        delay=delay,
+                        outcome=(
+                            "exhausted"
+                            if error.retryable
+                            else "terminal"
+                        ),
+                    )
+                    raise
+                try:
+                    self._sleep(delay)
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    self._record_attempt(
+                        started,
+                        category="cancellation",
+                        delay=delay,
+                        outcome="cancelled",
+                    )
+                    raise
+                if deadline is not None and self._clock() >= deadline:
+                    self._record_attempt(
+                        started,
+                        category=error.category,
+                        delay=delay,
+                        outcome="deadline_exhausted",
+                    )
+                    raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+                self._record_attempt(
+                    started,
+                    category=error.category,
+                    delay=delay,
+                    outcome="retry",
+                )
+                continue
+            self._record_attempt(
+                started,
+                category="none",
+                delay=None,
+                outcome="response_received",
+            )
+            return value
+        raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+
+    def _request_once(
+        self,
+        url: str,
+        *,
+        params: dict[str, str] | None,
+        deadline: float | None,
+        is_retry: bool,
+    ) -> dict[str, Any]:
         if self._remaining_response_bytes <= 0:
             raise _ProviderFailure(ProviderStatus.OVERSIZED)
+        if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
+            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+        if is_retry and self._retry_count >= _MAX_RETRIES_PER_OBSERVATION:
+            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
         if not self._pacer.wait(deadline):
             raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
         remaining = self._timeout_seconds
         if deadline is not None:
-            remaining = min(remaining, deadline - time.monotonic())
+            remaining = min(remaining, deadline - self._clock())
         if remaining <= 0:
             raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
         try:
+            if deadline is not None and self._clock() >= deadline:
+                raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            self._attempt_count += 1
+            if is_retry:
+                self._retry_count += 1
             with self._client.stream(
                 "GET",
                 url,
@@ -417,21 +550,17 @@ class OpenLibraryMetadataProvider:
                 },
                 timeout=remaining,
             ) as response:
-                if response.status_code == 429:
-                    raise _ProviderFailure(ProviderStatus.RATE_LIMITED)
-                if response.status_code != 200:
-                    raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
-                if (
-                    response.headers.get("content-type", "")
-                    .split(";", 1)[0]
+                retry_after = bounded_retry_after(
+                    response.headers.get("retry-after"),
+                    now=self._wall_clock(),
+                )
+                identity_encoding = (
+                    response.headers.get("content-encoding", "identity")
                     .strip()
                     .lower()
-                    != "application/json"
-                    or response.headers.get("content-encoding", "identity")
-                    .strip()
-                    .lower()
-                    not in {"", "identity"}
-                ):
+                    in {"", "identity"}
+                )
+                if response.is_stream_consumed and not identity_encoding:
                     raise _ProviderFailure(ProviderStatus.MALFORMED)
                 payload = _body(
                     response,
@@ -440,13 +569,54 @@ class OpenLibraryMetadataProvider:
                         self._remaining_response_bytes,
                     ),
                     deadline=deadline,
+                    clock=self._clock,
+                    consume=self._consume_response_bytes,
                 )
-                self._remaining_response_bytes -= len(payload)
+                if not identity_encoding:
+                    raise _ProviderFailure(ProviderStatus.MALFORMED)
+                if response.status_code == 429:
+                    raise _ProviderFailure(
+                        ProviderStatus.RATE_LIMITED,
+                        category="http_429",
+                    )
+                if response.status_code in {500, 502, 503, 504}:
+                    raise _ProviderFailure(
+                        ProviderStatus.UNAVAILABLE,
+                        category=f"http_{response.status_code}",
+                        retryable=True,
+                        retry_after=(
+                            retry_after
+                            if response.status_code == 503
+                            else None
+                        ),
+                    )
+                if response.status_code != 200:
+                    raise _ProviderFailure(
+                        ProviderStatus.UNAVAILABLE,
+                        category="http_other",
+                    )
+                if (
+                    response.headers.get("content-type", "")
+                    .split(";", 1)[0]
+                    .strip()
+                    .lower()
+                    != "application/json"
+                ):
+                    raise _ProviderFailure(ProviderStatus.MALFORMED)
         except _ProviderFailure as error:
             if error.status is ProviderStatus.OVERSIZED:
                 self._remaining_response_bytes = 0
             raise
-        except (httpx.HTTPError, OSError, ValueError):
+        except httpx.HTTPError as error:
+            category = transient_transport_failure(error)
+            if category is not None:
+                raise _ProviderFailure(
+                    ProviderStatus.UNAVAILABLE,
+                    category=category,
+                    retryable=True,
+                ) from None
+            raise _ProviderFailure(ProviderStatus.UNAVAILABLE) from None
+        except (OSError, ValueError):
             raise _ProviderFailure(ProviderStatus.UNAVAILABLE) from None
         try:
             value = json.loads(
@@ -466,6 +636,50 @@ class OpenLibraryMetadataProvider:
         if type(value) is not dict:
             raise _ProviderFailure(ProviderStatus.MALFORMED)
         return value
+
+    def _consume_response_bytes(self, amount: int) -> None:
+        self._remaining_response_bytes -= amount
+        if self._remaining_response_bytes < 0:
+            self._remaining_response_bytes = 0
+            raise _ProviderFailure(ProviderStatus.OVERSIZED)
+
+    def _retry_delay(self) -> float:
+        jitter = self._jitter()
+        if (
+            type(jitter) not in {int, float}
+            or isinstance(jitter, bool)
+            or not 0.0 <= float(jitter) < 1.0
+        ):
+            jitter = 0.0
+        return min(1.0 + float(jitter), 16.0)
+
+    def _delay_fits(
+        self, delay: float, *, deadline: float | None
+    ) -> bool:
+        if deadline is None:
+            return True
+        return self._clock() + delay < deadline
+
+    def _record_attempt(
+        self,
+        started: float,
+        *,
+        category: str,
+        delay: float | None,
+        outcome: str,
+    ) -> None:
+        self._attempt_records.append(
+            ProviderAttemptRecord(
+                provider=self._name,
+                ordinal=self._attempt_count,
+                category=category,
+                delay_seconds=delay,
+                elapsed_seconds=bounded_attempt_elapsed(
+                    started, self._clock()
+                ),
+                outcome=outcome,
+            )
+        )
 
 
 def _admitted_candidates(
@@ -1231,6 +1445,8 @@ def _body(
     maximum: int,
     *,
     deadline: float | None,
+    clock: Callable[[], float],
+    consume: Callable[[int], None],
 ) -> bytes:
     length = response.headers.get("content-length")
     if length is not None:
@@ -1244,13 +1460,19 @@ def _body(
             raise _ProviderFailure(ProviderStatus.MALFORMED) from None
     chunks: list[bytes] = []
     total = 0
-    for chunk in response.iter_bytes():
-        if deadline is not None and time.monotonic() >= deadline:
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+    raw_chunks = (
+        (response.content,)
+        if response.is_stream_consumed
+        else response.iter_raw()
+    )
+    for chunk in raw_chunks:
+        consume(len(chunk))
         total += len(chunk)
         if total > maximum:
             raise _ProviderFailure(ProviderStatus.OVERSIZED)
         chunks.append(chunk)
+        if deadline is not None and clock() >= deadline:
+            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
     return b"".join(chunks)
 
 
@@ -1337,9 +1559,19 @@ def _reject_number(_: str) -> float:
 
 
 class _ProviderFailure(Exception):
-    def __init__(self, status: ProviderStatus) -> None:
+    def __init__(
+        self,
+        status: ProviderStatus,
+        *,
+        category: str = "provider_failure",
+        retryable: bool = False,
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(status.value)
         self.status = status
+        self.category = category
+        self.retryable = retryable
+        self.retry_after = retry_after
 
 
 __all__ = [
