@@ -42,22 +42,29 @@ from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, vali
 
 
 HARDCOVER_URL = "https://api.hardcover.app/v1/graphql"
-HARDCOVER_SCHEMA_COMMIT = "2c03110845765c32af945ed550a942330c394a3e"
+HARDCOVER_SCHEMA_COMMIT = "1c5bdbd3244e02b03ccc658a792793e39cba17a8"
 MAX_RESPONSE_BYTES = 262_144
 MAX_AGGREGATE_RESPONSE_BYTES = 2_097_152
+MAX_GRAPHQL_ERRORS = 8
+MAX_GRAPHQL_ERROR_MESSAGE_CHARACTERS = 2_048
+_MAX_TAG_ROWS = (MAX_CANDIDATES + 1) * (MAX_TAGS + 1)
 _ISBN_QUERY = (
     "query MetadataEvidenceByIsbn($isbns:[String!]!){editions(where:{_or:["
     f"{{isbn_13:{{_in:$isbns}}}},{{isbn_10:{{_in:$isbns}}}}]}},order_by:{{id:asc}},limit:{MAX_CANDIDATES + 1})"
     "{id book_id isbn_10 isbn_13 asin title subtitle release_date image{url} publisher{id name parent_id} language{id code2 code3 language} contributions(order_by:{id:asc},limit:17){id contribution author{id name}}} "
     "books:books(where:{editions:{_or:[{isbn_13:{_in:$isbns}},{isbn_10:{_in:$isbns}}]}},order_by:{id:asc},limit:6)"
-    "{id title description release_date image{url} contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag{id tag tag_category{id category}}}}}}"
+    "{id title description release_date image{url} contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag_id}} "
+    f"tags:tags(where:{{taggings:{{book:{{editions:{{_or:[{{isbn_13:{{_in:$isbns}}}},{{isbn_10:{{_in:$isbns}}}}]}}}}}}}},order_by:{{id:asc}},limit:{_MAX_TAG_ROWS + 1})"
+    "{id tag tag_category{id category}}}"
 )
 _WORK_QUERY = (
     "query MetadataEvidenceByWork($title:String!,$authors:[String!]!){"
     f"editions(where:{{book:{{title:{{_eq:$title}},contributions:{{author:{{name:{{_in:$authors}}}}}}}}}},order_by:{{id:asc}},limit:{MAX_CANDIDATES + 1})"
     "{id book_id isbn_10 isbn_13 asin title subtitle release_date image{url} publisher{id name parent_id} language{id code2 code3 language} contributions(order_by:{id:asc},limit:17){id contribution author{id name}}} "
     "books:books(where:{title:{_eq:$title},contributions:{author:{name:{_in:$authors}}}},order_by:{id:asc},limit:6)"
-    "{id title description release_date image{url} contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag{id tag tag_category{id category}}}}}}"
+    "{id title description release_date image{url} contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag_id}} "
+    f"tags:tags(where:{{taggings:{{book:{{title:{{_eq:$title}},contributions:{{author:{{name:{{_in:$authors}}}}}}}}}}}},order_by:{{id:asc}},limit:{_MAX_TAG_ROWS + 1})"
+    "{id tag tag_category{id category}}}"
 )
 _QUERY = _ISBN_QUERY
 
@@ -256,6 +263,8 @@ class HardcoverMetadataProvider:
         except (httpx.HTTPError, OSError, ValueError):
             return result(ProviderStatus.UNAVAILABLE)
         try:
+            if _has_graphql_errors(payload):
+                return result(ProviderStatus.UNAVAILABLE)
             candidates = _parse_candidates(
                 payload,
                 self._name,
@@ -311,6 +320,81 @@ def _body(response: httpx.Response, maximum: int, *, deadline: float | None = No
     return b"".join(chunks)
 
 
+def _has_graphql_errors(payload: bytes) -> bool:
+    source = json.loads(
+        payload.decode("utf-8", "strict"),
+        object_pairs_hook=_unique_object,
+        parse_constant=_reject_number,
+        parse_float=Decimal,
+    )
+    if type(source) is not dict:
+        raise ValueError("provider envelope invalid")
+    if "errors" not in source:
+        _closed(source, {"data"})
+        return False
+    root = _closed(
+        source,
+        {"data", "errors"} if "data" in source else {"errors"},
+    )
+    errors = root["errors"]
+    if (
+        type(errors) is not list
+        or not errors
+        or len(errors) > MAX_GRAPHQL_ERRORS
+    ):
+        raise ValueError("provider errors invalid")
+    for value in errors:
+        error = _closed_subset(
+            value,
+            {"message"},
+            {"message", "locations", "path", "extensions"},
+        )
+        _text(error["message"], MAX_GRAPHQL_ERROR_MESSAGE_CHARACTERS)
+        if "locations" in error:
+            locations = error["locations"]
+            if (
+                type(locations) is not list
+                or len(locations) > MAX_GRAPHQL_ERRORS
+            ):
+                raise ValueError("provider error locations invalid")
+            for raw_location in locations:
+                location = _closed(raw_location, {"line", "column"})
+                for coordinate in location.values():
+                    if (
+                        type(coordinate) is not int
+                        or isinstance(coordinate, bool)
+                        or not 0 < coordinate <= 2_147_483_647
+                    ):
+                        raise ValueError("provider error location invalid")
+        if "path" in error:
+            path = error["path"]
+            if type(path) is not list or len(path) > 32:
+                raise ValueError("provider error path invalid")
+            for segment in path:
+                if type(segment) is str:
+                    _text(segment, MAX_SCALAR_CHARACTERS)
+                elif (
+                    type(segment) is not int
+                    or isinstance(segment, bool)
+                    or not 0 <= segment <= 2_147_483_647
+                ):
+                    raise ValueError("provider error path segment invalid")
+        if "extensions" in error:
+            extensions = error["extensions"]
+            if type(extensions) is not dict or len(extensions) > 8:
+                raise ValueError("provider error extensions invalid")
+            for key, extension in extensions.items():
+                _text(key, 64)
+                if type(extension) is str:
+                    _text(extension, MAX_SCALAR_CHARACTERS)
+                elif extension is not None and type(extension) not in {
+                    int,
+                    bool,
+                }:
+                    raise ValueError("provider error extension invalid")
+    return True
+
+
 def _parse_candidates(
     payload: bytes,
     provider: str,
@@ -318,9 +402,15 @@ def _parse_candidates(
 ) -> tuple[ProviderCandidate, ...]:
     source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
     root = _closed(source, {"data"})
-    data = _closed(root["data"], {"editions", "books"})
-    rows, books = data["editions"], data["books"]
-    if type(rows) is not list or type(books) is not list or len(rows) > MAX_CANDIDATES:
+    data = _closed(root["data"], {"editions", "books", "tags"})
+    rows, books, tags = data["editions"], data["books"], data["tags"]
+    if (
+        type(rows) is not list
+        or type(books) is not list
+        or type(tags) is not list
+        or len(rows) > MAX_CANDIDATES
+        or len(tags) > _MAX_TAG_ROWS
+    ):
         raise _CandidateLimit if type(rows) is list and len(rows) > MAX_CANDIDATES else ValueError("provider rows invalid")
     work_keys = {
         "id",
@@ -332,12 +422,39 @@ def _parse_candidates(
         "book_series",
         "taggings",
     }
-    indexed = {
-        _identifier(_closed(book, work_keys)["id"]): _closed(book, work_keys)
-        for book in books
+    indexed_tags = {
+        _identifier(_closed(tag, {"id", "tag", "tag_category"})["id"]): _closed(
+            tag, {"id", "tag", "tag_category"}
+        )
+        for tag in tags
     }
+    if len(indexed_tags) != len(tags):
+        raise ValueError("provider taxonomy invalid")
+    used_tags: set[int] = set()
+    indexed: dict[int, dict[str, Any]] = {}
+    for raw_book in books:
+        book = _closed(raw_book, work_keys)
+        raw_taggings = book["taggings"]
+        if type(raw_taggings) is not list:
+            raise ValueError("provider taxonomy invalid")
+        taggings: list[dict[str, Any]] = []
+        for raw_tagging in raw_taggings:
+            tagging = _closed(raw_tagging, {"id", "tag_id"})
+            _identifier(tagging["id"])
+            tag_id = _identifier(tagging["tag_id"])
+            if tag_id not in indexed_tags:
+                raise ValueError("provider taxonomy invalid")
+            used_tags.add(tag_id)
+            taggings.append({"id": tagging["id"], "tag": indexed_tags[tag_id]})
+        book = {**book, "taggings": taggings}
+        book_id = _identifier(book["id"])
+        if book_id in indexed:
+            raise ValueError("provider work invalid")
+        indexed[book_id] = book
     if len(indexed) != len(books):
         raise ValueError("provider work invalid")
+    if used_tags != set(indexed_tags):
+        raise ValueError("provider taxonomy invalid")
     candidates: list[ProviderCandidate] = []
     used: set[int] = set()
     for row_value in rows:
@@ -376,7 +493,10 @@ def _parse_cover_descriptors(
     query_kind: ProviderQueryKind,
 ) -> tuple[ProviderCoverDescriptor, ...]:
     source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
-    data = _closed(_closed(source, {"data"})["data"], {"editions", "books"})
+    data = _closed(
+        _closed(source, {"data"})["data"],
+        {"editions", "books", "tags"},
+    )
     rows = data["editions"]
     books = data["books"]
     if (
@@ -782,6 +902,20 @@ def _bounded_list(value: object, maximum: int, keys: set[str]) -> tuple[list[dic
 
 def _closed(value: object, keys: set[str]) -> dict[str, Any]:
     if type(value) is not dict or set(value) != keys:
+        raise ValueError("provider object invalid")
+    return value
+
+
+def _closed_subset(
+    value: object,
+    required: set[str],
+    allowed: set[str],
+) -> dict[str, Any]:
+    if (
+        type(value) is not dict
+        or not required <= set(value)
+        or not set(value) <= allowed
+    ):
         raise ValueError("provider object invalid")
     return value
 

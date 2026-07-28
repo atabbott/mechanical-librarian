@@ -19,6 +19,8 @@ The current installed contract is intentionally narrow:
 - fixed Hardcover, Open Library, and Google Books metadata operations for
   referenced enabled providers: at most eight exact ISBN-family lanes plus one exact
   title-plus-complete-author work lane, with no partial egress on overflow;
+  Hardcover selections use at most three relationship levels and reject
+  provider-declared GraphQL errors before considering partial data;
 - report-only bounded cover evidence from ABS, an EPUB-declared cover, and
   configured cover-enabled providers: at most eight provider sources overall
   and four per provider, with explicit provider/gallery truncation;

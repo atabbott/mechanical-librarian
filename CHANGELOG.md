@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Restore current Hardcover ISBN and complete-title/author GraphQL operations
+  within the provider's three-relationship-depth limit while preserving typed
+  taxonomy through a bounded sibling-root join. HTTP-success responses that
+  declare bounded GraphQL errors now yield `unavailable` with no candidates or
+  cover descriptors; malformed or over-bound error envelopes remain
+  `malformed`, and no provider diagnostic or credential enters retained
+  evidence. (#378)
+
 - Add Google Books as an ordinary report-only metadata provider with
   credential-free and optional controller-owned API-key modes, fixed bounded
   ISBN/work discovery, provider-local volume identities, explicit unresolved

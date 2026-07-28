@@ -103,6 +103,9 @@ Target, enabled-Hardcover, and keyed Google Books `secret_file` values are
 bounded absolute paths.
 Relative secret paths are rejected by both the generated schema and runtime
 configuration loader.
+An enabled Hardcover file contains the bare token value, without an
+authorization scheme. The controller adds the provider-required `Bearer`
+scheme only to an exact POST to the fixed Hardcover GraphQL URL.
 
 Optional `limits` fields are fixed bounded resource limits, not behavior or
 ranking policy:

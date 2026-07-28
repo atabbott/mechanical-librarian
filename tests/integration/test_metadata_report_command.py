@@ -510,6 +510,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                             "books": [
                                 {"id": 1, "title": "Current service title", "description": None, "release_date": None, "image": None, "contributions": [], "book_series": [], "taggings": []},
                             ],
+                            "tags": [],
                         }
                     },
                 )
@@ -670,6 +671,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                             "taggings": [],
                         }
                     ],
+                    "tags": [],
                 }
             }
 
@@ -782,6 +784,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                         "taggings": [],
                     }
                 ],
+                "tags": [],
             }
         }
         open_payloads = {
