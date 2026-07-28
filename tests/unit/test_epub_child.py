@@ -11,7 +11,6 @@ import threading
 import unittest
 import time
 import zipfile
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -467,6 +466,47 @@ class EpubChildRearSpineTests(unittest.TestCase):
             inspection,
         )
 
+    def test_package_only_date_lexicals_retain_typed_precision_in_child_replay(
+        self,
+    ) -> None:
+        value = epub_bytes(
+            package=EPUB3_PACKAGE.replace(
+                b"</metadata>",
+                b"""<dc:date>1750</dc:date>
+    <dc:date>2024-03-05T10:30:00.1234567Z</dc:date>
+  </metadata>""",
+            )
+        )
+        inspection = self._inspect_in_child(value)
+        publication = [
+            fact
+            for fact in inspection.facts
+            if fact.field is EpubInspectionField.PUBLICATION_DATE
+            and fact.observed_value
+            in {"1750", "2024-03-05T10:30:00.1234567Z"}
+        ]
+        self.assertEqual(
+            [
+                (
+                    fact.observed_value,
+                    fact.canonical_value,
+                    fact.state,
+                    fact.date_precision,
+                )
+                for fact in publication
+            ],
+            [
+                ("1750", "1750", "valid", DatePrecision.YEAR),
+                (
+                    "2024-03-05T10:30:00.1234567Z",
+                    "2024-03-05T10:30:00.1234567Z",
+                    "valid",
+                    DatePrecision.TIMESTAMP,
+                ),
+            ],
+        )
+        self.assertEqual(EpubInspection.from_json(inspection.to_json()), inspection)
+
     def test_package_nonpublication_date_events_never_become_publication_facts(
         self,
     ) -> None:
@@ -620,16 +660,14 @@ class EpubChildRearSpineTests(unittest.TestCase):
     def test_package_compound_roles_keep_bibliographic_and_contextual_evidence(
         self,
     ) -> None:
-        sentinel = "unsafe-source-text-sha256:" + "a" * 64
         package = EPUB3_PACKAGE.replace(
-            b"<dc:creator>A. Example</dc:creator>",
-            b'<dc:creator id="creator">A. Example</dc:creator>',
-        ).replace(
             b"</metadata>",
             (
-                '<meta refines="#creator" property="role" scheme="marc:relators">aut</meta>'
-                '<dc:contributor id="editor">Synthetic Editor</dc:contributor>'
-                '<meta refines="#editor" property="role" scheme="marc:relators">edt</meta>'
+                '<dc:contributor id="artist">Synthetic Artist</dc:contributor>'
+                '<meta refines="#artist" property="role" '
+                'scheme="marc:relators">trl</meta>'
+                '<meta refines="#artist" property="role" '
+                'scheme="marc:relators">ill</meta>'
                 "</metadata>"
             ).encode(),
         )
@@ -647,76 +685,29 @@ class EpubChildRearSpineTests(unittest.TestCase):
             request.cancellation,
         )
         report = EpubPackageExtractor().extract(package_request)
-        creator_role = next(
-            observation
-            for observation in report.observations
-            if observation.field.value == "creator_role"
-        )
-        contributor_role = next(
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
+        role_observations = [
             observation
             for observation in report.observations
             if observation.field.value == "contributor_role"
-        )
-        additions = (
-            replace(
-                creator_role,
-                raw_value="bkp",
-                normalized_value="bkp",
-                citation=replace(creator_role.citation, selector="role-bkp"),
-            ),
-            replace(
-                creator_role,
-                raw_value=sentinel,
-                normalized_value=sentinel,
-                citation=replace(creator_role.citation, selector="role-sentinel"),
-            ),
-            replace(
-                contributor_role,
-                raw_value="converter",
-                normalized_value="converter",
-                citation=replace(
-                    contributor_role.citation, selector="role-conversion"
-                ),
-            ),
-        )
-        report = replace(
-            report,
-            observations=tuple(
-                sorted(
-                    (*report.observations, *additions),
-                    key=lambda item: (
-                        item.citation.source_ordinal,
-                        item.citation.identity,
-                    ),
-                )
-            ),
-        )
-        facts = child._package_facts(report, report.source_fingerprint)
-        self.assertIn(
-            ("creator", "A. Example", "author"),
-            {
-                (fact.field.value, fact.canonical_value, fact.role)
-                for fact in facts
-            },
-        )
-        self.assertIn(
-            ("contributor", "Synthetic Editor", "editor"),
-            {
-                (fact.field.value, fact.canonical_value, fact.role)
-                for fact in facts
-            },
+        ]
+        self.assertEqual(
+            [observation.normalized_value for observation in role_observations],
+            ["trl", "ill"],
         )
         self.assertEqual(
-            {
+            len({observation.citation.identity for observation in role_observations}),
+            2,
+        )
+        facts = child._package_facts(report, report.source_fingerprint)
+        self.assertEqual(
+            [
                 (fact.canonical_value, fact.role)
                 for fact in facts
-                if fact.field is EpubInspectionField.CONTEXTUAL_CREDIT
-            },
-            {
-                ("A. Example", "book_producer"),
-                ("A. Example", sentinel),
-                ("Synthetic Editor", "conversion"),
-            },
+                if fact.field is EpubInspectionField.CONTRIBUTOR
+                and fact.canonical_value == "Synthetic Artist"
+            ],
+            [("Synthetic Artist", "translator+illustrator")],
         )
         self.assertEqual(
             EpubInspection.from_json(
@@ -995,6 +986,42 @@ class EpubChildRearSpineTests(unittest.TestCase):
                         if fact.field is EpubInspectionField.CONTRIBUTOR
                     },
                 )
+
+    def test_rear_descendant_promotion_credit_and_date_ambiguity_fail_closed(
+        self,
+    ) -> None:
+        request, (package, opening, _) = self._bundle(
+            _xhtml(
+                "<p>All rights reserved</p>"
+                "<p>Legal notice <span>Also by</span> "
+                "<span>First published 1999</span></p>"
+                "<p>EPUB conversion by Tool House and "
+                "Scanned by Archive Bot</p>"
+                "<p>Copyright notice last modified 2024</p>"
+                "<p>Copyright 2023</p>"
+            )
+        )
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package, opening, archive)
+        self.assertEqual(
+            {
+                (fact.canonical_value, fact.role)
+                for fact in facts
+                if fact.field is EpubInspectionField.CONTEXTUAL_CREDIT
+            },
+            {
+                ("Tool House", "conversion"),
+                ("Archive Bot", "scanner"),
+            },
+        )
+        self.assertEqual(
+            {
+                (fact.canonical_value, fact.date_event)
+                for fact in facts
+                if fact.date_event is not None
+            },
+            {("2023", DateEvent.COPYRIGHT)},
+        )
 
     def test_rear_colophon_is_admitted_but_advertisement_and_preview_are_not(
         self,

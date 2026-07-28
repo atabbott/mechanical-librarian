@@ -204,10 +204,18 @@ _DATE_EVENT_PATTERNS = (
         ),
     ),
 )
-_CREDIT_CUE_TEXT = (
+_BIBLIOGRAPHIC_CREDIT_CUE_TEXT = (
     r"(?:translated|translation|illustrated|illustrations|edited|foreword"
     r"|introduction|(?:book|cover|interior)\s+design|photographs?"
     r"|photography|maps?|cartography|adapted)\s+by"
+)
+_CONTEXTUAL_CREDIT_CUE_TEXT = (
+    r"(?:(?:epub|e-?book|digital)\s+conversion\s+by|converted\s+by"
+    r"|scann(?:ed|ing)\s+by|(?:produced|created)\s+(?:using|with)"
+    r"|(?:distributed|retailed)\s+by|workflow\s*[:\-])"
+)
+_CREDIT_CUE_TEXT = (
+    rf"(?:{_BIBLIOGRAPHIC_CREDIT_CUE_TEXT}|{_CONTEXTUAL_CREDIT_CUE_TEXT})"
 )
 _CREDIT_NAME_TEXT = (
     rf"(?P<name>[^;|\n]+?)(?="
@@ -233,12 +241,12 @@ _BIBLIOGRAPHIC_CREDITS = (
     (re.compile(rf"\badapted\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("adapter",), EpubObservationApplicability.WORK),
 )
 _CONTEXTUAL_CREDITS = (
-    (re.compile(r"\b(?:epub|e-?book|digital)\s+conversion\s+by\s+(?P<name>[^;|\n]+)", re.I), "conversion"),
-    (re.compile(r"\bconverted\s+by\s+(?P<name>[^;|\n]+)", re.I), "conversion"),
-    (re.compile(r"\bscann(?:ed|ing)\s+by\s+(?P<name>[^;|\n]+)", re.I), "scanner"),
-    (re.compile(r"\b(?:produced|created)\s+(?:using|with)\s+(?P<name>[^;|\n]+)", re.I), "software"),
-    (re.compile(r"\b(?:distributed|retailed)\s+by\s+(?P<name>[^;|\n]+)", re.I), "retailer"),
-    (re.compile(r"\bworkflow\s*[:\-]\s*(?P<name>[^;|\n]+)", re.I), "workflow"),
+    (re.compile(rf"\b(?:epub|e-?book|digital)\s+conversion\s+by\s+{_CREDIT_NAME_TEXT}", re.I), "conversion"),
+    (re.compile(rf"\bconverted\s+by\s+{_CREDIT_NAME_TEXT}", re.I), "conversion"),
+    (re.compile(rf"\bscann(?:ed|ing)\s+by\s+{_CREDIT_NAME_TEXT}", re.I), "scanner"),
+    (re.compile(rf"\b(?:produced|created)\s+(?:using|with)\s+{_CREDIT_NAME_TEXT}", re.I), "software"),
+    (re.compile(rf"\b(?:distributed|retailed)\s+by\s+{_CREDIT_NAME_TEXT}", re.I), "retailer"),
+    (re.compile(rf"\bworkflow\s*[:\-]\s*{_CREDIT_NAME_TEXT}", re.I), "workflow"),
 )
 _SERIES = re.compile(r"\b(?:book|volume)\s+([0-9]+(?:\.[0-9]+)?)\s+(?:of|in)\s+(?:the\s+)?(.+)", re.I)
 _EBOOK_LABEL = re.compile(
@@ -1998,12 +2006,14 @@ def _mixed_edition_date_spans(value: str) -> tuple[tuple[int, int], ...]:
     )
 
 
-def _indicia_dates(
+def _indicia_date_matches(
     value: str,
-) -> tuple[tuple[str, DateEvent, DatePrecision], ...]:
+) -> tuple[tuple[str, DateEvent, DatePrecision, tuple[int, int]], ...]:
     """Recover only locally labelled date events from one bounded indicia span."""
 
-    found: list[tuple[int, str, DateEvent, DatePrecision]] = []
+    found: list[
+        tuple[int, str, DateEvent, DatePrecision, tuple[int, int]]
+    ] = []
     occupied: set[tuple[int, int, DateEvent]] = set()
     ambiguous_spans = _mixed_edition_date_spans(value)
     for event, pattern in _DATE_EVENT_PATTERNS:
@@ -2019,12 +2029,33 @@ def _indicia_dates(
             if precision is None or key in occupied:
                 continue
             occupied.add(key)
-            found.append((match.start("date"), lexical, event, precision))
+            found.append(
+                (
+                    match.start("date"),
+                    lexical,
+                    event,
+                    precision,
+                    match.span("date"),
+                )
+            )
+    event_counts: dict[tuple[int, int], set[DateEvent]] = {}
+    for _position, _lexical, event, _precision, span in found:
+        event_counts.setdefault(span, set()).add(event)
     return tuple(
-        (lexical, event, precision)
-        for _position, lexical, event, precision in sorted(
+        (lexical, event, precision, span)
+        for _position, lexical, event, precision, span in sorted(
             found, key=lambda item: (item[0], item[2].value)
         )
+        if len(event_counts[span]) == 1
+    )
+
+
+def _indicia_dates(
+    value: str,
+) -> tuple[tuple[str, DateEvent, DatePrecision], ...]:
+    return tuple(
+        (lexical, event, precision)
+        for lexical, event, precision, _span in _indicia_date_matches(value)
     )
 
 
@@ -2133,16 +2164,22 @@ def _claim(field: OpeningField, value: str, applicability: EpubObservationApplic
     )
     if citation_context is not None:
         citation_element, citation_start, citation_end = citation_context
+        if (
+            citation_element is element
+            and projection.text[citation_start:citation_end] == raw
+        ):
+            start, end = citation_start, citation_end
         if not (
             0 <= citation_start <= start
             and end <= citation_end <= len(projection.text)
             and citation_end - citation_start <= excerpt_characters
         ):
             return None
-        semantic_path = (
-            f"{citation_element.name}[{citation_element.ordinal}]"
-            f">{element.name}[{element.ordinal}]"
-        )
+        if citation_element is not element:
+            semantic_path = (
+                f"{citation_element.name}[{citation_element.ordinal}]"
+                f">{element.name}[{element.ordinal}]"
+            )
     citation_excerpt = projection.text[citation_start:citation_end]
     leading = len(citation_excerpt) - len(citation_excerpt.lstrip())
     citation_excerpt = citation_excerpt.strip()
@@ -2227,6 +2264,10 @@ def _promotion_excluded_ordinals(projection: _Projection) -> frozenset[int]:
 
     by_ordinal = {element.ordinal: element for element in projection.elements}
     structural = {"section", "article", "aside", "nav"}
+    claim_containers = {
+        "h1", "h2", "h3", "h4", "h5", "h6",
+        "p", "dt", "dd", "li", "address", "figcaption",
+    }
     excluded: set[int] = set()
     semantic_scopes = {
         element.ordinal
@@ -2246,19 +2287,33 @@ def _promotion_excluded_ordinals(projection: _Projection) -> frozenset[int]:
             or _INDICIA_PROMOTION_NOTICE.fullmatch(notice.exact_text) is None
         ):
             continue
+        claim_container = next(
+            (
+                ancestor
+                for ancestor in reversed(notice.ancestors)
+                if by_ordinal[ancestor].name in claim_containers
+            ),
+            None,
+        )
         container = (
-            notice.ordinal
-            if notice.name in structural
-            else next(
-                (
-                    ancestor
-                    for ancestor in reversed(notice.ancestors)
-                    if (
-                        _is_html_namespace(by_ordinal[ancestor].namespace)
-                        and by_ordinal[ancestor].name in structural
-                    )
-                ),
-                None,
+            claim_container
+            if claim_container is not None
+            else (
+                notice.ordinal
+                if notice.name in structural
+                else next(
+                    (
+                        ancestor
+                        for ancestor in reversed(notice.ancestors)
+                        if (
+                            _is_html_namespace(
+                                by_ordinal[ancestor].namespace
+                            )
+                            and by_ordinal[ancestor].name in structural
+                        )
+                    ),
+                    None,
+                )
             )
         )
         if container is None:
@@ -2290,6 +2345,12 @@ def _promotion_excluded_ordinals(projection: _Projection) -> frozenset[int]:
             )
         ):
             excluded.add(element.ordinal)
+    excluded.update(
+        ancestor
+        for ordinal in tuple(excluded)
+        for ancestor in by_ordinal[ordinal].ancestors
+        if by_ordinal[ancestor].name in claim_containers
+    )
     return frozenset(excluded)
 
 
@@ -2631,7 +2692,7 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             add(OpeningField.REVISION, text, EpubObservationApplicability.EDITION)
         if _mixed_edition_date_spans(text):
             warnings.append("ambiguous_date_event")
-        for lexical, event, precision in _indicia_dates(text):
+        for lexical, event, precision, date_span in _indicia_date_matches(text):
             field = (
                 OpeningField.PUBLICATION_DATE
                 if event is DateEvent.MANIFESTATION_PUBLICATION
@@ -2651,6 +2712,11 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                     }
                     else EpubObservationApplicability.WORK
                 ),
+                citation_context=(
+                    element,
+                    element.start + date_span[0],
+                    element.start + date_span[1],
+                ),
                 date_event=event,
                 date_precision=precision,
             )
@@ -2659,6 +2725,11 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                     OpeningField.COPYRIGHT_DATE,
                     lexical,
                     EpubObservationApplicability.EDITION,
+                    citation_context=(
+                        element,
+                        element.start + date_span[0],
+                        element.start + date_span[1],
+                    ),
                 )
         series = _SERIES.search(text)
         if series:

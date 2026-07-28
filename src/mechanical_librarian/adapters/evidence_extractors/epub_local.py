@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import zipfile
+from datetime import date, datetime
 
 from mechanical_librarian.adapters.evidence_extractors import epub_opening as opening
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
@@ -12,6 +13,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
 )
 from mechanical_librarian.domain.epub_inspection import (
     DateEvent,
+    DatePrecision,
     EpubInspectionFact,
     EpubInspectionField,
     EpubPackageLimits,
@@ -98,6 +100,28 @@ def _project_role(value: str | None) -> str | None:
         return validate_role_projection(value)
     except EvidenceValueError:
         return "unsafe-source-text-sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _package_date_precision(value: str | None) -> DatePrecision | None:
+    """Retain precision for every lexical form admitted by the package parser."""
+
+    if value is None:
+        return None
+    try:
+        if "T" in value:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return DatePrecision.TIMESTAMP
+        if len(value) == 4 and value.isdigit():
+            return DatePrecision.YEAR
+        if len(value) == 7:
+            date(int(value[:4]), int(value[5:]), 1)
+            return DatePrecision.MONTH
+        if len(value) == 10:
+            date.fromisoformat(value)
+            return DatePrecision.DAY
+    except ValueError:
+        return None
+    return None
 
 
 def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubInspectionFact, ...]:
@@ -245,7 +269,7 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
             }.get(declared_date_event, DateEvent.UNKNOWN)
             field = EpubInspectionField.DATE_EVENT
         date_precision = (
-            opening._date_precision(canonical or observed)
+            _package_date_precision(canonical or observed)
             if date_event is not None
             else None
         )

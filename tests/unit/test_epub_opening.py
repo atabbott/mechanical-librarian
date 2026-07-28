@@ -1101,6 +1101,79 @@ class EpubOpeningTests(unittest.TestCase):
             },
         )
 
+    def test_adjacent_contextual_credits_stop_at_each_controlled_cue(self) -> None:
+        report = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page">'
+                    "<p>EPUB conversion by Tool House and "
+                    "Scanned by Archive Bot</p>"
+                    "</section>"
+                )
+            )
+        )
+        self.assertEqual(
+            {
+                (claim.normalized_value, claim.role)
+                for claim in report.claims
+                if claim.field is OpeningField.CONTEXTUAL_CREDIT
+            },
+            {
+                ("Tool House", "conversion"),
+                ("Archive Bot", "scanner"),
+            },
+        )
+
+    def test_one_date_occurrence_has_one_event_and_repeated_literals_cite_exactly(
+        self,
+    ) -> None:
+        self.assertEqual(
+            opening._indicia_dates("Copyright notice last modified 2024"),
+            (),
+        )
+        report = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page">'
+                    "<p>First published 1998. Copyright 1998</p>"
+                    "</section>"
+                )
+            )
+        )
+        dated = [
+            claim
+            for claim in report.claims
+            if claim.date_event
+            in {DateEvent.WORK_FIRST_PUBLICATION, DateEvent.COPYRIGHT}
+        ]
+        self.assertEqual(
+            [
+                (
+                    claim.normalized_value,
+                    claim.date_event,
+                    claim.citation.exact_excerpt,
+                )
+                for claim in dated
+            ],
+            [
+                ("1998", DateEvent.WORK_FIRST_PUBLICATION, "1998"),
+                ("1998", DateEvent.COPYRIGHT, "1998"),
+            ],
+        )
+        self.assertNotEqual(
+            dated[0].citation.projection_start,
+            dated[1].citation.projection_start,
+        )
+        copyright_shadow = next(
+            claim
+            for claim in report.claims
+            if claim.field is OpeningField.COPYRIGHT_DATE
+        )
+        self.assertEqual(
+            copyright_shadow.citation.projection_start,
+            dated[1].citation.projection_start,
+        )
+
     def test_promotion_word_inside_semantic_title_does_not_suppress_claim(
         self,
     ) -> None:
@@ -1205,6 +1278,40 @@ class EpubOpeningTests(unittest.TestCase):
         self.assertIn(
             (OpeningField.TITLE, "A Sample of Life"),
             {(claim.field, claim.normalized_value) for claim in report.claims},
+        )
+
+    def test_promotion_descendant_suppresses_its_claim_ancestor_only(self) -> None:
+        report = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page">'
+                    "<p>Edited by Earlier Editor</p>"
+                    "<p>Legal notice <span>Also by</span> "
+                    "<span>First published 1999</span></p>"
+                    "<p>Copyright 2023</p>"
+                    "<p>Edited by Later Editor</p>"
+                    "</section>"
+                )
+            )
+        )
+        self.assertEqual(
+            {
+                (claim.normalized_value, claim.role)
+                for claim in report.claims
+                if claim.field is OpeningField.CONTRIBUTOR
+            },
+            {
+                ("Earlier Editor", "editor"),
+                ("Later Editor", "editor"),
+            },
+        )
+        self.assertEqual(
+            {
+                (claim.normalized_value, claim.date_event)
+                for claim in report.claims
+                if claim.date_event is not None
+            },
+            {("2023", DateEvent.COPYRIGHT)},
         )
 
     def test_synthetic_indicia_aggregate_has_exact_role_and_date_recovery(

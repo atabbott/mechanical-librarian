@@ -1145,6 +1145,11 @@ class MetadataReportCommandTests(unittest.TestCase):
                     ("rear", "rear.xhtml", "application/xhtml+xml", ""),
                 ),
                 spine=("opening", "rear"),
+            ).replace(
+                b"</metadata>",
+                b"<dc:date>1750</dc:date>"
+                b"<dc:date>2024-03-05T10:30:00.1234567Z</dc:date>"
+                b"</metadata>",
             )
             source.write_bytes(
                 _opening_epub(
@@ -1207,17 +1212,25 @@ class MetadataReportCommandTests(unittest.TestCase):
                 )
             )
             self.assertEqual(
-                [
+                {
                     (claim.observed, claim.date_event)
                     for claim in report.local_claims
                     if claim.date_event is not None
-                ],
-                [
+                },
+                {
+                    (
+                        "1750",
+                        DateEvent.MANIFESTATION_PUBLICATION,
+                    ),
+                    (
+                        "2024-03-05T10:30:00.1234567Z",
+                        DateEvent.MANIFESTATION_PUBLICATION,
+                    ),
                     (
                         "2026-01-13T00:00:00Z",
                         DateEvent.MODIFICATION,
                     )
-                ],
+                },
             )
 
     def test_rear_limit_warning_survives_real_child_report_reopen(self) -> None:
