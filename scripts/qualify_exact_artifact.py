@@ -504,6 +504,24 @@ def _qualify_review_case_console(
             environment,
         )
         proposal_id = _proposal_identifier(proposal)
+        results = proposal.get("results")
+        author_results = (
+            [
+                result
+                for result in results
+                if type(result) is dict
+                and result.get("destination") == "authors"
+            ]
+            if type(results) is list
+            else []
+        )
+        if (
+            len(author_results) != 1
+            or author_results[0].get("outcome") != "ineligible"
+            or author_results[0].get("alternatives") != []
+            or author_results[0].get("selected_alternative_id") is not None
+        ):
+            raise QualificationFailure("installed_review_case_failed")
         admission_args = (
             "review-case-admit",
             "--config",
@@ -807,6 +825,7 @@ def _proposal_identifier(value: dict[str, object]) -> str:
     if (
         set(value) != {"policy_version", "report", "results", "schema_version"}
         or value.get("schema_version") != "proposal-set-v1"
+        or value.get("policy_version") != "fixed-conservative-v2"
     ):
         raise QualificationFailure("installed_review_case_failed")
     serialized = json.dumps(value, sort_keys=True, separators=(",", ":"))
@@ -926,10 +945,12 @@ def _review_probe_epub(*, actionable: bool) -> bytes:
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<package xmlns="http://www.idpf.org/2007/opf" '
         'unique-identifier="pub-id" version="3.0">'
-        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/" '
+        'xmlns:opf="http://www.idpf.org/2007/opf">'
         '<dc:identifier id="pub-id">'
         'urn:uuid:00000000-0000-4000-8000-000000000007'
         '</dc:identifier><dc:title>Fixture Registry Title</dc:title>'
+        '<dc:creator opf:role="author"> \n UnKnOwN \t</dc:creator>'
         '<dc:language>en-GB</dc:language>'
         '<meta property="dcterms:modified">2026-01-13T00:00:00Z</meta>'
         f'</metadata><manifest>{manifest}</manifest><spine>{spine}</spine>'

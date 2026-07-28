@@ -102,7 +102,9 @@ SQLite stores immutable canonical documents in `metadata_reports`, one separate
 pointer per target/file scope in `current_metadata_reports`, and immutable
 report-bound cover references in `metadata_report_cover_references`.
 `proposal_sets` stores one content-addressed result document bound to an exact
-report and has no current pointer. Report insert and pointer advance share one
+report and closed policy version and has no current pointer. Its exact-current
+table accepts only `fixed-conservative-v2`; earlier proposal-store shapes are
+rejected without migration. Report insert and pointer advance share one
 transaction. Proposal insertion separately rechecks the exact report and
 current pointer after external currentness. The report database also stores
 immutable ReviewCases with current lineages and append-only qualification-only
