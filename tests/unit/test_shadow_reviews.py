@@ -30,6 +30,9 @@ from mechanical_librarian.application.shadow_reviews import (
     execute_shadow_review,
     preview_shadow_review,
 )
+from mechanical_librarian.application.failure_diagnostics import (
+    reviewer_failure_diagnostic,
+)
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -86,6 +89,16 @@ def _identity() -> ReviewerProfileIdentity:
         16,
         131_072,
     )
+
+
+def _failure_output(code: str) -> str:
+    return canonical_json(
+        {
+            "diagnostic": reviewer_failure_diagnostic(code).to_data(),
+            "mode": "qualification_only",
+            "schema_version": "shadow-review-failure-v2",
+        }
+    ) + "\n"
 
 
 def _result(request: ShadowReviewRequest) -> ShadowReviewResult:
@@ -819,6 +832,25 @@ class ShadowReviewTests(unittest.TestCase):
                 )
             )
             self.assertEqual("unknown", inspected["status"])
+            self.assertEqual(1, inspected["attempt_count"])
+            self.assertEqual(
+                ["timeout"],
+                [
+                    value["category"]
+                    for value in inspected["diagnostics"]
+                ],
+            )
+            projection = canonical_json(inspected)
+            for forbidden in (
+                "diagnostic_digest",
+                "failure_code",
+                "attempt_number",
+                "claim_pid",
+                "start_token",
+                "packet",
+                "prompt",
+            ):
+                self.assertNotIn(forbidden, projection)
             successful = _Runner()
             result = json.loads(
                 execute_shadow_review(
@@ -832,7 +864,7 @@ class ShadowReviewTests(unittest.TestCase):
                 )
             )
             self.assertEqual("qualification_only", result["status"])
-            self.assertEqual(2, len(result["attempts"]))
+            self.assertEqual(2, result["attempt_count"])
             repository.close()
 
     def test_completed_success_cannot_be_reevaluated_or_append(self) -> None:
@@ -890,7 +922,8 @@ class ShadowReviewTests(unittest.TestCase):
                 )
             )
             repository.record_shadow_failure(
-                prepared["attempt_id"], "setup", 0, None
+                prepared["attempt_id"],
+                reviewer_failure_diagnostic("setup").to_json(),
             )
             request_id = prepared["request"]["review_request_id"]
             inspected = json.loads(
@@ -899,6 +932,10 @@ class ShadowReviewTests(unittest.TestCase):
                 )
             )
             self.assertEqual("failed", inspected["status"])
+            self.assertEqual(
+                "setup_configuration",
+                inspected["diagnostics"][0]["category"],
+            )
             runner = _Runner()
             with self.assertRaises(ShadowReviewError):
                 execute_shadow_review(
@@ -945,7 +982,7 @@ class ShadowReviewTests(unittest.TestCase):
                 )
             )
             self.assertEqual("unknown", inspected["status"])
-            self.assertEqual("unknown", inspected["attempts"][0]["status"])
+            self.assertEqual(1, inspected["attempt_count"])
             repository.close()
 
     def test_pending_pre_dispatch_restart_can_be_explicitly_reevaluated(self) -> None:
@@ -997,8 +1034,7 @@ class ShadowReviewTests(unittest.TestCase):
                 )
             )
             self.assertEqual("qualification_only", result["status"])
-            self.assertEqual(2, len(result["attempts"]))
-            self.assertEqual("pending", result["attempts"][0]["status"])
+            self.assertEqual(2, result["attempt_count"])
             repository.close()
 
     def test_concurrent_reevaluation_claim_has_one_cas_winner(self) -> None:
@@ -1256,11 +1292,7 @@ class ShadowReviewTests(unittest.TestCase):
             ),
         )
         self.assertEqual("", output.getvalue())
-        self.assertEqual(
-            '{"code":"profile","mode":"qualification_only",'
-            '"schema_version":"shadow-review-failure-v1"}\n',
-            errors.getvalue(),
-        )
+        self.assertEqual(_failure_output("profile"), errors.getvalue())
 
     def test_cli_rejects_wrong_success_schema_and_exact_id(self) -> None:
         case_id = "review_case_" + "a" * 64
@@ -1302,9 +1334,7 @@ class ShadowReviewTests(unittest.TestCase):
                 )
                 self.assertEqual("", output.getvalue())
                 self.assertEqual(
-                    '{"code":"malformed_output","mode":"qualification_only",'
-                    '"schema_version":"shadow-review-failure-v1"}\n',
-                    errors.getvalue(),
+                    _failure_output("malformed_output"), errors.getvalue()
                 )
 
     def test_cli_validates_request_and_inspect_ids_against_result(self) -> None:
@@ -1358,13 +1388,11 @@ class ShadowReviewTests(unittest.TestCase):
         )
         self.assertEqual("", output.getvalue())
         self.assertEqual(
-            '{"code":"malformed_output","mode":"qualification_only",'
-            '"schema_version":"shadow-review-failure-v1"}\n',
-            errors.getvalue(),
+            _failure_output("malformed_output"), errors.getvalue()
         )
         self.assertTrue(request_id.startswith("review_request_"))
 
-    def test_cli_rejects_zero_exit_semantic_request_and_result_drift(
+    def test_cli_rejects_zero_exit_private_and_diagnostic_drift(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1378,11 +1406,9 @@ class ShadowReviewTests(unittest.TestCase):
             )
             repository.close()
         invalid_request = json.loads(serialized)
-        invalid_request["request"]["output_schema"] = "{}"
+        invalid_request["request"] = {"private": "packet"}
         invalid_result = json.loads(serialized)
-        invalid_result["attempts"][0]["result"]["recommendations"][0][
-            "citations"
-        ] = []
+        invalid_result["diagnostics"] = [{"category": "unknown"}]
         for name, document in (
             ("request", invalid_request),
             ("result", invalid_result),
@@ -1410,10 +1436,7 @@ class ShadowReviewTests(unittest.TestCase):
                 )
                 self.assertEqual("", output.getvalue())
                 self.assertEqual(
-                    '{"code":"malformed_output",'
-                    '"mode":"qualification_only",'
-                    '"schema_version":"shadow-review-failure-v1"}\n',
-                    errors.getvalue(),
+                    _failure_output("malformed_output"), errors.getvalue()
                 )
 
 

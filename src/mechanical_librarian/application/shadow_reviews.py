@@ -8,6 +8,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from mechanical_librarian.application.failure_diagnostics import (
+    FailureDiagnostic,
+    reviewer_failure_diagnostic,
+)
 from mechanical_librarian.domain.shadow_review import (
     QUALIFICATION_MODE,
     ReviewerProfileIdentity,
@@ -44,6 +48,7 @@ class ShadowReviewError(RuntimeError):
         self.code = code
         self.count = count
         self.digest = digest
+        self.diagnostic = reviewer_failure_diagnostic(code, count=count)
         super().__init__(code)
 
 
@@ -113,7 +118,7 @@ class ShadowReviewRepository(Protocol):
     ) -> None: ...
     def record_shadow_result(self, attempt_id: str, result: str) -> None: ...
     def record_shadow_failure(
-        self, attempt_id: str, code: str, count: int, digest: str | None
+        self, attempt_id: str, diagnostic: str
     ) -> None: ...
     def last_shadow_claim(
         self, review_request_id: str
@@ -244,13 +249,15 @@ def execute_shadow_review(
             repository.record_shadow_result(attempt_id, result.to_json())
         except ShadowReviewError as error:
             repository.record_shadow_failure(
-                attempt_id, error.code, error.count, error.digest
+                attempt_id, error.diagnostic.to_json()
             )
             raise
         except Exception as error:
             code = "runtime" if dispatched else "setup"
             digest = hashlib.sha256(type(error).__name__.encode("utf-8")).hexdigest()
-            repository.record_shadow_failure(attempt_id, code, 0, digest)
+            repository.record_shadow_failure(
+                attempt_id, reviewer_failure_diagnostic(code).to_json()
+            )
             raise ShadowReviewError(code, digest=digest) from error
         return inspect_shadow_review(repository, request.review_request_id, identity)
     except ShadowReviewError:
@@ -274,27 +281,38 @@ def _validate_projection(
             type(raw) is not dict
             or set(raw)
             != {
-                "attempts",
+                "attempt_count",
                 "current",
+                "diagnostics",
                 "mode",
-                "request",
                 "review_request_id",
                 "schema_version",
                 "status",
             }
-            or raw["schema_version"] != "shadow-review-inspect-v1"
+            or raw["schema_version"] != "shadow-review-inspect-v2"
             or raw["mode"] != QUALIFICATION_MODE
             or raw["review_request_id"] != review_request_id
-            or type(raw["attempts"]) is not list
+            or type(raw["attempt_count"]) is not int
+            or not 1 <= raw["attempt_count"] <= 32
+            or type(raw["diagnostics"]) is not list
+            or len(raw["diagnostics"]) > 20
             or type(raw["current"]) is not bool
             or raw["status"]
             not in {"pending", "unknown", "failed", "qualification_only"}
         ):
             raise ValueError
-        request = repository.validate_shadow_request(
-            canonical_json(raw["request"])
+        diagnostics = tuple(
+            FailureDiagnostic.from_json(canonical_json(value))
+            for value in raw["diagnostics"]
         )
-        if request.review_request_id != review_request_id:
+        if (
+            tuple(value.to_data() for value in diagnostics)
+            != tuple(raw["diagnostics"])
+            or (
+                raw["status"] in {"failed", "unknown"}
+                and not diagnostics
+            )
+        ):
             raise ValueError
         canonical = canonical_json(raw)
         if canonical != serialized:

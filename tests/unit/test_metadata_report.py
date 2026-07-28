@@ -511,7 +511,25 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(ProviderStatus.UNAVAILABLE, reopened.providers[0].status)
         self.assertEqual((), reopened.providers[0].candidates)
         self.assertNotEqual(ProviderStatus.NO_MATCH, reopened.providers[0].status)
+        self.assertEqual(
+            ("http_non_success",),
+            tuple(
+                value.category.value
+                for value in reopened.providers[0].diagnostics
+            ),
+        )
+        self.assertEqual(
+            (6,),
+            tuple(value.count for value in reopened.providers[0].diagnostics),
+        )
         self.assertNotIn('"attempt', persisted)
+        for forbidden in (
+            "delay_seconds",
+            "elapsed_seconds",
+            "ordinal",
+            "retry-after",
+        ):
+            self.assertNotIn(forbidden, persisted)
 
     def test_rejected_cover_state_round_trips_in_serialized_report(self) -> None:
         source = CoverSource(
@@ -765,7 +783,7 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v14", report.schema_version)
+        self.assertEqual("metadata-report-v15", report.schema_version)
         previous = report.to_data()
         previous["schema_version"] = "metadata-report-v13"
         with self.assertRaises(ReportValueError):

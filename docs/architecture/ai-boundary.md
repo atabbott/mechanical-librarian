@@ -151,6 +151,13 @@ The current qualification-only backend:
 The profile's local executable, sandbox, auth-store, and job paths never enter
 the packet or durable request. A request is persisted before dispatch, has no
 automatic retry, and becomes `unknown` after ambiguous dispatched failure.
+
+Zero exit is not admission. The adapter still requires one strict canonical
+result whose request identity, citation membership, candidate identity, and
+semantics validate against the exact bound request before persistence can
+record success. ADR-0017 maps failures only after that validation and never
+copies malformed output, prompts, packets, raw streams, paths, or exception
+text into durable or CLI status.
 Only explicit reevaluation may egress again, after complete prior process-tree
 death. Successful advice remains permanently `qualification_only`; the normal
 owner-approved reviewer tuple and any apply authority remain unreachable.

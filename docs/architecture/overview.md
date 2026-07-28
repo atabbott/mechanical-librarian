@@ -123,7 +123,7 @@ workflow, job, cache, or deletion surface. Batch work stores no attempt or
 resume state; shadow-review attempts are the explicit qualification-only
 exception. These rules are the current-runtime application of repository-wide
 ADR-0013.
-The `metadata-report-v14` document retains all 16 ordered Audiobookshelf target
+The `metadata-report-v15` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
 source capability
@@ -136,6 +136,13 @@ envelope remains only its scope, identity, digest, and schema-version index.
 Within the exact current schema, a current-scope
 lookup follows the separate pointer offline, while an exact-ID lookup never
 changes a predecessor.
+
+Provider observations also retain application-classified, aggregate-only
+failure diagnostics. Raw process-local attempt records are not persisted.
+Shadow outcomes store the same canonical bounded diagnostic object, while
+`shadow-review-inspect-v2` projects only aggregate attempt count, currentness,
+status, and diagnostics; it does not expose request/packet/result content or
+process and attempt identities.
 
 On supported Linux deployments, the repository retains a no-follow,
 identity-checked directory chain from the filesystem root, holds an exclusive

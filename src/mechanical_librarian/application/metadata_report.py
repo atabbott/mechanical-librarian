@@ -41,6 +41,9 @@ from mechanical_librarian.domain.metadata_report import (
     provider_lane_candidate_reference,
     validate_provider_access_time,
 )
+from mechanical_librarian.application.failure_diagnostics import (
+    provider_attempt_diagnostics,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -1019,6 +1022,10 @@ class GenerateMetadataReport:
                 observation.lanes,
                 observation.convergence,
                 observation.accessed_at,
+                provider_attempt_diagnostics(
+                    getattr(provider, "attempt_records", ()),
+                    status=observation.status.value,
+                ),
             )
             observations.append(observation)
             candidate_descriptors = getattr(provider, "cover_descriptors", ())

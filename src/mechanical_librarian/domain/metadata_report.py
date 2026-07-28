@@ -22,10 +22,11 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverEvidenceError, CoverProvenance, CoverSource, CoverSourceKind,
     CoverSourceState, CoverTruncationReason, publication_ready,
 )
+from mechanical_librarian.domain.failure_diagnostics import FailureDiagnostic
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 
 
-REPORT_SCHEMA = "metadata-report-v14"
+REPORT_SCHEMA = "metadata-report-v15"
 COMPARISON_VERSION = "same-kind-v1"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -1287,6 +1288,7 @@ class ProviderObservation:
     lanes: tuple[ProviderLaneObservation, ...] = ()
     convergence: tuple[ProviderConvergence, ...] = ()
     accessed_at: str | None = None
+    diagnostics: tuple[FailureDiagnostic, ...] = ()
 
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
@@ -1303,6 +1305,25 @@ class ProviderObservation:
             raise ReportValueError("provider status is invalid")
         if self.accessed_at is not None:
             validate_provider_access_time(self.accessed_at)
+        if (
+            type(self.diagnostics) is not tuple
+            or any(type(value) is not FailureDiagnostic for value in self.diagnostics)
+            or self.diagnostics
+            != tuple(
+                sorted(
+                    set(self.diagnostics),
+                    key=lambda value: (
+                        value.category.value,
+                        value.component.value,
+                        value.stage.value,
+                        -1 if value.retryable is None else int(value.retryable),
+                        -1 if value.current is None else int(value.current),
+                        value.count,
+                    ),
+                )
+            )
+        ):
+            raise ReportValueError("provider diagnostics are invalid")
         if type(self.input_references) is not tuple or tuple(sorted(set(self.input_references))) != self.input_references or any(
             _REFERENCE.fullmatch(value) is None or not value.startswith("local_")
             for value in self.input_references
@@ -1429,6 +1450,7 @@ class ProviderObservation:
             "authority": self.authority,
             "accessed_at": self.accessed_at,
             "convergence": [value.to_data() for value in self.convergence],
+            "diagnostics": [value.to_data() for value in self.diagnostics],
             "lanes": [value.to_data() for value in self.lanes],
         }
 
@@ -2166,6 +2188,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
             "authority",
             "candidates",
             "convergence",
+            "diagnostics",
             "input_references",
             "lanes",
             "provider",
@@ -2187,6 +2210,10 @@ def _provider_from_data(value: object) -> ProviderObservation:
             for value in _list(item["convergence"])
         ),
         item["accessed_at"],
+        tuple(
+            FailureDiagnostic.from_json(canonical_json(value))
+            for value in _list(item["diagnostics"])
+        ),
     )
 
 

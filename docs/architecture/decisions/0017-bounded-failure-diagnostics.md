@@ -1,0 +1,108 @@
+# ADR-0017: Bound provider and reviewer failure diagnostics
+
+- Status: accepted
+- Date: 2026-07-28
+- Owners: project maintainers
+- Supersedes: none
+- Superseded by: none
+
+## Context
+
+Provider adapters and the isolated reviewer already classified failures, but
+their vocabularies were adapter-owned and incompatible. Provider attempt
+records also contain retry ordinals and timings, while shadow-review failures
+persisted a legacy code, count, and exception-type digest. Copying either form
+into reports, CLI failures, or inspection output would expose implementation
+details and make exact replay depend on process-local evidence.
+
+Operators need stable distinctions without receiving credentials, paths,
+prompts, packets, provider records or bodies, raw process streams, headers,
+timings, ordinals, or exception text. The classifications must survive restart
+and exact replay without reconstructing a provider or invoking a reviewer.
+
+## Decision
+
+Use one closed diagnostic value at application boundaries. It contains only:
+
+- one closed category;
+- one closed component and stage;
+- optional retryability and currentness booleans when known; and
+- one integer count bounded to 2,147,483,647.
+
+The closed categories are `setup_configuration`, `authentication`,
+`lookup_construction`, `provider_declared_error`, `http_non_success`,
+`quota_rate_limit`, `empty_no_match`, `malformed_over_bound_response`,
+`schema_construction`, `live_schema_rejection`, `spawn_runtime`, `transport`,
+`timeout`, `cancellation`, `malformed_output`, `citation_membership`,
+`identity`, `currentness`, `persistence`, and `unknown`. Unknown inputs always
+map to `unknown`; exception text is never used to classify them.
+
+Provider adapters retain `ProviderAttemptRecord` only in process memory. The
+application maps its category and outcome to bounded deterministic aggregates
+and drops provider identity, attempt ordinal, delay, elapsed time, and every
+raw response detail before adding diagnostics to `metadata-report-v15`.
+Provider status remains the existing neutral `ProviderStatus`; diagnostics
+explain failure shape without changing candidate or availability semantics.
+An HTTP 200 Hardcover response with a valid GraphQL `errors` envelope is a
+terminal `provider_declared_error` attempt, never a successful response.
+
+Reviewer adapters may retain bounded raw job evidence inside their existing
+owner-private lifetime. Before persistence, their legacy internal signals map
+to the same diagnostic value. The exact-current shadow outcome table stores
+only its canonical document. `shadow-review-inspect-v2` aggregates those
+documents across attempts and emits no request, packet, result, process
+identity, attempt identifier, or ordinal. `shadow-review-failure-v2` emits the
+same object on stderr. A zero-exit process becomes a successful result only
+after canonical parsing plus exact request identity, citation membership, and
+semantic validation.
+
+The report database accepts only the exact new schema. ADR-0013 applies: prior
+development state is rejected before mutation and has no migration, import, or
+conversion path. Proposal, packet, request, and result bytes do not contain
+these diagnostics and their discriminators do not change.
+
+## Consequences
+
+### Positive
+
+- Provider reports, durable reviewer state, offline inspection, and CLI failure
+  output use one replay-stable vocabulary.
+- Raw provider and reviewer evidence stays inside its existing least-authority
+  owner rather than becoming an operational support payload.
+- Status semantics remain independent from diagnostics and unknown failures
+  fail closed.
+
+### Negative
+
+- Earlier report databases and shadow outcome rows require a clean pre-release
+  rebuild.
+- Aggregation intentionally cannot answer which attempt, response, process, or
+  raw message caused a failure.
+
+### Neutral or deferred
+
+- This decision adds no generic observability, retry, support-bundle, reviewer
+  activation, decision, apply, or production-write authority.
+- Successful reviewer advice remains validated and persisted internally; the
+  aggregate inspection projection is a status surface, not an advice export.
+
+## Alternatives considered
+
+### Persist provider attempts and reviewer digests
+
+Rejected because ordinals, timings, digests, headers, and raw boundary
+artifacts are not needed to distinguish the supported categories and would
+expand the durable privacy boundary.
+
+### Keep separate provider and reviewer vocabularies
+
+Rejected because CLI, restart, and exact replay would disagree about equivalent
+failures and force adapters to own public application semantics.
+
+## Validation
+
+Synthetic tests cover canonical round-trip and aggregate stability, redaction,
+malformed UTF-8 and JSON, HTTP non-success, HTTP 200 GraphQL errors,
+transport, timeout, cancellation, unknown failures, zero-exit invalid reviewer
+output, clean-schema rejection, restart, and exact offline replay. Architecture
+tests continue to enforce dependency direction.

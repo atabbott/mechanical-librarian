@@ -109,8 +109,10 @@ jitter applies. The transport classifier uses only a narrow HTTPX type and
 bounded typed-cause allowlist; it never inspects exception text and rejects TLS,
 proxy/configuration, invalid protocol/URL, local stream-state, decoding,
 pool/write-timeout, and unknown failures. Every retry remains inside pacing,
-deadline, byte, and request-count authority. Attempt diagnostics are bounded,
-aggregate-safe, process-local, and never persisted.
+deadline, byte, and request-count authority. Attempt records are bounded and
+process-local. The application maps only their closed category and outcome to
+report-v15 diagnostic aggregates; provider, ordinal, delay, elapsed time,
+headers, bodies, and exception text are dropped.
 
 The fixed Hardcover selections stay within three relationship levels. Typed
 taxonomy is joined from bounded sibling-root tag rows by exact provider IDs;
@@ -237,8 +239,9 @@ per-case structured-output schema bytes are subset-validated, digest-bound into
 the canonical request and untrusted prompt, and raw output failure classes
 remain value-free. Malformed UTF-8/JSON, duplicate-key, noncanonical, and
 truncated documents are distinct from canonical parsed results that violate
-their request semantics; only bounded count/digest diagnostics cross the trust
-boundary.
+their request semantics. Only the ADR-0017 diagnostic category, closed
+component/stage, optional retryability/currentness, and bounded aggregate count
+cross the trust boundary.
 No current pinned CLI diagnostic safely proves response-format rejection, so a
 nonzero ordinary-command exit is conservatively `runtime` whether caused by
 exec, signal, resource, network/service, or an unknown failure.
@@ -247,6 +250,13 @@ dispatch, and outcome facts are append-only. Raw streams and reasoning are
 discarded. Dispatched ambiguity is `unknown`; there is no automatic retry, and
 explicit reevaluation requires proof that the complete prior supervised process
 group is absent.
+
+Shadow outcome rows persist one canonical ADR-0017 diagnostic document, not a
+legacy code, exception digest, raw stream, path, prompt, packet, process fact,
+or malformed value. Offline `shadow-review-inspect-v2` aggregates identical
+documents and exposes no per-attempt or request/result content. CLI failures use
+the same object in `shadow-review-failure-v2`; unknown exceptions map to
+`unknown` without inspecting their text.
 
 The final report database, `catalogue-v1` database, `config-v5`, artifact
 records, and `batch-manifest-v5` each accept only absent or their exact current

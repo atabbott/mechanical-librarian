@@ -151,15 +151,17 @@ python scripts/qualify_reviewer_cli_parser.py \
   --qualification-profile /absolute/private/profile.json
 ```
 
-Failures are the value-free codes `runtime`, `setup`, `auth`, `profile`,
-`timeout`, `cancel`, `schema`, `response_format`, `malformed_output`,
-`semantic_validation`, or `currentness`. Raw stdout, stderr, reasoning,
-malformed content, profile paths, and auth data are discarded.
+Process-local failures retain the adapter's narrow internal signals, but every
+durable and CLI boundary maps them to the ADR-0017 diagnostic object. It
+contains only category, closed component/stage, optional
+retryability/currentness, and bounded count. Raw stdout, stderr, reasoning,
+malformed content, profile paths, auth data, exception text, and digests are
+discarded from those projections.
 The pinned CLI currently exposes no stable bounded diagnostic that specifically
 proves a live response-format rejection. Every nonzero ordinary-command exit,
 including exec failure, signal termination, resource/network/service failure,
-and an unknown status, is therefore durable `runtime` with only bounded byte
-count and digest diagnostics. `response_format` remains reserved until a pinned
+and an unknown status, is therefore durable `spawn_runtime`.
+`response_format` remains reserved until a pinned
 canonical signal can support that narrower causal claim.
 
 Offline parser-help probes remain no-network and use a temporary empty auth
@@ -179,9 +181,9 @@ structured-output subset: every `const` and `enum` has its primitive type, and
 citation cardinality remains bounded without `uniqueItems` so later duplicate
 normalization can remain compatible.
 Invalid UTF-8, JSON, duplicate keys, noncanonical JSON, and truncated documents
-are durable `malformed_output` failures. A canonical parsed result that violates
-its bound request is instead durable `semantic_validation`; both retain only
-bounded byte count and digest diagnostics.
+are durable `malformed_output` diagnostics. A canonical parsed result that
+violates its bound request is instead `citation_membership`; neither retains
+raw bytes, rejected values, or exception digests in status.
 For a canonical document, the adapter validates every raw citation identifier
 against the exact packet allowlist and enforces the 256-item raw bound before
 normalizing each recommendation to a sorted unique set. Reordering and known
@@ -191,8 +193,15 @@ validation; normalization never adds evidence or repairs recommendation
 coverage, candidate membership, or currentness.
 
 The raw result bytes remain unchanged in the private bounded job path until its
-existing cleanup. Failures digest those exact bytes. Successful normalization
+existing cleanup. Failures classify those exact private bytes before cleanup.
+Successful normalization
 crosses the adapter seam only as an in-memory typed marker containing a changed
 flag and aggregate duplicate count; raw identifiers and ordering are not
 exposed, and the marker does not enter canonical result JSON, persistence,
 identity, or replay.
+
+`shadow-review-inspect-v2` is an offline aggregate status projection. It emits
+the request identity, currentness, final status, bounded total attempt count,
+and canonical aggregated diagnostics. It emits no request, packet, result,
+attempt ID/number, PID/process-group/start token, raw output, digest, or timing.
+`shadow-review-failure-v2` uses the identical diagnostic shape on CLI stderr.

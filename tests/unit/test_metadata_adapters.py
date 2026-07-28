@@ -151,7 +151,7 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v14'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v15'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -165,7 +165,7 @@ def _create_prior_schema(
 ) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v14'", f"= '{version}'"
+            "= 'metadata-report-v15'", f"= '{version}'"
         ),
         metadata_persistence._CURRENT_SQL,
         metadata_persistence._CURRENT_LINEAGE_SQL,
@@ -339,7 +339,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
-            self.assertEqual(schema_version, ("metadata-report-v14",))
+            self.assertEqual(schema_version, ("metadata-report-v15",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)
@@ -1721,12 +1721,11 @@ class ProviderAdapterTests(unittest.TestCase):
             graphql.observe(_isbn_lookup((self._claim(),))).status,
         )
         self.assertEqual(1, graphql_calls)
-        self.assertNotEqual(
-            "success", graphql.attempt_records[0].outcome
-        )
         self.assertEqual(
-            "response_received", graphql.attempt_records[0].outcome
+            "provider_declared_error",
+            graphql.attempt_records[0].category,
         )
+        self.assertEqual("terminal", graphql.attempt_records[0].outcome)
 
     def test_hardcover_pacer_shares_one_second_dispatch_starts(self) -> None:
         now = [0.0]

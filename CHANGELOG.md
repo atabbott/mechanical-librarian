@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Expose one closed, aggregate-safe provider and reviewer failure taxonomy
+  without copying exception text, credentials, paths, prompts, packets,
+  provider bodies or records, process streams, headers, timings, digests, or
+  attempt ordinals into public or durable status. Provider attempt evidence is
+  mapped once at the application seam while `ProviderStatus` remains
+  unchanged; Hardcover HTTP 200 GraphQL errors are terminal
+  `provider_declared_error`, never success. Shadow failures persist the same
+  canonical diagnostic object used by CLI failure output and offline restart
+  inspection. Advance clean exact-current contracts to
+  `metadata-report-v15`, `shadow-review-inspect-v2`, and
+  `shadow-review-failure-v2`; proposal, packet, request, and result bytes remain
+  unchanged. Earlier development report databases are rejected without
+  migration under ADR-0013. ADR-0017 freezes the privacy and replay boundary.
+  (#381)
+
 - Preserve provider publication evidence with the same closed event and
   year/month/day/timestamp precision vocabulary as local EPUB evidence.
   Provider claims retain lexical and normalized values plus explicit or
