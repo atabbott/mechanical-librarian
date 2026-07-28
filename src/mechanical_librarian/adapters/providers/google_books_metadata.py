@@ -408,13 +408,6 @@ class GoogleBooksMetadataProvider:
                 },
                 timeout=remaining,
             ) as response:
-                if (
-                    response.headers.get("content-encoding", "identity")
-                    .strip()
-                    .lower()
-                    not in {"", "identity"}
-                ):
-                    raise _ProviderFailure(ProviderStatus.MALFORMED)
                 payload = _body(
                     response,
                     min(self._maximum_bytes, self._remaining_response_bytes),
@@ -422,6 +415,13 @@ class GoogleBooksMetadataProvider:
                     clock=self._clock,
                     consume=self._consume_response_bytes,
                 )
+                if (
+                    response.headers.get("content-encoding", "identity")
+                    .strip()
+                    .lower()
+                    not in {"", "identity"}
+                ):
+                    raise _ProviderFailure(ProviderStatus.MALFORMED)
                 if response.status_code == 503:
                     raise _ProviderFailure(
                         ProviderStatus.UNAVAILABLE,
@@ -787,7 +787,12 @@ def _body(
             raise _ProviderFailure(ProviderStatus.MALFORMED) from None
     chunks: list[bytes] = []
     total = 0
-    for chunk in response.iter_bytes():
+    raw_chunks = (
+        (response.content,)
+        if response.is_stream_consumed
+        else response.iter_raw()
+    )
+    for chunk in raw_chunks:
         consume(len(chunk))
         total += len(chunk)
         if total > maximum:

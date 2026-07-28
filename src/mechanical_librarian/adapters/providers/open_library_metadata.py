@@ -1465,7 +1465,12 @@ def _body(
             raise _ProviderFailure(ProviderStatus.MALFORMED) from None
     chunks: list[bytes] = []
     total = 0
-    for chunk in response.iter_bytes():
+    raw_chunks = (
+        (response.content,)
+        if response.is_stream_consumed
+        else response.iter_raw()
+    )
+    for chunk in raw_chunks:
         consume(len(chunk))
         total += len(chunk)
         if total > maximum:

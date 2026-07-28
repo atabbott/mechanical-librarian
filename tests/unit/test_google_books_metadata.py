@@ -126,6 +126,11 @@ class _InterruptedStream(httpx.SyncByteStream):
         raise httpx.ReadTimeout("synthetic interrupted body")
 
 
+class _HostileEncodedStream(httpx.SyncByteStream):
+    def __iter__(self):
+        yield b"not-gzip"
+
+
 class GoogleBooksMetadataTests(unittest.TestCase):
     def test_retry_after_deadline_and_cancellation_are_fail_closed(
         self,
@@ -314,6 +319,35 @@ class GoogleBooksMetadataTests(unittest.TestCase):
         interrupted_provider.observe(_discovery_plan())
         self.assertEqual(9, interrupted_dispatches)
         self.assertEqual(9, len(interrupted_provider.attempt_records))
+
+    def test_hostile_encoded_error_body_is_charged_raw_and_terminal(
+        self,
+    ) -> None:
+        calls = 0
+
+        def handler(_: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(
+                503,
+                headers={"content-encoding": "gzip"},
+                stream=_HostileEncodedStream(),
+            )
+
+        provider = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            1_024,
+            sleep=lambda _: self.fail("malformed encoding must not retry"),
+        )
+        self.assertEqual(
+            ProviderStatus.MALFORMED, provider.observe(_lookup()).status
+        )
+        self.assertEqual(1, calls)
+        self.assertEqual(
+            1_024 * 9 - len(b"not-gzip"),
+            provider._remaining_response_bytes,
+        )
 
     def test_retries_503_with_fresh_backoff_and_records_each_dispatch(
         self,

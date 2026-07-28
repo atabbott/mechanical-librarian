@@ -629,7 +629,12 @@ def _body(
             raise _ResponseOversized
     chunks: list[bytes] = []
     size = 0
-    for chunk in response.iter_bytes():
+    raw_chunks = (
+        (response.content,)
+        if response.is_stream_consumed
+        else response.iter_raw()
+    )
+    for chunk in raw_chunks:
         consume(len(chunk))
         size += len(chunk)
         if size > maximum:

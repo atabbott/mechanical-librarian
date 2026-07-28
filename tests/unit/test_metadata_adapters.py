@@ -70,6 +70,11 @@ class _InterruptedProviderStream(httpx.SyncByteStream):
         raise httpx.ReadTimeout("synthetic interrupted body")
 
 
+class _HostileEncodedProviderStream(httpx.SyncByteStream):
+    def __iter__(self):
+        yield b"not-gzip"
+
+
 def _isbn_lookup(claims: tuple[LocalClaim, ...]) -> MetadataLookup:
     return MetadataLookup(ProviderQueryKind.ISBN, claims)
 
@@ -1532,6 +1537,37 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(
             control._remaining_response_bytes - 1,
             interrupted._remaining_response_bytes,
+        )
+        encoded_responses = [
+            httpx.Response(
+                503,
+                headers={"content-encoding": "gzip"},
+                stream=_HostileEncodedProviderStream(),
+            ),
+            httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=self._envelope([], []),
+            ),
+        ]
+        encoded = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: encoded_responses.pop(0)
+                )
+            ),
+            1_024,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        self.assertEqual(
+            ProviderStatus.NO_MATCH,
+            encoded.observe(_isbn_lookup((self._claim(),))).status,
+        )
+        self.assertEqual(
+            control._remaining_response_bytes - len(b"not-gzip"),
+            encoded._remaining_response_bytes,
         )
 
     def test_hardcover_429_retries_only_valid_retry_after_and_graphql_never(
