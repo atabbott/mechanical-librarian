@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import random
 import time
 import unicodedata
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
+from mechanical_librarian.adapters.providers.retry_safety import (
+    ProviderAttemptRecord,
+    bounded_attempt_elapsed,
+    bounded_retry_after,
+    transient_transport_failure,
+)
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
     MetadataLookup,
@@ -47,6 +55,8 @@ MAX_RESPONSE_BYTES = 262_144
 MAX_AGGREGATE_RESPONSE_BYTES = 2_097_152
 MAX_GRAPHQL_ERRORS = 8
 MAX_GRAPHQL_ERROR_MESSAGE_CHARACTERS = 2_048
+_MAX_ATTEMPTS_PER_QUERY = 3
+_MAX_ATTEMPTS_PER_OBSERVATION = 27
 _MAX_TAG_ROWS = (MAX_CANDIDATES + 1) * (MAX_TAGS + 1)
 _ISBN_QUERY = (
     "query MetadataEvidenceByIsbn($isbns:[String!]!){editions(where:{_or:["
@@ -69,8 +79,51 @@ _WORK_QUERY = (
 _QUERY = _ISBN_QUERY
 
 
+class HardcoverPacer:
+    """Share Hardcover's one-request-per-second start rate."""
+
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._clock = clock
+        self._sleep = sleep
+        self._last_start: float | None = None
+
+    def wait(self, *, deadline: float | None) -> bool:
+        now = self._clock()
+        delay = (
+            0.0
+            if self._last_start is None
+            else max(0.0, 1.0 - (now - self._last_start))
+        )
+        if deadline is not None and now + delay >= deadline:
+            return False
+        if delay:
+            self._sleep(delay)
+        now = self._clock()
+        if deadline is not None and now >= deadline:
+            return False
+        self._last_start = now
+        return True
+
+
 class HardcoverMetadataProvider:
-    def __init__(self, name: str, client: httpx.Client, maximum_bytes: int, timeout_seconds: float = 5.0) -> None:
+    def __init__(
+        self,
+        name: str,
+        client: httpx.Client,
+        maximum_bytes: int,
+        timeout_seconds: float = 5.0,
+        *,
+        pacer: HardcoverPacer | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
+        sleep: Callable[[float], None] = time.sleep,
+        jitter: Callable[[], float] = random.random,
+    ) -> None:
         if type(maximum_bytes) is not int or isinstance(maximum_bytes, bool) or maximum_bytes < 1:
             raise ValueError("provider response bound is invalid")
         if type(timeout_seconds) not in {int, float} or isinstance(timeout_seconds, bool) or not 0 < timeout_seconds <= 60:
@@ -81,8 +134,19 @@ class HardcoverMetadataProvider:
             self._maximum_bytes * 9, MAX_AGGREGATE_RESPONSE_BYTES
         )
         self._timeout_seconds = float(timeout_seconds)
+        self._pacer = pacer
+        self._clock = clock
+        self._wall_clock = wall_clock
+        self._sleep = sleep
+        self._jitter = jitter
+        self._attempt_count = 0
+        self._attempt_records: list[ProviderAttemptRecord] = []
         self._called = False
         self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+
+    @property
+    def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
+        return tuple(self._attempt_records)
 
     def observe(
         self,
@@ -232,36 +296,10 @@ class HardcoverMetadataProvider:
                 candidates,
                 lookup.kind,
             )
-        if self._remaining_response_bytes <= 0:
-            return result(ProviderStatus.OVERSIZED)
         try:
-            remaining = self._timeout_seconds if deadline is None else min(self._timeout_seconds, deadline - time.monotonic())
-            if remaining <= 0:
-                return result(ProviderStatus.UNAVAILABLE)
-            with self._client.stream("POST", HARDCOVER_URL, content=canonical_json(body).encode(), headers={"Accept": "application/json", "Content-Type": "application/json", "Accept-Encoding": "identity"}, timeout=remaining) as response:
-                if response.status_code == 401:
-                    return result(ProviderStatus.AUTHENTICATION)
-                if response.status_code == 403:
-                    return result(ProviderStatus.AUTHORIZATION)
-                if response.status_code == 429:
-                    return result(ProviderStatus.RATE_LIMITED)
-                if response.status_code != 200:
-                    return result(ProviderStatus.UNAVAILABLE)
-                if response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
-                    return result(ProviderStatus.MALFORMED)
-                if response.headers.get("content-encoding", "identity").strip().lower() not in {"", "identity"}:
-                    return result(ProviderStatus.MALFORMED)
-                payload = _body(
-                    response,
-                    min(self._maximum_bytes, self._remaining_response_bytes),
-                    deadline=deadline,
-                )
-                self._remaining_response_bytes -= len(payload)
-        except _ResponseOversized:
-            self._remaining_response_bytes = 0
-            return result(ProviderStatus.OVERSIZED)
-        except (httpx.HTTPError, OSError, ValueError):
-            return result(ProviderStatus.UNAVAILABLE)
+            payload = self._request(body, deadline=deadline)
+        except _ProviderFailure as error:
+            return result(error.status)
         try:
             if _has_graphql_errors(payload):
                 return result(ProviderStatus.UNAVAILABLE)
@@ -304,17 +342,278 @@ class HardcoverMetadataProvider:
         )
         return observation
 
+    def _request(
+        self, body: dict[str, object], *, deadline: float | None
+    ) -> bytes:
+        for retry_index in range(_MAX_ATTEMPTS_PER_QUERY):
+            started = self._clock()
+            attempts_before_dispatch = self._attempt_count
+            try:
+                payload = self._request_once(body, deadline=deadline)
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                if self._attempt_count != attempts_before_dispatch:
+                    self._record_attempt(
+                        started,
+                        category="cancellation",
+                        delay=None,
+                        outcome="cancelled",
+                    )
+                raise
+            except _ProviderFailure as error:
+                if self._attempt_count == attempts_before_dispatch:
+                    raise
+                can_retry = (
+                    error.retryable
+                    and retry_index + 1 < _MAX_ATTEMPTS_PER_QUERY
+                    and self._attempt_count < _MAX_ATTEMPTS_PER_OBSERVATION
+                )
+                delay = (
+                    (
+                        error.retry_after
+                        if error.retry_after is not None
+                        else self._retry_delay(retry_index)
+                    )
+                    if can_retry
+                    else None
+                )
+                if delay is not None and not self._delay_fits(
+                    delay, deadline=deadline
+                ):
+                    delay = None
+                    can_retry = False
+                if not can_retry or delay is None:
+                    self._record_attempt(
+                        started,
+                        category=error.category,
+                        delay=delay,
+                        outcome=(
+                            "exhausted"
+                            if error.retryable
+                            else "terminal"
+                        ),
+                    )
+                    raise
+                try:
+                    self._sleep(delay)
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    self._record_attempt(
+                        started,
+                        category="cancellation",
+                        delay=delay,
+                        outcome="cancelled",
+                    )
+                    raise
+                if deadline is not None and self._clock() >= deadline:
+                    self._record_attempt(
+                        started,
+                        category=error.category,
+                        delay=delay,
+                        outcome="deadline_exhausted",
+                    )
+                    raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+                self._record_attempt(
+                    started,
+                    category=error.category,
+                    delay=delay,
+                    outcome="retry",
+                )
+                continue
+            self._record_attempt(
+                started,
+                category="none",
+                delay=None,
+                outcome="response_received",
+            )
+            return payload
+        raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
 
-def _body(response: httpx.Response, maximum: int, *, deadline: float | None = None) -> bytes:
+    def _request_once(
+        self, body: dict[str, object], *, deadline: float | None
+    ) -> bytes:
+        if self._remaining_response_bytes <= 0:
+            raise _ProviderFailure(ProviderStatus.OVERSIZED)
+        if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
+            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+        if self._pacer is not None and not self._pacer.wait(
+            deadline=deadline
+        ):
+            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+        remaining = self._timeout_seconds
+        if deadline is not None:
+            remaining = min(remaining, deadline - self._clock())
+        if remaining <= 0:
+            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+        try:
+            if deadline is not None and self._clock() >= deadline:
+                raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            self._attempt_count += 1
+            with self._client.stream(
+                "POST",
+                HARDCOVER_URL,
+                content=canonical_json(body).encode(),
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "Accept-Encoding": "identity",
+                },
+                timeout=remaining,
+            ) as response:
+                retry_after = bounded_retry_after(
+                    response.headers.get("retry-after"),
+                    now=self._wall_clock(),
+                )
+                if response.status_code == 401:
+                    raise _ProviderFailure(
+                        ProviderStatus.AUTHENTICATION,
+                        category="http_401",
+                    )
+                if response.status_code == 403:
+                    raise _ProviderFailure(
+                        ProviderStatus.AUTHORIZATION,
+                        category="http_403",
+                    )
+                if response.status_code == 429:
+                    raise _ProviderFailure(
+                        ProviderStatus.RATE_LIMITED,
+                        category="http_429",
+                        retryable=retry_after is not None,
+                        retry_after=retry_after,
+                    )
+                if response.status_code in {500, 502, 503, 504}:
+                    raise _ProviderFailure(
+                        ProviderStatus.UNAVAILABLE,
+                        category=f"http_{response.status_code}",
+                        retryable=True,
+                        retry_after=(
+                            retry_after
+                            if response.status_code == 503
+                            else None
+                        ),
+                    )
+                if response.status_code != 200:
+                    raise _ProviderFailure(
+                        ProviderStatus.UNAVAILABLE,
+                        category="http_other",
+                    )
+                if (
+                    response.headers.get("content-type", "")
+                    .split(";", 1)[0]
+                    .strip()
+                    .lower()
+                    != "application/json"
+                ):
+                    raise _ProviderFailure(
+                        ProviderStatus.MALFORMED,
+                        category="response_malformed",
+                    )
+                if (
+                    response.headers.get("content-encoding", "identity")
+                    .strip()
+                    .lower()
+                    not in {"", "identity"}
+                ):
+                    raise _ProviderFailure(
+                        ProviderStatus.MALFORMED,
+                        category="response_malformed",
+                    )
+                return _body(
+                    response,
+                    min(
+                        self._maximum_bytes,
+                        self._remaining_response_bytes,
+                    ),
+                    deadline=deadline,
+                    clock=self._clock,
+                    consume=self._consume_response_bytes,
+                )
+        except _DeadlineExpired:
+            raise _ProviderFailure(
+                ProviderStatus.UNAVAILABLE,
+                category="deadline",
+            ) from None
+        except _ResponseOversized:
+            self._remaining_response_bytes = 0
+            raise _ProviderFailure(
+                ProviderStatus.OVERSIZED,
+                category="response_oversized",
+            ) from None
+        except _ProviderFailure:
+            raise
+        except httpx.HTTPError as error:
+            category = transient_transport_failure(error)
+            if category is not None:
+                raise _ProviderFailure(
+                    ProviderStatus.UNAVAILABLE,
+                    category=category,
+                    retryable=True,
+                ) from None
+            raise _ProviderFailure(ProviderStatus.UNAVAILABLE) from None
+        except (OSError, ValueError):
+            raise _ProviderFailure(ProviderStatus.UNAVAILABLE) from None
+
+    def _consume_response_bytes(self, amount: int) -> None:
+        self._remaining_response_bytes -= amount
+        if self._remaining_response_bytes < 0:
+            self._remaining_response_bytes = 0
+            raise _ResponseOversized
+
+    def _retry_delay(self, retry_index: int) -> float:
+        jitter = self._jitter()
+        if (
+            type(jitter) not in {int, float}
+            or isinstance(jitter, bool)
+            or not 0.0 <= float(jitter) < 1.0
+        ):
+            jitter = 0.0
+        return min(float(2**retry_index) + float(jitter), 16.0)
+
+    def _delay_fits(
+        self, delay: float, *, deadline: float | None
+    ) -> bool:
+        if deadline is None:
+            return True
+        return self._clock() + delay < deadline
+
+    def _record_attempt(
+        self,
+        started: float,
+        *,
+        category: str,
+        delay: float | None,
+        outcome: str,
+    ) -> None:
+        self._attempt_records.append(
+            ProviderAttemptRecord(
+                provider=self._name,
+                ordinal=self._attempt_count,
+                category=category,
+                delay_seconds=delay,
+                elapsed_seconds=bounded_attempt_elapsed(
+                    started, self._clock()
+                ),
+                outcome=outcome,
+            )
+        )
+
+
+def _body(
+    response: httpx.Response,
+    maximum: int,
+    *,
+    deadline: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    consume: Callable[[int], None] = lambda _: None,
+) -> bytes:
     chunks: list[bytes] = []
     size = 0
     for chunk in response.iter_bytes():
-        if deadline is not None and time.monotonic() >= deadline:
-            raise httpx.ReadTimeout("provider deadline elapsed")
+        consume(len(chunk))
         size += len(chunk)
         if size > maximum:
             raise _ResponseOversized
         chunks.append(chunk)
+        if deadline is not None and clock() >= deadline:
+            raise _DeadlineExpired
     if not chunks:
         raise ValueError("provider response empty")
     return b"".join(chunks)
@@ -1018,4 +1317,29 @@ class _ResponseOversized(ValueError):
     pass
 
 
-__all__ = ["HARDCOVER_SCHEMA_COMMIT", "HARDCOVER_URL", "HardcoverMetadataProvider"]
+class _DeadlineExpired(Exception):
+    pass
+
+
+class _ProviderFailure(Exception):
+    def __init__(
+        self,
+        status: ProviderStatus,
+        *,
+        category: str = "provider_failure",
+        retryable: bool = False,
+        retry_after: float | None = None,
+    ) -> None:
+        super().__init__(status.value)
+        self.status = status
+        self.category = category
+        self.retryable = retryable
+        self.retry_after = retry_after
+
+
+__all__ = [
+    "HARDCOVER_SCHEMA_COMMIT",
+    "HARDCOVER_URL",
+    "HardcoverMetadataProvider",
+    "HardcoverPacer",
+]

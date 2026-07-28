@@ -18,7 +18,11 @@ import mechanical_librarian.adapters.persistence.metadata_reports as metadata_pe
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import AudiobookshelfItemReader, _raw_cover_authority
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.adapters.providers.hardcover_metadata import HARDCOVER_URL, HardcoverMetadataProvider
+from mechanical_librarian.adapters.providers.hardcover_metadata import (
+    HARDCOVER_URL,
+    HardcoverMetadataProvider,
+    HardcoverPacer,
+)
 import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
 from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
@@ -58,6 +62,12 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact, CoverDesignation, CoverSource, CoverSourceKind,
     CoverSourceState, cover_source_id,
 )
+
+
+class _InterruptedProviderStream(httpx.SyncByteStream):
+    def __iter__(self):
+        yield b"x"
+        raise httpx.ReadTimeout("synthetic interrupted body")
 
 
 def _isbn_lookup(claims: tuple[LocalClaim, ...]) -> MetadataLookup:
@@ -1341,6 +1351,8 @@ class ProviderAdapterTests(unittest.TestCase):
                 )
             ),
             65_536,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
         ).observe(_isbn_lookup((self._claim(),)))
         self.assertEqual(ProviderStatus.UNAVAILABLE, timed_out.status)
 
@@ -1357,6 +1369,349 @@ class ProviderAdapterTests(unittest.TestCase):
         ).observe(_isbn_lookup((self._claim(),)), deadline=0)
         self.assertEqual(ProviderStatus.UNAVAILABLE, expired.status)
         self.assertEqual([], requests)
+
+    def test_hardcover_retries_declared_transients_with_exact_authority(
+        self,
+    ) -> None:
+        for status_code in (500, 502, 503, 504):
+            responses = [
+                httpx.Response(
+                    status_code,
+                    headers={"retry-after": "60"},
+                ),
+                httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=self._envelope([], []),
+                ),
+            ]
+            delays: list[float] = []
+            provider = HardcoverMetadataProvider(
+                "catalogue",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _, values=responses: values.pop(0)
+                    )
+                ),
+                65_536,
+                sleep=delays.append,
+                jitter=lambda: 0.0,
+            )
+            with self.subTest(status_code=status_code):
+                self.assertEqual(
+                    ProviderStatus.NO_MATCH,
+                    provider.observe(_isbn_lookup((self._claim(),))).status,
+                )
+                self.assertEqual(
+                    [60.0] if status_code == 503 else [1.0],
+                    delays,
+                )
+                self.assertEqual(2, len(provider.attempt_records))
+
+        dispatches = 0
+
+        def unavailable(_: httpx.Request) -> httpx.Response:
+            nonlocal dispatches
+            dispatches += 1
+            return httpx.Response(504)
+
+        exhausted = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(unavailable)),
+            65_536,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        self.assertEqual(
+            ProviderStatus.UNAVAILABLE,
+            exhausted.observe(_isbn_lookup((self._claim(),))).status,
+        )
+        self.assertEqual(3, dispatches)
+        self.assertEqual("exhausted", exhausted.attempt_records[-1].outcome)
+
+    def test_hardcover_429_retries_only_valid_retry_after_and_graphql_never(
+        self,
+    ) -> None:
+        responses = [
+            httpx.Response(429, headers={"retry-after": "2"}),
+            httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=self._envelope([], []),
+            ),
+        ]
+        delays: list[float] = []
+        recovered = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(lambda _: responses.pop(0))
+            ),
+            65_536,
+            sleep=delays.append,
+        )
+        self.assertEqual(
+            ProviderStatus.NO_MATCH,
+            recovered.observe(_isbn_lookup((self._claim(),))).status,
+        )
+        self.assertEqual([2.0], delays)
+
+        for retry_after in (None, "61", "2, 3"):
+            calls = 0
+
+            def rate_limited(_: httpx.Request) -> httpx.Response:
+                nonlocal calls
+                calls += 1
+                headers = (
+                    {}
+                    if retry_after is None
+                    else {"retry-after": retry_after}
+                )
+                return httpx.Response(429, headers=headers)
+
+            provider = HardcoverMetadataProvider(
+                "catalogue",
+                httpx.Client(
+                    transport=httpx.MockTransport(rate_limited)
+                ),
+                65_536,
+                sleep=lambda _: self.fail("invalid 429 must not retry"),
+            )
+            with self.subTest(retry_after=retry_after):
+                self.assertEqual(
+                    ProviderStatus.RATE_LIMITED,
+                    provider.observe(
+                        _isbn_lookup((self._claim(),))
+                    ).status,
+                )
+                self.assertEqual(1, calls)
+
+        graphql_calls = 0
+
+        def graphql_error(_: httpx.Request) -> httpx.Response:
+            nonlocal graphql_calls
+            graphql_calls += 1
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"errors": [{"message": "declared"}]},
+            )
+
+        graphql = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(graphql_error)),
+            65_536,
+            sleep=lambda _: self.fail("GraphQL errors must not retry"),
+        )
+        self.assertEqual(
+            ProviderStatus.UNAVAILABLE,
+            graphql.observe(_isbn_lookup((self._claim(),))).status,
+        )
+        self.assertEqual(1, graphql_calls)
+        self.assertNotEqual(
+            "success", graphql.attempt_records[0].outcome
+        )
+        self.assertEqual(
+            "response_received", graphql.attempt_records[0].outcome
+        )
+
+    def test_hardcover_pacer_shares_one_second_dispatch_starts(self) -> None:
+        now = [0.0]
+        delays: list[float] = []
+
+        def sleep(delay: float) -> None:
+            delays.append(delay)
+            now[0] += delay
+
+        pacer = HardcoverPacer(clock=lambda: now[0], sleep=sleep)
+        self.assertTrue(pacer.wait(deadline=None))
+        self.assertTrue(pacer.wait(deadline=None))
+        self.assertEqual([1.0], delays)
+        self.assertFalse(pacer.wait(deadline=now[0] + 1.0))
+        self.assertEqual([1.0], delays)
+
+    def test_hardcover_requests_retries_and_instances_share_pacing(
+        self,
+    ) -> None:
+        now = [0.0]
+        sleeps: list[float] = []
+        dispatch_times: list[float] = []
+
+        def sleep(delay: float) -> None:
+            sleeps.append(delay)
+            now[0] += delay
+
+        pacer = HardcoverPacer(clock=lambda: now[0], sleep=sleep)
+        responses = [
+            httpx.Response(503),
+            httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=self._envelope([], []),
+            ),
+        ]
+
+        def retrying(_: httpx.Request) -> httpx.Response:
+            dispatch_times.append(now[0])
+            return responses.pop(0)
+
+        first = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(retrying)),
+            65_536,
+            pacer=pacer,
+            clock=lambda: now[0],
+            sleep=sleep,
+            jitter=lambda: 0.0,
+        )
+        self.assertEqual(
+            ProviderStatus.NO_MATCH,
+            first.observe(_isbn_lookup((self._claim(),))).status,
+        )
+        self.assertEqual([0.0, 1.0], dispatch_times)
+        self.assertEqual([1.0], sleeps)
+
+        second = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: dispatch_times.append(now[0])
+                    or httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=self._envelope([], []),
+                    )
+                )
+            ),
+            65_536,
+            pacer=pacer,
+            clock=lambda: now[0],
+            sleep=sleep,
+        )
+        self.assertEqual(
+            ProviderStatus.NO_MATCH,
+            second.observe(_isbn_lookup((self._claim(),))).status,
+        )
+        self.assertEqual([0.0, 1.0, 2.0], dispatch_times)
+        self.assertEqual([1.0, 1.0], sleeps)
+
+    def test_hardcover_deadline_and_aggregate_attempt_bounds_are_exact(
+        self,
+    ) -> None:
+        rate_limit_calls = 0
+
+        def rate_limited(_: httpx.Request) -> httpx.Response:
+            nonlocal rate_limit_calls
+            rate_limit_calls += 1
+            return httpx.Response(429, headers={"retry-after": "2"})
+
+        deadline_provider = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(rate_limited)),
+            65_536,
+            clock=lambda: 0.0,
+            sleep=lambda _: self.fail("deadline must reject Retry-After"),
+        )
+        self.assertEqual(
+            ProviderStatus.RATE_LIMITED,
+            deadline_provider.observe(
+                _isbn_lookup((self._claim(),)), deadline=2.0
+            ).status,
+        )
+        self.assertEqual(1, rate_limit_calls)
+
+        values = (
+            "9780306406157",
+            "9780140328721",
+            "9780439023528",
+            "9780061120084",
+            "9780743273565",
+            "9780316769488",
+            "9780451524935",
+            "9780547928227",
+        )
+        claims = tuple(
+            LocalClaim.create(
+                kind=ClaimKind.ISBN,
+                observed=value,
+                canonical=value,
+                excerpt=f"ISBN {value}",
+                applicability="ebook",
+                basis="opening_matter",
+                checksum="valid_isbn_13",
+                applicability_basis="ebook",
+                scope=ClaimScope.EDITION,
+            )
+            for value in values
+        )
+        title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Current title",
+            canonical="Current title",
+            excerpt="Current title",
+            applicability="not_applicable",
+            basis="target_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        )
+        fields = tuple(
+            TargetField(
+                field.destination,
+                TargetFieldState.VALUE,
+                ("Ada Example",),
+            )
+            if field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields("Current title")
+        )
+        plan = metadata_discovery_plan(
+            TargetSnapshot(
+                "ebook",
+                "Current title",
+                (),
+                fields=fields,
+            ),
+            (title, *claims),
+        )
+        dispatches = 0
+
+        def unavailable(_: httpx.Request) -> httpx.Response:
+            nonlocal dispatches
+            dispatches += 1
+            return httpx.Response(503)
+
+        provider = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(unavailable)),
+            65_536,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        provider.observe(plan)
+        self.assertEqual(27, dispatches)
+        self.assertEqual(27, len(provider.attempt_records))
+
+        interrupted_dispatches = 0
+
+        def interrupted(_: httpx.Request) -> httpx.Response:
+            nonlocal interrupted_dispatches
+            interrupted_dispatches += 1
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                stream=_InterruptedProviderStream(),
+            )
+
+        interrupted_provider = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(interrupted)),
+            1,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        interrupted_provider.observe(plan)
+        self.assertEqual(9, interrupted_dispatches)
+        self.assertEqual(9, len(interrupted_provider.attempt_records))
 
     def test_work_lookup_retains_typed_taxonomy_and_first_publication(self) -> None:
         captured: list[dict[str, object]] = []
@@ -2336,12 +2691,19 @@ class ProviderAdapterTests(unittest.TestCase):
                 return httpx.Response(code)
 
             provider = HardcoverMetadataProvider(
-                "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+                "catalogue",
+                httpx.Client(transport=httpx.MockTransport(handler)),
+                65_536,
+                sleep=lambda _: None,
+                jitter=lambda: 0.0,
             )
             with self.subTest(status=status_code):
                 self.assertEqual(provider.observe(_isbn_lookup((self._claim(),))).status, expected)
                 self.assertEqual(provider.observe(_isbn_lookup((self._claim(),))).status, ProviderStatus.UNAVAILABLE)
-                self.assertEqual(calls, [1])
+                self.assertEqual(
+                    calls,
+                    [1, 1, 1] if status_code == 503 else [1],
+                )
 
     def test_zero_one_and_multiple_candidates_are_neutral(self) -> None:
         for rows, expected in (

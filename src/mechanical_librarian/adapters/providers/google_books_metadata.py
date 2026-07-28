@@ -334,7 +334,17 @@ class GoogleBooksMetadataProvider:
                         ),
                     )
                     raise
-                self._sleep(delay)
+                try:
+                    self._sleep(delay)
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    self._record_attempt(
+                        started,
+                        category="cancellation",
+                        retryable=False,
+                        delay=delay,
+                        outcome="cancelled",
+                    )
+                    raise
                 if deadline is not None and self._clock() >= deadline:
                     self._record_attempt(
                         started,
@@ -357,7 +367,7 @@ class GoogleBooksMetadataProvider:
                 category="none",
                 retryable=False,
                 delay=None,
-                outcome="success",
+                outcome="response_received",
             )
             return value
         raise _ProviderFailure(ProviderStatus.UNAVAILABLE)

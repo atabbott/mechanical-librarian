@@ -204,6 +204,28 @@ class GoogleBooksMetadataTests(unittest.TestCase):
         self.assertEqual(1, len(cancelled.attempt_records))
         self.assertEqual("cancelled", cancelled.attempt_records[0].outcome)
 
+        sleep_cancelled = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        503,
+                        headers={"content-type": "application/json"},
+                        json={"error": {}},
+                    )
+                )
+            ),
+            65_536,
+            sleep=lambda _: (_ for _ in ()).throw(KeyboardInterrupt()),
+            jitter=lambda: 0.0,
+        )
+        with self.assertRaises(KeyboardInterrupt):
+            sleep_cancelled.observe(_lookup())
+        self.assertEqual(1, len(sleep_cancelled.attempt_records))
+        self.assertEqual(
+            "cancelled", sleep_cancelled.attempt_records[0].outcome
+        )
+
     def test_narrow_transport_failure_retries_but_unknown_does_not(
         self,
     ) -> None:
@@ -331,7 +353,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
         self.assertEqual([1.25, 2.75], delays)
         self.assertEqual(3, len(provider.attempt_records))
         self.assertEqual(
-            ["retry", "retry", "success"],
+            ["retry", "retry", "response_received"],
             [record.outcome for record in provider.attempt_records],
         )
         self.assertEqual(
