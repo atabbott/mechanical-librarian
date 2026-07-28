@@ -10,6 +10,32 @@ from mechanical_librarian.application.batch import BatchSelection
 from mechanical_librarian.bootstrap.composition import _load_batch_credentials
 
 class BatchCompositionTests(unittest.TestCase):
+ def test_google_books_keyless_keyed_and_disabled_composition(self):
+  providers=(
+   ProviderConnectionConfiguration("disabled",False,False,None,"google_books"),
+   ProviderConnectionConfiguration("keyed",True,False,"/google.secret","google_books"),
+   ProviderConnectionConfiguration("keyless",True,False,None,"google_books"),
+  )
+  config=ApplicationConfiguration(
+   (TargetConnectionConfiguration("primary","https://example.invalid","/target"),),
+   (LibraryConfiguration("books","primary","library","book","media",("disabled","keyed","keyless")),),
+   (MediaMountConfiguration("media","/media","/books",True),),
+   providers,
+  )
+  service=unittest.mock.Mock()
+  service.run.return_value="report"
+  constructed=[]
+  with patch.object(composition,"CoverArtifactStore"),patch.object(composition,"AudiobookshelfItemReader"),patch.object(composition,"google_books_client",side_effect=(object(),object())) as clients,patch.object(composition,"read_secret",return_value="private-key") as secret,patch.object(composition,"GoogleBooksMetadataProvider",side_effect=lambda *args,**kwargs:constructed.append((args,kwargs)) or object()),patch.object(composition,"GenerateMetadataReport",return_value=service) as generate:
+   self.assertEqual("report",composition.run_metadata_report_loaded(config,Path("/reports"),Path("/artifacts"),"primary","books","item",0))
+   bindings=generate.call_args.kwargs["providers"]
+   self.assertEqual((False,True,True),tuple(binding.enabled for binding in bindings))
+   for binding in bindings:
+    if binding.enabled:
+     binding.factory()
+  self.assertEqual(2,clients.call_count)
+  secret.assert_called_once_with("/google.secret")
+  self.assertEqual(("private-key",None),tuple(item[1]["api_key"] for item in constructed))
+
  def test_namespaced_equal_name_credentials(self):
   config=ApplicationConfiguration((TargetConnectionConfiguration("shared","https://example.invalid","/target"),),(LibraryConfiguration("books","shared","library","book",None,("shared",)),),(),(ProviderConnectionConfiguration("shared",True,False,"/provider"),))
   with patch("mechanical_librarian.bootstrap.composition.read_secret",side_effect=lambda path:"target-token" if path=="/target" else "provider-token"):

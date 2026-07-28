@@ -49,7 +49,7 @@ provider-client construction, credential access, or egress. Existing larger and
 all-eligible batches remain available when Open Library is disabled.
 
 The manifest path must be absent. Preview atomically creates one immutable
-canonical `batch-manifest-v3` document. It records scoped identities, the
+canonical `batch-manifest-v4` document. It records scoped identities, the
 catalogue generation and fingerprint, a secret-free configuration fingerprint,
 enabled provider names and adapter discriminators, and conservative call-count
 maxima. Each enabled Open Library adapter allows at most 45 metadata requests
@@ -58,6 +58,8 @@ two editions plus two distinct works per lane. Hardcover permits at most nine
 metadata requests. The report gallery admits at most four
 cover sources per provider and eight overall. The maxima add the enabled
 adapters without a generic cost or scheduling framework.
+Each enabled Google Books adapter permits at most nine metadata requests and
+no cover requests per selected item.
 The manifest contains no title, author,
 path, credential, operational contact email, report body, execution state, or
 history.

@@ -63,7 +63,7 @@ provider call.
 
 - The database path is absent for the first invocation or already contains the
   exact current schema required by the installed increment.
-- `metadata-report-v1` through `metadata-report-v7`, and all earlier development
+- `metadata-report-v1` through `metadata-report-v10`, and all earlier development
   schemas are rejected before mutation. There is no migration, import,
   preservation, or compatibility parser. Keep an old database offline if
   required, initialize a clean database, and rerun the supported report command.
@@ -81,7 +81,7 @@ provider call.
 - The container runs under a dedicated Unix identity with no untrusted
   same-identity processes. Privileged and hostile same-identity filesystem
   mutation is outside the supported unprivileged exclusion boundary.
-- The configuration uses `config-v4` and names the requested connection and
+- The configuration uses `config-v5` and names the requested connection and
   library explicitly.
 - The target secret and each enabled referenced provider secret are owner-only
   regular files.
@@ -179,6 +179,12 @@ Library connection makes at most nine exact Search requests, with at most two
 edition and two distinct work requests per lane, for a 45-request aggregate
 maximum. All lanes share one client, Open Library pacer, response envelope,
 2 MiB aggregate response-byte ceiling, and 60-second aggregate deadline.
+Every referenced, enabled Google Books connection makes exactly one fixed
+Volumes request per lane, at most nine requests and 2 MiB of response bytes
+overall. It requests six rows to detect overflow while retaining no more than
+five candidates. Credential-free and API-key modes have identical evidence
+semantics; the optional key is read only by the controller and appears in no
+report, packet, log, diagnostic, or retained raw artifact.
 Search admission
 is bounded, deduplicated, and canonical by edition key; a third candidate is
 terminal before detail requests. Open Library request starts are spaced by the
@@ -209,6 +215,21 @@ Each fixed request asks for one row beyond the retained cap so overflow remains
 observable. Malformed or oversized provider fields remain explicit field-local
 claims; structural or join failures make the observation `malformed`. No
 winner, score, merge, fuzzy search, retry, or cache exists.
+
+Google Books retains its bounded volume ID as the edition candidate identity
+and records the edition-to-work relationship explicitly as `unresolved`;
+Google Books exposes no stable work identifier, so none is manufactured and
+unresolved volumes cannot produce lane convergence or ISBN work correlation.
+Exact ISBN-family lanes and exact complete-title/ordered-author qualification
+use the shared discovery plan. Volume-level format, page-count, revision,
+subject, and publication text remain typed evidence. In particular,
+`publishedDate` strings are evidence-only and never become selectable
+publication-date claims without safe event/manifestation linkage.
+Malformed or oversized scalar claim fields remain explicit field-local states,
+so valid sibling claims and evidence survive. Every identifier entry must be
+one exact bounded `type`/`identifier` object; structurally malformed entries
+make the lane `malformed`, while well-formed unsupported identifier types are
+ignored.
 
 Each child lane records its opaque identity, kind, matched ISBN family when
 applicable, exact triggering local references, typed status, and

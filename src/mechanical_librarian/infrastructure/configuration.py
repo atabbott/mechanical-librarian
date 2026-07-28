@@ -117,12 +117,30 @@ class DisabledOpenLibraryProviderInput(_ProviderInput):
     contact_email: Literal[None] = None
 
 
+class EnabledGoogleBooksProviderInput(_ProviderInput):
+    adapter: Literal["google_books"]
+    enabled: Literal[True]
+    cover_enabled: Literal[False]
+    secret_file: BoundedAbsolutePath | None
+    contact_email: Literal[None] = None
+
+
+class DisabledGoogleBooksProviderInput(_ProviderInput):
+    adapter: Literal["google_books"]
+    enabled: Literal[False]
+    cover_enabled: Literal[False]
+    secret_file: Literal[None]
+    contact_email: Literal[None] = None
+
+
 class ProviderInput(
     RootModel[
         EnabledHardcoverProviderInput
         | DisabledHardcoverProviderInput
         | EnabledOpenLibraryProviderInput
         | DisabledOpenLibraryProviderInput
+        | EnabledGoogleBooksProviderInput
+        | DisabledGoogleBooksProviderInput
     ]
 ):
     pass
@@ -151,7 +169,7 @@ class LimitsInput(_Closed):
 
 
 class ConfigurationInput(_Closed):
-    schema_version: Literal["config-v4"]
+    schema_version: Literal["config-v5"]
     connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=32)]
     libraries: Annotated[list[LibraryInput], Field(min_length=1, max_length=128)]
     mounts: Annotated[list[MountInput], Field(max_length=32)]

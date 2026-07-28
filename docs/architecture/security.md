@@ -11,8 +11,9 @@ background, retry, or cleanup authority.
 `metadata-report` may read one configured target item, one selected read-only
 EPUB, owner-only credential files, at most nine fixed credential-bearing
 Hardcover metadata requests, at most nine credential-free Open Library
-Search requests and 45 aggregate Open Library metadata requests, and separately
-credential-free bounded cover request chains for admitted descriptors. These
+Search requests and 45 aggregate Open Library metadata requests, at most nine
+Google Books Volumes requests, and separately credential-free bounded cover
+request chains for admitted descriptors. These
 metadata maxima apply only when their provider and corresponding discovery
 lanes are enabled and admitted. It may append a neutral report and update its
 current pointer. It has
@@ -84,6 +85,8 @@ and at most two edition plus two distinct work detail requests per lane, for
 nine Search and 45 aggregate metadata requests. The lanes share one client,
 the response-byte aggregate and deadline, and, for Open Library, one
 request-start pacer. There is no automatic retry.
+Each referenced enabled Google Books provider makes one fixed Volumes request
+per admitted lane, for nine aggregate metadata requests.
 
 Cover acquisition remains report-only. The ABS raw-cover route is bracketed by
 the final item read and has no credentials, cookies, referrer, or user agent.
@@ -182,9 +185,9 @@ discarded. Dispatched ambiguity is `unknown`; there is no automatic retry, and
 explicit reevaluation requires proof that the complete prior supervised process
 group is absent.
 
-The final report database, `catalogue-v1` database, `config-v4`, artifact
-records, and `batch-manifest-v3` each accept only absent or their exact current
-schema. `metadata-report-v1` through `metadata-report-v9`, prior development
+The final report database, `catalogue-v1` database, `config-v5`, artifact
+records, and `batch-manifest-v4` each accept only absent or their exact current
+schema. `metadata-report-v1` through `metadata-report-v10`, prior development
 schemas, extra objects, altered
 SQL, failed foreign-key/integrity checks, and other schemas fail closed before
 mutation. Persisted report content is validated when an exact-ID or
@@ -218,3 +221,14 @@ retained as `rejected` report outcomes without a request. Valid URLs are paced
 with metadata, reject
 redirects, and still pass through the existing public-address pinning, bounded
 decoder, and private artifact path.
+
+Google Books adds no production-write authority. It is an ordinary,
+explicitly referenced provider and remains disabled without client
+construction or egress. Enabled access may be credential-free or may use one
+owner-only API-key file. Only the credential-bearing controller reads that
+file; report, proposal, admission, and reviewer code receives neither
+credentials nor network authority. Requests are fixed-origin GETs with
+redirects, environment proxies, compression, retry, caching, and arbitrary
+endpoints disabled. Per-response, aggregate-byte, row, lane, request, and
+deadline bounds fail closed into typed provider outcomes; quota and service
+failures are never reclassified as `no_match`.

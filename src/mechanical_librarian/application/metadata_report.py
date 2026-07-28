@@ -599,7 +599,12 @@ class EpubInspector(Protocol):
 
 
 class MetadataProvider(Protocol):
-    def observe(self, plan: MetadataDiscoveryPlan) -> ProviderObservation: ...
+    def observe(
+        self,
+        plan: MetadataDiscoveryPlan,
+        *,
+        deadline: float | None = None,
+    ) -> ProviderObservation: ...
 
 
 class CoverObserver(Protocol):
@@ -704,6 +709,11 @@ def qualify_provider_observation(
     qualified: dict[str, list[ProviderCandidate]] = {}
     blocked_work_identities: set[str] = set()
     for candidate in observation.candidates:
+        qualification_identity = (
+            candidate.identity
+            if candidate.work_identity == "unresolved"
+            else candidate.work_identity
+        )
         titles = tuple(
             normalize_title(claim.value).casefold()
             for claim in candidate.claims
@@ -736,7 +746,7 @@ def qualify_provider_observation(
             and claim.value is not None
         )
         if disqualifying_roles or variant_marker:
-            blocked_work_identities.add(candidate.work_identity)
+            blocked_work_identities.add(qualification_identity)
         if (
             titles == (expected_title,)
             and len(authors) == len(expected_authors)
@@ -744,7 +754,7 @@ def qualify_provider_observation(
             and not disqualifying_roles
             and not variant_marker
         ):
-            qualified.setdefault(candidate.work_identity, []).append(candidate)
+            qualified.setdefault(qualification_identity, []).append(candidate)
     for identity in blocked_work_identities:
         qualified.pop(identity, None)
     if len(qualified) != 1:
@@ -961,10 +971,8 @@ class GenerateMetadataReport:
                 repository.close()
                 raise CredentialError("provider credential unavailable") from error
             try:
-                observation = (
-                    provider.observe(plan, deadline=cover_aggregate_deadline)
-                    if hasattr(provider, "cover_descriptors")
-                    else provider.observe(plan)
+                observation = provider.observe(
+                    plan, deadline=cover_aggregate_deadline
                 )
             except Exception:
                 observation = provider_observation(

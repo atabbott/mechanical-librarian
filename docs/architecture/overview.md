@@ -10,7 +10,7 @@ CLI catalogue -> application RefreshCurrentCatalogue
 CLI metadata-report -> application GenerateMetadataReport
                     |-> Audiobookshelf current-item adapter
                     |-> isolated EPUB inspector child
-                    |-> Hardcover and Open Library metadata/cover adapters
+                    |-> Hardcover, Open Library, and Google Books metadata adapters
                     |-> constrained cover-decoder child
                     `-> SQLite report repository + cover artifact store
 
@@ -71,7 +71,7 @@ port. ReviewCase and shadow-review seams add exact-current admission and
 qualification-only execution/persistence. There is no central speculative ports
 module, generic provider registry, queue, worker, or scheduler. Bootstrap
 explicitly composes Audiobookshelf, the isolated EPUB and cover children, the
-closed Hardcover/Open Library adapter choice, private-file credentials, SQLite,
+closed Hardcover/Open Library/Google Books adapter choice, private-file credentials, SQLite,
 the private artifact store, and the external reviewer tuple.
 
 The catalogue adapter uses bounded Audiobookshelf library, library-items, and
@@ -90,8 +90,11 @@ inputs supported by its fixed operation and retains every valid candidate
 without ranking. Open Library uses exact Search-to-edition-to-work admission,
 one adapter-local request-start pacer, and no author traversal, fallback
 discovery, retry, or generic provider registry.
+Google Books uses one fixed Volumes request per lane. Its volume ID remains an
+edition candidate identity, work linkage is explicitly unresolved, and
+bounded publication strings remain evidence-only rather than selectable dates.
 
-`batch-manifest-v3` is an immutable secret-free operator artifact. It binds the
+`batch-manifest-v4` is an immutable secret-free operator artifact. It binds the
 current catalogue generation, exact entries, report-relevant configuration,
 enabled provider names and adapter discriminators, and conservative call
 maxima. `ForegroundBatchRun`
@@ -118,7 +121,7 @@ workflow, job, cache, or deletion surface. Batch work stores no attempt or
 resume state; shadow-review attempts are the explicit qualification-only
 exception. These rules are the current-runtime application of repository-wide
 ADR-0013.
-The `metadata-report-v10` document retains all 16 ordered Audiobookshelf target
+The `metadata-report-v11` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
 source capability

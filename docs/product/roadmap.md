@@ -15,6 +15,19 @@ selects neither that checkpoint nor its version. After the first published
 release, maintainers may explicitly designate later milestones as release
 trains; release publication does not make that automatic.
 
+### Completed 0.10.1 Google Books provider increment
+
+Issue #315 adds Google Books as a third ordinary, explicitly configured
+metadata provider through the same bounded ISBN-family and complete
+title/author discovery plan. It supports credential-free access and an optional
+controller-owned API-key file, retains provider-local volume identities and
+explicitly unresolved work linkage, and carries only qualified claims plus
+bounded typed evidence through report, proposal, review admission, and
+sanitized reviewer packets. Google `publishedDate` strings remain
+evidence-only pending the downstream event/manifestation rules in #382.
+This increment adds no ranking, retry, cache, scheduler, generic provider
+framework, service write, or media write.
+
 ## M0: Foundation
 
 - Enforce the recorded `AGPL-3.0-or-later` licence and notice policy.

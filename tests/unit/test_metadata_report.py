@@ -385,7 +385,7 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v10", report.schema_version)
+        self.assertEqual("metadata-report-v11", report.schema_version)
 
     def test_aggregate_candidate_failures_preserve_independent_lane_statuses(
         self,
@@ -892,7 +892,7 @@ class MetadataReportTests(unittest.TestCase):
         repository = _Repository()
         inspector = _Inspector(InspectionResult("c" * 64, ()))
         class MismatchedProvider:
-            def observe(self, claims): return ProviderObservation("other", ProviderStatus.NO_MATCH)
+            def observe(self, claims, *, deadline=None): return ProviderObservation("other", ProviderStatus.NO_MATCH)
         service = GenerateMetadataReport(target=_Target([TargetSnapshot("ebook", "Title", (selected,))]), inspector=inspector, repository_factory=lambda: repository, providers=(ProviderBinding("catalogue", True, MismatchedProvider),), connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"), library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ("catalogue",)), mount=MediaMountConfiguration("books", "/media", "/library", True), limits=ReportLimits())
         with self.assertRaises(MetadataReportError):
             service.run("item-1", 0)
@@ -1959,7 +1959,7 @@ class MetadataReportTests(unittest.TestCase):
         constructions: list[str] = []
 
         class Provider:
-            def observe(self, claims):
+            def observe(self, claims, *, deadline=None):
                 return ProviderObservation("catalogue", ProviderStatus.NO_MATCH, tuple(sorted(value.reference for value in claims if value.kind is ClaimKind.ISBN)))
 
         service = GenerateMetadataReport(
@@ -1978,6 +1978,64 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(constructions, ["one"])
         self.assertEqual((inspector.inspections, inspector.verifications), (1, 1))
         self.assertTrue(repository.closed)
+
+    def test_application_shares_aggregate_deadline_with_metadata_and_cover_providers(
+        self,
+    ) -> None:
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        snapshot = TargetSnapshot("ebook", "Current title", (selected,))
+        target = _Target([snapshot, snapshot])
+        inspector = _Inspector(InspectionResult("c" * 64, ()))
+        repository = _Repository()
+        observed: list[tuple[str, float]] = []
+
+        class Provider:
+            def observe(self, _plan, *, deadline):
+                observed.append(("metadata", deadline))
+                return ProviderObservation("catalogue", ProviderStatus.NO_MATCH)
+
+        class CoverObserver:
+            def observe(
+                self,
+                _target,
+                _providers,
+                _local_sources,
+                _descriptors,
+                aggregate_deadline,
+            ):
+                observed.append(("cover", aggregate_deadline))
+                return ()
+
+        service = GenerateMetadataReport(
+            target=target,
+            inspector=inspector,
+            repository_factory=lambda: repository,
+            providers=(ProviderBinding("catalogue", True, Provider),),
+            connection=TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/target"
+            ),
+            library=LibraryConfiguration(
+                "ebooks",
+                "primary",
+                "library-id",
+                "ebook",
+                "books",
+                ("catalogue",),
+            ),
+            mount=MediaMountConfiguration(
+                "books", "/media", "/library", True
+            ),
+            limits=ReportLimits(),
+            cover_observer=CoverObserver(),
+        )
+
+        report = MetadataReport.from_json(service.run("item-1", 0))
+
+        self.assertEqual(ProviderStatus.NO_MATCH, report.providers[0].status)
+        self.assertEqual(
+            ["metadata", "cover"], [boundary for boundary, _ in observed]
+        )
+        self.assertEqual(observed[0][1], observed[1][1])
 
     def test_application_preserves_inspector_occurrence_order_after_target_title(self) -> None:
         claims = tuple(

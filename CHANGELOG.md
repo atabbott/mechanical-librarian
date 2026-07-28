@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Add Google Books as an ordinary report-only metadata provider with
+  credential-free and optional controller-owned API-key modes, fixed bounded
+  ISBN/work discovery, provider-local volume identities, explicit unresolved
+  work linkage, evidence-only publication strings, typed transport/quota
+  outcomes including unregistered daily-limit exhaustion, field-local malformed
+  or oversized scalar claims, strict identifier-entry validation, one shared
+  report deadline independent of cover support, deterministic replay, and
+  end-to-end proposal/review evidence persistence.
+  Advance the exact configuration and report contracts to
+  `config-v5`, `metadata-report-v11`, and `batch-manifest-v4`; earlier
+  development state remains clean-schema incompatible. (#315)
+
 - Keep a controlled package-metadata `Unknown` creator visible in report
   evidence while preventing it from becoming an authors replacement by itself.
   Mixed real creators retain their order, and legitimate anonymous, nonexact,

@@ -96,10 +96,10 @@ def manifest(
     provider_adapters: tuple[str, ...],
 ) -> bytes:
     identities = tuple((value.connection, value.library, value.library_id, value.item) for value in selections)
-    if type(snapshot.generation) is not int or snapshot.generation < 1 or not _digest(snapshot.fingerprint) or not _digest(config_fingerprint) or len(selections) > 10_000 or len(set(identities)) != len(identities) or tuple(sorted(set(providers))) != providers or any(not _name(value) for value in providers) or len(provider_adapters) != len(providers) or any(value not in {"hardcover", "open_library"} for value in provider_adapters) or any(not _entry_valid(asdict(value)) for value in selections):
+    if type(snapshot.generation) is not int or snapshot.generation < 1 or not _digest(snapshot.fingerprint) or not _digest(config_fingerprint) or len(selections) > 10_000 or len(set(identities)) != len(identities) or tuple(sorted(set(providers))) != providers or any(not _name(value) for value in providers) or len(provider_adapters) != len(providers) or any(value not in {"google_books", "hardcover", "open_library"} for value in provider_adapters) or any(not _entry_valid(asdict(value)) for value in selections):
         raise BatchError("batch manifest is invalid")
     body = {
-        "schema": "batch-manifest-v3",
+        "schema": "batch-manifest-v4",
         "catalogue_generation": snapshot.generation,
         "catalogue_fingerprint": snapshot.fingerprint,
         "batch_config_fingerprint": config_fingerprint,
@@ -123,13 +123,13 @@ def parse_manifest(raw: bytes) -> dict[str, object]:
         value = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=_unique, parse_constant=_reject_constant)
     except (UnicodeError, ValueError, RecursionError):
         raise BatchError("batch manifest is invalid") from None
-    if type(value) is not dict or set(value) != {"schema", "id", "catalogue_generation", "catalogue_fingerprint", "batch_config_fingerprint", "entries", "providers", "provider_adapters", "call_maxima"} or value.get("schema") != "batch-manifest-v3" or not _digest(value.get("id")):
+    if type(value) is not dict or set(value) != {"schema", "id", "catalogue_generation", "catalogue_fingerprint", "batch_config_fingerprint", "entries", "providers", "provider_adapters", "call_maxima"} or value.get("schema") != "batch-manifest-v4" or not _digest(value.get("id")):
         raise BatchError("batch manifest is invalid")
     identity = value["id"]
     body = {key: item for key, item in value.items() if key != "id"}
     if raw != canonical_json(value).encode("utf-8") + b"\n" or identity != hashlib.sha256(canonical_json(body).encode("utf-8") + b"\n").hexdigest():
         raise BatchError("batch manifest is invalid")
-    if type(body["catalogue_generation"]) is not int or body["catalogue_generation"] < 1 or not _digest(body["catalogue_fingerprint"]) or not _digest(body["batch_config_fingerprint"]) or type(body["entries"]) is not list or len(body["entries"]) > 10_000 or type(body["providers"]) is not list or any(not _name(item) for item in body["providers"]) or tuple(body["providers"]) != tuple(sorted(set(body["providers"]))) or type(body["provider_adapters"]) is not list or len(body["provider_adapters"]) != len(body["providers"]) or any(item not in {"hardcover", "open_library"} for item in body["provider_adapters"]) or body["call_maxima"] != _maxima(len(body["entries"]), tuple(body["provider_adapters"])):
+    if type(body["catalogue_generation"]) is not int or body["catalogue_generation"] < 1 or not _digest(body["catalogue_fingerprint"]) or not _digest(body["batch_config_fingerprint"]) or type(body["entries"]) is not list or len(body["entries"]) > 10_000 or type(body["providers"]) is not list or any(not _name(item) for item in body["providers"]) or tuple(body["providers"]) != tuple(sorted(set(body["providers"]))) or type(body["provider_adapters"]) is not list or len(body["provider_adapters"]) != len(body["providers"]) or any(item not in {"google_books", "hardcover", "open_library"} for item in body["provider_adapters"]) or body["call_maxima"] != _maxima(len(body["entries"]), tuple(body["provider_adapters"])):
         raise BatchError("batch manifest is invalid")
     for entry in body["entries"]:
         if type(entry) is not dict or set(entry) != {"connection", "library", "library_id", "item", "file_identity", "classification", "eligible"} or not _entry_valid(entry):
@@ -145,12 +145,13 @@ def _digest(value: object) -> bool:
 
 def _maxima(entries: int, adapters: tuple[str, ...]) -> dict[str, int]:
     hardcover = adapters.count("hardcover")
+    google_books = adapters.count("google_books")
     open_library = adapters.count("open_library")
     return {
         "target_item_observations": entries * 6,
         "target_raw_cover_requests": entries * 4,
         "provider_metadata_requests": entries
-        * (hardcover * 9 + open_library * 45),
+        * (google_books * 9 + hardcover * 9 + open_library * 45),
         "remote_cover_requests": entries
         * (hardcover * 5 * 4 + open_library * 4),
     }

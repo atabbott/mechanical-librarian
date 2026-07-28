@@ -3,21 +3,21 @@
 The current installed contract is intentionally narrow:
 
 - Python 3.13 or 3.14;
-- `config-v4` only;
+- `config-v5` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v10` plus `proposal-set-v1`, or the separate `catalogue-v1`
+  `metadata-report-v11` plus `proposal-set-v1`, or the separate `catalogue-v1`
   schema;
 - `review-case-v1`, `shadow-review-request-v2`, and the exact-current append-only
   qualification-only shadow request/attempt/dispatch/outcome schema;
 - canonical `reviewer-qualification-profile-v1` with exact
   `gpt-5.6-sol`/`medium` and pinned Codex CLI/Bubblewrap identities; shadow
   request execution requires Linux;
-- strict `batch-manifest-v3` for foreground evidence batches;
+- strict `batch-manifest-v4` for foreground evidence batches;
 - Audiobookshelf v2.35.1 library, library-items, and current-item responses for
   explicitly configured book libraries;
 - an explicitly selected EPUB on a mapped read-only mount; and
-- fixed Hardcover and Open Library metadata operations for referenced enabled
-  providers: at most eight exact ISBN-family lanes plus one exact
+- fixed Hardcover, Open Library, and Google Books metadata operations for
+  referenced enabled providers: at most eight exact ISBN-family lanes plus one exact
   title-plus-complete-author work lane, with no partial egress on overflow;
 - report-only bounded cover evidence from ABS, an EPUB-declared cover, and
   configured cover-enabled providers: at most eight provider sources overall

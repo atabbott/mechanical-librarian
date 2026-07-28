@@ -2,8 +2,8 @@
 
 The installed `metadata-report`, `proposal-set-create`, `catalogue`, and `batch`
 operations accept one strict UTF-8 JSON document with schema version
-`config-v4`. Unknown and duplicate fields are rejected. The generated schema is
-[`config-v4.schema.json`](config-v4.schema.json) and is regenerated with:
+`config-v5`. Unknown and duplicate fields are rejected. The generated schema is
+[`config-v5.schema.json`](config-v5.schema.json) and is regenerated with:
 
 ```text
 uv run --frozen python scripts/generate_configuration_schema.py
@@ -13,7 +13,7 @@ uv run --frozen python scripts/generate_configuration_schema.py
 
 ```json
 {
-  "schema_version": "config-v4",
+  "schema_version": "config-v5",
   "connections": [
     {
       "name": "primary",
@@ -28,7 +28,7 @@ uv run --frozen python scripts/generate_configuration_schema.py
       "connection": "primary",
       "library_id": "01234567-89ab-4def-8123-456789abcdef",
       "mount": "books",
-      "provider_connections": ["hardcover-main", "open-library-main"]
+      "provider_connections": ["google-books-main", "hardcover-main", "open-library-main"]
     }
   ],
   "mounts": [
@@ -40,6 +40,13 @@ uv run --frozen python scripts/generate_configuration_schema.py
     }
   ],
   "providers": [
+    {
+      "name": "google-books-main",
+      "adapter": "google_books",
+      "enabled": true,
+      "cover_enabled": false,
+      "secret_file": null
+    },
     {
       "name": "hardcover-main",
       "adapter": "hardcover",
@@ -68,9 +75,12 @@ An ebook library requires a named read-only mount. Audiobook libraries may
 coexist and use `mount: null`, but `metadata-report` rejects their items before
 parser/provider/publication activity.
 
-Every provider has explicit enablement and one of exactly two built-in adapter
+Every provider has explicit enablement and one of exactly three built-in adapter
 values:
 
+- `google_books` forbids `contact_email` and cover retrieval. When enabled,
+  `secret_file` is optional: `null` uses credential-free access and an absolute
+  path supplies a Google Books API key through the controller only.
 - `hardcover` forbids `contact_email`; when enabled it requires an absolute
   private `secret_file`.
 - `open_library` always forbids a secret; when enabled it requires a bounded
@@ -89,7 +99,8 @@ may set `cover_enabled: true`. The report admits no more than four provider
 cover sources per named connection and eight provider sources overall; excess
 descriptors produce explicit truncation evidence.
 
-Target and enabled-Hardcover `secret_file` values are bounded absolute paths.
+Target, enabled-Hardcover, and keyed Google Books `secret_file` values are
+bounded absolute paths.
 Relative secret paths are rejected by both the generated schema and runtime
 configuration loader.
 
