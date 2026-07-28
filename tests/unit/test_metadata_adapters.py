@@ -1205,7 +1205,7 @@ class ProviderAdapterTests(unittest.TestCase):
     def test_rich_schema_query_and_field_order_are_closed(self) -> None:
         captured: list[dict[str, object]] = []
         payload = self._envelope(
-            [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": "B012345678", "title": "Edition title", "subtitle": "Edition subtitle", "release_date": "2026-01-01", "publisher": {"id": 2, "name": "Example Press", "parent_id": 9}, "language": {"id": 3, "code2": "en", "code3": "eng", "language": "English"}, "contributions": [{"id": 7, "contribution": "Author", "author": {"id": 4, "name": "Ada Example"}}]}],
+            [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": "b012345678", "title": "Edition title", "subtitle": "Edition subtitle", "release_date": "2026-01-01", "publisher": {"id": 2, "name": "Example Press", "parent_id": 9}, "language": {"id": 3, "code2": "en", "code3": "eng", "language": "English"}, "contributions": [{"id": 7, "contribution": "Author", "author": {"id": 4, "name": "Ada Example"}}]}],
             [{"id": 1, "title": "Work title", "description": "Description", "contributions": [{"id": 8, "contribution": "Translator", "author": {"id": 4, "name": "Ada Example"}}], "book_series": [{"id": 9, "position": "1", "series": {"id": 5, "name": "Series"}}], "taggings": [{"id": 10, "tag": {"id": 6, "tag": "Speculative"}}]}],
         )
         def handler(request: httpx.Request) -> httpx.Response:
@@ -1214,6 +1214,14 @@ class ProviderAdapterTests(unittest.TestCase):
         observation = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536).observe(_isbn_lookup((self._claim(), self._title_claim())))
         self.assertEqual(observation.status, ProviderStatus.CANDIDATES)
         claims = observation.candidates[0].claims
+        self.assertEqual(
+            "B012345678",
+            next(
+                claim.value
+                for claim in claims
+                if claim.kind is ClaimKind.ASIN
+            ),
+        )
         self.assertEqual([claim.raw_order for claim in claims], list(range(len(claims))))
         self.assertEqual({claim.kind for claim in claims}, {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLICATION_DATE, ClaimKind.PUBLISHER, ClaimKind.IMPRINT, ClaimKind.LANGUAGE, ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR, ClaimKind.DESCRIPTION, ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE, ClaimKind.TAG, ClaimKind.GENRE})
         self.assertEqual(next(claim.scope for claim in claims if claim.kind is ClaimKind.PUBLISHER), ClaimScope.EDITION)

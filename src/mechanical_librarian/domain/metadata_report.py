@@ -40,6 +40,7 @@ MAX_DESCRIPTION_CHARACTERS = 16_384
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
 _REFERENCE = re.compile(r"^(?:local|provider)_[0-9a-f]{64}$")
+_ASIN = re.compile(r"^B[0-9A-Z]{9}$")
 _LANE_IDENTITY = re.compile(r"^lane_[0-9a-f]{64}$")
 _LANE_CANDIDATE_REFERENCE = re.compile(r"^lane_candidate_[0-9a-f]{64}$")
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -883,6 +884,12 @@ class ProviderClaim:
             or _valid_isbn(self.value, "valid_isbn_13")
         ):
             raise ReportValueError("provider ISBN claim is invalid")
+        if (
+            self.kind is ClaimKind.ASIN
+            and self.value is not None
+            and _ASIN.fullmatch(self.value) is None
+        ):
+            raise ReportValueError("provider ASIN claim is invalid")
         is_date = self.kind is ClaimKind.PUBLICATION_DATE
         if is_date != (type(self.date_event) is DateEvent):
             raise ReportValueError("provider date claim typing is inconsistent")
@@ -930,6 +937,12 @@ class ProviderClaim:
         date_lexical: str | None = None,
         date_confidence: DateLinkConfidence | None = None,
     ) -> Self:
+        if (
+            kind is ClaimKind.ASIN
+            and state is FieldState.VALID
+            and type(value) is str
+        ):
+            value = value.upper()
         if kind is ClaimKind.PUBLICATION_DATE:
             date_event = (
                 DateEvent.MANIFESTATION_PUBLICATION
@@ -1945,6 +1958,8 @@ def comparison_links(provider: ProviderClaim, local: tuple[LocalClaim, ...]) -> 
 def _comparison_value(kind: ClaimKind, value: str) -> str:
     if kind is ClaimKind.ISBN:
         return "".join(character for character in value if character.isdigit() or character in "Xx").upper()
+    if kind is ClaimKind.PUBLICATION_DATE:
+        return normalize_date_value(value)[0]
     if kind is ClaimKind.DESCRIPTION:
         _projection_text(value, "comparison description", MAX_DESCRIPTION_CHARACTERS)
         return " ".join(unicodedata.normalize("NFC", value).split()).casefold()

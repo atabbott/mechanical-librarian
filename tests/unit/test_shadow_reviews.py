@@ -182,7 +182,7 @@ class ShadowReviewTests(unittest.TestCase):
             provider="catalogue",
             candidate="edition-1",
             kind=ClaimKind.ASIN,
-            value="B000000001",
+            value="b000000001",
             state=FieldState.VALID,
             scope=ClaimScope.EDITION,
             applicability="ebook",
@@ -251,6 +251,7 @@ class ShadowReviewTests(unittest.TestCase):
         )
         self.assertEqual("edition-1", citation["candidate"])
         self.assertEqual("work-1", citation["work_identity"])
+        self.assertEqual("B000000001", asin.value)
         expected_identifier_facts = sorted(
             [
                 {

@@ -280,6 +280,62 @@ class MetadataReportTests(unittest.TestCase):
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(replay_data))
 
+    def test_provider_asin_is_canonical_before_reference_and_report_replay(
+        self,
+    ) -> None:
+        claim = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.ASIN,
+            value="b012345678",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="not_applicable",
+        )
+        canonical = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.ASIN,
+            value="B012345678",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="not_applicable",
+        )
+        self.assertEqual("B012345678", claim.value)
+        self.assertEqual(canonical.reference, claim.reference)
+        with self.assertRaises(ReportValueError):
+            replace(claim, value="b012345678")
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    (
+                        ProviderCandidate(
+                            "edition-1",
+                            "work-1",
+                            (claim,),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        replayed = MetadataReport.from_json(report.to_json())
+        self.assertEqual(
+            "B012345678",
+            replayed.providers[0].candidates[0].claims[0].value,
+        )
+
     def test_local_date_event_scope_is_event_aware_and_replay_rejects_mismatch(
         self,
     ) -> None:
@@ -1533,6 +1589,62 @@ class MetadataReportTests(unittest.TestCase):
         data["providers"][0]["candidates"][0]["claims"][0]["links"][0]["outcome"] = "disagreement"
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(data))
+
+    def test_date_comparison_normalizes_both_lexicals_without_losing_precision(
+        self,
+    ) -> None:
+        def local(value: str, precision: DatePrecision) -> LocalClaim:
+            return LocalClaim.create(
+                kind=ClaimKind.PUBLICATION_DATE,
+                observed=value,
+                canonical=value,
+                excerpt=value,
+                applicability="not_applicable",
+                basis="package_metadata",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.EDITION,
+                date_event=DateEvent.MANIFESTATION_PUBLICATION,
+                date_precision=precision,
+            )
+
+        zulu = local(
+            "2024-03-05T10:30:00Z",
+            DatePrecision.TIMESTAMP,
+        )
+        different = local(
+            "2024-03-05T10:30:01Z",
+            DatePrecision.TIMESTAMP,
+        )
+        day = local("2024-03-05", DatePrecision.DAY)
+        provider = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.PUBLICATION_DATE,
+            value="2024-03-05T10:30:00+00:00",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="not_applicable",
+        )
+        self.assertEqual(
+            {
+                zulu.reference: Comparison.AGREEMENT,
+                different.reference: Comparison.DISAGREEMENT,
+                day.reference: Comparison.DISAGREEMENT,
+            },
+            {
+                link.local_reference: link.outcome
+                for link in comparison_links(
+                    provider,
+                    (zulu, different, day),
+                )
+            },
+        )
+        self.assertEqual("2024-03-05T10:30:00Z", zulu.canonical)
+        self.assertEqual(
+            "2024-03-05T10:30:00+00:00",
+            provider.date_lexical,
+        )
 
     def test_identifier_evidence_classifies_provider_local_work_relations(self) -> None:
         def local(

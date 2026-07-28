@@ -1235,8 +1235,15 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
         text = validate_projection_text(value, "provider claim value", maximum)
         if kind is ClaimKind.ISBN:
             text = _isbn(text, len(text.replace("-", "").replace(" ", "")))
-        if kind is ClaimKind.ASIN and (len(text) != 10 or not text.isascii() or not text.isalnum()):
-            raise ValueError("provider ASIN invalid")
+        if kind is ClaimKind.ASIN:
+            text = text.upper()
+            if (
+                len(text) != 10
+                or not text.isascii()
+                or not text.isalnum()
+                or not text.startswith("B")
+            ):
+                raise ValueError("provider ASIN invalid")
         if kind is ClaimKind.PUBLICATION_DATE:
             normalize_date_value(text)
         if kind is ClaimKind.SERIES_SEQUENCE:

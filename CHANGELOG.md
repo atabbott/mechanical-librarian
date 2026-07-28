@@ -19,7 +19,11 @@
   and request replay now also requires the authoritative immutable report and
   rejects invented checksum-valid identifiers or physical formats even when
   all internal identities are recomputed; non-provider replay remains
-  self-contained. ADR-0016 supersedes ADR-0015 to freeze the
+  self-contained. Lowercase provider ASIN input is canonicalized to the closed
+  uppercase form before its content identity is constructed, and date
+  comparison normalizes both lexical operands so equivalent `Z` and `+00:00`
+  timestamps agree without discarding either source lexical value or precision.
+  ADR-0016 supersedes ADR-0015 to freeze the
   packet-v2/request-v3 trust boundary. The first actual provider dispatch now
   records
   one strict canonical UTC access time from the adapter's injected clock;
