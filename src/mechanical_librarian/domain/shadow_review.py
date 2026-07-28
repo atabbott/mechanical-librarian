@@ -744,6 +744,33 @@ class ShadowReviewResult:
     recommendations: tuple[dict[str, object], ...]
     schema_version: str = RESULT_SCHEMA
 
+    @staticmethod
+    def validate_identity_for(
+        source: dict[str, object],
+        request: ShadowReviewRequest,
+    ) -> None:
+        """Validate the canonical outer result shape and its bound identity."""
+        if type(source) is not dict or set(source) != {
+            "recommendations",
+            "review_request_id",
+            "schema_version",
+        }:
+            raise ShadowReviewSemanticError(
+                "shadow-review result is invalid"
+            )
+        review_request_id = source["review_request_id"]
+        if (
+            type(review_request_id) is not str
+            or _REQUEST_ID.fullmatch(review_request_id) is None
+        ):
+            raise ShadowReviewSemanticError(
+                "shadow-review result is invalid"
+            )
+        if review_request_id != request.review_request_id:
+            raise ShadowReviewIdentityError(
+                "shadow-review result identity is invalid"
+            )
+
     def validate_for(self, request: ShadowReviewRequest) -> None:
         if self.review_request_id != request.review_request_id:
             raise ShadowReviewIdentityError(
@@ -829,8 +856,7 @@ class ShadowReviewResult:
             raise ShadowReviewDocumentError(
                 "shadow-review result document is malformed"
             ) from error
-        if set(raw) != {"recommendations", "review_request_id", "schema_version"}:
-            raise ShadowReviewSemanticError("shadow-review result is invalid")
+        cls.validate_identity_for(raw, request)
         if type(raw["recommendations"]) is not list:
             raise ShadowReviewSemanticError("shadow-review result is invalid")
         try:

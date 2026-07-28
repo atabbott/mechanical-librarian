@@ -184,13 +184,16 @@ structured-output subset: every `const` and `enum` has its primitive type, and
 citation cardinality remains bounded without `uniqueItems` so later duplicate
 normalization can remain compatible.
 Invalid UTF-8, JSON, duplicate keys, noncanonical JSON, and truncated documents
-are durable `malformed_output` diagnostics. A canonical parsed result that
-names a different exact request is `identity` at the reviewer identity stage.
-Other canonical results that violate their bound request remain
-`citation_membership`; none retains raw bytes, rejected values, request IDs, or
-exception digests in status. Exact repository failures map to `persistence`
-with the persistence component and stage. A store failure can prevent a new
-durable outcome, but its CLI projection remains the same bounded diagnostic.
+are durable `malformed_output` diagnostics. After canonical outer shape and
+exact request-ID syntax are established, a result that names a different exact
+request is `identity` at the reviewer identity stage, before citation
+normalization or membership checks. A missing or malformed request identity
+remains a semantic failure. Other canonical results that violate their bound
+request remain `citation_membership`; none retains raw bytes, rejected values,
+request IDs, or exception digests in status. Exact repository failures map to
+`persistence` with the persistence component and stage. A store failure can
+prevent a new durable outcome, but its CLI projection remains the same bounded
+diagnostic.
 For a canonical document, the adapter validates every raw citation identifier
 against the exact packet allowlist and enforces the 256-item raw bound before
 normalizing each recommendation to a sorted unique set. Reordering and known

@@ -60,10 +60,13 @@ and the exact bounded terminal `turn.failed` service rejection for
 `response_format 'codex_output_schema'`; that signal maps to
 `live_schema_rejection`. Any wire variance or other nonzero exit maps to
 `spawn_runtime`, while malformed result documents and zero-exit semantic or
-citation failures remain separate. A typed domain identity mismatch maps to
-reviewer/identity/identity before the broader semantic catch; no exception text
-or result identifier participates in that classification. Exact repository
-faults map to persistence/persistence/persistence rather than runtime.
+citation failures remain separate. After canonical outer shape and exact
+request-ID syntax are established, a typed domain identity mismatch maps to
+reviewer/identity/identity before citation normalization, membership, and the
+broader semantic catch; missing or malformed identity remains semantic, and no
+exception text or result identifier participates in that classification.
+Exact repository faults map to persistence/persistence/persistence rather than
+runtime.
 
 The report database accepts only the exact new schema. ADR-0013 applies: prior
 development state is rejected before mutation and has no migration, import, or

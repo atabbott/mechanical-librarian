@@ -12,9 +12,11 @@
   canonical diagnostic object used by CLI failure output and offline restart
   inspection. The pinned reviewer now runs in JSONL mode and maps only its
   exact bounded terminal `codex_output_schema` rejection event to
-  `live_schema_rejection`. A canonical zero-exit result naming another request
-  is a typed `identity` failure; other semantic/citation failures remain
-  `citation_membership`, and repository faults are typed `persistence`.
+  `live_schema_rejection`. After canonical outer shape and exact request-ID
+  syntax are proven, a zero-exit result naming another request is a typed
+  `identity` failure before citation checks; malformed identity remains
+  semantic, other semantic/citation failures remain `citation_membership`, and
+  repository faults are typed `persistence`.
   Malformed output and every other nonzero exit remain separate. Advance clean
   exact-current contracts to
   `metadata-report-v15`, `shadow-review-inspect-v2`, and

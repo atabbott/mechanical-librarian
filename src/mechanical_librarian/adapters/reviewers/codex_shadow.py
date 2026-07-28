@@ -1062,6 +1062,7 @@ def _validated_result(
             "malformed_output", count=len(result_bytes), digest=digest
         ) from error
     try:
+        ShadowReviewResult.validate_identity_for(raw, request)
         marker = _normalize_result_citations(raw, request)
         result = ShadowReviewResult.from_json(canonical_json(raw), request)
     except ShadowReviewIdentityError as error:

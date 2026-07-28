@@ -1277,7 +1277,18 @@ class ShadowReviewTests(unittest.TestCase):
     ) -> None:
         request = ShadowReviewRequest.synthetic_canary(_identity())
         wrong_identity = _result(request).to_data()
-        wrong_identity["review_request_id"] = "review_request_" + "f" * 64
+        wrong_id = "review_request_" + (
+            "f" if not request.review_request_id.endswith("f" * 64) else "e"
+        ) * 64
+        wrong_identity["review_request_id"] = wrong_id
+        with self.assertRaises(ShadowReviewIdentityError):
+            ShadowReviewResult.from_json(
+                canonical_json(wrong_identity),
+                request,
+            )
+        wrong_identity["recommendations"][0]["citations"] = [
+            "evidence_" + "f" * 64
+        ]
         with self.assertRaises(ShadowReviewIdentityError):
             ShadowReviewResult.from_json(
                 canonical_json(wrong_identity),
@@ -2320,6 +2331,93 @@ class CodexShadowAdapterTests(unittest.TestCase):
             ShadowReviewResult.from_json(
                 canonical_json(semantic), request
             )
+
+    def test_exact_wrong_identity_precedes_citation_normalization_only_after_shape(
+        self,
+    ) -> None:
+        request = _request_with_citations()
+        other_request = _request_with_citations(seed="b")
+        wrong_id = "review_request_" + (
+            "f" if not request.review_request_id.endswith("f" * 64) else "e"
+        ) * 64
+        foreign_citation = other_request.packet.citations[0]["citation_id"]
+        base = _result(request).to_data()
+        identity_cases = {
+            "valid_citations": base,
+            "foreign_citation": {
+                **base,
+                "recommendations": [
+                    {
+                        **base["recommendations"][0],
+                        "citations": [foreign_citation],
+                    }
+                ],
+            },
+            "malformed_recommendations": {
+                **base,
+                "recommendations": "private malformed recommendations",
+            },
+        }
+        for name, value in identity_cases.items():
+            with self.subTest(identity=name):
+                raw = json.loads(canonical_json(value))
+                raw["review_request_id"] = wrong_id
+                serialized = canonical_json(raw).encode("utf-8")
+                with self.assertRaises(ShadowReviewerError) as raised:
+                    codex_shadow._validated_result(
+                        serialized,
+                        request,
+                        maximum=MAX_REQUEST_BYTES,
+                    )
+                self.assertEqual("identity", raised.exception.code)
+                self.assertEqual(len(serialized), raised.exception.count)
+                self.assertEqual(
+                    hashlib.sha256(serialized).hexdigest(),
+                    raised.exception.digest,
+                )
+                self.assertNotIn(wrong_id, str(raised.exception))
+                self.assertNotIn("private", str(raised.exception))
+
+        semantic_cases = {
+            "missing_identity": {
+                key: value
+                for key, value in base.items()
+                if key != "review_request_id"
+            },
+            "malformed_identity": {
+                **base,
+                "review_request_id": "review_request_private",
+            },
+            "matching_identity_foreign_citation": {
+                **base,
+                "recommendations": [
+                    {
+                        **base["recommendations"][0],
+                        "citations": [foreign_citation],
+                    }
+                ],
+            },
+        }
+        for name, raw in semantic_cases.items():
+            with self.subTest(semantic=name):
+                serialized = canonical_json(raw).encode("utf-8")
+                with self.assertRaises(ShadowReviewerError) as raised:
+                    codex_shadow._validated_result(
+                        serialized,
+                        request,
+                        maximum=MAX_REQUEST_BYTES,
+                    )
+                self.assertEqual(
+                    "semantic_validation",
+                    raised.exception.code,
+                )
+        with self.assertRaises(ShadowReviewerError) as malformed:
+            codex_shadow._validated_result(
+                b'{"review_request_id":',
+                request,
+                maximum=MAX_REQUEST_BYTES,
+            )
+        self.assertEqual("malformed_output", malformed.exception.code)
 
     def test_untrusted_citations_normalize_before_domain_construction(self) -> None:
         request = _request_with_citations()
