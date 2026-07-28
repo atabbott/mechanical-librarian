@@ -15,7 +15,11 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.infrastructure.configuration import ConfigurationInput, configuration_schema_json, load_configuration_file
-from mechanical_librarian.infrastructure.security.credentials import read_secret, target_client
+from mechanical_librarian.infrastructure.security.credentials import (
+    hardcover_client,
+    read_secret,
+    target_client,
+)
 
 
 def _source(root: Path) -> dict[str, object]:
@@ -371,6 +375,33 @@ class CredentialBoundaryTests(unittest.TestCase):
             client.get("https://other.invalid/api/items/item-1")
             client.close()
         self.assertEqual(requests[0].headers.get("authorization"), "Bearer token-value")
+        self.assertIsNone(requests[1].headers.get("authorization"))
+        self.assertIsNone(requests[2].headers.get("authorization"))
+
+    def test_hardcover_raw_token_is_confined_to_the_exact_graphql_post(self) -> None:
+        token = "synthetic-provider-token"
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "secret"
+            secret.write_text(token, encoding="ascii")
+            secret.chmod(0o600)
+            requests: list[httpx.Request] = []
+            client = hardcover_client(
+                str(secret),
+                5,
+                transport=httpx.MockTransport(
+                    lambda request: requests.append(request)
+                    or httpx.Response(200)
+                ),
+            )
+            self.assertNotIn(token, repr(client))
+            client.post("https://api.hardcover.app/v1/graphql")
+            client.get("https://api.hardcover.app/v1/graphql")
+            client.post("https://other.invalid/v1/graphql")
+            client.close()
+        self.assertEqual(
+            "Bearer synthetic-provider-token",
+            requests[0].headers.get("authorization"),
+        )
         self.assertIsNone(requests[1].headers.get("authorization"))
         self.assertIsNone(requests[2].headers.get("authorization"))
 

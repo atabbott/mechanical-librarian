@@ -929,31 +929,53 @@ class ProviderAdapterTests(unittest.TestCase):
             }
             for row in rows
         ]
-        works = [
-            {"id": book["id"], "title": book.get("title"), "description": book.get("description"),
-             "release_date": book.get("release_date"),
-             "image": book.get("image"),
-             "contributions": book.get("contributions", []), "book_series": book.get("book_series", []),
-             "taggings": [
-                 {
-                     **tagging,
-                     "tag": (
-                         None
-                         if tagging.get("tag") is None
-                         else {
-                             **tagging["tag"],  # type: ignore[arg-type]
-                             "tag_category": tagging["tag"].get(  # type: ignore[union-attr]
-                                 "tag_category",
-                                 {"id": 1, "category": "Mood"},
-                             ),
-                         }
-                     ),
-                 }
-                 for tagging in book.get("taggings", [])  # type: ignore[union-attr]
-             ]}
-            for book in books
-        ]
-        return {"data": {"editions": editions, "books": works}}
+        works: list[dict[str, object]] = []
+        tags: list[dict[str, object]] = []
+        seen_tags: set[object] = set()
+        for book in books:
+            taggings: list[dict[str, object]] = []
+            for raw_tagging in book.get("taggings", []):  # type: ignore[union-attr]
+                tagging = cast(dict[str, object], raw_tagging)
+                raw_tag = tagging.get("tag")
+                if type(raw_tag) is dict:
+                    tag = {
+                        **raw_tag,
+                        "tag_category": raw_tag.get(
+                            "tag_category",
+                            {"id": 1, "category": "Mood"},
+                        ),
+                    }
+                    tag_id = tag.get("id")
+                    if tag_id not in seen_tags:
+                        seen_tags.add(tag_id)
+                        tags.append(tag)
+                else:
+                    tag_id = tagging.get("tag_id")
+                taggings.append(
+                    {
+                        "id": tagging.get("id"),
+                        "tag_id": tag_id,
+                    }
+                )
+            works.append(
+                {
+                    "id": book["id"],
+                    "title": book.get("title"),
+                    "description": book.get("description"),
+                    "release_date": book.get("release_date"),
+                    "image": book.get("image"),
+                    "contributions": book.get("contributions", []),
+                    "book_series": book.get("book_series", []),
+                    "taggings": taggings,
+                }
+            )
+        return {
+            "data": {
+                "editions": editions,
+                "books": works,
+                "tags": tags,
+            }
+        }
     def _claim(self) -> LocalClaim:
         return LocalClaim.create(
             kind=ClaimKind.ISBN,
@@ -978,6 +1000,43 @@ class ProviderAdapterTests(unittest.TestCase):
             applicability_basis="not_applicable",
             scope=ClaimScope.WORK,
         )
+
+    def _observe_contributions(
+        self,
+        contributions: list[dict[str, object]],
+    ) -> ProviderObservation:
+        payload = self._envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": "9780306406157",
+                    "contributions": contributions,
+                }
+            ],
+            [
+                {
+                    "id": 1,
+                    "title": "Synthetic title",
+                    "release_date": "2001-02-03",
+                    "contributions": contributions,
+                }
+            ],
+        )
+        return HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
+                )
+            ),
+            65_536,
+        ).observe(_isbn_lookup((self._claim(),)))
 
     def test_one_request_retains_all_candidates_in_identity_order(self) -> None:
         requests: list[httpx.Request] = []
@@ -1108,6 +1167,196 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertNotIn("parent_id", {claim.value for claim in claims if claim.value is not None})
         self.assertIn("contributions(order_by:{id:asc},limit:17)", captured[0]["query"])
         self.assertIn("taggings(order_by:{id:asc},limit:33)", captured[0]["query"])
+
+    def test_hardcover_operations_keep_relationship_selections_within_depth_three(
+        self,
+    ) -> None:
+        captured: list[dict[str, object]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=self._envelope([], []),
+            )
+
+        for lookup in (
+            _isbn_lookup((self._claim(),)),
+            _work_lookup(),
+        ):
+            with self.subTest(kind=lookup.kind):
+                captured.clear()
+                observation = HardcoverMetadataProvider(
+                    "catalogue",
+                    httpx.Client(transport=httpx.MockTransport(handler)),
+                    65_536,
+                ).observe(lookup)
+                self.assertEqual(ProviderStatus.NO_MATCH, observation.status)
+                operation = captured[0]
+                self.assertNotIn(
+                    "taggings(order_by:{id:asc},limit:33)"
+                    "{id tag{id tag tag_category",
+                    operation["query"],
+                )
+                self.assertIn(
+                    "taggings(order_by:{id:asc},limit:33){id tag_id}",
+                    operation["query"],
+                )
+                self.assertIn("tags:tags(", operation["query"])
+                self.assertIn(
+                    "{id tag tag_category{id category}}",
+                    operation["query"],
+                )
+                if lookup.kind is ProviderQueryKind.ISBN:
+                    self.assertEqual(
+                        {"isbns": ["9780306406157"]},
+                        operation["variables"],
+                    )
+                else:
+                    self.assertEqual(
+                        {
+                            "authors": ["Ada Example"],
+                            "title": "Current title",
+                        },
+                        operation["variables"],
+                    )
+
+    def test_http_success_graphql_errors_are_typed_before_data(self) -> None:
+        error = {
+            "message": "query exceeds the provider depth limit",
+            "extensions": {
+                "code": "validation-failed",
+                "path": "$.selectionSet.books.selectionSet",
+            },
+        }
+        for payload in (
+            {"errors": [error]},
+            {
+                "data": self._envelope(
+                    [
+                        {
+                            "id": 1,
+                            "book_id": 1,
+                            "isbn_10": None,
+                            "isbn_13": "9780306406157",
+                        }
+                    ],
+                    [{"id": 1, "title": "Current title"}],
+                )["data"],
+                "errors": [error],
+            },
+        ):
+            with self.subTest(partial="data" in payload):
+                provider = HardcoverMetadataProvider(
+                    "catalogue",
+                    httpx.Client(
+                        transport=httpx.MockTransport(
+                            lambda request, value=payload: httpx.Response(
+                                200,
+                                headers={"content-type": "application/json"},
+                                json=value,
+                            )
+                        )
+                    ),
+                    65_536,
+                )
+                observation = provider.observe(
+                    _isbn_lookup((self._claim(), self._title_claim()))
+                )
+                self.assertEqual(ProviderStatus.UNAVAILABLE, observation.status)
+                self.assertEqual((), observation.candidates)
+                self.assertEqual((), provider.cover_descriptors)
+
+    def test_graphql_error_envelope_bounds_are_closed_and_do_not_leak(self) -> None:
+        def observe(payload: object) -> ProviderObservation:
+            return HardcoverMetadataProvider(
+                "catalogue",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda request: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            content=(
+                                payload
+                                if type(payload) is bytes
+                                else json.dumps(payload).encode()
+                            ),
+                        )
+                    )
+                ),
+                65_536,
+            ).observe(_isbn_lookup((self._claim(),)))
+
+        exact_message = "x" * hardcover_metadata.MAX_GRAPHQL_ERROR_MESSAGE_CHARACTERS
+        for errors in (
+            [{"message": exact_message}],
+            [{"message": "declared"}] * hardcover_metadata.MAX_GRAPHQL_ERRORS,
+            [
+                {
+                    "message": "Authorization: Bearer synthetic-private-token",
+                    "locations": [{"line": 1, "column": 2}],
+                    "path": ["books", 0],
+                    "extensions": {
+                        "code": "validation-failed",
+                        "path": "$.selectionSet.books",
+                    },
+                }
+            ],
+        ):
+            with self.subTest(valid=len(errors)):
+                observation = observe({"errors": errors})
+                self.assertEqual(ProviderStatus.UNAVAILABLE, observation.status)
+                self.assertEqual((), observation.candidates)
+                self.assertNotIn("synthetic-private-token", repr(observation))
+
+        malformed = (
+            {"errors": []},
+            {"errors": [{"message": "x" * (len(exact_message) + 1)}]},
+            {
+                "errors": [{"message": "declared"}]
+                * (hardcover_metadata.MAX_GRAPHQL_ERRORS + 1)
+            },
+            {"errors": [{"message": "declared", "unexpected": True}]},
+            {"errors": [{"message": "declared", "extensions": {"nested": {}}}]},
+            b'{"errors":[{"message":"\xff"}]}',
+            b'{"errors":',
+        )
+        for payload in malformed:
+            with self.subTest(payload=repr(payload)[:80]):
+                observation = observe(payload)
+                self.assertEqual(ProviderStatus.MALFORMED, observation.status)
+                self.assertEqual((), observation.candidates)
+
+    def test_graphql_error_transport_timeout_and_expired_deadline_are_unavailable(
+        self,
+    ) -> None:
+        timed_out = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: (_ for _ in ()).throw(
+                        httpx.ReadTimeout("synthetic timeout")
+                    )
+                )
+            ),
+            65_536,
+        ).observe(_isbn_lookup((self._claim(),)))
+        self.assertEqual(ProviderStatus.UNAVAILABLE, timed_out.status)
+
+        requests: list[httpx.Request] = []
+        expired = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: requests.append(request)
+                    or httpx.Response(500)
+                )
+            ),
+            65_536,
+        ).observe(_isbn_lookup((self._claim(),)), deadline=0)
+        self.assertEqual(ProviderStatus.UNAVAILABLE, expired.status)
+        self.assertEqual([], requests)
 
     def test_work_lookup_retains_typed_taxonomy_and_first_publication(self) -> None:
         captured: list[dict[str, object]] = []
@@ -1380,13 +1629,21 @@ class ProviderAdapterTests(unittest.TestCase):
             self.assertEqual(provider.observe(_isbn_lookup((self._claim(),))).status, expected)
 
     def test_exact_rich_caps_and_pinned_schema_are_admitted(self) -> None:
-        self.assertEqual(hardcover_metadata.HARDCOVER_SCHEMA_COMMIT, "2c03110845765c32af945ed550a942330c394a3e")
+        self.assertEqual(hardcover_metadata.HARDCOVER_SCHEMA_COMMIT, "1c5bdbd3244e02b03ccc658a792793e39cba17a8")
         self.assertIn("contributions(order_by:{id:asc},limit:17){id contribution author{id name}}", hardcover_metadata._QUERY)
         self.assertIn("books:books(", hardcover_metadata._QUERY)
         self.assertNotIn("books_through_editions", hardcover_metadata._QUERY)
         self.assertIn("book_series(order_by:{id:asc},limit:17){id position series{id name}}", hardcover_metadata._QUERY)
         self.assertIn(
-            "taggings(order_by:{id:asc},limit:33){id tag{id tag tag_category{id category}}}",
+            "taggings(order_by:{id:asc},limit:33){id tag_id}",
+            hardcover_metadata._QUERY,
+        )
+        self.assertIn(
+            "tags:tags(",
+            hardcover_metadata._QUERY,
+        )
+        self.assertIn(
+            "{id tag tag_category{id category}}",
             hardcover_metadata._QUERY,
         )
         for scalar, description, expected in (("x" * 512, "d" * 16384, "valid"), ("x" * 513, "d" * 16385, "oversized")):
@@ -1423,6 +1680,116 @@ class ProviderAdapterTests(unittest.TestCase):
             payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions}], [{"id": 1, "title": None}])
             with self.assertRaises(ValueError):
                 hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())
+
+    def test_nullable_contribution_roles_preserve_candidate_with_typed_malformed_claims(self) -> None:
+        contribution = {
+            "id": 1,
+            "contribution": None,
+            "author": {"id": 1, "name": "Synthetic Contributor"},
+        }
+        observation = self._observe_contributions([contribution])
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        malformed = [
+            claim
+            for claim in observation.candidates[0].claims
+            if claim.kind is ClaimKind.CONTRIBUTOR
+            and claim.state is FieldState.MALFORMED
+        ]
+        self.assertEqual(
+            {ClaimScope.EDITION, ClaimScope.WORK},
+            {claim.scope for claim in malformed},
+        )
+        self.assertEqual(
+            {ProviderEvidenceKind.FIRST_PUBLICATION_DATE},
+            {evidence.kind for evidence in observation.candidates[0].evidence},
+        )
+
+    def test_nullable_and_malformed_contribution_authors_are_field_local(self) -> None:
+        for label, role, author, expected_kind in (
+            ("both-null", None, None, ClaimKind.CONTRIBUTOR),
+            ("null-author", "Author", None, ClaimKind.CREATOR),
+            ("malformed-author", "Translator", "invalid", ClaimKind.CONTRIBUTOR),
+            ("malformed-role-and-author", {}, "invalid", ClaimKind.CONTRIBUTOR),
+        ):
+            with self.subTest(label=label):
+                contribution = {
+                    "id": 1,
+                    "contribution": role,
+                    "author": author,
+                }
+                observation = self._observe_contributions([contribution])
+
+                self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+                malformed = [
+                    claim
+                    for claim in observation.candidates[0].claims
+                    if claim.kind is expected_kind
+                    and claim.state is FieldState.MALFORMED
+                ]
+                self.assertEqual(
+                    {ClaimScope.EDITION, ClaimScope.WORK},
+                    {claim.scope for claim in malformed},
+                )
+                self.assertEqual(
+                    {ProviderEvidenceKind.FIRST_PUBLICATION_DATE},
+                    {
+                        evidence.kind
+                        for evidence in observation.candidates[0].evidence
+                    },
+                )
+
+    def test_malformed_author_identity_is_omitted_without_losing_valid_name_claims(self) -> None:
+        contribution = {
+            "id": 1,
+            "contribution": "Author",
+            "author": {"id": None, "name": "Synthetic Contributor"},
+        }
+        observation = self._observe_contributions([contribution])
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        creators = [
+            claim
+            for claim in observation.candidates[0].claims
+            if claim.kind is ClaimKind.CREATOR
+        ]
+        self.assertEqual(
+            {ClaimScope.EDITION, ClaimScope.WORK},
+            {claim.scope for claim in creators},
+        )
+        self.assertTrue(all(claim.state is FieldState.VALID for claim in creators))
+        self.assertEqual(
+            {ProviderEvidenceKind.FIRST_PUBLICATION_DATE},
+            {evidence.kind for evidence in observation.candidates[0].evidence},
+        )
+
+    def test_nullable_contribution_overflow_remains_bounded_without_author_inference(self) -> None:
+        contributions = [
+            {"id": index, "contribution": None, "author": None}
+            for index in range(1, 18)
+        ]
+        observation = self._observe_contributions(contributions)
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        contribution_claims = [
+            claim
+            for claim in observation.candidates[0].claims
+            if claim.kind in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}
+        ]
+        self.assertEqual(
+            {
+                (ClaimKind.CONTRIBUTOR, ClaimScope.EDITION, FieldState.OVERSIZED),
+                (ClaimKind.CONTRIBUTOR, ClaimScope.WORK, FieldState.OVERSIZED),
+            },
+            {
+                (claim.kind, claim.scope, claim.state)
+                for claim in contribution_claims
+            },
+        )
+        self.assertEqual(
+            {ProviderEvidenceKind.FIRST_PUBLICATION_DATE},
+            {evidence.kind for evidence in observation.candidates[0].evidence},
+        )
 
     def test_nested_overflow_probe_objects_are_structurally_validated(self) -> None:
         cases = []
@@ -1479,6 +1846,76 @@ class ProviderAdapterTests(unittest.TestCase):
                 client = httpx.Client(transport=httpx.MockTransport(lambda request, value=data: httpx.Response(200, headers={"content-type": "application/json"}, json={"data": value})))
                 self.assertEqual(HardcoverMetadataProvider("catalogue", client, 65_536).observe(_isbn_lookup((self._claim(),))).status, ProviderStatus.MALFORMED)
 
+    def test_separate_taxonomy_root_join_rejects_missing_duplicate_and_extra_tags(
+        self,
+    ) -> None:
+        base = self._envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": "9780306406157",
+                }
+            ],
+            [
+                {
+                    "id": 1,
+                    "title": "Current title",
+                    "taggings": [
+                        {
+                            "id": 1,
+                            "tag": {
+                                "id": 2,
+                                "tag": "Hopeful",
+                                "tag_category": {
+                                    "id": 3,
+                                    "category": "Mood",
+                                },
+                            },
+                        }
+                    ],
+                }
+            ],
+        )
+        tag = cast(
+            list[dict[str, object]],
+            cast(dict[str, object], base["data"])["tags"],
+        )[0]
+        variants = []
+        missing = json.loads(json.dumps(base))
+        missing["data"]["tags"] = []
+        variants.append(missing)
+        duplicate = json.loads(json.dumps(base))
+        duplicate["data"]["tags"].append(tag)
+        variants.append(duplicate)
+        extra = json.loads(json.dumps(base))
+        extra["data"]["tags"].append(
+            {
+                "id": 99,
+                "tag": "Unreferenced",
+                "tag_category": {"id": 3, "category": "Mood"},
+            }
+        )
+        variants.append(extra)
+        for payload in variants:
+            with self.subTest(tags=len(payload["data"]["tags"])):
+                observation = HardcoverMetadataProvider(
+                    "catalogue",
+                    httpx.Client(
+                        transport=httpx.MockTransport(
+                            lambda request, value=payload: httpx.Response(
+                                200,
+                                headers={"content-type": "application/json"},
+                                json=value,
+                            )
+                        )
+                    ),
+                    65_536,
+                ).observe(_isbn_lookup((self._claim(),)))
+                self.assertEqual(ProviderStatus.MALFORMED, observation.status)
+                self.assertEqual((), observation.candidates)
+
     def test_multiple_inputs_are_selected_deterministically_and_statuses_do_not_retry(self) -> None:
         second = LocalClaim.create(
             kind=ClaimKind.ISBN,
@@ -1502,7 +1939,7 @@ class ProviderAdapterTests(unittest.TestCase):
 
         def success(request: httpx.Request) -> httpx.Response:
             observed_bodies.append(json.loads(request.content))
-            return httpx.Response(200, headers={"content-type": "application/json"}, json={"data": {"editions": [], "books": []}})
+            return httpx.Response(200, headers={"content-type": "application/json"}, json=self._envelope([], []))
 
         observation = HardcoverMetadataProvider(
             "catalogue", httpx.Client(transport=httpx.MockTransport(success)), 65_536
@@ -1559,7 +1996,7 @@ class ProviderAdapterTests(unittest.TestCase):
             return httpx.Response(
                 200,
                 headers={"content-type": "application/json"},
-                json={"data": {"editions": [], "books": []}},
+                json=self._envelope([], []),
             )
 
         observation = HardcoverMetadataProvider(
@@ -1596,7 +2033,7 @@ class ProviderAdapterTests(unittest.TestCase):
             TargetSnapshot("ebook", None, ()), claims
         )
         payload = json.dumps(
-            {"data": {"editions": [], "books": []}},
+            self._envelope([], []),
             separators=(",", ":"),
         ).encode()
 

@@ -192,6 +192,15 @@ same fixed one-second pacer and are single-attempt. Disabled references produce
 one `disabled` observation without client construction, credential access, or
 egress. Unreferenced providers are absent.
 
+Each Hardcover ISBN or complete-title/author operation uses only current
+documented fields and no more than three relationship levels. The work rows
+retain bounded tagging IDs and a bounded sibling `tags` root supplies the exact
+category relation; the adapter admits taxonomy only after an exact closed join.
+An HTTP 200 response containing a valid bounded GraphQL `errors` envelope is
+`unavailable`, even when partial `data` is also present, and contributes no
+candidate or cover evidence. A malformed, empty, or over-bound error envelope is
+`malformed`; its diagnostic content is never retained.
+
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
 bounded set is `candidates`; all candidates survive in provider-identity order
 with their distinct edition identity and opaque provider-local work identity.

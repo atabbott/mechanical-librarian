@@ -68,6 +68,9 @@ to the fixed HTTPS Hardcover GraphQL URL. Open Library has no secret; its
 operational contact appears only in the User-Agent of requests to the fixed
 metadata and Covers origins. HTTP clients ignore ambient proxy/environment
 configuration and redirects.
+The Hardcover secret file contains the bare provider token without an
+authorization scheme. Infrastructure adds the required `Bearer` scheme only to
+an exact POST to the fixed GraphQL URL.
 
 Disabled providers cause no secret access, client construction, or egress.
 Unreferenced providers are never bound. Each of at most eight distinct
@@ -87,6 +90,14 @@ the response-byte aggregate and deadline, and, for Open Library, one
 request-start pacer. There is no automatic retry.
 Each referenced enabled Google Books provider makes one fixed Volumes request
 per admitted lane, for nine aggregate metadata requests.
+
+The fixed Hardcover selections stay within three relationship levels. Typed
+taxonomy is joined from bounded sibling-root tag rows by exact provider IDs;
+missing, duplicate, extra, malformed, or over-bound join material fails closed.
+HTTP-success GraphQL `errors` are inspected before `data` and produce no
+candidates or cover descriptors. Their bounded structure is validated only to
+type the failure; provider messages, paths, extensions, and partial data are not
+logged, persisted, or copied into reviewer material.
 
 Cover acquisition remains report-only. The ABS raw-cover route is bracketed by
 the final item read and has no credentials, cookies, referrer, or user agent.

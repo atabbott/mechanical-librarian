@@ -43,7 +43,11 @@ The suite covers:
   collision-free lane candidate references, sparse candidates, every valid
   ISBN family plus the optional complete-author work lane, fail-closed work
   qualification, typed taxonomy/publication scope, all-or-nothing malformed
-  handling, and identity order;
+  handling, and identity order. Hardcover coverage additionally fixes both
+  operations at three relationship levels, proves the bounded sibling taxonomy
+  join, inspects valid error-only and partial-data GraphQL errors before data,
+  rejects malformed/UTF-8/empty/over-bound error envelopes, and preserves
+  timeout, HTTP-status, byte, lane-order, and raw-token confinement behavior;
 - Open Library exact per-family Search admission, canonical edition/work
   request order, shared one-second pacing, finite rich evidence, terminal
   failure mapping, identified metadata/cover requests, cover-failure isolation,
