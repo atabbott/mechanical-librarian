@@ -1956,12 +1956,15 @@ def _bibliographic_indicia(
         return ()
     labelled = _BIBLIOGRAPHIC_INDICIA_LABEL.fullmatch(text)
     if labelled is not None:
+        value = labelled.group("value")
+        if _NON_BIBLIOGRAPHIC_INDICIA.match(value) is not None:
+            return ()
         field = {
             "subtitle": OpeningField.SUBTITLE,
             "publisher": OpeningField.PUBLISHER,
             "imprint": OpeningField.IMPRINT,
         }[labelled.group("label").casefold()]
-        return ((field, labelled.group("value")),)
+        return ((field, value),)
     return tuple(
         (field, text)
         for token, field in (

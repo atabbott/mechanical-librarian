@@ -1302,6 +1302,17 @@ class MetadataReportCommandTests(unittest.TestCase):
                                     "<p>Publisher: House One</p>"
                                     "<p>Publisher: House Two</p>"
                                     "<p>Imprint: Example Mark</p>"
+                                    "<p>Publisher: Printed by Printer House</p>"
+                                    "<p>Publisher: Distributed by Retail House</p>"
+                                    "<p>Publisher: Distributor: Distribution House</p>"
+                                    "<p>Publisher: Retailer: Retail House</p>"
+                                    "<p>Publisher: Copyright holder: Rights House</p>"
+                                    "<p>Imprint: EPUB conversion by Conversion House</p>"
+                                    "<p>Publisher: Printer House</p>"
+                                    "<p>Publisher: Distributor Books</p>"
+                                    "<p>Publisher: Retailer Press</p>"
+                                    "<p>Publisher: Copyright House</p>"
+                                    "<p>Imprint: Conversion Press</p>"
                                 )
                                 if index == 8
                                 else _xhtml("<p>ordinary synthetic prose</p>")
@@ -1375,6 +1386,31 @@ class MetadataReportCommandTests(unittest.TestCase):
                         "imprint",
                         "Example Mark",
                         "Imprint: Example Mark",
+                    ),
+                    (
+                        "publisher",
+                        "Printer House",
+                        "Publisher: Printer House",
+                    ),
+                    (
+                        "publisher",
+                        "Distributor Books",
+                        "Publisher: Distributor Books",
+                    ),
+                    (
+                        "publisher",
+                        "Retailer Press",
+                        "Publisher: Retailer Press",
+                    ),
+                    (
+                        "publisher",
+                        "Copyright House",
+                        "Publisher: Copyright House",
+                    ),
+                    (
+                        "imprint",
+                        "Conversion Press",
+                        "Imprint: Conversion Press",
                     ),
                 ],
             )
