@@ -13,7 +13,17 @@ from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote
 
+from mechanical_librarian.application.failure_diagnostics import (
+    reviewer_diagnostic_is_admissible,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.failure_diagnostics import (
+    MAX_DIAGNOSTIC_COUNT,
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
+)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     REPORT_SCHEMA,
@@ -56,7 +66,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v14'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v15'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -152,11 +162,9 @@ _SHADOW_OUTCOMES_SQL = (
     "attempt_id TEXT PRIMARY KEY NOT NULL REFERENCES shadow_review_attempts(attempt_id), "
     "kind TEXT NOT NULL CHECK(kind IN ('result','failure')), "
     "result_document TEXT CHECK(result_document IS NULL OR (typeof(result_document)='text' AND length(CAST(result_document AS BLOB)) BETWEEN 2 AND 262144)), "
-    "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('runtime','setup','auth','profile','timeout','cancel','schema','response_format','malformed_output','semantic_validation','currentness')), "
-    "diagnostic_count INTEGER NOT NULL CHECK(diagnostic_count BETWEEN 0 AND 2147483647), "
-    "diagnostic_digest TEXT CHECK(diagnostic_digest IS NULL OR (length(diagnostic_digest)=64 AND diagnostic_digest NOT GLOB '*[^0-9a-f]*')), "
-    "CHECK((kind='result' AND result_document IS NOT NULL AND failure_code IS NULL AND diagnostic_count=0 AND diagnostic_digest IS NULL) OR "
-    "(kind='failure' AND result_document IS NULL AND failure_code IS NOT NULL)))"
+    "failure_document TEXT CHECK(failure_document IS NULL OR (typeof(failure_document)='text' AND length(CAST(failure_document AS BLOB)) BETWEEN 2 AND 512)), "
+    "CHECK((kind='result' AND result_document IS NOT NULL AND failure_document IS NULL) OR "
+    "(kind='failure' AND result_document IS NULL AND failure_document IS NOT NULL)))"
 )
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
@@ -1087,8 +1095,8 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("shadow review was not dispatched")
             self._connection.execute(
                 "INSERT INTO shadow_review_outcomes("
-                "attempt_id,kind,result_document,failure_code,"
-                "diagnostic_count,diagnostic_digest) VALUES(?,'result',?,NULL,0,NULL)",
+                "attempt_id,kind,result_document,failure_document) "
+                "VALUES(?,'result',?,NULL)",
                 (attempt_id, validated.to_json()),
             )
             if self._binding is not None:
@@ -1102,45 +1110,20 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("shadow review result failed") from error
 
     def record_shadow_failure(
-        self, attempt_id: str, code: str, count: int, digest: str | None
+        self, attempt_id: str, diagnostic: str
     ) -> None:
         try:
-            if (
-                code
-                not in {
-                    "runtime",
-                    "setup",
-                    "auth",
-                    "profile",
-                    "timeout",
-                    "cancel",
-                    "schema",
-                    "response_format",
-                    "malformed_output",
-                    "semantic_validation",
-                    "currentness",
-                }
-                or type(count) is not int
-                or not 0 <= count <= 2_147_483_647
-                or (
-                    digest is not None
-                    and (
-                        type(digest) is not str
-                        or len(digest) != 64
-                        or any(value not in "0123456789abcdef" for value in digest)
-                    )
-                )
-            ):
+            parsed = FailureDiagnostic.from_json(diagnostic)
+            if not reviewer_diagnostic_is_admissible(parsed):
                 raise MetadataReportError("shadow review failure is invalid")
             self._connection.execute("BEGIN IMMEDIATE")
             if self._binding is not None:
                 self._binding.require_current()
             self._connection.execute(
                 "INSERT INTO shadow_review_outcomes("
-                "attempt_id,kind,result_document,failure_code,"
-                "diagnostic_count,diagnostic_digest) "
-                "VALUES(?,'failure',NULL,?,?,?)",
-                (attempt_id, code, count, digest),
+                "attempt_id,kind,result_document,failure_document) "
+                "VALUES(?,'failure',NULL,?)",
+                (attempt_id, parsed.to_json()),
             )
             if self._binding is not None:
                 self._binding.require_current()
@@ -1168,11 +1151,7 @@ class SQLiteMetadataReportRepository:
             except ReviewAdmissionStaleError:
                 current = False
             rows = self._connection.execute(
-                "SELECT a.attempt_id,a.attempt_number,"
-                "a.claim_pid,a.claim_start_token,"
-                "d.pid,d.pgid,d.start_token,"
-                "o.kind,o.result_document,o.failure_code,"
-                "o.diagnostic_count,o.diagnostic_digest "
+                "SELECT d.pid,o.kind,o.result_document,o.failure_document "
                 "FROM shadow_review_attempts a "
                 "LEFT JOIN shadow_review_dispatches d ON d.attempt_id=a.attempt_id "
                 "LEFT JOIN shadow_review_outcomes o ON o.attempt_id=a.attempt_id "
@@ -1181,72 +1160,85 @@ class SQLiteMetadataReportRepository:
             ).fetchall()
             if not rows:
                 raise MetadataReportError("shadow review attempt is unavailable")
-            attempts: list[dict[str, object]] = []
+            diagnostics: dict[
+                tuple[str, str, str, bool | None, bool | None],
+                FailureDiagnostic,
+            ] = {}
+
+            def add_diagnostic(diagnostic: FailureDiagnostic) -> None:
+                key = (
+                    diagnostic.category.value,
+                    diagnostic.component.value,
+                    diagnostic.stage.value,
+                    diagnostic.retryable,
+                    diagnostic.current,
+                )
+                prior = diagnostics.get(key)
+                diagnostics[key] = FailureDiagnostic(
+                    diagnostic.category,
+                    diagnostic.component,
+                    diagnostic.stage,
+                    diagnostic.retryable,
+                    diagnostic.current,
+                    min(
+                        diagnostic.count
+                        + (0 if prior is None else prior.count),
+                        MAX_DIAGNOSTIC_COUNT,
+                    ),
+                )
+
             top_status = "pending"
             for row in rows:
-                (
-                    attempt_id,
-                    attempt_number,
-                    claim_pid,
-                    claim_start_token,
-                    pid,
-                    pgid,
-                    start_token,
-                    kind,
-                    result_document,
-                    failure_code,
-                    diagnostic_count,
-                    diagnostic_digest,
-                ) = row
+                pid, kind, result_document, failure_document = row
                 status = "pending"
-                result_data = None
-                failure_data = None
                 if kind == "result":
                     result = ShadowReviewResult.from_json(
                         result_document, request
                     )
-                    result_data = result.to_data()
                     status = QUALIFICATION_MODE
                 elif kind == "failure":
                     status = "unknown" if pid is not None else "failed"
-                    failure_data = {
-                        "code": failure_code,
-                        "count": diagnostic_count,
-                        "diagnostic_digest": diagnostic_digest,
-                    }
+                    diagnostic = FailureDiagnostic.from_json(failure_document)
+                    if not reviewer_diagnostic_is_admissible(diagnostic):
+                        raise MetadataReportError(
+                            "shadow review failure is invalid"
+                        )
+                    add_diagnostic(diagnostic)
                 elif pid is not None:
                     status = "unknown"
-                attempts.append(
-                    {
-                        "attempt_id": attempt_id,
-                        "attempt_number": attempt_number,
-                        "claim": {
-                            "pid": claim_pid,
-                            "start_token": claim_start_token,
-                        },
-                        "dispatch": (
-                            None
-                            if pid is None
-                            else {
-                                "pgid": pgid,
-                                "pid": pid,
-                                "start_token": start_token,
-                            }
-                        ),
-                        "failure": failure_data,
-                        "result": result_data,
-                        "status": status,
-                    }
-                )
+                    add_diagnostic(
+                        FailureDiagnostic(
+                            FailureCategory.UNKNOWN,
+                            FailureComponent.REVIEWER,
+                            FailureStage.EXECUTION,
+                        )
+                    )
                 top_status = status
             return _canonical_json(
                 {
-                    "attempts": attempts,
+                    "attempt_count": len(rows),
                     "current": current,
+                    "diagnostics": [
+                        value.to_data()
+                        for value in sorted(
+                            diagnostics.values(),
+                            key=lambda value: (
+                                value.category.value,
+                                value.component.value,
+                                value.stage.value,
+                                -1
+                                if value.retryable is None
+                                else int(value.retryable),
+                                -1
+                                if value.current is None
+                                else int(value.current),
+                            ),
+                        )
+                    ],
                     "mode": QUALIFICATION_MODE,
-                    "request": request.to_data(),
+                    "review_case_id": request.review_case_id,
                     "review_request_id": request.review_request_id,
-                    "schema_version": "shadow-review-inspect-v1",
+                    "schema_version": "shadow-review-inspect-v2",
                     "status": top_status,
                 }
             )

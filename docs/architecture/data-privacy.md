@@ -51,12 +51,14 @@ does not add reviewer identity, decision text, raw evidence, or service secrets.
 
 Shadow review adds append-only sanitized canonical packets, validated canonical
 results, path-free executable/model/profile/policy identities, attempt and
-dispatch process facts, and bounded failure code/count/digest diagnostics. The
+dispatch process facts, and canonical bounded failure diagnostics. The
 packet uses only the opaque ReviewCase ID, current field projections, declared
 candidate/evidence identities, and the bounded report facts those candidates
 already reference. It excludes connection/library/item IDs, file identities,
 paths, credentials, target/provider payloads, raw CLI streams, chain-of-thought,
-and arbitrary diagnostics.
+and arbitrary diagnostics. Public inspection aggregates only category, closed
+component/stage, optional retryability/currentness, and count; it omits packets,
+results, process facts, attempt identifiers and ordinals, and legacy digests.
 
 The complete application SQLite database—including shadow packets and advice—
 is exposed to whoever can read a backup. Store it and its backups as private

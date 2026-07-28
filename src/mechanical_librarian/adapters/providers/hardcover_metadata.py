@@ -312,6 +312,7 @@ class HardcoverMetadataProvider:
             return result(error.status)
         try:
             if _has_graphql_errors(payload):
+                self._mark_response_attempt("provider_declared_error")
                 return result(ProviderStatus.UNAVAILABLE)
             candidates = _parse_candidates(
                 payload,
@@ -335,8 +336,10 @@ class HardcoverMetadataProvider:
                 ):
                     return result(ProviderStatus.MALFORMED)
         except _CandidateLimit:
+            self._mark_response_attempt("response_oversized")
             return result(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
         except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
+            self._mark_response_attempt("response_malformed")
             return result(ProviderStatus.MALFORMED)
         try:
             self.cover_descriptors = _parse_cover_descriptors(
@@ -613,6 +616,21 @@ class HardcoverMetadataProvider:
                 ),
                 outcome=outcome,
             )
+        )
+
+    def _mark_response_attempt(self, category: str) -> None:
+        if not self._attempt_records:
+            return
+        prior = self._attempt_records[-1]
+        if prior.outcome != "response_received":
+            return
+        self._attempt_records[-1] = ProviderAttemptRecord(
+            provider=prior.provider,
+            ordinal=prior.ordinal,
+            category=category,
+            delay_seconds=None,
+            elapsed_seconds=prior.elapsed_seconds,
+            outcome="terminal",
         )
 
 

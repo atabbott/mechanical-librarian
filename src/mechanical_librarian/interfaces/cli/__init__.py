@@ -13,9 +13,16 @@ from pathlib import Path
 from typing import TextIO
 
 from mechanical_librarian.application.configuration import ConfigurationError
+from mechanical_librarian.application.failure_diagnostics import (
+    FailureDiagnostic,
+    diagnostics_are_canonical,
+    reviewer_diagnostic_is_admissible,
+    reviewer_failure_diagnostic,
+)
 from mechanical_librarian.application.metadata_report import (
     CredentialError,
     CurrentnessError,
+    MetadataReportError,
     UnsupportedMediaError,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport, ReportValueError
@@ -340,152 +347,64 @@ def _validated_shadow_output(
             if request.review_case_id != review_case_id:
                 raise ValueError
             return serialized
-        if set(raw) != {
-            "attempts",
-            "current",
-            "mode",
-            "request",
-            "review_request_id",
-            "schema_version",
-            "status",
-        }:
-            raise ValueError
         if (
-            raw["mode"] != "qualification_only"
-            or raw["schema_version"] != "shadow-review-inspect-v1"
+            set(raw)
+            != {
+                "attempt_count",
+                "current",
+                "diagnostics",
+                "mode",
+                "review_case_id",
+                "review_request_id",
+                "schema_version",
+                "status",
+            }
+            or raw["mode"] != "qualification_only"
+            or raw["schema_version"] != "shadow-review-inspect-v2"
             or type(raw["current"]) is not bool
-            or type(raw["request"]) is not dict
-            or type(raw["attempts"]) is not list
-            or not 1 <= len(raw["attempts"]) <= 32
-        ):
-            raise ValueError
-        request = ShadowReviewRequest.from_source_validated_json(
-            shadow_canonical_json(raw["request"])
-        )
-        if (
-            raw["review_request_id"] != request.review_request_id
+            or type(raw["attempt_count"]) is not int
+            or not 1 <= raw["attempt_count"] <= 32
+            or type(raw["diagnostics"]) is not list
+            or len(raw["diagnostics"]) > 20
             or (
                 review_case_id is not None
-                and request.review_case_id != review_case_id
+                and raw["review_case_id"] != review_case_id
             )
+            or type(raw["review_case_id"]) is not str
+            or re.fullmatch(
+                r"review_case_[0-9a-f]{64}", raw["review_case_id"]
+            )
+            is None
             or (
                 review_request_id is not None
-                and request.review_request_id != review_request_id
+                and raw["review_request_id"] != review_request_id
             )
+            or type(raw["review_request_id"]) is not str
+            or re.fullmatch(
+                r"review_request_[0-9a-f]{64}", raw["review_request_id"]
+            )
+            is None
+            or raw["status"]
+            not in {"pending", "unknown", "failed", "qualification_only"}
         ):
             raise ValueError
-        statuses: list[str] = []
-        for number, attempt in enumerate(raw["attempts"], 1):
-            if type(attempt) is not dict or set(attempt) != {
-                "attempt_id",
-                "attempt_number",
-                "claim",
-                "dispatch",
-                "failure",
-                "result",
-                "status",
-            }:
-                raise ValueError
-            if (
-                type(attempt["attempt_id"]) is not str
-                or re.fullmatch(
-                    r"review_attempt_[0-9a-f]{64}", attempt["attempt_id"]
-                )
-                is None
-                or attempt["attempt_number"] != number
-                or attempt["attempt_id"]
-                != "review_attempt_"
-                + hashlib.sha256(
-                    shadow_canonical_json(
-                        {
-                            "attempt_number": number,
-                            "review_request_id": request.review_request_id,
-                            "schema_version": "shadow-review-attempt-v1",
-                        }
-                    ).encode("utf-8")
-                ).hexdigest()
-            ):
-                raise ValueError
-            claim = attempt["claim"]
-            if (
-                type(claim) is not dict
-                or set(claim) != {"pid", "start_token"}
-                or type(claim["pid"]) is not int
-                or claim["pid"] < 2
-                or type(claim["start_token"]) is not str
-                or not 1 <= len(claim["start_token"]) <= 32
-                or not claim["start_token"].isascii()
-                or not claim["start_token"].isdigit()
-            ):
-                raise ValueError
-            dispatch = attempt["dispatch"]
-            if dispatch is not None and (
-                type(dispatch) is not dict
-                or set(dispatch) != {"pgid", "pid", "start_token"}
-                or type(dispatch["pid"]) is not int
-                or type(dispatch["pgid"]) is not int
-                or dispatch["pid"] < 2
-                or dispatch["pgid"] < 2
-                or type(dispatch["start_token"]) is not str
-                or not 1 <= len(dispatch["start_token"]) <= 32
-                or not dispatch["start_token"].isascii()
-                or not dispatch["start_token"].isdigit()
-            ):
-                raise ValueError
-            failure = attempt["failure"]
-            if failure is not None and (
-                type(failure) is not dict
-                or set(failure) != {"code", "count", "diagnostic_digest"}
-                or failure["code"]
-                not in {
-                    "runtime",
-                    "setup",
-                    "auth",
-                    "profile",
-                    "timeout",
-                    "cancel",
-                    "schema",
-                    "response_format",
-                    "malformed_output",
-                    "semantic_validation",
-                    "currentness",
-                }
-                or type(failure["count"]) is not int
-                or not 0 <= failure["count"] <= 2_147_483_647
-                or (
-                    failure["diagnostic_digest"] is not None
-                    and (
-                        type(failure["diagnostic_digest"]) is not str
-                        or re.fullmatch(
-                            r"[0-9a-f]{64}",
-                            failure["diagnostic_digest"],
-                        )
-                        is None
-                    )
-                )
-            ):
-                raise ValueError
-            result = attempt["result"]
-            if result is not None:
-                if type(result) is not dict:
-                    raise ValueError
-                ShadowReviewResult.from_json(
-                    shadow_canonical_json(result), request
-                )
-            if result is not None and dispatch is not None and failure is None:
-                expected_status = "qualification_only"
-            elif failure is not None and result is None:
-                expected_status = "unknown" if dispatch is not None else "failed"
-            elif dispatch is not None and failure is None and result is None:
-                expected_status = "unknown"
-            elif dispatch is None and failure is None and result is None:
-                expected_status = "pending"
-            else:
-                raise ValueError
-            if attempt["status"] != expected_status:
-                raise ValueError
-            statuses.append(expected_status)
-        if raw["status"] != statuses[-1]:
+        diagnostics = tuple(
+            FailureDiagnostic.from_json(shadow_canonical_json(value))
+            for value in raw["diagnostics"]
+        )
+        if (
+            tuple(value.to_data() for value in diagnostics)
+            != tuple(raw["diagnostics"])
+            or not diagnostics_are_canonical(diagnostics)
+            or any(
+                not reviewer_diagnostic_is_admissible(value)
+                for value in diagnostics
+            )
+            or (
+                raw["status"] in {"failed", "unknown"}
+                and not diagnostics
+            )
+        ):
             raise ValueError
         return serialized
     except (
@@ -509,6 +428,18 @@ def _unique_cli_object(
             raise ValueError("duplicate key")
         result[key] = value
     return result
+
+
+def _shadow_failure(diagnostic: FailureDiagnostic) -> str:
+    return json.dumps(
+        {
+            "diagnostic": diagnostic.to_data(),
+            "mode": "qualification_only",
+            "schema_version": "shadow-review-failure-v2",
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _preview_variant(value: str) -> str:
@@ -544,10 +475,7 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
             raw_arguments[0].startswith("shadow-review-")
             or raw_arguments[0].startswith("reviewer-auth-")
         ):
-            errors.write(
-                '{"code":"profile","mode":"qualification_only",'
-                '"schema_version":"shadow-review-failure-v1"}\n'
-            )
+            errors.write(_shadow_failure(reviewer_failure_diagnostic("profile")) + "\n")
         elif raw_arguments[:1] in {("review-case-admit",), ("review-case-get",)}:
             errors.write(ReviewAdmissionFailure("invalid").to_json() + "\n")
         else:
@@ -605,24 +533,18 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
                 ),
             )
         except ShadowReviewError as error:
+            errors.write(_shadow_failure(error.diagnostic) + "\n")
+            return 1
+        except MetadataReportError:
             errors.write(
-                json.dumps(
-                    {
-                        "code": error.code,
-                        "mode": "qualification_only",
-                        "schema_version": "shadow-review-failure-v1",
-                    },
-                    separators=(",", ":"),
-                    sort_keys=True,
+                _shadow_failure(
+                    reviewer_failure_diagnostic("persistence")
                 )
                 + "\n"
             )
             return 1
         except Exception:
-            errors.write(
-                '{"code":"runtime","mode":"qualification_only",'
-                '"schema_version":"shadow-review-failure-v1"}\n'
-            )
+            errors.write(_shadow_failure(reviewer_failure_diagnostic("unknown")) + "\n")
             return 1
         output.write(serialized + "\n")
         return 0

@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- Expose one closed, aggregate-safe provider and reviewer failure taxonomy
+  without copying exception text, credentials, paths, prompts, packets,
+  provider bodies or records, process streams, headers, timings, digests, or
+  attempt ordinals into public or durable status. Provider attempt evidence is
+  mapped once at the application seam while `ProviderStatus` remains
+  unchanged; Hardcover HTTP 200 GraphQL errors are terminal
+  `provider_declared_error`, never success. Shadow failures persist the same
+  canonical diagnostic object used by CLI failure output and offline restart
+  inspection. The pinned reviewer now runs in JSONL mode and maps only its
+  exact bounded terminal `codex_output_schema` rejection event to
+  `live_schema_rejection`. After canonical outer shape and exact request-ID
+  syntax are proven, a zero-exit result naming another request is a typed
+  `identity` failure before citation checks; malformed identity remains
+  semantic, other semantic/citation failures remain `citation_membership`, and
+  repository faults at application and CLI-runner boundaries are
+  typed `persistence`. Outcome-less dispatched attempts reopen with one bounded
+  `unknown` reviewer diagnostic, and discovery-plan overflow records
+  `lookup_construction` in each affected provider observation. Malformed
+  optional provider attempt records fail closed to `unknown`; report replay
+  admits only canonical provider diagnostic aggregates. Inspection binds both
+  case and request identities, rejects duplicate or out-of-order aggregates,
+  and untyped CLI runner exceptions map to `unknown`. Shadow failure record,
+  durable replay, application inspection, and CLI inspection admit only the
+  closed reviewer-owned category/component/stage shapes, including the exact
+  persistence/persistence/persistence producer.
+  Malformed output and every other nonzero exit remain separate. Advance clean
+  exact-current contracts to
+  `metadata-report-v15`, `shadow-review-inspect-v2`, and
+  `shadow-review-failure-v2`; proposal, packet, request, and result bytes remain
+  unchanged. Earlier development report databases are rejected without
+  migration under ADR-0013. ADR-0017 freezes the privacy and replay boundary.
+  (#381)
+
 - Preserve provider publication evidence with the same closed event and
   year/month/day/timestamp precision vocabulary as local EPUB evidence.
   Provider claims retain lexical and normalized values plus explicit or

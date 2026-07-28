@@ -10,8 +10,10 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     open_repository,
@@ -28,7 +30,15 @@ from mechanical_librarian.application.shadow_reviews import (
     ShadowReviewError,
     ShadowReviewRunResult,
     execute_shadow_review,
+    inspect_shadow_review,
     preview_shadow_review,
+)
+from mechanical_librarian.application.failure_diagnostics import (
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
+    reviewer_failure_diagnostic,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.metadata_report import (
@@ -47,7 +57,10 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
-from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.review_case import (
+    ReviewAdmissionStaleError,
+    ReviewCase,
+)
 from mechanical_librarian.domain.shadow_review import (
     MAX_LINKAGE_FORMAT_FACTS,
     MAX_LINKAGE_IDENTIFIER_FACTS,
@@ -56,6 +69,7 @@ from mechanical_librarian.domain.shadow_review import (
     MAX_REQUEST_BYTES,
     ReviewerProfileIdentity,
     ShadowReviewDocumentError,
+    ShadowReviewIdentityError,
     ShadowReviewPacket,
     ShadowReviewRequest,
     ShadowReviewResult,
@@ -86,6 +100,16 @@ def _identity() -> ReviewerProfileIdentity:
         16,
         131_072,
     )
+
+
+def _failure_output(code: str) -> str:
+    return canonical_json(
+        {
+            "diagnostic": reviewer_failure_diagnostic(code).to_data(),
+            "mode": "qualification_only",
+            "schema_version": "shadow-review-failure-v2",
+        }
+    ) + "\n"
 
 
 def _result(request: ShadowReviewRequest) -> ShadowReviewResult:
@@ -819,6 +843,25 @@ class ShadowReviewTests(unittest.TestCase):
                 )
             )
             self.assertEqual("unknown", inspected["status"])
+            self.assertEqual(1, inspected["attempt_count"])
+            self.assertEqual(
+                ["timeout"],
+                [
+                    value["category"]
+                    for value in inspected["diagnostics"]
+                ],
+            )
+            projection = canonical_json(inspected)
+            for forbidden in (
+                "diagnostic_digest",
+                "failure_code",
+                "attempt_number",
+                "claim_pid",
+                "start_token",
+                "packet",
+                "prompt",
+            ):
+                self.assertNotIn(forbidden, projection)
             successful = _Runner()
             result = json.loads(
                 execute_shadow_review(
@@ -832,7 +875,154 @@ class ShadowReviewTests(unittest.TestCase):
                 )
             )
             self.assertEqual("qualification_only", result["status"])
-            self.assertEqual(2, len(result["attempts"]))
+            self.assertEqual(2, result["attempt_count"])
+            repository.close()
+
+    def test_live_schema_rejection_survives_restart_as_bounded_diagnostic(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reports.sqlite"
+            repository, case_id = self._repository(directory)
+            with self.assertRaises(ShadowReviewerError) as raised:
+                execute_shadow_review(
+                    repository,
+                    case_id,
+                    _identity(),
+                    _Runner(fail="response_format"),
+                    claimant=(9001, "11"),
+                )
+            self.assertEqual("response_format", raised.exception.code)
+            request_id = repository._connection.execute(
+                "SELECT review_request_id FROM shadow_review_requests"
+            ).fetchone()[0]
+            repository.close()
+
+            reopened = open_repository(database, create=False)
+            inspected = reopened.inspect_shadow_request(
+                request_id, _identity().to_json()
+            )
+            self.assertEqual(
+                ["live_schema_rejection"],
+                [
+                    value["category"]
+                    for value in json.loads(inspected)["diagnostics"]
+                ],
+            )
+            for forbidden in (
+                "response_format",
+                "diagnostic_digest",
+                "/tmp/private",
+                "raw stderr",
+                "raw stdout",
+            ):
+                self.assertNotIn(forbidden, inspected)
+            reopened.close()
+
+    def test_wrong_result_identity_persists_and_restarts_without_payload(
+        self,
+    ) -> None:
+        class WrongIdentityRunner:
+            def run(self, request, dispatched):
+                dispatched(12345, 12345, "777")
+                result = _result(request)
+                wrong_id = "review_request_" + (
+                    "f" if not request.review_request_id.endswith("f" * 64) else "e"
+                ) * 64
+                return ShadowReviewRunResult(
+                    ShadowReviewResult(wrong_id, result.recommendations),
+                    CitationNormalizationMarker(False, 0),
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reports.sqlite"
+            repository, case_id = self._repository(directory)
+            with self.assertRaises(ShadowReviewError) as raised:
+                execute_shadow_review(
+                    repository,
+                    case_id,
+                    _identity(),
+                    WrongIdentityRunner(),
+                    claimant=(9001, "11"),
+                )
+            self.assertEqual("identity", raised.exception.code)
+            self.assertEqual("identity", raised.exception.diagnostic.category.value)
+            self.assertEqual("reviewer", raised.exception.diagnostic.component.value)
+            self.assertEqual("identity", raised.exception.diagnostic.stage.value)
+            request_id = repository._connection.execute(
+                "SELECT review_request_id FROM shadow_review_requests"
+            ).fetchone()[0]
+            repository.close()
+
+            reopened = open_repository(database, create=False)
+            inspected = reopened.inspect_shadow_request(
+                request_id, _identity().to_json()
+            )
+            diagnostic = json.loads(inspected)["diagnostics"]
+            self.assertEqual(
+                [
+                    {
+                        "category": "identity",
+                        "component": "reviewer",
+                        "count": 1,
+                        "current": None,
+                        "retryable": None,
+                        "stage": "identity",
+                    }
+                ],
+                diagnostic,
+            )
+            for forbidden in (
+                "review_request_ffffffff",
+                "failure_code",
+                "diagnostic_digest",
+                "payload",
+            ):
+                self.assertNotIn(forbidden, inspected)
+            reopened.close()
+
+    def test_currentness_and_persistence_have_exact_application_producers(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository, case_id = self._repository(directory)
+            scenarios = (
+                (
+                    ReviewAdmissionStaleError("/tmp/private currentness"),
+                    "currentness",
+                    "reviewer",
+                    "currentness",
+                ),
+                (
+                    MetadataReportError("/tmp/private persistence"),
+                    "persistence",
+                    "persistence",
+                    "persistence",
+                ),
+            )
+            for cause, category, component, stage in scenarios:
+                with self.subTest(category=category), patch.object(
+                    repository,
+                    "prepare_shadow_request",
+                    side_effect=cause,
+                ), self.assertRaises(ShadowReviewError) as raised:
+                    execute_shadow_review(
+                        repository,
+                        case_id,
+                        _identity(),
+                        _Runner(),
+                        claimant=(9001, "11"),
+                    )
+                self.assertEqual(category, raised.exception.code)
+                self.assertEqual(
+                    (category, component, stage),
+                    (
+                        raised.exception.diagnostic.category.value,
+                        raised.exception.diagnostic.component.value,
+                        raised.exception.diagnostic.stage.value,
+                    ),
+                )
+                self.assertNotIn("/tmp/private", str(raised.exception))
             repository.close()
 
     def test_completed_success_cannot_be_reevaluated_or_append(self) -> None:
@@ -890,7 +1080,8 @@ class ShadowReviewTests(unittest.TestCase):
                 )
             )
             repository.record_shadow_failure(
-                prepared["attempt_id"], "setup", 0, None
+                prepared["attempt_id"],
+                reviewer_failure_diagnostic("setup").to_json(),
             )
             request_id = prepared["request"]["review_request_id"]
             inspected = json.loads(
@@ -899,6 +1090,10 @@ class ShadowReviewTests(unittest.TestCase):
                 )
             )
             self.assertEqual("failed", inspected["status"])
+            self.assertEqual(
+                "setup_configuration",
+                inspected["diagnostics"][0]["category"],
+            )
             runner = _Runner()
             with self.assertRaises(ShadowReviewError):
                 execute_shadow_review(
@@ -922,8 +1117,57 @@ class ShadowReviewTests(unittest.TestCase):
             )
             repository.close()
 
+    def test_shadow_failure_record_and_replay_reject_foreign_taxonomy(
+        self,
+    ) -> None:
+        invalid = FailureDiagnostic(
+            FailureCategory.HTTP_NON_SUCCESS,
+            FailureComponent.REVIEWER,
+            FailureStage.RESPONSE,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            repository, case_id = self._repository(directory)
+            prepared = json.loads(
+                repository.prepare_shadow_request(
+                    case_id,
+                    _identity().to_json(),
+                    reevaluate=False,
+                    claim_pid=9001,
+                    claim_start_token="11",
+                    expected_prior_attempt_id=None,
+                )
+            )
+            attempt_id = prepared["attempt_id"]
+            request_id = prepared["request"]["review_request_id"]
+            with self.assertRaises(MetadataReportError):
+                repository.record_shadow_failure(
+                    attempt_id, invalid.to_json()
+                )
+            self.assertEqual(
+                (0,),
+                repository._connection.execute(
+                    "SELECT COUNT(*) FROM shadow_review_outcomes"
+                ).fetchone(),
+            )
+
+            repository._connection.execute(
+                "INSERT INTO shadow_review_outcomes("
+                "attempt_id,kind,result_document,failure_document) "
+                "VALUES(?,'failure',NULL,?)",
+                (attempt_id, invalid.to_json()),
+            )
+            repository._connection.commit()
+            with self.assertRaises(MetadataReportError) as raised:
+                repository.inspect_shadow_request(
+                    request_id, _identity().to_json()
+                )
+            self.assertNotIn("http_non_success", str(raised.exception))
+            self.assertNotIn("reviewer", str(raised.exception))
+            repository.close()
+
     def test_dispatch_without_terminal_outcome_is_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reports.sqlite"
             repository, case_id = self._repository(directory)
             prepared = json.loads(
                 repository.prepare_shadow_request(
@@ -945,8 +1189,56 @@ class ShadowReviewTests(unittest.TestCase):
                 )
             )
             self.assertEqual("unknown", inspected["status"])
-            self.assertEqual("unknown", inspected["attempts"][0]["status"])
+            self.assertEqual(1, inspected["attempt_count"])
+            self.assertEqual(
+                [
+                    {
+                        "category": "unknown",
+                        "component": "reviewer",
+                        "count": 1,
+                        "current": None,
+                        "retryable": None,
+                        "stage": "execution",
+                    }
+                ],
+                inspected["diagnostics"],
+            )
             repository.close()
+
+            reopened = open_repository(database, create=False)
+            restarted = inspect_shadow_review(
+                reopened, request_id, _identity()
+            )
+            reopened.close()
+            output, errors = io.StringIO(), io.StringIO()
+            self.assertEqual(
+                0,
+                main(
+                    [
+                        "shadow-review-inspect",
+                        "--database",
+                        "/private/database",
+                        "--review-request-id",
+                        request_id,
+                        "--qualification-profile",
+                        "/private/profile",
+                    ],
+                    shadow_inspect_runner=lambda *_: restarted,
+                    stdout=output,
+                    stderr=errors,
+                ),
+            )
+            self.assertEqual("", errors.getvalue())
+            self.assertEqual(json.loads(restarted), json.loads(output.getvalue()))
+            for forbidden in (
+                "12345",
+                "777",
+                "attempt_id",
+                "failure_document",
+                "result_document",
+                "/private",
+            ):
+                self.assertNotIn(forbidden, restarted)
 
     def test_pending_pre_dispatch_restart_can_be_explicitly_reevaluated(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -997,8 +1289,7 @@ class ShadowReviewTests(unittest.TestCase):
                 )
             )
             self.assertEqual("qualification_only", result["status"])
-            self.assertEqual(2, len(result["attempts"]))
-            self.assertEqual("pending", result["attempts"][0]["status"])
+            self.assertEqual(2, result["attempt_count"])
             repository.close()
 
     def test_concurrent_reevaluation_claim_has_one_cas_winner(self) -> None:
@@ -1084,6 +1375,49 @@ class ShadowReviewTests(unittest.TestCase):
             with self.assertRaises(ShadowReviewValueError):
                 ShadowReviewResult.from_json(canonical_json(malformed), request)
             repository.close()
+
+    def test_result_identity_mismatch_is_typed_before_other_semantics(
+        self,
+    ) -> None:
+        request = ShadowReviewRequest.synthetic_canary(_identity())
+        wrong_identity = _result(request).to_data()
+        wrong_id = "review_request_" + (
+            "f" if not request.review_request_id.endswith("f" * 64) else "e"
+        ) * 64
+        wrong_identity["review_request_id"] = wrong_id
+        with self.assertRaises(ShadowReviewIdentityError):
+            ShadowReviewResult.from_json(
+                canonical_json(wrong_identity),
+                request,
+            )
+        wrong_identity["recommendations"][0]["citations"] = [
+            "evidence_" + "f" * 64
+        ]
+        with self.assertRaises(ShadowReviewIdentityError):
+            ShadowReviewResult.from_json(
+                canonical_json(wrong_identity),
+                request,
+            )
+        for malformed_id in ("review_request_private", None):
+            with self.subTest(malformed_id=malformed_id):
+                malformed = ShadowReviewResult(
+                    malformed_id,  # type: ignore[arg-type]
+                    _result(request).recommendations,
+                )
+                with self.assertRaises(ShadowReviewSemanticError) as raised:
+                    malformed.validate_for(request)
+                self.assertNotIsInstance(
+                    raised.exception, ShadowReviewIdentityError
+                )
+
+        missing_coverage = _result(request).to_data()
+        missing_coverage["recommendations"] = []
+        with self.assertRaises(ShadowReviewSemanticError) as raised:
+            ShadowReviewResult.from_json(
+                canonical_json(missing_coverage),
+                request,
+            )
+        self.assertNotIsInstance(raised.exception, ShadowReviewIdentityError)
 
     def test_maximum_packet_request_round_trips_and_persists(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1256,11 +1590,86 @@ class ShadowReviewTests(unittest.TestCase):
             ),
         )
         self.assertEqual("", output.getvalue())
+        self.assertEqual(_failure_output("profile"), errors.getvalue())
+
+        output, errors = io.StringIO(), io.StringIO()
         self.assertEqual(
-            '{"code":"profile","mode":"qualification_only",'
-            '"schema_version":"shadow-review-failure-v1"}\n',
-            errors.getvalue(),
+            1,
+            main(
+                [
+                    "shadow-review-preview",
+                    "--database",
+                    "/db",
+                    "--review-case-id",
+                    case_id,
+                    "--qualification-profile",
+                    "/profile",
+                ],
+                shadow_preview_runner=lambda *_: (_ for _ in ()).throw(
+                    ShadowReviewerError(
+                        "response_format",
+                        count=999,
+                        digest=hashlib.sha256(
+                            b"/tmp/private raw stderr raw stdout"
+                        ).hexdigest(),
+                    )
+                ),
+                stdout=output,
+                stderr=errors,
+            ),
         )
+        self.assertEqual("", output.getvalue())
+        cli_failure = json.loads(errors.getvalue())
+        self.assertEqual(
+            "live_schema_rejection",
+            cli_failure["diagnostic"]["category"],
+        )
+        self.assertEqual("schema", cli_failure["diagnostic"]["stage"])
+        self.assertEqual(999, cli_failure["diagnostic"]["count"])
+        for forbidden in ("/tmp/private", "raw stderr", "raw stdout"):
+            self.assertNotIn(forbidden, errors.getvalue())
+
+        output, errors = io.StringIO(), io.StringIO()
+        private_identity = "review_request_" + "f" * 64
+        self.assertEqual(
+            1,
+            main(
+                [
+                    "shadow-review-preview",
+                    "--database",
+                    "/db",
+                    "--review-case-id",
+                    case_id,
+                    "--qualification-profile",
+                    "/profile",
+                ],
+                shadow_preview_runner=lambda *_: (_ for _ in ()).throw(
+                    ShadowReviewerError(
+                        "identity",
+                        count=1,
+                        digest=hashlib.sha256(
+                            private_identity.encode("utf-8")
+                        ).hexdigest(),
+                    )
+                ),
+                stdout=output,
+                stderr=errors,
+            ),
+        )
+        self.assertEqual("", output.getvalue())
+        cli_failure = json.loads(errors.getvalue())
+        self.assertEqual(
+            {
+                "category": "identity",
+                "component": "reviewer",
+                "count": 1,
+                "current": None,
+                "retryable": None,
+                "stage": "identity",
+            },
+            cli_failure["diagnostic"],
+        )
+        self.assertNotIn(private_identity, errors.getvalue())
 
     def test_cli_rejects_wrong_success_schema_and_exact_id(self) -> None:
         case_id = "review_case_" + "a" * 64
@@ -1302,9 +1711,7 @@ class ShadowReviewTests(unittest.TestCase):
                 )
                 self.assertEqual("", output.getvalue())
                 self.assertEqual(
-                    '{"code":"malformed_output","mode":"qualification_only",'
-                    '"schema_version":"shadow-review-failure-v1"}\n',
-                    errors.getvalue(),
+                    _failure_output("malformed_output"), errors.getvalue()
                 )
 
     def test_cli_validates_request_and_inspect_ids_against_result(self) -> None:
@@ -1338,6 +1745,30 @@ class ShadowReviewTests(unittest.TestCase):
             ),
         )
         self.assertEqual("", errors.getvalue())
+        wrong_case = json.loads(serialized)
+        wrong_case["review_case_id"] = "review_case_" + "f" * 64
+        output, errors = io.StringIO(), io.StringIO()
+        self.assertEqual(
+            1,
+            main(
+                [
+                    "shadow-review-request",
+                    "--database",
+                    "/db",
+                    "--review-case-id",
+                    case_id,
+                    "--qualification-profile",
+                    "/profile",
+                ],
+                shadow_request_runner=lambda *_: canonical_json(wrong_case),
+                stdout=output,
+                stderr=errors,
+            ),
+        )
+        self.assertEqual("", output.getvalue())
+        self.assertEqual(
+            _failure_output("malformed_output"), errors.getvalue()
+        )
         output, errors = io.StringIO(), io.StringIO()
         self.assertEqual(
             1,
@@ -1358,13 +1789,96 @@ class ShadowReviewTests(unittest.TestCase):
         )
         self.assertEqual("", output.getvalue())
         self.assertEqual(
-            '{"code":"malformed_output","mode":"qualification_only",'
-            '"schema_version":"shadow-review-failure-v1"}\n',
-            errors.getvalue(),
+            _failure_output("malformed_output"), errors.getvalue()
         )
         self.assertTrue(request_id.startswith("review_request_"))
 
-    def test_cli_rejects_zero_exit_semantic_request_and_result_drift(
+    def test_cli_maps_exact_shadow_repository_failures_to_persistence(
+        self,
+    ) -> None:
+        request_id = "review_request_" + "a" * 64
+        private = "/private/repository-detail"
+
+        class BrokenRepository:
+            def inspect_shadow_request(self, *_args):
+                raise MetadataReportError(private)
+
+            def close(self) -> None:
+                return None
+
+        for name, repository_effect in (
+            ("open", MetadataReportError(private)),
+            ("inspect", BrokenRepository()),
+        ):
+            output, errors = io.StringIO(), io.StringIO()
+            open_patch = (
+                patch.object(
+                    composition,
+                    "open_repository",
+                    side_effect=repository_effect,
+                )
+                if isinstance(repository_effect, Exception)
+                else patch.object(
+                    composition,
+                    "open_repository",
+                    return_value=repository_effect,
+                )
+            )
+            with self.subTest(boundary=name), patch.object(
+                composition,
+                "load_qualification_profile",
+                return_value=SimpleNamespace(identity=_identity()),
+            ), open_patch:
+                self.assertEqual(
+                    1,
+                    main(
+                        [
+                            "shadow-review-inspect",
+                            "--database",
+                            "/private/database",
+                            "--review-request-id",
+                            request_id,
+                            "--qualification-profile",
+                            "/private/profile",
+                        ],
+                        shadow_inspect_runner=(
+                            composition.inspect_shadow_review_request
+                        ),
+                        stdout=output,
+                        stderr=errors,
+                    ),
+                )
+            self.assertEqual("", output.getvalue())
+            self.assertEqual(
+                _failure_output("persistence"), errors.getvalue()
+            )
+            self.assertNotIn(private, errors.getvalue())
+
+        output, errors = io.StringIO(), io.StringIO()
+        self.assertEqual(
+            1,
+            main(
+                [
+                    "shadow-review-inspect",
+                    "--database",
+                    "/private/database",
+                    "--review-request-id",
+                    request_id,
+                    "--qualification-profile",
+                    "/private/profile",
+                ],
+                shadow_inspect_runner=lambda *_: (_ for _ in ()).throw(
+                    RuntimeError(private)
+                ),
+                stdout=output,
+                stderr=errors,
+            ),
+        )
+        self.assertEqual("", output.getvalue())
+        self.assertEqual(_failure_output("unknown"), errors.getvalue())
+        self.assertNotIn(private, errors.getvalue())
+
+    def test_cli_rejects_zero_exit_private_and_diagnostic_drift(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1378,14 +1892,35 @@ class ShadowReviewTests(unittest.TestCase):
             )
             repository.close()
         invalid_request = json.loads(serialized)
-        invalid_request["request"]["output_schema"] = "{}"
+        invalid_request["request"] = {"private": "packet"}
         invalid_result = json.loads(serialized)
-        invalid_result["attempts"][0]["result"]["recommendations"][0][
-            "citations"
-        ] = []
+        invalid_result["diagnostics"] = [{"category": "unknown"}]
+        timeout = reviewer_failure_diagnostic("timeout").to_data()
+        unknown = reviewer_failure_diagnostic("unknown").to_data()
+        duplicate_diagnostics = json.loads(serialized)
+        duplicate_diagnostics["diagnostics"] = [timeout, timeout]
+        unaggregated_diagnostics = json.loads(serialized)
+        second_timeout = dict(timeout)
+        second_timeout["count"] = 2
+        unaggregated_diagnostics["diagnostics"] = [timeout, second_timeout]
+        out_of_order_diagnostics = json.loads(serialized)
+        out_of_order_diagnostics["diagnostics"] = [unknown, timeout]
+        foreign_taxonomy = json.loads(serialized)
+        foreign_taxonomy["status"] = "unknown"
+        foreign_taxonomy["diagnostics"] = [
+            FailureDiagnostic(
+                FailureCategory.PERSISTENCE,
+                FailureComponent.REVIEWER,
+                FailureStage.PERSISTENCE,
+            ).to_data()
+        ]
         for name, document in (
             ("request", invalid_request),
             ("result", invalid_result),
+            ("duplicate_diagnostics", duplicate_diagnostics),
+            ("unaggregated_diagnostics", unaggregated_diagnostics),
+            ("out_of_order_diagnostics", out_of_order_diagnostics),
+            ("foreign_taxonomy", foreign_taxonomy),
         ):
             output, errors = io.StringIO(), io.StringIO()
             with self.subTest(document=name):
@@ -1410,11 +1945,20 @@ class ShadowReviewTests(unittest.TestCase):
                 )
                 self.assertEqual("", output.getvalue())
                 self.assertEqual(
-                    '{"code":"malformed_output",'
-                    '"mode":"qualification_only",'
-                    '"schema_version":"shadow-review-failure-v1"}\n',
-                    errors.getvalue(),
+                    _failure_output("malformed_output"), errors.getvalue()
                 )
+
+        class ProjectionRepository:
+            def inspect_shadow_request(self, *_args) -> str:
+                return canonical_json(foreign_taxonomy)
+
+        with self.assertRaises(ShadowReviewError) as raised:
+            inspect_shadow_review(
+                ProjectionRepository(),
+                foreign_taxonomy["review_request_id"],
+                _identity(),
+            )
+        self.assertEqual("runtime", raised.exception.code)
 
 
 class CodexShadowAdapterTests(unittest.TestCase):
@@ -1641,6 +2185,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
             bind = command.index("/runtime/codex")
             self.assertEqual("/proc/self/fd/10", command[bind - 1])
             self.assertIn("--skip-git-repo-check", command)
+            self.assertIn("--json", command)
 
     def test_production_runner_applies_profile_resource_limits(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1785,6 +2330,134 @@ class CodexShadowAdapterTests(unittest.TestCase):
                     list(profile.job_root_path.glob("shadow-review-*"))
                 )
 
+    def test_pinned_jsonl_live_schema_rejection_has_distinct_failure_code(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex, sandbox = root / "codex", root / "bwrap"
+            codex.write_bytes(b"codex")
+            sandbox.write_bytes(b"bwrap")
+            os.chmod(codex, 0o700)
+            os.chmod(sandbox, 0o700)
+            profile = self._profile(root, codex, sandbox)
+            request = ShadowReviewRequest.synthetic_canary(profile.identity)
+            private_detail = "/tmp/private schema body"
+            message = (
+                "Invalid schema for response_format 'codex_output_schema': "
+                + private_detail
+            )
+            jsonl = (
+                canonical_json({"thread_id": "thread_1", "type": "thread.started"})
+                + "\n"
+                + canonical_json(
+                    {
+                        "error": {"message": message},
+                        "type": "turn.failed",
+                    }
+                )
+                + "\n"
+            ).encode()
+            reviewer = CodexShadowReviewer(profile)
+
+            def run_gated(*args) -> int:
+                os.write(args[4], jsonl)
+                args[6](1234, 1234, "5678")
+                return 1
+
+            with (
+                patch.object(codex_shadow.sys, "platform", "linux"),
+                patch.object(reviewer, "_verify_codex"),
+                patch.object(reviewer, "_require_chatgpt_auth"),
+                patch.object(reviewer, "_run_gated", side_effect=run_gated),
+                self.assertRaises(ShadowReviewerError) as raised,
+            ):
+                reviewer.run(request, lambda *_: None)
+            self.assertEqual("response_format", raised.exception.code)
+            self.assertEqual(len(jsonl), raised.exception.count)
+            self.assertEqual(
+                hashlib.sha256(jsonl).hexdigest(), raised.exception.digest
+            )
+            self.assertNotIn(private_detail, str(raised.exception))
+
+    def test_schema_rejection_signal_variance_fails_closed_to_runtime(
+        self,
+    ) -> None:
+        prefix = (
+            b"Invalid schema for response_format 'codex_output_schema': private"
+        )
+        variants = (
+            canonical_json(
+                {
+                    "error": {"message": "ordinary runtime failure"},
+                    "type": "turn.failed",
+                }
+            ).encode()
+            + b"\n",
+            canonical_json(
+                {
+                    "message": prefix.decode(),
+                    "type": "error",
+                }
+            ).encode()
+            + b"\n",
+            canonical_json(
+                {
+                    "error": {"message": prefix.decode(), "raw": "private"},
+                    "type": "turn.failed",
+                }
+            ).encode()
+            + b"\n",
+            b'{"error":{"message":"' + prefix + b'"},"type":"turn.failed"}',
+            b'{"error":{"message":"'
+            + prefix
+            + b'"},"type":"turn.failed","type":"turn.failed"}\n',
+            b"not-json\n"
+            + canonical_json(
+                {
+                    "error": {"message": prefix.decode()},
+                    "type": "turn.failed",
+                }
+            ).encode()
+            + b"\n",
+            b"\xff\n",
+        )
+        for payload in variants:
+            with self.subTest(payload=payload[:40]), tempfile.TemporaryFile(
+                "w+b"
+            ) as stdout_file, tempfile.TemporaryFile("w+b") as stderr_file:
+                stdout_file.write(payload)
+                code, count, digest = codex_shadow._nonzero_failure(
+                    stdout_file, stderr_file, returncode=1
+                )
+                self.assertEqual("runtime", code)
+                self.assertEqual(len(payload), count)
+                self.assertEqual(hashlib.sha256(payload).hexdigest(), digest)
+        canonical_signal = (
+            canonical_json(
+                {
+                    "error": {"message": prefix.decode()},
+                    "type": "turn.failed",
+                }
+            ).encode()
+            + b"\n"
+        )
+        private_stderr = b"/tmp/private raw stderr"
+        with tempfile.TemporaryFile("w+b") as stdout_file, tempfile.TemporaryFile(
+            "w+b"
+        ) as stderr_file:
+            stdout_file.write(canonical_signal)
+            stderr_file.write(private_stderr)
+            code, count, digest = codex_shadow._nonzero_failure(
+                stdout_file, stderr_file, returncode=1
+            )
+            self.assertEqual("runtime", code)
+            self.assertEqual(len(canonical_signal) + len(private_stderr), count)
+            self.assertEqual(
+                hashlib.sha256(canonical_signal + private_stderr).hexdigest(),
+                digest,
+            )
+
     def test_output_schema_is_typed_bound_and_digest_frozen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository, case_id = ShadowReviewTests()._repository(directory)
@@ -1892,12 +2565,118 @@ class CodexShadowAdapterTests(unittest.TestCase):
             hashlib.sha256(semantic_bytes).hexdigest(),
             raised.exception.digest,
         )
+        wrong_identity = json.loads(valid)
+        wrong_identity["review_request_id"] = "review_request_" + "f" * 64
+        identity_bytes = canonical_json(wrong_identity).encode("utf-8")
+        with self.assertRaises(ShadowReviewerError) as identity_raised:
+            codex_shadow._validated_result(
+                identity_bytes,
+                request,
+                maximum=MAX_REQUEST_BYTES,
+            )
+        self.assertEqual("identity", identity_raised.exception.code)
+        self.assertEqual(len(identity_bytes), identity_raised.exception.count)
+        self.assertEqual(
+            hashlib.sha256(identity_bytes).hexdigest(),
+            identity_raised.exception.digest,
+        )
+        self.assertNotIn(
+            wrong_identity["review_request_id"],
+            str(identity_raised.exception),
+        )
         with self.assertRaises(ShadowReviewDocumentError):
             ShadowReviewResult.from_json("{", request)
         with self.assertRaises(ShadowReviewSemanticError):
             ShadowReviewResult.from_json(
                 canonical_json(semantic), request
             )
+
+    def test_exact_wrong_identity_precedes_citation_normalization_only_after_shape(
+        self,
+    ) -> None:
+        request = _request_with_citations()
+        other_request = _request_with_citations(seed="b")
+        wrong_id = "review_request_" + (
+            "f" if not request.review_request_id.endswith("f" * 64) else "e"
+        ) * 64
+        foreign_citation = other_request.packet.citations[0]["citation_id"]
+        base = _result(request).to_data()
+        identity_cases = {
+            "valid_citations": base,
+            "foreign_citation": {
+                **base,
+                "recommendations": [
+                    {
+                        **base["recommendations"][0],
+                        "citations": [foreign_citation],
+                    }
+                ],
+            },
+            "malformed_recommendations": {
+                **base,
+                "recommendations": "private malformed recommendations",
+            },
+        }
+        for name, value in identity_cases.items():
+            with self.subTest(identity=name):
+                raw = json.loads(canonical_json(value))
+                raw["review_request_id"] = wrong_id
+                serialized = canonical_json(raw).encode("utf-8")
+                with self.assertRaises(ShadowReviewerError) as raised:
+                    codex_shadow._validated_result(
+                        serialized,
+                        request,
+                        maximum=MAX_REQUEST_BYTES,
+                    )
+                self.assertEqual("identity", raised.exception.code)
+                self.assertEqual(len(serialized), raised.exception.count)
+                self.assertEqual(
+                    hashlib.sha256(serialized).hexdigest(),
+                    raised.exception.digest,
+                )
+                self.assertNotIn(wrong_id, str(raised.exception))
+                self.assertNotIn("private", str(raised.exception))
+
+        semantic_cases = {
+            "missing_identity": {
+                key: value
+                for key, value in base.items()
+                if key != "review_request_id"
+            },
+            "malformed_identity": {
+                **base,
+                "review_request_id": "review_request_private",
+            },
+            "matching_identity_foreign_citation": {
+                **base,
+                "recommendations": [
+                    {
+                        **base["recommendations"][0],
+                        "citations": [foreign_citation],
+                    }
+                ],
+            },
+        }
+        for name, raw in semantic_cases.items():
+            with self.subTest(semantic=name):
+                serialized = canonical_json(raw).encode("utf-8")
+                with self.assertRaises(ShadowReviewerError) as raised:
+                    codex_shadow._validated_result(
+                        serialized,
+                        request,
+                        maximum=MAX_REQUEST_BYTES,
+                    )
+                self.assertEqual(
+                    "semantic_validation",
+                    raised.exception.code,
+                )
+        with self.assertRaises(ShadowReviewerError) as malformed:
+            codex_shadow._validated_result(
+                b'{"review_request_id":',
+                request,
+                maximum=MAX_REQUEST_BYTES,
+            )
+        self.assertEqual("malformed_output", malformed.exception.code)
 
     def test_untrusted_citations_normalize_before_domain_construction(self) -> None:
         request = _request_with_citations()

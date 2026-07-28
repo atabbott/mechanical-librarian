@@ -176,7 +176,7 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v14`; earlier development reports and
+discriminator is `metadata-report-v15`; earlier development reports and
 databases remain offline and require a clean current database under ADR-0013.
 
 The credential-bearing parent combines those facts with the target projection.
@@ -218,8 +218,16 @@ retain bounded tagging IDs and a bounded sibling `tags` root supplies the exact
 category relation; the adapter admits taxonomy only after an exact closed join.
 An HTTP 200 response containing a valid bounded GraphQL `errors` envelope is
 `unavailable`, even when partial `data` is also present, and contributes no
-candidate or cover evidence. A malformed, empty, or over-bound error envelope is
-`malformed`; its diagnostic content is never retained.
+candidate or cover evidence. Its aggregate diagnostic is
+`provider_declared_error`, never success. A malformed, empty, or over-bound
+error envelope is `malformed`; its content is never retained.
+
+Report v15 adds only bounded failure diagnostics to provider observations.
+They contain category, closed component/stage, optional retryability/currentness
+and aggregate count. Provider names, attempt ordinals, delays, timings,
+headers, bodies, exception text, and credentials are not diagnostic fields.
+Exact reopen uses the stored aggregate and performs no provider construction
+or egress. Provider status retains its existing neutral meaning.
 
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
 bounded set is `candidates`; all candidates survive in provider-identity order

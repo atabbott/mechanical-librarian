@@ -31,6 +31,7 @@ from mechanical_librarian.domain.shadow_review import (
     RESULT_SCHEMA,
     ReviewerProfileIdentity,
     ShadowReviewDocumentError,
+    ShadowReviewIdentityError,
     ShadowReviewRequest,
     ShadowReviewResult,
     ShadowReviewSemanticError,
@@ -40,10 +41,15 @@ from mechanical_librarian.domain.shadow_review import (
 
 PROFILE_SCHEMA = "reviewer-qualification-profile-v1"
 MAX_PROFILE_BYTES = 65_536
+MAX_FAILURE_SIGNAL_BYTES = 65_536
+_LIVE_SCHEMA_REJECTION_PREFIX = (
+    "Invalid schema for response_format 'codex_output_schema': "
+)
 _FAILURES = frozenset(
     {
         "runtime", "setup", "auth", "profile", "timeout", "cancel", "schema",
         "response_format", "malformed_output", "semantic_validation",
+        "identity",
     }
 )
 MAX_CITATIONS = 256
@@ -335,11 +341,13 @@ class CodexShadowReviewer:
                             dispatched,
                         )
                         if returncode != 0:
-                            count, digest = _diagnostic(
-                                stdout_file, stderr_file
+                            code, count, digest = _nonzero_failure(
+                                stdout_file,
+                                stderr_file,
+                                returncode=returncode,
                             )
                             raise ShadowReviewerError(
-                                "runtime", count=count, digest=digest
+                                code, count=count, digest=digest
                             )
                     try:
                         result_bytes = result_path.read_bytes()
@@ -650,6 +658,7 @@ class CodexShadowReviewer:
                 self._profile.identity.model,
                 "--sandbox",
                 "read-only",
+                "--json",
                 "--output-schema",
                 "/job/output-schema.json",
                 "--output-last-message",
@@ -926,6 +935,92 @@ def _diagnostic(stdout_file, stderr_file) -> tuple[int, str]:
     return count, digest.hexdigest()
 
 
+def _nonzero_failure(
+    stdout_file,
+    stderr_file,
+    *,
+    returncode: int,
+) -> tuple[str, int, str]:
+    count, digest = _diagnostic(stdout_file, stderr_file)
+    code = "runtime"
+    if returncode == 1 and _is_live_schema_rejection(stdout_file, stderr_file):
+        code = "response_format"
+    return code, count, digest
+
+
+def _is_live_schema_rejection(stdout_file, stderr_file) -> bool:
+    """Recognize only the pinned Codex JSONL response-schema rejection event."""
+    try:
+        stdout_file.flush()
+        stderr_file.flush()
+        stdout_size = os.fstat(stdout_file.fileno()).st_size
+        stderr_size = os.fstat(stderr_file.fileno()).st_size
+        if (
+            stderr_size != 0
+            or not 1 <= stdout_size <= MAX_FAILURE_SIGNAL_BYTES
+        ):
+            return False
+        stdout_file.seek(0)
+        payload = stdout_file.read(MAX_FAILURE_SIGNAL_BYTES + 1)
+        if len(payload) != stdout_size or not payload.endswith(b"\n"):
+            return False
+        serialized = payload.decode("utf-8", errors="strict")
+        lines = serialized[:-1].split("\n")
+        if not 1 <= len(lines) <= 64 or any(not line for line in lines):
+            return False
+        events: list[dict[str, object]] = []
+        for line in lines:
+            event = json.loads(
+                line,
+                object_pairs_hook=_unique_failure_object,
+                parse_constant=lambda value: (_ for _ in ()).throw(
+                    ValueError(value)
+                ),
+            )
+            if (
+                type(event) is not dict
+                or type(event.get("type")) is not str
+            ):
+                return False
+            events.append(event)
+        raw = events[-1]
+        if type(raw) is not dict or set(raw) != {"error", "type"}:
+            return False
+        error = raw["error"]
+        if (
+            raw["type"] != "turn.failed"
+            or type(error) is not dict
+            or set(error) != {"message"}
+            or type(error["message"]) is not str
+        ):
+            return False
+        message = cast(str, error["message"])
+        return (
+            message.startswith(_LIVE_SCHEMA_REJECTION_PREFIX)
+            and len(message) > len(_LIVE_SCHEMA_REJECTION_PREFIX)
+        )
+    except (
+        OSError,
+        TypeError,
+        ValueError,
+        UnicodeError,
+        RecursionError,
+        json.JSONDecodeError,
+    ):
+        return False
+
+
+def _unique_failure_object(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate failure event key")
+        result[key] = value
+    return result
+
+
 def _validated_result(
     result_bytes: bytes,
     request: ShadowReviewRequest,
@@ -967,8 +1062,13 @@ def _validated_result(
             "malformed_output", count=len(result_bytes), digest=digest
         ) from error
     try:
+        ShadowReviewResult.validate_identity_for(raw, request)
         marker = _normalize_result_citations(raw, request)
         result = ShadowReviewResult.from_json(canonical_json(raw), request)
+    except ShadowReviewIdentityError as error:
+        raise ShadowReviewerError(
+            "identity", count=len(result_bytes), digest=digest
+        ) from error
     except ShadowReviewValueError as error:
         raise ShadowReviewerError(
             "semantic_validation", count=len(result_bytes), digest=digest

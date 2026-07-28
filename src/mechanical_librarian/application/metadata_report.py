@@ -41,6 +41,9 @@ from mechanical_librarian.domain.metadata_report import (
     provider_lane_candidate_reference,
     validate_provider_access_time,
 )
+from mechanical_librarian.application.failure_diagnostics import (
+    provider_attempt_diagnostics,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -978,6 +981,10 @@ class GenerateMetadataReport:
                         binding.name,
                         ProviderStatus.QUERY_LIMIT_EXCEEDED,
                         authority=binding.authority,
+                        diagnostics=provider_attempt_diagnostics(
+                            (),
+                            status=ProviderStatus.QUERY_LIMIT_EXCEEDED.value,
+                        ),
                     )
                 )
                 continue
@@ -1009,6 +1016,10 @@ class GenerateMetadataReport:
             if observation.provider != binding.name:
                 repository.close()
                 raise MetadataReportError("provider result is invalid")
+            try:
+                attempt_records = getattr(provider, "attempt_records", ())
+            except Exception:
+                attempt_records = None
             observation = ProviderObservation(
                 observation.provider,
                 observation.status,
@@ -1019,6 +1030,10 @@ class GenerateMetadataReport:
                 observation.lanes,
                 observation.convergence,
                 observation.accessed_at,
+                provider_attempt_diagnostics(
+                    attempt_records,
+                    status=observation.status.value,
+                ),
             )
             observations.append(observation)
             candidate_descriptors = getattr(provider, "cover_descriptors", ())

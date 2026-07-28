@@ -109,8 +109,16 @@ jitter applies. The transport classifier uses only a narrow HTTPX type and
 bounded typed-cause allowlist; it never inspects exception text and rejects TLS,
 proxy/configuration, invalid protocol/URL, local stream-state, decoding,
 pool/write-timeout, and unknown failures. Every retry remains inside pacing,
-deadline, byte, and request-count authority. Attempt diagnostics are bounded,
-aggregate-safe, process-local, and never persisted.
+deadline, byte, and request-count authority. Attempt records are bounded and
+process-local. The application maps only their closed category and outcome to
+report-v15 diagnostic aggregates; provider, ordinal, delay, elapsed time,
+headers, bodies, and exception text are dropped. Application-created
+query-limit outcomes follow the same closed mapping and persist
+provider/lookup_construction/lookup without constructing or invoking a
+provider. Missing, malformed, or exception-raising optional attempt records map
+to a bounded provider/unknown/response aggregate. Provider observations admit
+only sorted unique provider-component aggregates whose category and stage are
+one supported provider combination.
 
 The fixed Hardcover selections stay within three relationship levels. Typed
 taxonomy is joined from bounded sibling-root tag rows by exact provider IDs;
@@ -237,16 +245,43 @@ per-case structured-output schema bytes are subset-validated, digest-bound into
 the canonical request and untrusted prompt, and raw output failure classes
 remain value-free. Malformed UTF-8/JSON, duplicate-key, noncanonical, and
 truncated documents are distinct from canonical parsed results that violate
-their request semantics; only bounded count/digest diagnostics cross the trust
-boundary.
-No current pinned CLI diagnostic safely proves response-format rejection, so a
-nonzero ordinary-command exit is conservatively `runtime` whether caused by
-exec, signal, resource, network/service, or an unknown failure.
+their request semantics. Only the ADR-0017 diagnostic category, closed
+component/stage, optional retryability/currentness, and bounded aggregate count
+cross the trust boundary.
+The pinned ordinary command enables JSONL output. Only exit status 1 with empty
+stderr and a bounded, strict-UTF-8 stream ending in the exact terminal
+`turn.failed` response-format rejection for the controller-owned
+`codex_output_schema` maps to `live_schema_rejection`. The raw message is never
+retained. Every variant, other nonzero exit, and unrecognized failure remains
+conservatively `spawn_runtime`; malformed result documents and zero-exit
+semantic or citation failures remain distinct. Once canonical outer shape and
+exact request-ID syntax are proven, a zero-exit result whose request identity
+differs from the bound request maps through a typed domain error to
+reviewer/identity/identity before citation normalization or membership checks,
+without string matching or retaining either identifier. Missing or malformed
+identity remains semantic, and noncanonical input remains malformed output.
+Exact repository faults map to the persistence component/category/stage rather
+than runtime, including database open and inspection failures crossing the
+CLI-runner boundary. A dispatched attempt with no terminal outcome reopens
+with a bounded reviewer/unknown/execution aggregate, so unknown inspection
+never requires the CLI to invent a replacement runtime failure.
 Request, attempt,
 dispatch, and outcome facts are append-only. Raw streams and reasoning are
 discarded. Dispatched ambiguity is `unknown`; there is no automatic retry, and
 explicit reevaluation requires proof that the complete prior supervised process
 group is absent.
+
+Shadow outcome rows persist one canonical ADR-0017 diagnostic document, not a
+legacy code, exception digest, raw stream, path, prompt, packet, process fact,
+or malformed value. Offline `shadow-review-inspect-v2` aggregates identical
+documents, rejects duplicate/split/out-of-order aggregates, binds the case and
+request identities, and exposes no per-attempt or request/result content. CLI
+failures use the same object in `shadow-review-failure-v2`; unknown exceptions
+map to `unknown` without inspecting their text. Persistence record and replay,
+application inspection, and CLI inspection reject any diagnostic that is not
+one exact closed reviewer producer shape; a provider-only category/stage cannot
+cross by claiming the reviewer component. The legitimate
+persistence/persistence/persistence producer remains accepted.
 
 The final report database, `catalogue-v1` database, `config-v5`, artifact
 records, and `batch-manifest-v5` each accept only absent or their exact current

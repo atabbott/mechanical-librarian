@@ -151,16 +151,21 @@ python scripts/qualify_reviewer_cli_parser.py \
   --qualification-profile /absolute/private/profile.json
 ```
 
-Failures are the value-free codes `runtime`, `setup`, `auth`, `profile`,
-`timeout`, `cancel`, `schema`, `response_format`, `malformed_output`,
-`semantic_validation`, or `currentness`. Raw stdout, stderr, reasoning,
-malformed content, profile paths, and auth data are discarded.
-The pinned CLI currently exposes no stable bounded diagnostic that specifically
-proves a live response-format rejection. Every nonzero ordinary-command exit,
-including exec failure, signal termination, resource/network/service failure,
-and an unknown status, is therefore durable `runtime` with only bounded byte
-count and digest diagnostics. `response_format` remains reserved until a pinned
-canonical signal can support that narrower causal claim.
+Process-local failures retain the adapter's narrow internal signals, but every
+durable and CLI boundary maps them to the ADR-0017 diagnostic object. It
+contains only category, closed component/stage, optional
+retryability/currentness, and bounded count. Raw stdout, stderr, reasoning,
+malformed content, profile paths, auth data, exception text, and digests are
+discarded from those projections.
+The pinned ordinary command runs with JSONL events enabled. Exit status 1 maps
+to `live_schema_rejection` only when stderr is empty and its bounded,
+strict-UTF-8 JSONL stream ends in the exact `turn.failed` shape whose sole
+message begins with the pinned service rejection for
+`response_format 'codex_output_schema'`. The message and the rest of both
+streams are discarded. A different exit status, over-bound or malformed
+stream, additional terminal fields, stderr output, or any other error message
+is conservatively `spawn_runtime`. Malformed result documents and zero-exit
+semantic or citation failures remain their own diagnostic categories.
 
 Offline parser-help probes remain no-network and use a temporary empty auth
 store. The one-case compatibility canary is a real synthetic,
@@ -179,9 +184,16 @@ structured-output subset: every `const` and `enum` has its primitive type, and
 citation cardinality remains bounded without `uniqueItems` so later duplicate
 normalization can remain compatible.
 Invalid UTF-8, JSON, duplicate keys, noncanonical JSON, and truncated documents
-are durable `malformed_output` failures. A canonical parsed result that violates
-its bound request is instead durable `semantic_validation`; both retain only
-bounded byte count and digest diagnostics.
+are durable `malformed_output` diagnostics. After canonical outer shape and
+exact request-ID syntax are established, a result that names a different exact
+request is `identity` at the reviewer identity stage, before citation
+normalization or membership checks. A missing or malformed request identity
+remains a semantic failure. Other canonical results that violate their bound
+request remain `citation_membership`; none retains raw bytes, rejected values,
+request IDs, or exception digests in status. Exact repository failures map to
+`persistence` with the persistence component and stage. A store failure can
+prevent a new durable outcome, but its CLI projection remains the same bounded
+diagnostic.
 For a canonical document, the adapter validates every raw citation identifier
 against the exact packet allowlist and enforces the 256-item raw bound before
 normalizing each recommendation to a sorted unique set. Reordering and known
@@ -191,8 +203,28 @@ validation; normalization never adds evidence or repairs recommendation
 coverage, candidate membership, or currentness.
 
 The raw result bytes remain unchanged in the private bounded job path until its
-existing cleanup. Failures digest those exact bytes. Successful normalization
+existing cleanup. Failures classify those exact private bytes before cleanup.
+Successful normalization
 crosses the adapter seam only as an in-memory typed marker containing a changed
 flag and aggregate duplicate count; raw identifiers and ordering are not
 exposed, and the marker does not enter canonical result JSON, persistence,
 identity, or replay.
+
+`shadow-review-inspect-v2` is an offline aggregate status projection. It emits
+the case and request identities, currentness, final status, bounded total
+attempt count, and sorted unique canonical diagnostic aggregates. The case
+identity binds `shadow-review-request` output to its requested case. Duplicate,
+split, or out-of-order aggregates fail closed. The projection emits no request,
+packet, result, attempt ID/number, PID/process-group/start token, raw output,
+digest, or timing.
+A dispatched attempt without a durable terminal outcome reopens as `unknown`
+with one bounded reviewer/unknown/execution diagnostic; `unknown` and `failed`
+inspection states therefore never carry an empty diagnostic list.
+`shadow-review-failure-v2` uses the identical diagnostic shape on CLI stderr.
+Failure record, durable replay, application inspection, and CLI validation all
+enforce the same closed reviewer diagnostic shapes. Impossible relabellings,
+such as a provider HTTP response with a reviewer component, fail closed without
+retaining the rejected value.
+The production-signal mapping matrix covers every frozen diagnostic category;
+unknown producer signals fail closed to `unknown` rather than borrowing a
+nearby category.
