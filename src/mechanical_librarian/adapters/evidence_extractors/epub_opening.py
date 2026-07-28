@@ -91,6 +91,17 @@ _ROLE_ORDER = {
 }
 _BODY_SEMANTICS = {"bodymatter"}
 _CLAIM_SEMANTICS = {"title", "fulltitle", "subtitle", "publisher", "imprint", "contributor", "creator"}
+_BIBLIOGRAPHIC_INDICIA_LABEL = re.compile(
+    r"^(?P<label>subtitle|publisher|imprint)\s*:\s*(?P<value>.+)$",
+    re.I,
+)
+_NON_BIBLIOGRAPHIC_INDICIA = re.compile(
+    r"^(?:copyright(?:\s+holder)?\s*[:\-]"
+    r"|(?:printed|printing|distributed|retailed|converted)\s+by\b"
+    r"|(?:epub|e-?book|digital)\s+conversion\s+by\b"
+    r"|(?:printer|distributor|retailer|conversion)\s*[:\-])",
+    re.I,
+)
 _SPACE = re.compile(r"\s+")
 _ISBN = re.compile(r"(?<![0-9Xx])(?:97[89][\s-]*)?[0-9][0-9Xx\s-]{8,20}[0-9Xx](?![0-9Xx])")
 _DATE_TEXT = (
@@ -1935,6 +1946,33 @@ def _normal(value: str, field: OpeningField) -> str:
     return result
 
 
+def _bibliographic_indicia(
+    semantics: set[str],
+    text: str,
+) -> tuple[tuple[OpeningField, str], ...]:
+    """Admit only structurally explicit or exactly labelled target indicia."""
+
+    if _NON_BIBLIOGRAPHIC_INDICIA.match(text) is not None:
+        return ()
+    labelled = _BIBLIOGRAPHIC_INDICIA_LABEL.fullmatch(text)
+    if labelled is not None:
+        field = {
+            "subtitle": OpeningField.SUBTITLE,
+            "publisher": OpeningField.PUBLISHER,
+            "imprint": OpeningField.IMPRINT,
+        }[labelled.group("label").casefold()]
+        return ((field, labelled.group("value")),)
+    return tuple(
+        (field, text)
+        for token, field in (
+            ("subtitle", OpeningField.SUBTITLE),
+            ("publisher", OpeningField.PUBLISHER),
+            ("imprint", OpeningField.IMPRINT),
+        )
+        if token in semantics
+    )
+
+
 def _isbn_valid(value: str) -> bool:
     compact = "".join(character for character in value.upper() if character.isdigit() or character == "X")
     if len(compact) == 10 and compact[:9].isdigit() and (compact[9].isdigit() or compact[9] == "X"):
@@ -2623,15 +2661,32 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                 )
             )
 
-        if "subtitle" in semantic:
-            add(OpeningField.SUBTITLE, text, EpubObservationApplicability.WORK)
-        elif semantic & {"fulltitle", "title"} or (
-            element.name == "h1" and (title_context or title_ancestor)
+        bibliographic_indicia = _bibliographic_indicia(semantic, text)
+        for field, value in bibliographic_indicia:
+            add(
+                field,
+                value,
+                (
+                    EpubObservationApplicability.WORK
+                    if field is OpeningField.SUBTITLE
+                    else EpubObservationApplicability.EDITION
+                ),
+            )
+        if not any(
+            field is OpeningField.SUBTITLE
+            for field, _value in bibliographic_indicia
+        ) and (
+            semantic & {"fulltitle", "title"}
+            or (element.name == "h1" and (title_context or title_ancestor))
         ):
             add(OpeningField.TITLE, text, EpubObservationApplicability.WORK)
-        if "publisher" in semantic:
-            add(OpeningField.PUBLISHER, text, EpubObservationApplicability.EDITION)
-        if "imprint" in semantic or lowered.endswith(" imprint"):
+        if (
+            not any(
+                field is OpeningField.IMPRINT
+                for field, _value in bibliographic_indicia
+            )
+            and lowered.endswith(" imprint")
+        ):
             add(OpeningField.IMPRINT, text, EpubObservationApplicability.EDITION)
         if lowered.startswith(("by ", "author: ", "written by ")):
             value = re.sub(r"^(?:by|author:|written by)\s+", "", text, flags=re.I)

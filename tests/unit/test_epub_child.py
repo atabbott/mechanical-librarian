@@ -726,6 +726,216 @@ class EpubChildRearSpineTests(unittest.TestCase):
             facts = child._rear_facts(request, package, opening, archive)
         self.assertEqual([(fact.field.value, fact.canonical_value) for fact in facts], [("title", "Rear Clock"), ("creator", "Ada Example"), ("isbn", "9780306406157")])
 
+    def test_front_and_rear_bibliographic_indicia_have_paired_semantics(self) -> None:
+        front_package = _opening_package(
+            items=(("front", "front.xhtml", "application/xhtml+xml", ""),),
+            spine=("front",),
+        )
+        front = self._inspect_in_child(
+            _opening_epub(
+                package=front_package,
+                entries=(
+                    (
+                        "EPUB/front.xhtml",
+                        _xhtml(
+                            '<section epub:type="copyright-page">'
+                            "<p>Subtitle: A Bounded Companion</p>"
+                            "<p>Publisher: Example House</p>"
+                            "<p>Imprint: Example Mark</p>"
+                            "</section>"
+                        ),
+                        zipfile.ZIP_STORED,
+                    ),
+                ),
+            )
+        )
+        request, (package, opening, _) = self._bundle(
+            _xhtml(
+                "<p>All rights reserved</p>"
+                "<p>Subtitle: A Bounded Companion</p>"
+                "<p>Publisher: Example House</p>"
+                "<p>Imprint: Example Mark</p>"
+            )
+        )
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            rear_facts = child._rear_facts(request, package, opening, archive)
+
+        fields = {
+            EpubInspectionField.SUBTITLE,
+            EpubInspectionField.PUBLISHER,
+            EpubInspectionField.IMPRINT,
+        }
+        front_facts = tuple(
+            fact
+            for fact in front.facts
+            if fact.basis == "opening_matter" and fact.field in fields
+        )
+        rear_facts = tuple(fact for fact in rear_facts if fact.field in fields)
+        self.assertEqual(
+            [
+                (fact.field, fact.observed_value, fact.canonical_value)
+                for fact in rear_facts
+            ],
+            [
+                (fact.field, fact.observed_value, fact.canonical_value)
+                for fact in front_facts
+            ],
+        )
+        self.assertEqual(
+            [fact.supporting_context for fact in rear_facts],
+            [
+                "Subtitle: A Bounded Companion",
+                "Publisher: Example House",
+                "Imprint: Example Mark",
+            ],
+        )
+        self.assertTrue(
+            all(fact.rear_provenance is not None for fact in rear_facts)
+        )
+        self.assertTrue(
+            all(fact.rear_provenance is None for fact in front_facts)
+        )
+        inspection = EpubInspection(
+            EpubInspectionOutcome.SUCCESS,
+            rear_facts[0].source,
+            rear_facts,
+        )
+        self.assertEqual(EpubInspection.from_json(inspection.to_json()), inspection)
+
+    def test_rear_bibliographic_indicia_preserves_conflicts_and_repetition(self) -> None:
+        request, (package, opening, _) = self._bundle(
+            _xhtml(
+                "<p>All rights reserved</p>"
+                '<p epub:type="subtitle">A Structural Companion</p>'
+                "<p>Publisher: House One</p>"
+                "<p>Publisher: House One</p>"
+                '<p epub:type="publisher">House Two</p>'
+                "<p>Imprint: Mark One</p>"
+                '<p epub:type="imprint">Mark Two</p>'
+                "<p>Copyright holder: Not a Publisher</p>"
+                '<p epub:type="publisher">Printed by Printer House</p>'
+                "<p>Distributed by Retail House</p>"
+                "<p>EPUB conversion by Conversion House</p>"
+                "<p>Publisher: /Users/private/publisher</p>"
+                "<p>Imprint: Authorization: Bearer abcdefgh</p>"
+                '<section epub:type="advertisement">'
+                "<p>Publisher: Advertised House</p>"
+                "</section>"
+                '<section epub:type="preview">'
+                "<p>Imprint: Preview Mark</p>"
+                "</section>"
+            )
+        )
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package, opening, archive)
+
+        self.assertEqual(
+            [
+                (fact.field, fact.canonical_value)
+                for fact in facts
+                if fact.field
+                in {
+                    EpubInspectionField.SUBTITLE,
+                    EpubInspectionField.PUBLISHER,
+                    EpubInspectionField.IMPRINT,
+                }
+            ],
+            [
+                (EpubInspectionField.SUBTITLE, "A Structural Companion"),
+                (EpubInspectionField.PUBLISHER, "House One"),
+                (EpubInspectionField.PUBLISHER, "House One"),
+                (EpubInspectionField.PUBLISHER, "House Two"),
+                (EpubInspectionField.IMPRINT, "Mark One"),
+                (EpubInspectionField.IMPRINT, "Mark Two"),
+            ],
+        )
+
+    def test_rear_bibliographic_indicia_enforces_the_exact_excerpt_bound(self) -> None:
+        prefix = "Publisher: "
+        for value_length, admitted in ((280 - len(prefix), True), (281 - len(prefix), False)):
+            with self.subTest(value_length=value_length):
+                publisher = "P" * value_length
+                request, (package, opening, _) = self._bundle(
+                    _xhtml(
+                        "<p>All rights reserved</p>"
+                        f"<p>{prefix}{publisher}</p>"
+                    )
+                )
+                with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+                    facts = child._rear_facts(
+                        request,
+                        package,
+                        opening,
+                        archive,
+                    )
+                publishers = tuple(
+                    fact
+                    for fact in facts
+                    if fact.field is EpubInspectionField.PUBLISHER
+                )
+                self.assertEqual(bool(publishers), admitted)
+                if admitted:
+                    self.assertEqual(
+                        (
+                            publishers[0].observed_value,
+                            publishers[0].supporting_context,
+                        ),
+                        (publisher, prefix + publisher),
+                    )
+
+    def test_rear_bibliographic_indicia_has_aggregate_safe_quality_evidence(self) -> None:
+        samples = (
+            (
+                "<p>All rights reserved</p>"
+                "<p>Subtitle: Companion One</p>"
+                "<p>Publisher: House One</p>"
+                "<p>Imprint: Mark One</p>",
+                3,
+            ),
+            (
+                "<p>Copyright</p>"
+                '<p epub:type="subtitle">Companion Two</p>'
+                '<p epub:type="publisher">House Two</p>'
+                '<p epub:type="imprint">Mark Two</p>',
+                3,
+            ),
+            (
+                "<p>Copyright</p><p>Printed by Printer House</p>"
+                "<p>Distributed by Retail House</p>",
+                0,
+            ),
+            (
+                "<p>Copyright</p><section epub:type=\"preview\">"
+                "<p>Subtitle: Other Work</p>"
+                "<p>Publisher: Preview House</p>"
+                "<p>Imprint: Preview Mark</p></section>",
+                0,
+            ),
+        )
+        expected = found = false_positives = 0
+        fields = {
+            EpubInspectionField.SUBTITLE,
+            EpubInspectionField.PUBLISHER,
+            EpubInspectionField.IMPRINT,
+        }
+        for markup, expected_count in samples:
+            request, (package, opening, _) = self._bundle(_xhtml(markup))
+            with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+                facts = child._rear_facts(request, package, opening, archive)
+            actual_count = sum(fact.field in fields for fact in facts)
+            expected += expected_count
+            found += min(actual_count, expected_count)
+            false_positives += max(0, actual_count - expected_count)
+        aggregate = {
+            "expected": expected,
+            "found": found,
+            "false_positives": false_positives,
+        }
+        self.assertEqual(
+            aggregate,
+            {"expected": 6, "found": 6, "false_positives": 0},
+        )
+
     def test_rear_indicia_retains_roles_dates_and_contextual_credits_with_provenance(
         self,
     ) -> None:

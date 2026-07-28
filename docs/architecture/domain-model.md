@@ -35,6 +35,12 @@ basis. Invalid, unlabeled, and conflicting-label identifiers remain distinct
 facts; an ISBN-10 is not represented as an observed ISBN-13. Other bounded
 local fields remain source-attributed evidence, never decisions, and preserve
 their admitted source/DOM order and rear-spine provenance where present.
+Source-explicit target-work subtitle, publisher, and imprint claims use the
+same closed kinds for front and rear indicia. Rear claims additionally retain
+their bounded resource identity, spine ordinal, tail slot, marker, and exact
+supporting excerpt. Publisher and imprint remain separate edition-scoped kinds;
+repeated or conflicting occurrences are retained without source-position
+authority or automatic resolution.
 An explicitly non-ISBN package scheme or URI owns its digit sequence, so a
 checksum-valid substring within it is not an ISBN fact.
 Local dates retain the exact lexical value and maximum stated `year`, `month`,

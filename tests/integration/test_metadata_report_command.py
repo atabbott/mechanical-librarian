@@ -1270,6 +1270,126 @@ class MetadataReportCommandTests(unittest.TestCase):
             self.assertEqual(reopened, report)
             self.assertFalse(any(claim.rear_provenance is not None for claim in report.local_claims))
 
+    def test_rear_bibliographic_indicia_survive_installed_report_reopen(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = root / "media"
+            media.mkdir()
+            source = media / "book.epub"
+            items = tuple(
+                (
+                    f"slot{index}",
+                    f"slot{index}.xhtml",
+                    "application/xhtml+xml",
+                    "",
+                )
+                for index in range(9)
+            )
+            package = _opening_package(
+                items=items,
+                spine=tuple(identity for identity, *_rest in items),
+            )
+            source.write_bytes(
+                _opening_epub(
+                    package=package,
+                    entries=tuple(
+                        (
+                            f"EPUB/slot{index}.xhtml",
+                            (
+                                _xhtml(
+                                    "<p>All rights reserved</p>"
+                                    "<p>Subtitle: A Bounded Companion</p>"
+                                    "<p>Publisher: House One</p>"
+                                    "<p>Publisher: House Two</p>"
+                                    "<p>Imprint: Example Mark</p>"
+                                )
+                                if index == 8
+                                else _xhtml("<p>ordinary synthetic prose</p>")
+                            ),
+                            zipfile.ZIP_STORED,
+                        )
+                        for index in range(9)
+                    ),
+                )
+            )
+            target_secret = root / "target.secret"
+            target_secret.write_text("target-token", encoding="ascii")
+            target_secret.chmod(0o600)
+            database = root / "reports.sqlite"
+            artifact_store = root / "artifacts"
+            artifact_store.mkdir(mode=0o700)
+            with _Server(_item(source.stat().st_size)) as server:
+                config = root / "config.json"
+                config.write_text(
+                    json.dumps(_config(server.endpoint, media, target_secret)),
+                    encoding="utf-8",
+                )
+                report = MetadataReport.from_json(
+                    run_metadata_report(
+                        config,
+                        database,
+                        artifact_store,
+                        "primary",
+                        "books",
+                        "item-1",
+                        0,
+                    )
+                )
+
+            reopened = MetadataReport.from_json(
+                reopen_metadata_report(database, report.report_id)
+            )
+            self.assertEqual(reopened, report)
+            rear_claims = tuple(
+                claim
+                for claim in report.local_claims
+                if claim.rear_provenance is not None
+                and claim.kind.value in {"subtitle", "publisher", "imprint"}
+            )
+            self.assertEqual(
+                [
+                    (
+                        claim.kind.value,
+                        claim.observed,
+                        claim.excerpt,
+                    )
+                    for claim in rear_claims
+                ],
+                [
+                    (
+                        "subtitle",
+                        "A Bounded Companion",
+                        "Subtitle: A Bounded Companion",
+                    ),
+                    (
+                        "publisher",
+                        "House One",
+                        "Publisher: House One",
+                    ),
+                    (
+                        "publisher",
+                        "House Two",
+                        "Publisher: House Two",
+                    ),
+                    (
+                        "imprint",
+                        "Example Mark",
+                        "Imprint: Example Mark",
+                    ),
+                ],
+            )
+            self.assertEqual(
+                [claim.occurrence for claim in rear_claims],
+                sorted({claim.occurrence for claim in rear_claims}),
+            )
+            self.assertTrue(
+                all(
+                    claim.rear_provenance is not None
+                    and claim.rear_provenance.tail_slot == 1
+                    for claim in rear_claims
+                )
+            )
+
     def test_six_metadata_only_providers_do_not_consume_cover_source_capacity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

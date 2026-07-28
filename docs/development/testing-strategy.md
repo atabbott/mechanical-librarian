@@ -35,6 +35,10 @@ The suite covers:
   production-credit negatives, and typed manifestation/work/copyright/
   creation/modification/conversion date events at exact year/month/day/signed-
   timestamp precision across package, front, and rear evidence;
+  paired source-explicit subtitle/publisher/imprint recognition across front
+  and rear indicia, distinct publisher/imprint kinds, exact excerpts and rear
+  provenance, conflict/repetition retention, exact bounds, hostile-context
+  isolation, canonical replay, and installed database reopen;
 - strict configuration, duplicate/reference rejection, and no implicit inputs;
 - scoped Audiobookshelf item reading, response bounds, root mounts,
   `relPath`/`path` agreement, all 16 destination states/currentness, multiple
@@ -126,6 +130,15 @@ installed-report paths in both cue orders and case/punctuation variants,
 same-statement versus unrelated-sentence bounds, adjacent independent credits
 versus initials and same-person compound roles, and event-aware local-claim
 scope replay.
+
+The #377 synthetic indicia aggregate reports target-work subtitle, publisher,
+and imprint recall separately from explicit-negative precision. Paired
+front/rear fixtures cover semantic and exact-labelled admission, while rear
+fixtures cover the exact excerpt bound, conflicts, repetition, hostile
+copyright-holder/printer/distributor/retailer/conversion contexts, and
+advertisement/preview/other-work isolation. Only aggregate expected, found, and
+false-positive counts are asserted or exported; fixture rows and source text
+remain private.
 
 Hostile-input tests name a supported external actor and reachable boundary.
 Typed in-process collaborators are not attacker-controlled unless the product

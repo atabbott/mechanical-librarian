@@ -406,7 +406,18 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
                 continue
             field = canonical = None; role = None
             byline = _BYLINE.match(value)
-            admitted_cue = bool(element.semantics & {"title", "fulltitle", "contributor", "creator"}) or byline is not None
+            bibliographic_indicia = opening._bibliographic_indicia(
+                element.semantics,
+                value,
+            )
+            admitted_cue = (
+                bool(
+                    element.semantics
+                    & {"title", "fulltitle", "contributor", "creator"}
+                )
+                or byline is not None
+                or bool(bibliographic_indicia)
+            )
             credits = () if is_ancestor else opening._indicia_credits(value)
             dates = () if is_ancestor else opening._indicia_dates(value)
             admitted_cue = admitted_cue or bool(credits) or bool(dates)
@@ -419,6 +430,38 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             elif byline is not None and len(byline.group(1)) <= 280: field, canonical, role = EpubInspectionField.CREATOR, byline.group(1), "author"
             elif element.semantics & {"creator"}: field, canonical, role = EpubInspectionField.CREATOR, value, "author"
             if field is not None: facts.append(EpubInspectionFact(field, report.source_fingerprint, value, canonical, value, "not_applicable", "not_applicable", "not_applicable", "opening_matter", rear_provenance=provenance, role=role))
+            for indicia_field, indicia_value in bibliographic_indicia:
+                try:
+                    indicia_value = validate_projection_text(
+                        indicia_value,
+                        "rear-spine bibliographic indicia",
+                        280,
+                    )
+                except EvidenceValueError:
+                    continue
+                inspection_field = {
+                    opening.OpeningField.SUBTITLE: EpubInspectionField.SUBTITLE,
+                    opening.OpeningField.PUBLISHER: EpubInspectionField.PUBLISHER,
+                    opening.OpeningField.IMPRINT: EpubInspectionField.IMPRINT,
+                }[indicia_field]
+                facts.append(
+                    EpubInspectionFact(
+                        inspection_field,
+                        report.source_fingerprint,
+                        indicia_value,
+                        (
+                            normalize_title(indicia_value)
+                            if inspection_field is EpubInspectionField.SUBTITLE
+                            else indicia_value
+                        ),
+                        value,
+                        "not_applicable",
+                        "not_applicable",
+                        "not_applicable",
+                        "opening_matter",
+                        rear_provenance=provenance,
+                    )
+                )
             for credit_field, credit_value, credit_role, _applicability in credits:
                 inspection_field = (
                     EpubInspectionField.CONTRIBUTOR

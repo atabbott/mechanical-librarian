@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Admit source-explicit target-work subtitle, publisher, and imprint from the
+  existing bounded rear EPUB indicia pass under the same structural-semantic or
+  exact-label rules as front matter. Reports preserve publisher versus imprint,
+  every repeated or conflicting occurrence, exact bounded excerpts, and closed
+  rear resource/spine/tail/marker provenance through canonical serialization
+  and database reopen. Copyright holders, printers, distributors, retailers,
+  conversion credits, advertisements, previews, and other-work material remain
+  excluded, while rear position supplies no candidate authority or write
+  capability. Existing report and inspection schema versions remain unchanged.
+  (#377)
+
 - Recover source-explicit contributor roles and selected-manifestation
   publication dates from bounded package, front, and rear EPUB indicia.
   Compound bibliographic roles remain attached to their contributor occurrence;
