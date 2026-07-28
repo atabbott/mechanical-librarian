@@ -14,7 +14,7 @@ mechanical-librarian proposal-set-create \
 Every option is required. The command reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v1` policy. It does not construct or contact a metadata or
+`fixed-conservative-v2` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline:
@@ -27,6 +27,12 @@ mechanical-librarian proposal-set-get \
 
 Success is exactly one canonical `proposal-set-v1` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
+
+Only `fixed-conservative-v2` proposal documents and the exact current
+`proposal_sets` table envelope are accepted. A database with the earlier
+`fixed-conservative-v1` table shape is incompatible and is rejected before
+mutation; there is no proposal migration, import, conversion, or compatibility
+parser.
 
 ## Fixed policy
 
@@ -63,6 +69,12 @@ The policy is deliberately conservative:
 - ordered author and narrator lists, series name/sequence, and date/year remain
   complete and linked rather than being edited piecemeal; untyped contributor
   evidence cannot become a partial narrator list;
+- an exact case/width/whitespace-normalized `Unknown` creator from package
+  metadata is a controlled placeholder, not an author candidate. The source claim,
+  provenance, report identity, and sibling results remain visible and
+  unchanged; real creators in the same report keep their source order, while
+  `Anonymous`, nonexact names, provider creators, and explicit opening-matter
+  creators remain eligible under the ordinary rules;
 - refining a populated year into a full date requires two materially
   independent correlation groups;
 - work first-publication evidence can fill an empty date/year consistently but

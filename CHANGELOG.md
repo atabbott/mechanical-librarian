@@ -11,6 +11,14 @@
   `config-v5`, `metadata-report-v11`, and `batch-manifest-v4`; earlier
   development state remains clean-schema incompatible. (#315)
 
+- Keep a controlled package-metadata `Unknown` creator visible in report
+  evidence while preventing it from becoming an authors replacement by itself.
+  Mixed real creators retain their order, and legitimate anonymous, nonexact,
+  provider, and opening-matter names remain eligible. Advance the closed
+  proposal policy to `fixed-conservative-v2` and the exact proposal-store
+  envelope; earlier proposal policy documents and stores are rejected without
+  migration or conversion. (#376)
+
 - Accept order-insensitive, repeated known reviewer citations at the untrusted
   output boundary, then persist and replay one deterministic sorted unique set.
   Unknown, missing, malformed, mixed-validity, and over-bound citations remain

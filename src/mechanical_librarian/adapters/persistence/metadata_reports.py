@@ -20,6 +20,7 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
 )
 from mechanical_librarian.domain.proposal_set import (
+    POLICY_VERSION,
     ProposalSet,
     ProposalValueError,
     evaluate_report,
@@ -93,6 +94,9 @@ _PROPOSAL_SETS_SQL = (
     "CREATE TABLE proposal_sets ("
     "proposal_set_id TEXT PRIMARY KEY NOT NULL CHECK (proposal_set_id GLOB 'proposal_set_[0-9a-f]*' AND length(proposal_set_id) = 77), "
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "policy_version TEXT NOT NULL CHECK (policy_version = '"
+    + POLICY_VERSION
+    + "'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152))"
 )
 _REVIEW_CASES_SQL = (
@@ -649,6 +653,7 @@ class SQLiteMetadataReportRepository:
         values = (
             proposal_set.proposal_set_id,
             proposal_set.report_id,
+            proposal_set.policy_version,
             document,
         )
         try:
@@ -656,7 +661,7 @@ class SQLiteMetadataReportRepository:
             if self._binding is not None:
                 self._binding.require_current()
             existing = self._connection.execute(
-                "SELECT report_id,document "
+                "SELECT report_id,policy_version,document "
                 "FROM proposal_sets WHERE proposal_set_id=?",
                 (proposal_set.proposal_set_id,),
             ).fetchone()
@@ -690,7 +695,7 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("proposal report changed")
             if existing is None:
                 self._connection.execute(
-                    "INSERT INTO proposal_sets(proposal_set_id,report_id,document) VALUES(?,?,?)",
+                    "INSERT INTO proposal_sets(proposal_set_id,report_id,policy_version,document) VALUES(?,?,?,?)",
                     values,
                 )
             if self._binding is not None:
@@ -712,7 +717,7 @@ class SQLiteMetadataReportRepository:
     def get_proposal(self, proposal_set_id: str) -> str:
         try:
             row = self._connection.execute(
-                "SELECT proposal_set_id,report_id,document "
+                "SELECT proposal_set_id,report_id,policy_version,document "
                 "FROM proposal_sets WHERE proposal_set_id=?",
                 (proposal_set_id,),
             ).fetchone()
@@ -732,7 +737,7 @@ class SQLiteMetadataReportRepository:
             self._connection.execute("BEGIN IMMEDIATE")
             if self._binding is not None:
                 self._binding.require_current()
-            proposal_row = self._connection.execute("SELECT proposal_set_id,report_id,document FROM proposal_sets WHERE proposal_set_id=?", (proposal_set.proposal_set_id,)).fetchone()
+            proposal_row = self._connection.execute("SELECT proposal_set_id,report_id,policy_version,document FROM proposal_sets WHERE proposal_set_id=?", (proposal_set.proposal_set_id,)).fetchone()
             if proposal_row is None or _validate_proposal_row(proposal_row) != proposal_set.to_json():
                 raise MetadataReportError("review proposal is unavailable")
             report_row = self._connection.execute("SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?", (proposal_set.report_id,)).fetchone()
@@ -816,7 +821,7 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("review case is invalid")
             self._validated_review_pointer((case.target["connection"], case.target["library"], case.target["item"]))
             proposal_row = self._connection.execute(
-                "SELECT proposal_set_id,report_id,document FROM proposal_sets WHERE proposal_set_id=?",
+                "SELECT proposal_set_id,report_id,policy_version,document FROM proposal_sets WHERE proposal_set_id=?",
                 (case.proposal_set_id,),
             ).fetchone()
             report_row = self._connection.execute(
@@ -1263,7 +1268,7 @@ class SQLiteMetadataReportRepository:
             raise ReviewAdmissionStaleError
         case = ReviewCase.create_from_data(reopened["case"])
         proposal_row = self._connection.execute(
-            "SELECT proposal_set_id,report_id,document FROM proposal_sets "
+            "SELECT proposal_set_id,report_id,policy_version,document FROM proposal_sets "
             "WHERE proposal_set_id=?",
             (case.proposal_set_id,),
         ).fetchone()
@@ -1914,11 +1919,12 @@ def _validate_report_row(row: tuple[object, ...]) -> str:
 
 
 def _validate_proposal_row(row: tuple[object, ...]) -> str:
-    if len(row) != 3:
+    if len(row) != 4:
         raise MetadataReportError("persisted proposal is invalid")
-    proposal_set_id, report_id, document = row
+    proposal_set_id, report_id, policy_version, document = row
     if (
         type(proposal_set_id) is not str
+        or policy_version != POLICY_VERSION
         or type(document) is not str
     ):
         raise MetadataReportError("persisted proposal is invalid")
@@ -1929,9 +1935,11 @@ def _validate_proposal_row(row: tuple[object, ...]) -> str:
     if (
         proposal_set.proposal_set_id,
         proposal_set.report_id,
+        proposal_set.policy_version,
     ) != (
         proposal_set_id,
         report_id,
+        policy_version,
     ):
         raise MetadataReportError("persisted proposal envelope disagrees")
     return document
