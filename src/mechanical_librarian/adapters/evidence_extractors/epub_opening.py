@@ -2228,7 +2228,7 @@ def _promotion_excluded_ordinals(projection: _Projection) -> frozenset[int]:
     by_ordinal = {element.ordinal: element for element in projection.elements}
     structural = {"section", "article", "aside", "nav"}
     excluded: set[int] = set()
-    semantic_scopes = [
+    semantic_scopes = {
         element.ordinal
         for element in projection.elements
         if (
@@ -2236,10 +2236,9 @@ def _promotion_excluded_ordinals(projection: _Projection) -> frozenset[int]:
             and not element.active
             and element.semantics & _EXCLUDED_SEMANTICS
         )
-    ]
-    for element in projection.elements:
-        if any(_scope_contains(scope, element) for scope in semantic_scopes):
-            excluded.add(element.ordinal)
+    }
+    notice_starts: dict[int, int] = {}
+    uncontained_start: int | None = None
     for notice in projection.elements:
         if (
             notice.active
@@ -2247,22 +2246,50 @@ def _promotion_excluded_ordinals(projection: _Projection) -> frozenset[int]:
             or _INDICIA_PROMOTION_NOTICE.fullmatch(notice.exact_text) is None
         ):
             continue
-        container = next(
-            (
-                ancestor
-                for ancestor in reversed(notice.ancestors)
-                if (
-                    _is_html_namespace(by_ordinal[ancestor].namespace)
-                    and by_ordinal[ancestor].name in structural
-                )
-            ),
-            None,
+        container = (
+            notice.ordinal
+            if notice.name in structural
+            else next(
+                (
+                    ancestor
+                    for ancestor in reversed(notice.ancestors)
+                    if (
+                        _is_html_namespace(by_ordinal[ancestor].namespace)
+                        and by_ordinal[ancestor].name in structural
+                    )
+                ),
+                None,
+            )
         )
-        for element in projection.elements:
-            if element.ordinal < notice.ordinal:
-                continue
-            if container is None or container in element.ancestors:
-                excluded.add(element.ordinal)
+        if container is None:
+            uncontained_start = (
+                notice.ordinal
+                if uncontained_start is None
+                else min(uncontained_start, notice.ordinal)
+            )
+        else:
+            notice_starts[container] = min(
+                notice_starts.get(container, notice.ordinal),
+                notice.ordinal,
+            )
+    for element in projection.elements:
+        scopes = (element.ordinal, *element.ancestors)
+        bounded = any(by_ordinal[scope].name in structural for scope in scopes)
+        if (
+            element.ordinal in semantic_scopes
+            or any(scope in semantic_scopes for scope in element.ancestors)
+            or (
+                uncontained_start is not None
+                and element.ordinal >= uncontained_start
+                and not bounded
+            )
+            or any(
+                element.ordinal >= notice_starts[scope]
+                for scope in scopes
+                if scope in notice_starts
+            )
+        ):
+            excluded.add(element.ordinal)
     return frozenset(excluded)
 
 

@@ -341,10 +341,18 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
         except (opening._MalformedMarkup, opening._UnsafeConstruct, opening._UnsupportedEncoding, ValueError):
             raise opening._AggregateRejected(report.outcome.MALFORMED) from None
         promotion_exclusions = opening._promotion_excluded_ordinals(projection)
+        by_ordinal = {
+            element.ordinal: element for element in projection.elements
+        }
         parents = {
             ancestor
             for element in projection.elements
             for ancestor in element.ancestors
+        }
+        promotion_ancestors = {
+            ancestor
+            for ordinal in promotion_exclusions
+            for ancestor in by_ordinal[ordinal].ancestors
         }
         marker = next(
             (
@@ -352,7 +360,7 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
                 for element in projection.elements
                 if (
                     element.ordinal not in promotion_exclusions
-                    and element.ordinal not in parents
+                    and element.ordinal not in promotion_ancestors
                 )
                 for match in [_MARKER.search(element.exact_text)]
                 if match is not None

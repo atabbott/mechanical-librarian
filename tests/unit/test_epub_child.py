@@ -922,6 +922,80 @@ class EpubChildRearSpineTests(unittest.TestCase):
             {(fact.field, fact.canonical_value) for fact in facts},
         )
 
+    def test_rear_uncontained_promotion_run_stops_at_target_section(self) -> None:
+        request, (package, opening, _) = self._bundle(
+            _xhtml(
+                "<p>All rights reserved</p>"
+                "<p>Edited by Earlier Editor</p>"
+                "<h2>Preview of Another Work</h2>"
+                "<p>Copyright 2024</p>"
+                "<p>Edited by Promo Editor</p>"
+                '<section epub:type="copyright-page">'
+                '<h1 epub:type="fulltitle">A Sample of Life</h1>'
+                "<p>Copyright 2023</p>"
+                "<p>Edited by Target Editor</p>"
+                "</section>"
+            )
+        )
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package, opening, archive)
+        self.assertEqual(
+            {
+                (fact.canonical_value, fact.role)
+                for fact in facts
+                if fact.field is EpubInspectionField.CONTRIBUTOR
+            },
+            {
+                ("Earlier Editor", "editor"),
+                ("Target Editor", "editor"),
+            },
+        )
+        self.assertEqual(
+            {
+                fact.canonical_value
+                for fact in facts
+                if fact.date_event is DateEvent.COPYRIGHT
+            },
+            {"2023"},
+        )
+        self.assertIn(
+            (EpubInspectionField.TITLE, "A Sample of Life"),
+            {(fact.field, fact.canonical_value) for fact in facts},
+        )
+
+    def test_rear_marker_detection_accepts_plain_and_inline_assembled_text(
+        self,
+    ) -> None:
+        for marker in (
+            "All rights reserved",
+            "All <em>rights</em> reserved",
+            "Colophon",
+            "Colo<em>phon</em>",
+            "Credits",
+            "Cred<em>its</em>",
+            "Copyright page",
+            "Copy<em>right</em> page",
+        ):
+            with self.subTest(marker=marker):
+                request, (package, opening, _) = self._bundle(
+                    _xhtml(
+                        f"<p>{marker}</p>"
+                        "<p>Edited by Marker Editor</p>"
+                    )
+                )
+                with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+                    facts = child._rear_facts(
+                        request, package, opening, archive
+                    )
+                self.assertIn(
+                    ("Marker Editor", "editor"),
+                    {
+                        (fact.canonical_value, fact.role)
+                        for fact in facts
+                        if fact.field is EpubInspectionField.CONTRIBUTOR
+                    },
+                )
+
     def test_rear_colophon_is_admitted_but_advertisement_and_preview_are_not(
         self,
     ) -> None:

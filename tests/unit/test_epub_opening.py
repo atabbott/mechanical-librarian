@@ -1167,6 +1167,46 @@ class EpubOpeningTests(unittest.TestCase):
             {(claim.field, claim.normalized_value) for claim in report.claims},
         )
 
+    def test_uncontained_promotion_run_stops_at_later_target_section(self) -> None:
+        report = _extract(
+            self._single(
+                _xhtml(
+                    "<p>Edited by Earlier Editor</p>"
+                    "<h2>Preview of Another Work</h2>"
+                    "<p>Copyright 2024</p>"
+                    "<p>Edited by Promo Editor</p>"
+                    '<section epub:type="copyright-page">'
+                    '<h1 epub:type="fulltitle">A Sample of Life</h1>'
+                    "<p>Copyright 2023</p>"
+                    "<p>Edited by Target Editor</p>"
+                    "</section>"
+                )
+            )
+        )
+        self.assertEqual(
+            {
+                (claim.normalized_value, claim.role)
+                for claim in report.claims
+                if claim.field is OpeningField.CONTRIBUTOR
+            },
+            {
+                ("Earlier Editor", "editor"),
+                ("Target Editor", "editor"),
+            },
+        )
+        self.assertEqual(
+            {
+                claim.normalized_value
+                for claim in report.claims
+                if claim.date_event is DateEvent.COPYRIGHT
+            },
+            {"2023"},
+        )
+        self.assertIn(
+            (OpeningField.TITLE, "A Sample of Life"),
+            {(claim.field, claim.normalized_value) for claim in report.claims},
+        )
+
     def test_synthetic_indicia_aggregate_has_exact_role_and_date_recovery(
         self,
     ) -> None:
