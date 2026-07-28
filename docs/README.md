@@ -35,6 +35,15 @@
 - [Work management](development/work-management.md)
 - [Release engineering](development/release-engineering.md)
 
+## Research
+
+- [Metadata-provider retry assessment](research/metadata-provider-retry-assessment.md)
+- [Google Books 503 retry policy](research/google-books-retry-policy.md)
+
+These notes justify the current fixed provider-local policy; they do not grant
+runtime authority beyond the operations, compatibility, and security contracts
+listed above.
+
 ## Product and governance
 
 - [Vision](product/vision.md)

@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 import io
+import tempfile
 import unittest
 from pathlib import Path
 
+import httpx
+
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    open_repository,
+)
+from mechanical_librarian.adapters.providers.google_books_metadata import (
+    GoogleBooksMetadataProvider,
+)
 from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
     MediaMountConfiguration,
@@ -133,6 +142,90 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_exhausted_provider_reopens_as_typed_terminal_without_attempts(
+        self,
+    ) -> None:
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        snapshot = TargetSnapshot(
+            "ebook", "Current title", (selected,)
+        )
+        target = _Target([snapshot, snapshot])
+        claim = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="ISBN 9780306406157",
+            applicability="ebook",
+            basis="opening_matter",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+            scope=ClaimScope.EDITION,
+        )
+        inspector = _Inspector(InspectionResult("c" * 64, (claim,)))
+        dispatches = 0
+
+        def unavailable(_: httpx.Request) -> httpx.Response:
+            nonlocal dispatches
+            dispatches += 1
+            return httpx.Response(
+                503,
+                headers={"content-type": "application/json"},
+                json={"error": {}},
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reports.sqlite"
+            service = GenerateMetadataReport(
+                target=target,
+                inspector=inspector,
+                repository_factory=lambda: open_repository(database),
+                providers=(
+                    ProviderBinding(
+                        "google_books",
+                        True,
+                        lambda: GoogleBooksMetadataProvider(
+                            "google_books",
+                            httpx.Client(
+                                transport=httpx.MockTransport(unavailable)
+                            ),
+                            65_536,
+                            sleep=lambda _: None,
+                            jitter=lambda: 0.0,
+                        ),
+                        "google_books",
+                    ),
+                ),
+                connection=TargetConnectionConfiguration(
+                    "primary",
+                    "https://example.invalid",
+                    "/private/target",
+                ),
+                library=LibraryConfiguration(
+                    "ebooks",
+                    "primary",
+                    "library-id",
+                    "ebook",
+                    "books",
+                    ("google_books",),
+                ),
+                mount=MediaMountConfiguration(
+                    "books", "/media", "/library", True
+                ),
+                limits=ReportLimits(),
+            )
+            report = MetadataReport.from_json(service.run("item-1", 0))
+            repository = open_repository(database, create=False)
+            try:
+                persisted = repository.get(report.report_id)
+            finally:
+                repository.close()
+        reopened = MetadataReport.from_json(persisted)
+        self.assertEqual(6, dispatches)
+        self.assertEqual(ProviderStatus.UNAVAILABLE, reopened.providers[0].status)
+        self.assertEqual((), reopened.providers[0].candidates)
+        self.assertNotEqual(ProviderStatus.NO_MATCH, reopened.providers[0].status)
+        self.assertNotIn('"attempt', persisted)
+
     def test_rejected_cover_state_round_trips_in_serialized_report(self) -> None:
         source = CoverSource(
             cover_source_id(CoverSourceKind.OPEN_LIBRARY, "open_library:edition:OL1M"),

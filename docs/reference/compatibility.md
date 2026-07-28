@@ -12,7 +12,7 @@ The current installed contract is intentionally narrow:
 - canonical `reviewer-qualification-profile-v1` with exact
   `gpt-5.6-sol`/`medium` and pinned Codex CLI/Bubblewrap identities; shadow
   request execution requires Linux;
-- strict `batch-manifest-v4` for foreground evidence batches;
+- strict `batch-manifest-v5` for foreground evidence batches;
 - Audiobookshelf v2.35.1 library, library-items, and current-item responses for
   explicitly configured book libraries;
 - an explicitly selected EPUB on a mapped read-only mount; and

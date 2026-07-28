@@ -173,22 +173,23 @@ complete ordered author list, one provider-local work identity, and no
 translation, adaptation, or uncertain abridgement marker. Competing works and
 same-title/different-author results are `no_match`.
 
-Every referenced, enabled Hardcover connection makes at most nine fresh
-credential-bearing GraphQL metadata requests. Every referenced, enabled Open
-Library connection makes at most nine exact Search requests, with at most two
-edition and two distinct work requests per lane, for a 45-request aggregate
-maximum. All lanes share one client, Open Library pacer, response envelope,
-2 MiB aggregate response-byte ceiling, and 60-second aggregate deadline.
-Every referenced, enabled Google Books connection makes exactly one fixed
-Volumes request per lane, at most nine requests and 2 MiB of response bytes
-overall. It requests six rows to detect overflow while retaining no more than
-five candidates. Credential-free and API-key modes have identical evidence
+Every referenced, enabled Hardcover connection makes one fixed credential-bearing
+GraphQL query per lane and at most 27 attempts. Every referenced, enabled Open
+Library connection makes at most nine exact Search queries, with at most two
+edition and two distinct work queries per lane, at most one retry per request,
+four retries per observation, and 49 aggregate attempts. Every referenced,
+enabled Google Books connection makes one fixed Volumes query per lane, at most
+five retries per query and 54 aggregate attempts. All lanes share one client,
+response-byte envelope, and 60-second aggregate deadline; Hardcover and Open
+Library use shared one-second request-start pacers. Google Books requests six
+rows to detect overflow while retaining no more than five candidates.
+Credential-free and API-key modes have identical evidence
 semantics; the optional key is read only by the controller and appears in no
 report, packet, log, diagnostic, or retained raw artifact.
 Search admission
 is bounded, deduplicated, and canonical by edition key; a third candidate is
-terminal before detail requests. Open Library request starts are spaced by the
-same fixed one-second pacer and are single-attempt. Disabled references produce
+terminal before detail requests. Open Library request starts, including
+retries, are spaced by the same fixed one-second pacer. Disabled references produce
 one `disabled` observation without client construction, credential access, or
 egress. Unreferenced providers are absent.
 
@@ -223,7 +224,7 @@ enumeration, fuzzy fallback, ranking, voting, or provider fusion.
 Each fixed request asks for one row beyond the retained cap so overflow remains
 observable. Malformed or oversized provider fields remain explicit field-local
 claims; structural or join failures make the observation `malformed`. No
-winner, score, merge, fuzzy search, retry, or cache exists.
+winner, score, merge, fuzzy search, generic retry framework, or cache exists.
 
 Google Books retains its bounded volume ID as the edition candidate identity
 and records the edition-to-work relationship explicitly as `unresolved`;

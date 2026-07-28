@@ -89,12 +89,14 @@ artifact, and currentness authority. Each provider adapter selects only the ISBN
 inputs supported by its fixed operation and retains every valid candidate
 without ranking. Open Library uses exact Search-to-edition-to-work admission,
 one adapter-local request-start pacer, and no author traversal, fallback
-discovery, retry, or generic provider registry.
-Google Books uses one fixed Volumes request per lane. Its volume ID remains an
+discovery, or generic provider registry. Provider-local fixed retry loops admit
+only declared transient status and transport classes within the shared deadline,
+byte envelope, pacing, and observation authority.
+Google Books uses one fixed Volumes query per lane. Its volume ID remains an
 edition candidate identity, work linkage is explicitly unresolved, and
 bounded publication strings remain evidence-only rather than selectable dates.
 
-`batch-manifest-v4` is an immutable secret-free operator artifact. It binds the
+`batch-manifest-v5` is an immutable secret-free operator artifact. It binds the
 current catalogue generation, exact entries, report-relevant configuration,
 enabled provider names and adapter discriminators, and conservative call
 maxima. `ForegroundBatchRun`

@@ -47,17 +47,32 @@ The suite covers:
   operations at three relationship levels, proves the bounded sibling taxonomy
   join, inspects valid error-only and partial-data GraphQL errors before data,
   rejects malformed/UTF-8/empty/over-bound error envelopes, and preserves
-  timeout, HTTP-status, byte, lane-order, and raw-token confinement behavior;
+  timeout, HTTP-status, byte, lane-order, and raw-token confinement behavior.
+  Fixed-policy retry coverage proves the 27-attempt observation ceiling,
+  500/502/503/504 and narrow typed-transport allowlists, rejection of unsafe
+  transport causes, 503-only and rate-limit `Retry-After` semantics, shared
+  one-second pacing, cumulative backoff, deadline gates, cancellation, immediate
+  partial-body charging, and aggregate-safe diagnostics;
 - Open Library exact per-family Search admission, canonical edition/work
   request order, shared one-second pacing, finite rich evidence, terminal
   failure mapping, identified metadata/cover requests, cover-failure isolation,
-  provider-order/contact privacy, and the explicit five-item batch envelope;
+  provider-order/contact privacy, one retry per request, exactly four retries
+  and 49 attempts per observation, terminal 429, 503-only `Retry-After`,
+  pacing/backoff/deadline/byte/cancellation bounds, and the explicit five-item
+  batch envelope;
 - Google Books keyed and credential-free fixed-origin requests, disabled
   zero-egress, exact ISBN/work qualification, unresolved work linkage,
   evidence-only publication strings, deterministic replay and provider order,
-  response/candidate/request/aggregate bounds, quota/4xx/5xx/no-match typing,
+  response/candidate/request/aggregate bounds including six attempts per query
+  and 54 per observation, quota/4xx/503/no-match typing, canonical
+  `Retry-After`, accepted/rejected transport classes, deadline and partial-byte
+  bounds,
   field-local scalar failures, strict identifier-entry shapes,
   cancellation/timeout behavior, and credential/raw-response redaction;
+- strict `batch-manifest-v5` replay and clean-current rejection, with exact
+  54/27/49 Google Books/Hardcover/Open Library metadata-attempt maxima, one
+  shared pacer per paced adapter across foreground entries, and no persisted
+  attempt diagnostics;
 - cover-gallery provider/aggregate bounds, safe provenance, timeout/rejection
   states, visible truncation, and digest deduplication with all provenance;
 - exact clean-state DELETE-mode report/ProposalSet/ReviewCase schema, side-effect-free existing-file

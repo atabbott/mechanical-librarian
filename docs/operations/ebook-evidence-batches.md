@@ -49,16 +49,16 @@ provider-client construction, credential access, or egress. Existing larger and
 all-eligible batches remain available when Open Library is disabled.
 
 The manifest path must be absent. Preview atomically creates one immutable
-canonical `batch-manifest-v4` document. It records scoped identities, the
+canonical `batch-manifest-v5` document. It records scoped identities, the
 catalogue generation and fingerprint, a secret-free configuration fingerprint,
 enabled provider names and adapter discriminators, and conservative call-count
-maxima. Each enabled Open Library adapter allows at most 45 metadata requests
-and four remote cover requests per selected item: up to nine Search lanes and
-two editions plus two distinct works per lane. Hardcover permits at most nine
-metadata requests. The report gallery admits at most four
+maxima. Each enabled Open Library adapter allows at most 49 metadata requests
+and four remote cover requests per selected item: up to 45 initial Search and
+detail requests plus four bounded retries. Hardcover permits at most 27
+metadata requests, and Google Books at most 54. The report gallery admits at most four
 cover sources per provider and eight overall. The maxima add the enabled
 adapters without a generic cost or scheduling framework.
-Each enabled Google Books adapter permits at most nine metadata requests and
+Each enabled Google Books adapter permits at most 54 metadata requests and
 no cover requests per selected item.
 The manifest contains no title, author,
 path, credential, operational contact email, report body, execution state, or
@@ -99,14 +99,17 @@ provider, target-service, or report-publication failures stop the remainder
 while preserving already published reports. Interruption propagates to the
 operator.
 
-One Open Library pacer is shared by the whole serial foreground run. It keeps
-all Open Library metadata and cover request starts at least one second apart;
-requests remain single-attempt and no retry or backoff state is created.
+One Open Library pacer and one Hardcover pacer are shared by the whole serial
+foreground run. They keep their provider's metadata request starts at least one
+second apart; the Open Library pacer also governs its cover requests. Initial
+attempts and bounded retries traverse the same pacing and deadline gates.
 
-There is no attempt record, resume, automatic retry, backoff, queue, worker,
-lease, scheduler, parallel execution, or report adoption. Recovery is an
-operator-created fresh manifest and foreground run. Existing completed reports
-remain available through the normal exact-ID and current-scope reopen commands.
+Bounded aggregate-safe attempt diagnostics exist only in the provider process.
+There is no durable retry or attempt state, resume, background retry, queue,
+worker, lease, scheduler, parallel execution, or report adoption. Recovery is
+an operator-created fresh manifest and foreground run. Existing completed
+reports remain available through the normal exact-ID and current-scope reopen
+commands.
 
 ## Authority and privacy
 
