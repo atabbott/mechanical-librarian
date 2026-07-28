@@ -9,6 +9,7 @@ from mechanical_librarian.application.failure_diagnostics import (
     FailureDiagnostic,
     FailureStage,
     provider_attempt_diagnostics,
+    reviewer_diagnostic_is_admissible,
     reviewer_failure_diagnostic,
 )
 
@@ -185,6 +186,25 @@ class FailureDiagnosticTests(unittest.TestCase):
         self.assertEqual(
             FailureCategory.UNKNOWN,
             reviewer_failure_diagnostic("exception:/tmp/secret").category,
+        )
+        self.assertTrue(
+            reviewer_diagnostic_is_admissible(
+                reviewer_failure_diagnostic("persistence")
+            )
+        )
+        self.assertTrue(
+            reviewer_diagnostic_is_admissible(
+                reviewer_failure_diagnostic("unknown")
+            )
+        )
+        self.assertFalse(
+            reviewer_diagnostic_is_admissible(
+                FailureDiagnostic(
+                    FailureCategory.HTTP_NON_SUCCESS,
+                    FailureComponent.REVIEWER,
+                    FailureStage.RESPONSE,
+                )
+            )
         )
 
     def test_every_frozen_category_has_an_exact_production_signal_mapping(

@@ -221,6 +221,10 @@ A dispatched attempt without a durable terminal outcome reopens as `unknown`
 with one bounded reviewer/unknown/execution diagnostic; `unknown` and `failed`
 inspection states therefore never carry an empty diagnostic list.
 `shadow-review-failure-v2` uses the identical diagnostic shape on CLI stderr.
+Failure record, durable replay, application inspection, and CLI validation all
+enforce the same closed reviewer diagnostic shapes. Impossible relabellings,
+such as a provider HTTP response with a reviewer component, fail closed without
+retaining the rejected value.
 The production-signal mapping matrix covers every frozen diagnostic category;
 unknown producer signals fail closed to `unknown` rather than borrowing a
 nearby category.

@@ -96,6 +96,17 @@ def reviewer_failure_diagnostic(code: str, *, count: int = 0) -> FailureDiagnost
     )
 
 
+def reviewer_diagnostic_is_admissible(diagnostic: object) -> bool:
+    """Accept only diagnostics produced by the closed reviewer mapping."""
+
+    if type(diagnostic) is not FailureDiagnostic:
+        return False
+    return diagnostic in {
+        reviewer_failure_diagnostic(code, count=diagnostic.count)
+        for code in (*_REVIEWER_FAILURES, "unknown")
+    }
+
+
 def provider_attempt_diagnostics(
     attempts: object,
     *,
@@ -255,5 +266,6 @@ __all__ = [
     "MAX_DIAGNOSTIC_COUNT",
     "diagnostics_are_canonical",
     "provider_attempt_diagnostics",
+    "reviewer_diagnostic_is_admissible",
     "reviewer_failure_diagnostic",
 ]

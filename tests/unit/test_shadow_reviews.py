@@ -34,6 +34,10 @@ from mechanical_librarian.application.shadow_reviews import (
     preview_shadow_review,
 )
 from mechanical_librarian.application.failure_diagnostics import (
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
     reviewer_failure_diagnostic,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
@@ -1113,6 +1117,54 @@ class ShadowReviewTests(unittest.TestCase):
             )
             repository.close()
 
+    def test_shadow_failure_record_and_replay_reject_foreign_taxonomy(
+        self,
+    ) -> None:
+        invalid = FailureDiagnostic(
+            FailureCategory.HTTP_NON_SUCCESS,
+            FailureComponent.REVIEWER,
+            FailureStage.RESPONSE,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            repository, case_id = self._repository(directory)
+            prepared = json.loads(
+                repository.prepare_shadow_request(
+                    case_id,
+                    _identity().to_json(),
+                    reevaluate=False,
+                    claim_pid=9001,
+                    claim_start_token="11",
+                    expected_prior_attempt_id=None,
+                )
+            )
+            attempt_id = prepared["attempt_id"]
+            request_id = prepared["request"]["review_request_id"]
+            with self.assertRaises(MetadataReportError):
+                repository.record_shadow_failure(
+                    attempt_id, invalid.to_json()
+                )
+            self.assertEqual(
+                (0,),
+                repository._connection.execute(
+                    "SELECT COUNT(*) FROM shadow_review_outcomes"
+                ).fetchone(),
+            )
+
+            repository._connection.execute(
+                "INSERT INTO shadow_review_outcomes("
+                "attempt_id,kind,result_document,failure_document) "
+                "VALUES(?,'failure',NULL,?)",
+                (attempt_id, invalid.to_json()),
+            )
+            repository._connection.commit()
+            with self.assertRaises(MetadataReportError) as raised:
+                repository.inspect_shadow_request(
+                    request_id, _identity().to_json()
+                )
+            self.assertNotIn("http_non_success", str(raised.exception))
+            self.assertNotIn("reviewer", str(raised.exception))
+            repository.close()
+
     def test_dispatch_without_terminal_outcome_is_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "reports.sqlite"
@@ -1853,12 +1905,22 @@ class ShadowReviewTests(unittest.TestCase):
         unaggregated_diagnostics["diagnostics"] = [timeout, second_timeout]
         out_of_order_diagnostics = json.loads(serialized)
         out_of_order_diagnostics["diagnostics"] = [unknown, timeout]
+        foreign_taxonomy = json.loads(serialized)
+        foreign_taxonomy["status"] = "unknown"
+        foreign_taxonomy["diagnostics"] = [
+            FailureDiagnostic(
+                FailureCategory.PERSISTENCE,
+                FailureComponent.REVIEWER,
+                FailureStage.PERSISTENCE,
+            ).to_data()
+        ]
         for name, document in (
             ("request", invalid_request),
             ("result", invalid_result),
             ("duplicate_diagnostics", duplicate_diagnostics),
             ("unaggregated_diagnostics", unaggregated_diagnostics),
             ("out_of_order_diagnostics", out_of_order_diagnostics),
+            ("foreign_taxonomy", foreign_taxonomy),
         ):
             output, errors = io.StringIO(), io.StringIO()
             with self.subTest(document=name):
@@ -1885,6 +1947,18 @@ class ShadowReviewTests(unittest.TestCase):
                 self.assertEqual(
                     _failure_output("malformed_output"), errors.getvalue()
                 )
+
+        class ProjectionRepository:
+            def inspect_shadow_request(self, *_args) -> str:
+                return canonical_json(foreign_taxonomy)
+
+        with self.assertRaises(ShadowReviewError) as raised:
+            inspect_shadow_review(
+                ProjectionRepository(),
+                foreign_taxonomy["review_request_id"],
+                _identity(),
+            )
+        self.assertEqual("runtime", raised.exception.code)
 
 
 class CodexShadowAdapterTests(unittest.TestCase):

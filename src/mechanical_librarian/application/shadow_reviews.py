@@ -12,6 +12,7 @@ from typing import Protocol
 from mechanical_librarian.application.failure_diagnostics import (
     FailureDiagnostic,
     diagnostics_are_canonical,
+    reviewer_diagnostic_is_admissible,
     reviewer_failure_diagnostic,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -342,6 +343,10 @@ def _validate_projection(
             tuple(value.to_data() for value in diagnostics)
             != tuple(raw["diagnostics"])
             or not diagnostics_are_canonical(diagnostics)
+            or any(
+                not reviewer_diagnostic_is_admissible(value)
+                for value in diagnostics
+            )
             or (
                 raw["status"] in {"failed", "unknown"}
                 and not diagnostics

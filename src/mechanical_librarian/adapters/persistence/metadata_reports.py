@@ -13,6 +13,9 @@ from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote
 
+from mechanical_librarian.application.failure_diagnostics import (
+    reviewer_diagnostic_is_admissible,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.failure_diagnostics import (
     MAX_DIAGNOSTIC_COUNT,
@@ -1111,7 +1114,7 @@ class SQLiteMetadataReportRepository:
     ) -> None:
         try:
             parsed = FailureDiagnostic.from_json(diagnostic)
-            if parsed.component.value != "reviewer":
+            if not reviewer_diagnostic_is_admissible(parsed):
                 raise MetadataReportError("shadow review failure is invalid")
             self._connection.execute("BEGIN IMMEDIATE")
             if self._binding is not None:
@@ -1195,9 +1198,12 @@ class SQLiteMetadataReportRepository:
                     status = QUALIFICATION_MODE
                 elif kind == "failure":
                     status = "unknown" if pid is not None else "failed"
-                    add_diagnostic(
-                        FailureDiagnostic.from_json(failure_document)
-                    )
+                    diagnostic = FailureDiagnostic.from_json(failure_document)
+                    if not reviewer_diagnostic_is_admissible(diagnostic):
+                        raise MetadataReportError(
+                            "shadow review failure is invalid"
+                        )
+                    add_diagnostic(diagnostic)
                 elif pid is not None:
                     status = "unknown"
                     add_diagnostic(

@@ -23,7 +23,10 @@
   optional provider attempt records fail closed to `unknown`; report replay
   admits only canonical provider diagnostic aggregates. Inspection binds both
   case and request identities, rejects duplicate or out-of-order aggregates,
-  and untyped CLI runner exceptions map to `unknown`.
+  and untyped CLI runner exceptions map to `unknown`. Shadow failure record,
+  durable replay, application inspection, and CLI inspection admit only the
+  closed reviewer-owned category/component/stage shapes, including the exact
+  persistence/persistence/persistence producer.
   Malformed output and every other nonzero exit remain separate. Advance clean
   exact-current contracts to
   `metadata-report-v15`, `shadow-review-inspect-v2`, and

@@ -277,7 +277,11 @@ or malformed value. Offline `shadow-review-inspect-v2` aggregates identical
 documents, rejects duplicate/split/out-of-order aggregates, binds the case and
 request identities, and exposes no per-attempt or request/result content. CLI
 failures use the same object in `shadow-review-failure-v2`; unknown exceptions
-map to `unknown` without inspecting their text.
+map to `unknown` without inspecting their text. Persistence record and replay,
+application inspection, and CLI inspection reject any diagnostic that is not
+one exact closed reviewer producer shape; a provider-only category/stage cannot
+cross by claiming the reviewer component. The legitimate
+persistence/persistence/persistence producer remains accepted.
 
 The final report database, `catalogue-v1` database, `config-v5`, artifact
 records, and `batch-manifest-v5` each accept only absent or their exact current

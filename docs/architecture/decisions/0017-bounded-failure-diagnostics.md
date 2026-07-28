@@ -81,6 +81,12 @@ reviewer/unknown/execution diagnostic per such attempt; inspection never emits
 an unknown or failed status with an empty diagnostic set. Untyped exceptions
 crossing the CLI runner boundary map to reviewer/unknown/execution; typed
 reviewer runtime remains reviewer/spawn_runtime/execution.
+Shadow failure record, durable replay, application inspection, and CLI
+inspection all apply the same application-owned admissibility invariant.
+Category, component, stage, retryability, and currentness must exactly match a
+closed reviewer producer; provider-only failure shapes cannot be relabelled as
+reviewer diagnostics. Persistence/persistence/persistence remains an admitted
+typed producer.
 
 The report database accepts only the exact new schema. ADR-0013 applies: prior
 development state is rejected before mutation and has no migration, import, or
