@@ -115,7 +115,7 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
                     declared_roles.append(role)
                 values[target][-1] = (ordinal, declared_roles)
     roles = {
-        ordinal: "+".join(declared_roles) if declared_roles else None
+        ordinal: tuple(declared_roles)
         for entries in values.values()
         for ordinal, declared_roles in entries
     }
@@ -193,16 +193,37 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
         if canonical is not None and field in {EpubInspectionField.TITLE, EpubInspectionField.SUBTITLE}:
             canonical = normalize_title(observed)
         state = forced_state or ("untyped" if field is EpubInspectionField.SUBJECT else "malformed" if canonical is None else "inapplicable" if observation.applicability.value == "inapplicable" else "valid")
-        role = roles.get(observation.citation.source_ordinal)
-        role_parts = set(() if role is None else role.split("+"))
+        declared_roles = roles.get(observation.citation.source_ordinal, ())
+        bibliographic_roles = tuple(
+            role
+            for role in declared_roles
+            if role in set(_ROLE_MAP.values()) | {"other"}
+        )
+        contextual_roles = tuple(
+            role for role in declared_roles if role in _CONTEXTUAL_ROLE_MAP.values()
+        )
+        sentinel_roles = tuple(
+            role for role in declared_roles if _SENTINEL.fullmatch(role)
+        )
+        role = "+".join(bibliographic_roles) or (
+            sentinel_roles[0]
+            if sentinel_roles and not contextual_roles
+            else None
+        )
+        role_parts = set(bibliographic_roles)
         non_author_bibliographic_roles = set(_ROLE_MAP.values()) - {"author"}
         if (
             field is EpubInspectionField.CREATOR
             and role_parts & non_author_bibliographic_roles
         ):
             field = EpubInspectionField.CONTRIBUTOR
-        if role_parts & set(_CONTEXTUAL_ROLE_MAP.values()):
-            field = EpubInspectionField.CONTEXTUAL_CREDIT
+        contextual_only = (
+            observation.field
+            in {EpubPackageField.CREATOR, EpubPackageField.CONTRIBUTOR}
+            and bool(contextual_roles)
+            and not bibliographic_roles
+            and not sentinel_roles
+        )
         date_event = {
             EpubPackageField.PUBLICATION_DATE: DateEvent.MANIFESTATION_PUBLICATION,
             EpubPackageField.COPYRIGHT_DATE: DateEvent.COPYRIGHT,
@@ -234,7 +255,41 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
         } and date_precision is not None:
             canonical = canonical or observed
             state = forced_state or "valid"
-        facts.append(EpubInspectionFact(field, source, observed, canonical, observed, "not_applicable", "not_applicable", "not_applicable", "package_metadata", state=state, role=role, date_event=date_event, date_precision=date_precision))
+        if not contextual_only:
+            facts.append(EpubInspectionFact(field, source, observed, canonical, observed, "not_applicable", "not_applicable", "not_applicable", "package_metadata", state=state, role=role, date_event=date_event, date_precision=date_precision))
+        for contextual_role in contextual_roles:
+            facts.append(
+                EpubInspectionFact(
+                    EpubInspectionField.CONTEXTUAL_CREDIT,
+                    source,
+                    observed,
+                    canonical,
+                    observed,
+                    "not_applicable",
+                    "not_applicable",
+                    "not_applicable",
+                    "package_metadata",
+                    state=state,
+                    role=contextual_role,
+                )
+            )
+        if bibliographic_roles or contextual_roles:
+            for sentinel_role in sentinel_roles:
+                facts.append(
+                    EpubInspectionFact(
+                        EpubInspectionField.CONTEXTUAL_CREDIT,
+                        source,
+                        observed,
+                        canonical,
+                        observed,
+                        "not_applicable",
+                        "not_applicable",
+                        "not_applicable",
+                        "package_metadata",
+                        state=state,
+                        role=sentinel_role,
+                    )
+                )
     return tuple(facts)
 
 
@@ -285,8 +340,14 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             raise opening._AggregateRejected(report.outcome.RESOURCE_LIMIT, tuple(facts)) from None
         except (opening._MalformedMarkup, opening._UnsafeConstruct, opening._UnsupportedEncoding, ValueError):
             raise opening._AggregateRejected(report.outcome.MALFORMED) from None
+        by_ordinal = {element.ordinal: element for element in projection.elements}
         if any(
-            opening._INDICIA_EXCLUSION.search(element.exact_text)
+            opening._INDICIA_PROMOTION_NOTICE.fullmatch(element.exact_text)
+            or bool(element.semantics & opening._EXCLUDED_SEMANTICS)
+            or any(
+                by_ordinal[ancestor].semantics & opening._EXCLUDED_SEMANTICS
+                for ancestor in element.ancestors
+            )
             for element in projection.elements
         ):
             continue

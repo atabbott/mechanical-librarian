@@ -1021,6 +1021,43 @@ class EpubOpeningTests(unittest.TestCase):
             (),
         )
 
+    def test_indicia_dates_require_whole_tokens_and_exact_offset_boundary(
+        self,
+    ) -> None:
+        valid = (
+            "EPUB publication date: 2024-03-05T10:30:00+14:00. "
+            "Copyright 2023"
+        )
+        self.assertEqual(
+            [
+                (value, event, precision)
+                for value, event, precision in opening._indicia_dates(valid)
+            ],
+            [
+                (
+                    "2024-03-05T10:30:00+14:00",
+                    DateEvent.MANIFESTATION_PUBLICATION,
+                    DatePrecision.TIMESTAMP,
+                ),
+                ("2023", DateEvent.COPYRIGHT, DatePrecision.YEAR),
+            ],
+        )
+        for malformed in (
+            "2024-03-05T10:30:00+14:01",
+            "2024-03-05T10:30:00-14:59",
+            "2024/03/05",
+            "2024abc",
+            "2024-03-05Z",
+        ):
+            with self.subTest(malformed=malformed):
+                self.assertEqual(
+                    opening._indicia_dates(
+                        f"EPUB publication date: {malformed}"
+                    ),
+                    (),
+                )
+                self.assertIsNone(opening._date_precision(malformed))
+
     def test_adjacent_explicit_credits_recover_independent_people_and_roles(
         self,
     ) -> None:
@@ -1031,6 +1068,8 @@ class EpubOpeningTests(unittest.TestCase):
                     "<p>Translated by Alice. Illustrated by Bob</p>"
                     "<p>Translated by Carol and illustrated by Dana</p>"
                     "<p>Translated by A. B. Carter</p>"
+                    "<p>Translated by Eve. Copyright 2024</p>"
+                    "<p>EPUB conversion by Tool House. Copyright 2024</p>"
                     "<p>Translated and illustrated by Bea Artist</p>"
                     "</section>"
                 )
@@ -1049,8 +1088,35 @@ class EpubOpeningTests(unittest.TestCase):
                 ("Carol", "translator"),
                 ("Dana", "illustrator"),
                 ("A. B. Carter", "translator"),
+                ("Eve", "translator"),
                 ("Bea Artist", "translator+illustrator"),
             },
+        )
+        self.assertIn(
+            ("Tool House", "conversion"),
+            {
+                (claim.normalized_value, claim.role)
+                for claim in report.claims
+                if claim.field is OpeningField.CONTEXTUAL_CREDIT
+            },
+        )
+
+    def test_promotion_word_inside_semantic_title_does_not_suppress_claim(
+        self,
+    ) -> None:
+        report = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page">'
+                    '<h1 epub:type="fulltitle">A Sample of Life</h1>'
+                    "<p>Copyright 2024</p>"
+                    "</section>"
+                )
+            )
+        )
+        self.assertIn(
+            (OpeningField.TITLE, "A Sample of Life"),
+            {(claim.field, claim.normalized_value) for claim in report.claims},
         )
 
     def test_synthetic_indicia_aggregate_has_exact_role_and_date_recovery(
@@ -1165,6 +1231,27 @@ class EpubOpeningTests(unittest.TestCase):
         self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(len(report.claims), 1)
         self.assertIn("opening_fact_limit", report.warnings)
+
+    def test_fact_limit_marker_is_reserved_inside_a_full_warning_budget(self) -> None:
+        report = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page">'
+                    "<p>First published as this ebook edition 2024</p>"
+                    "<p>Translated by First Contributor</p>"
+                    "<p>Illustrated by Second Contributor</p>"
+                    "</section>"
+                )
+            ),
+            EpubOpeningLimits(facts=1, warnings=2),
+        )
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
+        self.assertEqual(len(report.claims), 1)
+        self.assertEqual(
+            report.warnings,
+            ("ambiguous_date_event", "opening_fact_limit"),
+        )
+        self.assertEqual(EpubOpeningReport.from_json(report.to_json()), report)
 
     def test_trailing_series_cue_without_positive_structure_is_rejected(
         self,

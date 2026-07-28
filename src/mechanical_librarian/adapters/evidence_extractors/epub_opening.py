@@ -94,10 +94,12 @@ _CLAIM_SEMANTICS = {"title", "fulltitle", "subtitle", "publisher", "imprint", "c
 _SPACE = re.compile(r"\s+")
 _ISBN = re.compile(r"(?<![0-9Xx])(?:97[89][\s-]*)?[0-9][0-9Xx\s-]{8,20}[0-9Xx](?![0-9Xx])")
 _DATE_TEXT = (
-    r"(?<!\d)(?:18|19|20|21)\d{2}"
+    r"(?<![\w/:+\-])(?:18|19|20|21)\d{2}"
     r"(?:-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]\d|3[01]))?)?"
     r"(?:T(?:[01]\d|2[0-3]):[0-5]\d"
-    r"(?::[0-5]\d(?:\.\d{1,6})?)?(?:Z|[+-](?:0\d|1[0-4]):[0-5]\d))?(?![\dT-])"
+    r"(?::[0-5]\d(?:\.\d{1,6})?)?"
+    r"(?:Z|[+-](?:(?:0\d|1[0-3]):[0-5]\d|14:00)))?"
+    r"(?![\w/:+\-]|\.\d)"
 )
 _DATE = re.compile(_DATE_TEXT)
 _WORK_FIRST_DATE_CUE_TEXT = (
@@ -254,8 +256,10 @@ _HARDCOVER_LABEL = re.compile(
 _NON_ISBN_IDENTIFIER = re.compile(
     r"(?i)(?P<scheme>urn:isbn|[a-z][a-z0-9+.-]{0,31}):\s*(?://)?[^\s|]+"
 )
-_INDICIA_EXCLUSION = re.compile(
-    r"\b(?:advertisement|preview|sample|also by|other works? by)\b",
+_INDICIA_PROMOTION_NOTICE = re.compile(
+    r"^\s*(?:advertisement|preview(?:\s+of\b.*)?|"
+    r"sample(?:\s+(?:chapter|excerpt|of)\b.*)?|"
+    r"also by(?:\b.*)?|other works? by(?:\b.*)?)\s*[:.!]?\s*$",
     re.I,
 )
 _CHARSET_PARAMETER = re.compile(
@@ -1958,6 +1962,8 @@ def _isbn_owned_by_non_isbn_identifier(
 def _date_precision(value: str) -> DatePrecision | None:
     """Validate one exact ISO-like lexical date without inventing precision."""
 
+    if _DATE.fullmatch(value) is None:
+        return None
     try:
         if "T" in value:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -2047,7 +2053,7 @@ def _indicia_credits(
                 for start, end in occupied
             ):
                 continue
-            name = _SPACE.sub(" ", match.group("name")).strip(" ,:")
+            name = _credit_name(match.group("name"))
             if not name:
                 continue
             occupied.append(match.span())
@@ -2063,7 +2069,7 @@ def _indicia_credits(
             )
     for pattern, role in _CONTEXTUAL_CREDITS:
         for match in pattern.finditer(value):
-            name = _SPACE.sub(" ", match.group("name")).strip(" ,:")
+            name = _credit_name(match.group("name"))
             if not name:
                 continue
             found.append(
@@ -2082,6 +2088,20 @@ def _indicia_credits(
             found, key=lambda item: (item[0], item[1].value, item[3])
         )
     )
+
+
+def _credit_name(value: str) -> str:
+    """Stop a credit at prose while preserving dotted personal initials."""
+
+    name = _SPACE.sub(" ", value).strip(" ,:")
+    for boundary in re.finditer(r"\.\s+(?=\S)", name):
+        preceding = name[: boundary.start()].rstrip()
+        token = preceding.rsplit(" ", 1)[-1]
+        if len(token) == 1 and token.isalpha():
+            continue
+        name = preceding
+        break
+    return name.strip(" ,:")
 
 
 def _claim(field: OpeningField, value: str, applicability: EpubObservationApplicability, element: _Element, projection: _Projection, source, resource_identity: str, resource_digest: str, selection_path: tuple[str, ...], lineage: str, excerpt_characters: int, *, normalized: str | None = None, identifier_type: str | None = None, applicability_label: str | None = None, citation_context: tuple[_Element, int, int] | None = None, date_event: DateEvent | None = None, date_precision: DatePrecision | None = None, role: str | None = None) -> OpeningClaim | None:
@@ -2414,7 +2434,7 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
         if not text or element.end <= element.start:
             continue
         lowered = text.casefold()
-        if _INDICIA_EXCLUSION.search(text):
+        if _INDICIA_PROMOTION_NOTICE.fullmatch(text):
             continue
         if element.name not in claim_elements and not semantic & _CLAIM_SEMANTICS:
             continue
@@ -2985,10 +3005,22 @@ class EpubOpeningExtractor:
                     code = "malformed_selected_resource"
                     resources.append(OpeningResourceResult(candidate.identity, OpeningResourceDisposition.MALFORMED, candidate.selection_path, warnings=(code,), opened=True))
                     warnings.append(code)
-            if len(claims) > limits.facts:
+            fact_limit_reached = len(claims) > limits.facts
+            if fact_limit_reached:
                 claims = claims[: limits.facts]
-                warnings.append("opening_fact_limit")
-            unique_warnings = tuple(sorted(set(warnings)))
+            unique_warning_values = sorted(set(warnings))
+            if (
+                fact_limit_reached
+                and len(unique_warning_values) <= limits.warnings
+            ):
+                marker = "opening_fact_limit"
+                unique_warning_values = [
+                    warning
+                    for warning in unique_warning_values
+                    if warning != marker
+                ][: limits.warnings - 1]
+                unique_warning_values.append(marker)
+            unique_warnings = tuple(sorted(unique_warning_values))
             if len(unique_warnings) > limits.warnings:
                 raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
             usage = EpubOpeningUsage(selected, opened, expanded, text_characters, nodes, navigation_links, strict, recovered)

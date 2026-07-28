@@ -1156,6 +1156,8 @@ class MetadataReportCommandTests(unittest.TestCase):
                                 '<section epub:type="copyright-page">'
                                 "<p>First published as this ebook edition 2024</p>"
                                 "<p>THIS EBOOK EDITION: FIRST PUBLISHED 2025</p>"
+                                "<p>Copyright 2024/03/05</p>"
+                                "<p>Copyright 2024abc</p>"
                                 "</section>"
                             ),
                             zipfile.ZIP_STORED,
@@ -1168,6 +1170,9 @@ class MetadataReportCommandTests(unittest.TestCase):
                                 "<p>Digital edition, originally published 2026</p>"
                                 "<p>EPUB publication date: "
                                 "2024-03-05T10:30:00</p>"
+                                "<p>EPUB publication date: "
+                                "2024-03-05T10:30:00+14:01</p>"
+                                "<p>Copyright 2024-03-05Z</p>"
                             ),
                             zipfile.ZIP_STORED,
                         ),
