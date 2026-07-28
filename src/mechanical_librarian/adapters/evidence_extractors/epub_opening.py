@@ -97,9 +97,16 @@ _DATE_TEXT = (
     r"(?<!\d)(?:18|19|20|21)\d{2}"
     r"(?:-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]\d|3[01]))?)?"
     r"(?:T(?:[01]\d|2[0-3]):[0-5]\d"
-    r"(?::[0-5]\d(?:\.\d{1,6})?)?(?:Z|[+-](?:0\d|1[0-4]):[0-5]\d))?(?!\d)"
+    r"(?::[0-5]\d(?:\.\d{1,6})?)?(?:Z|[+-](?:0\d|1[0-4]):[0-5]\d))?(?![\dT-])"
 )
 _DATE = re.compile(_DATE_TEXT)
+_MIXED_EDITION_DATE_EVENT = re.compile(
+    rf"(?:\bfirst\s+published|\boriginally\s+published"
+    rf"|\boriginal\s+publication(?:\s+date)?\s*[:\-]?)"
+    rf"[^.;|\n]{{0,96}}\b(?:e-?book|electronic|digital|epub)"
+    rf"(?:\s+edition)?\b[^.;|\n]{{0,96}}?(?P<date>{_DATE_TEXT})",
+    re.I,
+)
 _DATE_EVENT_PATTERNS = (
     (
         DateEvent.MANIFESTATION_PUBLICATION,
@@ -158,25 +165,33 @@ _DATE_EVENT_PATTERNS = (
         ),
     ),
 )
+_CREDIT_CUE_TEXT = (
+    r"(?:translated|translation|illustrated|illustrations|edited|foreword"
+    r"|introduction|(?:book|cover|interior)\s+design|photographs?"
+    r"|photography|maps?|cartography|adapted)\s+by"
+)
+_CREDIT_NAME_TEXT = (
+    rf"(?P<name>[^;|\n]+?)(?="
+    rf"(?:\s*\.\s*|\s+and\s+){_CREDIT_CUE_TEXT}\b|[;|\n]|$)"
+)
 _BIBLIOGRAPHIC_CREDITS = (
     (
         re.compile(
-            r"\b(?:translated|translation)\s+and\s+"
-            r"(?:illustrated|illustrations)\s+by\s+"
-            r"(?P<name>[^;|\n]+)",
+            rf"\b(?:translated|translation)\s+and\s+"
+            rf"(?:illustrated|illustrations)\s+by\s+{_CREDIT_NAME_TEXT}",
             re.I,
         ),
         ("translator", "illustrator"),
         EpubObservationApplicability.EDITION,
     ),
-    (re.compile(r"\b(?:translated|translation)\s+by\s+(?P<name>[^;|\n]+)", re.I), ("translator",), EpubObservationApplicability.EDITION),
-    (re.compile(r"\b(?:illustrated|illustrations)\s+by\s+(?P<name>[^;|\n]+)", re.I), ("illustrator",), EpubObservationApplicability.EDITION),
-    (re.compile(r"\bedited\s+by\s+(?P<name>[^;|\n]+)", re.I), ("editor",), EpubObservationApplicability.WORK),
-    (re.compile(r"\b(?:foreword|introduction)\s+by\s+(?P<name>[^;|\n]+)", re.I), ("foreword",), EpubObservationApplicability.WORK),
-    (re.compile(r"\b(?:book|cover|interior)\s+design\s+by\s+(?P<name>[^;|\n]+)", re.I), ("designer",), EpubObservationApplicability.EDITION),
-    (re.compile(r"\b(?:photographs?|photography)\s+by\s+(?P<name>[^;|\n]+)", re.I), ("photographer",), EpubObservationApplicability.EDITION),
-    (re.compile(r"\b(?:maps?|cartography)\s+by\s+(?P<name>[^;|\n]+)", re.I), ("cartographer",), EpubObservationApplicability.EDITION),
-    (re.compile(r"\badapted\s+by\s+(?P<name>[^;|\n]+)", re.I), ("adapter",), EpubObservationApplicability.WORK),
+    (re.compile(rf"\b(?:translated|translation)\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("translator",), EpubObservationApplicability.EDITION),
+    (re.compile(rf"\b(?:illustrated|illustrations)\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("illustrator",), EpubObservationApplicability.EDITION),
+    (re.compile(rf"\bedited\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("editor",), EpubObservationApplicability.WORK),
+    (re.compile(rf"\b(?:foreword|introduction)\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("foreword",), EpubObservationApplicability.WORK),
+    (re.compile(rf"\b(?:book|cover|interior)\s+design\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("designer",), EpubObservationApplicability.EDITION),
+    (re.compile(rf"\b(?:photographs?|photography)\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("photographer",), EpubObservationApplicability.EDITION),
+    (re.compile(rf"\b(?:maps?|cartography)\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("cartographer",), EpubObservationApplicability.EDITION),
+    (re.compile(rf"\badapted\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("adapter",), EpubObservationApplicability.WORK),
 )
 _CONTEXTUAL_CREDITS = (
     (re.compile(r"\b(?:epub|e-?book|digital)\s+conversion\s+by\s+(?P<name>[^;|\n]+)", re.I), "conversion"),
@@ -1908,7 +1923,9 @@ def _date_precision(value: str) -> DatePrecision | None:
 
     try:
         if "T" in value:
-            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                return None
             return DatePrecision.TIMESTAMP
         pieces = value.split("-")
         if len(pieces) == 1:
@@ -1931,8 +1948,16 @@ def _indicia_dates(
 
     found: list[tuple[int, str, DateEvent, DatePrecision]] = []
     occupied: set[tuple[int, int, DateEvent]] = set()
+    ambiguous_spans = tuple(
+        match.span() for match in _MIXED_EDITION_DATE_EVENT.finditer(value)
+    )
     for event, pattern in _DATE_EVENT_PATTERNS:
         for match in pattern.finditer(value):
+            if any(
+                start < match.end() and match.start() < end
+                for start, end in ambiguous_spans
+            ):
+                continue
             lexical = match.group("date")
             precision = _date_precision(lexical)
             key = (*match.span("date"), event)
@@ -2462,6 +2487,8 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             add(OpeningField.PRINTING, text, EpubObservationApplicability.EDITION)
         if "revision" in lowered or "revised" in lowered:
             add(OpeningField.REVISION, text, EpubObservationApplicability.EDITION)
+        if _MIXED_EDITION_DATE_EVENT.search(text) is not None:
+            warnings.append("ambiguous_date_event")
         for lexical, event, precision in _indicia_dates(text):
             field = (
                 OpeningField.PUBLICATION_DATE

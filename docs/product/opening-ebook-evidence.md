@@ -135,6 +135,24 @@ dates, and print-edition dates do not become selected-ebook manifestation
 facts. Conversion, scanning, software, retailer, and workflow credits remain
 typed contextual evidence and never enter contributor candidates.
 
+Date-time evidence requires either `Z` or an explicit signed offset; an
+unsigned date-time is rejected as a whole and cannot fall back to its valid
+year, month, or day prefix. Wording that mixes a work-first cue with the
+selected ebook edition, such as `First published as this ebook edition 2024`,
+is unresolved: the opening report records `ambiguous_date_event`, while neither
+front nor rear projection emits a typed date claim. The retained metadata
+report currently has no separate unresolved-date field, so this condition is
+represented there by the absence of either date event rather than by guessing.
+Work-first-publication and creation events are work-scoped; manifestation,
+copyright, modification, conversion, and unknown events are edition-scoped,
+and durable local-claim construction and replay reject a mismatched scope.
+
+Adjacent explicit contributor credits are split only at another controlled
+role cue after sentence punctuation or `and`. This keeps initials such as
+`A. B. Carter` intact, recovers separate people from `Translated by Alice.
+Illustrated by Bob`, and retains `Translated and illustrated by Bea Artist` as
+one compound role on one contributor.
+
 Only the minimum supporting text is retained. Story prose adjacent to front
 matter is not automatically evidence of title, author, edition, or series.
 When both publisher and imprint are explicit, the local projection preserves

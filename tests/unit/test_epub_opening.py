@@ -936,6 +936,64 @@ class EpubOpeningTests(unittest.TestCase):
             [("1999", DateEvent.WORK_FIRST_PUBLICATION)],
         )
 
+    def test_ambiguous_date_spans_fail_closed_without_truncation_or_event_guessing(
+        self,
+    ) -> None:
+        report = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page">'
+                    "<p>EPUB publication date: 2024-03-05T10:30:00</p>"
+                    "<p>First published as this ebook edition 2024</p>"
+                    "</section>"
+                )
+            )
+        )
+
+        self.assertFalse(
+            any(
+                claim.field
+                in {OpeningField.PUBLICATION_DATE, OpeningField.DATE_EVENT}
+                for claim in report.claims
+            )
+        )
+        self.assertIn("ambiguous_date_event", report.warnings)
+        self.assertIsNone(
+            opening._date_precision("2024-03-05T10:30:00")
+        )
+
+    def test_adjacent_explicit_credits_recover_independent_people_and_roles(
+        self,
+    ) -> None:
+        report = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page">'
+                    "<p>Translated by Alice. Illustrated by Bob</p>"
+                    "<p>Translated by Carol and illustrated by Dana</p>"
+                    "<p>Translated by A. B. Carter</p>"
+                    "<p>Translated and illustrated by Bea Artist</p>"
+                    "</section>"
+                )
+            )
+        )
+
+        self.assertEqual(
+            {
+                (claim.normalized_value, claim.role)
+                for claim in report.claims
+                if claim.field is OpeningField.CONTRIBUTOR
+            },
+            {
+                ("Alice", "translator"),
+                ("Bob", "illustrator"),
+                ("Carol", "translator"),
+                ("Dana", "illustrator"),
+                ("A. B. Carter", "translator"),
+                ("Bea Artist", "translator+illustrator"),
+            },
+        )
+
     def test_synthetic_indicia_aggregate_has_exact_role_and_date_recovery(
         self,
     ) -> None:

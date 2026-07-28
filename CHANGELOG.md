@@ -12,7 +12,10 @@
   selected ebook. Advance clean exact-current opening, child, and report
   contracts to `epub-opening-report-v2`, `epub-inspection-v3`, and
   `metadata-report-v12`; earlier development state remains incompatible under
-  ADR-0013. (#374)
+  ADR-0013. Unsigned date-times and mixed work-first/selected-edition wording
+  now fail closed without lower-precision truncation or event guessing,
+  adjacent explicit contributor credits remain independent, and durable local
+  date-event scope must agree with the event. (#374)
 
 - Recover from narrowly classified transient metadata-provider failures within
   provider-local fixed retry, pacing, byte, deadline, and dispatch bounds.

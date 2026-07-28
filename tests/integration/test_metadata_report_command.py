@@ -25,6 +25,7 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.bootstrap.composition import reopen_metadata_report, run_metadata_report
 from mechanical_librarian.bootstrap.composition import reopen_cover_preview
+from mechanical_librarian.domain.epub_inspection import DateEvent
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.cover_evidence import PREVIEW_VARIANT
@@ -1129,6 +1130,87 @@ class MetadataReportCommandTests(unittest.TestCase):
             connection.close()
             self.assertEqual(server.requests, 8)
             self.assertEqual(source.read_bytes(), original_media)
+
+    def test_real_child_mixed_edition_date_never_reaches_installed_report(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = root / "media"
+            media.mkdir()
+            source = media / "book.epub"
+            package = _opening_package(
+                items=(
+                    ("opening", "opening.xhtml", "application/xhtml+xml", ""),
+                    ("rear", "rear.xhtml", "application/xhtml+xml", ""),
+                ),
+                spine=("opening", "rear"),
+            )
+            source.write_bytes(
+                _opening_epub(
+                    package=package,
+                    entries=(
+                        (
+                            "EPUB/opening.xhtml",
+                            _xhtml(
+                                '<section epub:type="copyright-page">'
+                                "<p>First published as this ebook edition 2024</p>"
+                                "</section>"
+                            ),
+                            zipfile.ZIP_STORED,
+                        ),
+                        (
+                            "EPUB/rear.xhtml",
+                            _xhtml(
+                                "<p>All rights reserved</p>"
+                                "<p>First published as this ebook edition 2024</p>"
+                                "<p>EPUB publication date: "
+                                "2024-03-05T10:30:00</p>"
+                            ),
+                            zipfile.ZIP_STORED,
+                        ),
+                    ),
+                )
+            )
+            target_secret = root / "target.secret"
+            target_secret.write_text("target-token", encoding="ascii")
+            target_secret.chmod(0o600)
+            database = root / "reports.sqlite"
+            artifact_store = root / "artifacts"
+            with _Server(_item(source.stat().st_size)) as server:
+                config = root / "config.json"
+                config.write_text(
+                    json.dumps(_config(server.endpoint, media, target_secret)),
+                    encoding="utf-8",
+                )
+                result, output, errors = _installed_cli(
+                    config,
+                    database,
+                    artifact_store,
+                )
+
+            self.assertEqual((result, errors), (0, ""))
+            report = MetadataReport.from_json(output.removesuffix("\n"))
+            self.assertFalse(
+                any(
+                    claim.date_event is DateEvent.WORK_FIRST_PUBLICATION
+                    or claim.observed in {"2024", "2024-03-05"}
+                    for claim in report.local_claims
+                )
+            )
+            self.assertEqual(
+                [
+                    (claim.observed, claim.date_event)
+                    for claim in report.local_claims
+                    if claim.date_event is not None
+                ],
+                [
+                    (
+                        "2026-01-13T00:00:00Z",
+                        DateEvent.MODIFICATION,
+                    )
+                ],
+            )
 
     def test_rear_limit_warning_survives_real_child_report_reopen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

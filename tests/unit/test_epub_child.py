@@ -706,6 +706,30 @@ class EpubChildRearSpineTests(unittest.TestCase):
             )
         )
 
+    def test_rear_mixed_edition_and_unsigned_datetime_evidence_fails_closed(
+        self,
+    ) -> None:
+        request, (package, opening, _) = self._bundle(
+            _xhtml(
+                "<p>All rights reserved</p>"
+                "<p>First published as this ebook edition 2024</p>"
+                "<p>EPUB publication date: 2024-03-05T10:30:00</p>"
+            )
+        )
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package, opening, archive)
+
+        self.assertFalse(
+            any(
+                fact.field
+                in {
+                    EpubInspectionField.PUBLICATION_DATE,
+                    EpubInspectionField.DATE_EVENT,
+                }
+                for fact in facts
+            )
+        )
+
     def test_rear_colophon_is_admitted_but_advertisement_and_preview_are_not(
         self,
     ) -> None:

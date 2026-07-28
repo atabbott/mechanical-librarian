@@ -661,6 +661,8 @@ class LocalClaim:
             and self.date_event is not DateEvent.MANIFESTATION_PUBLICATION
         ):
             raise ReportValueError("local publication date event is inconsistent")
+        if is_date and self.scope is not claim_scope(self.kind, self.date_event):
+            raise ReportValueError("local date claim scope is inconsistent")
         sentinel = _sentinel_state(self.observed)
         if sentinel is not None and (self.state is not sentinel or self.canonical is not None):
             raise ReportValueError("source sentinel claim is inconsistent")
@@ -690,6 +692,9 @@ class LocalClaim:
         date_event: DateEvent | None = None,
         date_precision: DatePrecision | None = None,
     ) -> Self:
+        resolved_scope = (
+            scope if scope is not None else claim_scope(kind, date_event)
+        )
         value = {
             "applicability": applicability,
             "basis": basis,
@@ -700,7 +705,11 @@ class LocalClaim:
             "observed": observed,
             "applicability_basis": applicability_basis,
             "state": state.value if type(state) is FieldState else "",
-            "scope": (scope if scope is not None else claim_scope(kind)).value if type(scope if scope is not None else claim_scope(kind)) is ClaimScope else "",
+            "scope": (
+                resolved_scope.value
+                if type(resolved_scope) is ClaimScope
+                else ""
+            ),
             "role": role,
             "rear_provenance": None if rear_provenance is None else rear_provenance.to_data(),
             "occurrence": occurrence,
@@ -709,7 +718,6 @@ class LocalClaim:
                 None if date_precision is None else date_precision.value
             ),
         }
-        resolved_scope = scope if scope is not None else claim_scope(kind)
         return cls(stable_reference("local", value), kind, observed, canonical, excerpt, applicability, basis, checksum, applicability_basis, resolved_scope, state, role, rear_provenance, occurrence, date_event, date_precision)
 
     def _reference_data(self) -> dict[str, object]:
@@ -1582,9 +1590,23 @@ def _provider_reference_data(provider: str, candidate: str, kind: ClaimKind, val
     }
 
 
-def claim_scope(kind: ClaimKind) -> ClaimScope:
+def claim_scope(
+    kind: ClaimKind,
+    date_event: DateEvent | None = None,
+) -> ClaimScope:
     if type(kind) is not ClaimKind:
         raise ReportValueError("claim kind is invalid")
+    if date_event is not None and type(date_event) is not DateEvent:
+        raise ReportValueError("date event is invalid")
+    if (
+        kind is ClaimKind.DATE_EVENT
+        and date_event
+        in {
+            DateEvent.WORK_FIRST_PUBLICATION,
+            DateEvent.CREATION,
+        }
+    ):
+        return ClaimScope.WORK
     return ClaimScope.EDITION if kind in {ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLICATION_DATE, ClaimKind.DATE_EVENT, ClaimKind.CONTEXTUAL_CREDIT, ClaimKind.PUBLISHER, ClaimKind.IMPRINT, ClaimKind.LANGUAGE} else ClaimScope.WORK
 
 

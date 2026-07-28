@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import io
 import tempfile
 import unittest
@@ -143,6 +144,51 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_local_date_event_scope_is_event_aware_and_replay_rejects_mismatch(
+        self,
+    ) -> None:
+        claims = tuple(
+            LocalClaim.create(
+                kind=ClaimKind.DATE_EVENT,
+                observed="1998",
+                canonical="1998",
+                excerpt="First published 1998",
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                date_event=event,
+                date_precision=DatePrecision.YEAR,
+            )
+            for event in (
+                DateEvent.WORK_FIRST_PUBLICATION,
+                DateEvent.CREATION,
+                DateEvent.COPYRIGHT,
+            )
+        )
+        self.assertEqual(
+            [claim.scope for claim in claims],
+            [ClaimScope.WORK, ClaimScope.WORK, ClaimScope.EDITION],
+        )
+        with self.assertRaises(ReportValueError):
+            replace(claims[0], scope=ClaimScope.EDITION)
+
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields("Example"),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=claims,
+            local_reasons=("opening_date_event",),
+            providers=(),
+        )
+        replay_data = report.to_data()
+        replay_data["local"]["claims"][0]["scope"] = "edition"
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(replay_data))
+
     def test_local_dates_and_contextual_credits_replay_without_candidate_conflation(
         self,
     ) -> None:
