@@ -39,8 +39,9 @@ Source-explicit target-work subtitle, publisher, and imprint claims use the
 same closed kinds for front and rear indicia. Rear claims additionally retain
 their bounded resource identity, spine ordinal, tail slot, marker, and exact
 supporting excerpt. Publisher and imprint remain separate edition-scoped kinds.
-Each complete nested or sibling label owns one occurrence without an assembled
-ancestor claim; repeated or conflicting occurrences are retained without
+Each complete nested or sibling label owns its exact occurrence span without a
+synthetic combined value, while unmatched split labels in the same ancestor
+remain assembled. Repeated or conflicting occurrences are retained without
 source-position authority or automatic resolution.
 An explicitly non-ISBN package scheme or URI owns its digit sequence, so a
 checksum-valid substring within it is not an ISBN fact.

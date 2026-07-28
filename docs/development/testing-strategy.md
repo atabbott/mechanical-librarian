@@ -138,9 +138,11 @@ front/rear fixtures cover semantic and exact-labelled admission, while rear
 fixtures cover the exact excerpt bound, conflicts, repetition, hostile
 copyright-holder/printer/distributor/retailer/conversion contexts, and
 advertisement/preview/other-work isolation. Focused regressions additionally
-cover nested single-emission, multiple exact sibling labels, repeated siblings,
-assembled inline labels, scanning/production/workflow label values, promotion
-cues inside labels, front/rear NFC and whitespace normalization, `metadata-report-v13`
+cover nested single-emission, multiple exact sibling labels, mixed complete and
+split labels in one ancestor, repeated equal complete/split siblings, multiple
+assembled labels, scanning/production/workflow label values, promotion cues
+inside labels, the exact 16-fact rear cap, front/rear NFC and whitespace
+normalization, `metadata-report-v13`
 canonical replay, clean database creation, and byte-unchanged rejection of v12
 state. Only aggregate expected, found, and false-positive counts are asserted
 or exported; fixture rows and source text remain private.

@@ -410,11 +410,12 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             except EvidenceValueError:
                 continue
             eligible_ordinals.add(candidate.ordinal)
-        bibliographic_label_ancestors = (
-            opening._bibliographic_indicia_label_ancestors(
-                projection.elements,
-                eligible_ordinals,
-            )
+        (
+            bibliographic_labels,
+            bibliographic_label_allocations,
+        ) = opening._bibliographic_indicia_label_allocations(
+            projection.elements,
+            eligible_ordinals,
         )
         bibliographic_owners: list[
             tuple[int, EpubInspectionField, str]
@@ -432,13 +433,10 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             field = canonical = None; role = None
             byline = _BYLINE.match(value)
             bibliographic_label = opening._is_bibliographic_indicia_label(value)
-            bibliographic_indicia = (
-                ()
-                if element.ordinal in bibliographic_label_ancestors
-                else opening._bibliographic_indicia(
-                    element.semantics,
-                    value,
-                )
+            bibliographic_indicia = opening._bibliographic_indicia(
+                element.semantics,
+                value,
+                bibliographic_labels.get(element.ordinal, ()),
             )
             admitted_cue = (
                 bool(
@@ -467,10 +465,23 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             elif byline is not None and len(byline.group(1)) <= 280: field, canonical, role = EpubInspectionField.CREATOR, byline.group(1), "author"
             elif element.semantics & {"creator"}: field, canonical, role = EpubInspectionField.CREATOR, value, "author"
             if field is not None: facts.append(EpubInspectionFact(field, report.source_fingerprint, value, canonical, value, "not_applicable", "not_applicable", "not_applicable", "opening_matter", rear_provenance=provenance, role=role))
-            for indicia_field, indicia_value, _labelled in bibliographic_indicia:
+            for indicia in bibliographic_indicia:
+                labelled = indicia.context_span is not None
+                if labelled:
+                    allocation = bibliographic_label_allocations.get(
+                        opening._bibliographic_indicia_label_key(
+                            element,
+                            indicia,
+                        )
+                    )
+                    if (
+                        allocation is None
+                        or allocation.emitter_ordinal != element.ordinal
+                    ):
+                        continue
                 try:
                     indicia_value = validate_projection_text(
-                        indicia_value,
+                        indicia.value,
                         "rear-spine bibliographic indicia",
                         280,
                     )
@@ -480,24 +491,40 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
                     opening.OpeningField.SUBTITLE: EpubInspectionField.SUBTITLE,
                     opening.OpeningField.PUBLISHER: EpubInspectionField.PUBLISHER,
                     opening.OpeningField.IMPRINT: EpubInspectionField.IMPRINT,
-                }[indicia_field]
-                if any(
+                }[indicia.field]
+                if not labelled and any(
                     owner in element.ancestors
                     and owner_field is inspection_field
                     and owner_value == indicia_value
                     for owner, owner_field, owner_value in bibliographic_owners
                 ):
                     continue
-                bibliographic_owners.append(
-                    (element.ordinal, inspection_field, indicia_value)
-                )
+                if not labelled:
+                    bibliographic_owners.append(
+                        (element.ordinal, inspection_field, indicia_value)
+                    )
+                supporting_context = value
+                if indicia.context_span is not None:
+                    context_start, context_end = indicia.context_span
+                    supporting_context = projection.text[
+                        element.start + context_start:
+                        element.start + context_end
+                    ]
+                try:
+                    supporting_context = validate_projection_text(
+                        supporting_context,
+                        "rear-spine bibliographic context",
+                        280,
+                    )
+                except EvidenceValueError:
+                    continue
                 facts.append(
                     EpubInspectionFact(
                         inspection_field,
                         report.source_fingerprint,
                         indicia_value,
-                        opening._normal(indicia_value, indicia_field),
-                        value,
+                        opening._normal(indicia_value, indicia.field),
+                        supporting_context,
                         "not_applicable",
                         "not_applicable",
                         "not_applicable",

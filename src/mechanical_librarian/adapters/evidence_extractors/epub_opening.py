@@ -91,10 +91,20 @@ _ROLE_ORDER = {
 }
 _BODY_SEMANTICS = {"bodymatter"}
 _CLAIM_SEMANTICS = {"title", "fulltitle", "subtitle", "publisher", "imprint", "contributor", "creator"}
+_CLAIM_ELEMENTS = {
+    "h1", "h2", "h3", "h4", "h5", "h6", "p", "dt", "dd", "li",
+    "address", "figcaption",
+}
 _BIBLIOGRAPHIC_INDICIA_LABEL = re.compile(
     r"^(?P<label>subtitle|publisher|imprint)\s*:\s*(?P<value>.+)$",
     re.I,
 )
+_BIBLIOGRAPHIC_INDICIA_LABEL_CUE = re.compile(
+    r"(?P<label>subtitle|publisher|imprint)\s*:\s*",
+    re.I,
+)
+# One past the immutable 64-fact cap is sufficient to prove exhaustion.
+_BIBLIOGRAPHIC_INDICIA_PER_ELEMENT = 65
 _NON_BIBLIOGRAPHIC_INDICIA = re.compile(
     r"^(?:(?:©|\(c\))\s*"
     r"|copyright(?:(?:\s+|-)holder\b"
@@ -362,6 +372,19 @@ class _Element:
     namespace: str = ""
     fragment_ids: tuple[str, ...] = ()
     invalid_attributes: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class _BibliographicIndicia:
+    field: OpeningField
+    value: str
+    context_span: tuple[int, int] | None = None
+
+
+@dataclass(frozen=True)
+class _BibliographicIndiciaAllocation:
+    owner_ordinal: int
+    emitter_ordinal: int
 
 
 @dataclass
@@ -1954,24 +1977,20 @@ def _normal(value: str, field: OpeningField) -> str:
 def _bibliographic_indicia(
     semantics: set[str],
     text: str,
-) -> tuple[tuple[OpeningField, str, bool], ...]:
+    labelled: tuple[_BibliographicIndicia, ...] | None = None,
+) -> tuple[_BibliographicIndicia, ...]:
     """Admit only structurally explicit or exactly labelled target indicia."""
 
+    if labelled is None:
+        labelled = _bibliographic_indicia_label_occurrences(text)
+    if labelled:
+        return labelled
+    if _is_bibliographic_indicia_label(text):
+        return ()
     if _is_non_bibliographic_indicia(text):
         return ()
-    labelled = _BIBLIOGRAPHIC_INDICIA_LABEL.fullmatch(text)
-    if labelled is not None:
-        value = labelled.group("value")
-        if _is_non_bibliographic_indicia(value):
-            return ()
-        field = {
-            "subtitle": OpeningField.SUBTITLE,
-            "publisher": OpeningField.PUBLISHER,
-            "imprint": OpeningField.IMPRINT,
-        }[labelled.group("label").casefold()]
-        return ((field, value, True),)
     return tuple(
-        (field, text, False)
+        _BibliographicIndicia(field, text)
         for token, field in (
             ("subtitle", OpeningField.SUBTITLE),
             ("publisher", OpeningField.PUBLISHER),
@@ -1996,22 +2015,120 @@ def _is_bibliographic_indicia_label(text: str) -> bool:
     return _BIBLIOGRAPHIC_INDICIA_LABEL.fullmatch(text) is not None
 
 
-def _bibliographic_indicia_label_ancestors(
+def _bibliographic_indicia_label_occurrences(
+    text: str,
+    *,
+    base_start: int = 0,
+    cue_boundaries: set[int] | None = None,
+) -> tuple[_BibliographicIndicia, ...]:
+    cues: list[re.Match[str]] = []
+    for cue in _BIBLIOGRAPHIC_INDICIA_LABEL_CUE.finditer(text):
+        if not cues and cue.start() != 0:
+            return ()
+        if (
+            cue.start() != 0
+            and not text[cue.start() - 1].isspace()
+            and (
+                cue_boundaries is None
+                or base_start + cue.start() not in cue_boundaries
+            )
+        ):
+            continue
+        if len(cues) == _BIBLIOGRAPHIC_INDICIA_PER_ELEMENT:
+            break
+        cues.append(cue)
+    occurrences: list[_BibliographicIndicia] = []
+    for index, cue in enumerate(cues):
+        context_end = (
+            cues[index + 1].start()
+            if index + 1 < len(cues)
+            else len(text)
+        )
+        while context_end > cue.end() and text[context_end - 1].isspace():
+            context_end -= 1
+        value = text[cue.end():context_end].strip()
+        if not value or _is_non_bibliographic_indicia(value):
+            continue
+        field = {
+            "subtitle": OpeningField.SUBTITLE,
+            "publisher": OpeningField.PUBLISHER,
+            "imprint": OpeningField.IMPRINT,
+        }[cue.group("label").casefold()]
+        occurrences.append(
+            _BibliographicIndicia(
+                field,
+                value,
+                (cue.start(), context_end),
+            )
+        )
+    return tuple(occurrences)
+
+
+def _bibliographic_indicia_label_key(
+    element: _Element,
+    indicia: _BibliographicIndicia,
+) -> tuple[OpeningField, int, int]:
+    if indicia.context_span is None:
+        raise ValueError("unlabelled bibliographic indicia has no owner key")
+    start, end = indicia.context_span
+    return indicia.field, element.start + start, element.start + end
+
+
+def _bibliographic_indicia_label_allocations(
     elements: list[_Element],
     eligible_ordinals: set[int],
-) -> set[int]:
-    """Return eligible ancestors whose projection contains a complete label."""
+) -> tuple[
+    dict[int, tuple[_BibliographicIndicia, ...]],
+    dict[
+        tuple[OpeningField, int, int],
+        _BibliographicIndiciaAllocation,
+    ],
+]:
+    """Assign each labelled span a deepest owner and nearest claim emitter."""
 
-    return {
-        ancestor
+    owners: dict[
+        tuple[OpeningField, int, int],
+        tuple[int, int],
+    ] = {}
+    emitters: dict[
+        tuple[OpeningField, int, int],
+        tuple[int, int],
+    ] = {}
+    labels_by_ordinal: dict[int, tuple[_BibliographicIndicia, ...]] = {}
+    cue_boundaries = {
+        candidate.start
         for candidate in elements
-        if (
-            candidate.ordinal in eligible_ordinals
-            and _is_bibliographic_indicia_label(candidate.exact_text)
-        )
-        for ancestor in candidate.ancestors
-        if ancestor in eligible_ordinals
+        if candidate.ordinal in eligible_ordinals
     }
+    for candidate in elements:
+        if candidate.ordinal not in eligible_ordinals:
+            continue
+        labelled = _bibliographic_indicia_label_occurrences(
+            candidate.exact_text,
+            base_start=candidate.start,
+            cue_boundaries=cue_boundaries,
+        )
+        labels_by_ordinal[candidate.ordinal] = labelled
+        for indicia in labelled:
+            key = _bibliographic_indicia_label_key(candidate, indicia)
+            owner = (candidate.depth, candidate.ordinal)
+            if owner > owners.get(key, (-1, -1)):
+                owners[key] = owner
+            if (
+                candidate.name in _CLAIM_ELEMENTS
+                or candidate.semantics & _CLAIM_SEMANTICS
+            ) and owner > emitters.get(key, (-1, -1)):
+                emitters[key] = owner
+    return (
+        labels_by_ordinal,
+        {
+            key: _BibliographicIndiciaAllocation(
+                owner_ordinal,
+                emitters.get(key, (owner_depth, owner_ordinal))[1],
+            )
+            for key, (owner_depth, owner_ordinal) in owners.items()
+        },
+    )
 
 
 def _isbn_valid(value: str) -> bool:
@@ -2229,8 +2346,20 @@ def _claim(field: OpeningField, value: str, applicability: EpubObservationApplic
         return None
     start = element.start
     if state == "valid" and raw != element.exact_text:
+        contextual_relative = (
+            projection.text[
+                citation_context[1]:citation_context[2]
+            ].find(raw)
+            if (
+                citation_context is not None
+                and citation_context[0] is element
+            )
+            else -1
+        )
         relative = element.exact_text.find(raw)
-        if relative >= 0:
+        if contextual_relative >= 0 and citation_context is not None:
+            start = citation_context[1] + contextual_relative
+        elif relative >= 0:
             start += relative
         else:
             raw = element.exact_text[:excerpt_characters]
@@ -2624,11 +2753,13 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
         for candidate in projection.elements
         if admissible_context_element(candidate)
     }
-    bibliographic_label_ancestors = _bibliographic_indicia_label_ancestors(
+    (
+        bibliographic_labels,
+        bibliographic_label_allocations,
+    ) = _bibliographic_indicia_label_allocations(
         projection.elements,
         eligible_ordinals,
     )
-    claim_elements = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "dt", "dd", "li", "address", "figcaption"}
     for element in projection.elements:
         text = element.exact_text
         if element.active or not _is_html_namespace(element.namespace):
@@ -2660,7 +2791,7 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
         lowered = text.casefold()
         bibliographic_label = _is_bibliographic_indicia_label(text)
         if (
-            element.name not in claim_elements
+            element.name not in _CLAIM_ELEMENTS
             and not semantic & _CLAIM_SEMANTICS
             and not bibliographic_label
         ):
@@ -2716,24 +2847,55 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                 )
             )
 
-        bibliographic_indicia = (
-            ()
-            if element.ordinal in bibliographic_label_ancestors
-            else _bibliographic_indicia(semantic, text)
+        bibliographic_indicia = _bibliographic_indicia(
+            semantic,
+            text,
+            bibliographic_labels.get(element.ordinal, ()),
         )
-        for field, value, labelled in bibliographic_indicia:
+        for indicia in bibliographic_indicia:
+            if indicia.context_span is not None:
+                key = _bibliographic_indicia_label_key(element, indicia)
+                allocation = bibliographic_label_allocations.get(key)
+                if (
+                    allocation is None
+                    or allocation.emitter_ordinal != element.ordinal
+                ):
+                    continue
+                owner = by_ordinal[allocation.owner_ordinal]
+                claim = _claim(
+                    indicia.field,
+                    indicia.value,
+                    (
+                        EpubObservationApplicability.WORK
+                        if indicia.field is OpeningField.SUBTITLE
+                        else EpubObservationApplicability.EDITION
+                    ),
+                    owner,
+                    projection,
+                    source,
+                    resource_identity,
+                    resource_digest,
+                    context.selection_path,
+                    lineage,
+                    excerpt_characters,
+                    citation_context=(
+                        owner,
+                        key[1],
+                        key[2],
+                    ),
+                )
+                if claim is None:
+                    warnings.append("unsafe_claim_suppressed")
+                else:
+                    claims.append(claim)
+                continue
             add(
-                field,
-                value,
+                indicia.field,
+                indicia.value,
                 (
                     EpubObservationApplicability.WORK
-                    if field is OpeningField.SUBTITLE
+                    if indicia.field is OpeningField.SUBTITLE
                     else EpubObservationApplicability.EDITION
-                ),
-                citation_context=(
-                    (element, element.start, element.end)
-                    if labelled
-                    else None
                 ),
             )
         if not bibliographic_label and not bibliographic_indicia and (

@@ -968,13 +968,19 @@ class EpubChildRearSpineTests(unittest.TestCase):
         markup = (
             "<p>All rights reserved</p>"
             "<p><span>Publisher: House One</span> "
-            "<span>Publisher: House Two</span></p>"
-            "<p><span>Imprint: Mark One</span> "
+            "<span>Imprint:</span> Inline <em>Mark</em></p>"
+            "<p><span>Publisher: House Two</span> "
             "<span>Subtitle: Companion</span></p>"
             "<p><span>Publisher: Repeat House</span> "
             "<span>Publisher: Repeat House</span></p>"
-            "<p><span>Imprint:</span> Inline <em>Mark</em></p>"
+            "<p><span>Publisher: Echo House</span> "
+            "<span>Publisher:</span> Echo House</p>"
+            "<p><span>Publisher:</span> Split House "
+            "<span>Imprint:</span> Split Mark "
+            "<span>Subtitle:</span> Split Companion</p>"
             "<div><p><span><em>Publisher: Nested House</em></span></p></div>"
+            "<p><span>Publisher: Safe House</span> "
+            "<span>Imprint:</span> EPUB conversion by Toolchain</p>"
         )
         front_package = _opening_package(
             items=(("front", "front.xhtml", "application/xhtml+xml", ""),),
@@ -1011,11 +1017,15 @@ class EpubChildRearSpineTests(unittest.TestCase):
                 "Publisher: House One",
             ),
             (
+                EpubInspectionField.IMPRINT,
+                "Inline Mark",
+                "Imprint: Inline Mark",
+            ),
+            (
                 EpubInspectionField.PUBLISHER,
                 "House Two",
                 "Publisher: House Two",
             ),
-            (EpubInspectionField.IMPRINT, "Mark One", "Imprint: Mark One"),
             (
                 EpubInspectionField.SUBTITLE,
                 "Companion",
@@ -1031,11 +1041,40 @@ class EpubChildRearSpineTests(unittest.TestCase):
                 "Repeat House",
                 "Publisher: Repeat House",
             ),
-            (EpubInspectionField.IMPRINT, "Inline Mark", "Imprint: Inline Mark"),
+            (
+                EpubInspectionField.PUBLISHER,
+                "Echo House",
+                "Publisher: Echo House",
+            ),
+            (
+                EpubInspectionField.PUBLISHER,
+                "Echo House",
+                "Publisher: Echo House",
+            ),
+            (
+                EpubInspectionField.PUBLISHER,
+                "Split House",
+                "Publisher: Split House",
+            ),
+            (
+                EpubInspectionField.IMPRINT,
+                "Split Mark",
+                "Imprint: Split Mark",
+            ),
+            (
+                EpubInspectionField.SUBTITLE,
+                "Split Companion",
+                "Subtitle: Split Companion",
+            ),
             (
                 EpubInspectionField.PUBLISHER,
                 "Nested House",
                 "Publisher: Nested House",
+            ),
+            (
+                EpubInspectionField.PUBLISHER,
+                "Safe House",
+                "Publisher: Safe House",
             ),
         ]
         for source, facts in (("front", front.facts), ("rear", rear)):
@@ -1102,6 +1141,39 @@ class EpubChildRearSpineTests(unittest.TestCase):
                     ],
                     expected,
                 )
+
+    def test_rear_split_labels_preserve_the_sixteen_fact_cap(self) -> None:
+        labels = "".join(
+            f"<span>Imprint:</span> {chr(ord('A') + index)} "
+            for index in range(17)
+        )
+        request, (package, opening, _) = self._bundle(
+            _xhtml(
+                "<p>All rights reserved</p>"
+                f"<p>{labels}</p>"
+            )
+        )
+        with self.assertRaises(child.opening_parser._AggregateRejected) as raised:
+            with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+                child._rear_facts(request, package, opening, archive)
+        self.assertEqual(
+            raised.exception.outcome,
+            EpubInspectionOutcome.RESOURCE_LIMIT,
+        )
+        self.assertEqual(
+            [
+                (
+                    fact.canonical_value,
+                    fact.supporting_context,
+                    fact.rear_provenance is not None,
+                )
+                for fact in raised.exception.partial_facts
+            ],
+            [
+                (chr(ord("A") + index), f"Imprint: {chr(ord('A') + index)}", True)
+                for index in range(16)
+            ],
+        )
 
     def test_rear_bibliographic_indicia_preserves_conflicts_and_repetition(self) -> None:
         request, (package, opening, _) = self._bundle(
