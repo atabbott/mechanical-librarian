@@ -52,6 +52,7 @@ The suite covers:
   zero-egress, exact ISBN/work qualification, unresolved work linkage,
   evidence-only publication strings, deterministic replay and provider order,
   response/candidate/request/aggregate bounds, quota/4xx/5xx/no-match typing,
+  field-local scalar failures, strict identifier-entry shapes,
   cancellation/timeout behavior, and credential/raw-response redaction;
 - cover-gallery provider/aggregate bounds, safe provenance, timeout/rejection
   states, visible truncation, and digest deduplication with all provenance;

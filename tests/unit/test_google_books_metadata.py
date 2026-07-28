@@ -30,6 +30,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     default_target_fields,
     FileFacts,
+    MAX_DESCRIPTION_CHARACTERS,
     TargetFacts,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
@@ -269,6 +270,15 @@ class GoogleBooksMetadataTests(unittest.TestCase):
                 ProviderStatus.RATE_LIMITED,
             ),
             (
+                403,
+                {
+                    "error": {
+                        "errors": [{"reason": "dailyLimitExceededUnreg"}]
+                    }
+                },
+                ProviderStatus.RATE_LIMITED,
+            ),
+            (
                 401,
                 {"error": {"errors": [{"reason": "required"}]}},
                 ProviderStatus.AUTHENTICATION,
@@ -300,6 +310,118 @@ class GoogleBooksMetadataTests(unittest.TestCase):
                     65_536,
                 ).observe(_lookup())
                 self.assertEqual(expected, observation.status)
+
+    def test_invalid_scalar_claims_are_field_local_and_keep_valid_evidence(
+        self,
+    ) -> None:
+        volume = _volume()
+        info = volume["volumeInfo"]
+        assert isinstance(info, dict)
+        info["subtitle"] = 7
+        info["description"] = "x" * (MAX_DESCRIPTION_CHARACTERS + 1)
+
+        observation = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={"totalItems": 1, "items": [volume]},
+                    )
+                )
+            ),
+            65_536,
+        ).observe(_lookup())
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        candidate = observation.candidates[0]
+        states = {
+            claim.kind: claim.state
+            for claim in candidate.claims
+            if claim.kind in {ClaimKind.SUBTITLE, ClaimKind.DESCRIPTION}
+        }
+        self.assertEqual(
+            {
+                ClaimKind.SUBTITLE: FieldState.MALFORMED,
+                ClaimKind.DESCRIPTION: FieldState.OVERSIZED,
+            },
+            states,
+        )
+        self.assertTrue(
+            any(
+                claim.kind is ClaimKind.ISBN
+                and claim.state is FieldState.VALID
+                for claim in candidate.claims
+            )
+        )
+        self.assertTrue(
+            any(
+                claim.kind is ClaimKind.TITLE
+                and claim.state is FieldState.VALID
+                and claim.value == "Example Book"
+                for claim in candidate.claims
+            )
+        )
+        self.assertIn(
+            ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+            {evidence.kind for evidence in candidate.evidence},
+        )
+
+    def test_malformed_identifier_entries_fail_but_unsupported_types_are_ignored(
+        self,
+    ) -> None:
+        malformed = (
+            "not-an-object",
+            {"type": "ISBN_13"},
+            {
+                "type": "ISBN_13",
+                "identifier": "9780306406157",
+                "unexpected": "field",
+            },
+        )
+        for identifier in malformed:
+            volume = _volume()
+            info = volume["volumeInfo"]
+            assert isinstance(info, dict)
+            info["industryIdentifiers"] = [identifier]
+            with self.subTest(identifier=identifier):
+                observation = GoogleBooksMetadataProvider(
+                    "google_books",
+                    httpx.Client(
+                        transport=httpx.MockTransport(
+                            lambda _: httpx.Response(
+                                200,
+                                headers={"content-type": "application/json"},
+                                json={"totalItems": 1, "items": [volume]},
+                            )
+                        )
+                    ),
+                    65_536,
+                ).observe(_lookup())
+                self.assertEqual(ProviderStatus.MALFORMED, observation.status)
+                self.assertEqual((), observation.candidates)
+
+        volume = _volume()
+        info = volume["volumeInfo"]
+        assert isinstance(info, dict)
+        identifiers = info["industryIdentifiers"]
+        assert isinstance(identifiers, list)
+        identifiers.append({"type": "OTHER", "identifier": "synthetic-id"})
+        observation = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={"totalItems": 1, "items": [volume]},
+                    )
+                )
+            ),
+            65_536,
+        ).observe(_lookup())
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
 
     def test_oversized_timeout_and_expired_deadline_fail_closed(self) -> None:
         oversized = GoogleBooksMetadataProvider(

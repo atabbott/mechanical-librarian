@@ -225,6 +225,11 @@ use the shared discovery plan. Volume-level format, page-count, revision,
 subject, and publication text remain typed evidence. In particular,
 `publishedDate` strings are evidence-only and never become selectable
 publication-date claims without safe event/manifestation linkage.
+Malformed or oversized scalar claim fields remain explicit field-local states,
+so valid sibling claims and evidence survive. Every identifier entry must be
+one exact bounded `type`/`identifier` object; structurally malformed entries
+make the lane `malformed`, while well-formed unsupported identifier types are
+ignored.
 
 Each child lane records its opaque identity, kind, matched ISBN family when
 applicable, exact triggering local references, typed status, and

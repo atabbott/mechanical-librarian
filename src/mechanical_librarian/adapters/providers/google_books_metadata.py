@@ -400,15 +400,18 @@ def _candidate(
         raise ValueError("provider identifiers are malformed")
     isbns: list[str] = []
     for identifier in identifiers:
-        if (
-            type(identifier) is not dict
-            or set(identifier) != {"identifier", "type"}
-            or identifier["type"] not in {"ISBN_10", "ISBN_13"}
-        ):
+        if type(identifier) is not dict or set(identifier) != {
+            "identifier",
+            "type",
+        }:
+            raise ValueError("provider identifier is malformed")
+        identifier_type = _text(identifier["type"])
+        identifier_value = _text(identifier["identifier"])
+        if identifier_type not in {"ISBN_10", "ISBN_13"}:
             continue
         compact = "".join(
             value
-            for value in _text(identifier["identifier"])
+            for value in identifier_value
             if value.isdigit() or value in "Xx"
         ).upper()
         if isbn_family(compact) is None:
@@ -430,13 +433,7 @@ def _candidate(
         applicability: str = "not_applicable",
         role: str | None = None,
     ) -> None:
-        state = FieldState.ABSENT if value is None else FieldState.VALID
-        exact = None if value is None else _text(
-            value,
-            MAX_DESCRIPTION_CHARACTERS
-            if kind is ClaimKind.DESCRIPTION
-            else MAX_SCALAR_CHARACTERS,
-        )
+        state, exact = _field(kind, value)
         bare = ProviderClaim.create(
             provider=provider,
             candidate=identity,
@@ -560,6 +557,27 @@ def _string_list(value: object, maximum: int) -> tuple[str, ...]:
     return values
 
 
+def _field(
+    kind: ClaimKind, value: object
+) -> tuple[FieldState, str | None]:
+    if value is None:
+        return FieldState.ABSENT, None
+    maximum = (
+        MAX_DESCRIPTION_CHARACTERS
+        if kind is ClaimKind.DESCRIPTION
+        else MAX_SCALAR_CHARACTERS
+    )
+    try:
+        return FieldState.VALID, _text(value, maximum)
+    except (ValueError, EvidenceValueError):
+        return (
+            FieldState.OVERSIZED
+            if type(value) is str and len(value) > maximum
+            else FieldState.MALFORMED,
+            None,
+        )
+
+
 def _text(value: object, maximum: int = MAX_SCALAR_CHARACTERS) -> str:
     return validate_projection_text(value, "provider evidence value", maximum)
 
@@ -617,6 +635,7 @@ def _error_status(status_code: int, payload: bytes) -> ProviderStatus:
         reasons = set()
     if reasons & {
         "dailyLimitExceeded",
+        "dailyLimitExceededUnreg",
         "rateLimitExceeded",
         "userRateLimitExceeded",
         "quotaExceeded",
