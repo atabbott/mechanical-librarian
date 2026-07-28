@@ -573,7 +573,11 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v12", report.schema_version)
+        self.assertEqual("metadata-report-v13", report.schema_version)
+        previous = report.to_data()
+        previous["schema_version"] = "metadata-report-v12"
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(previous))
 
     def test_aggregate_candidate_failures_preserve_independent_lane_statuses(
         self,
@@ -1341,7 +1345,21 @@ class MetadataReportTests(unittest.TestCase):
             applicability_basis="not_applicable", role="author", rear_provenance=provenance,
         )
         self.assertEqual(valid_rear.rear_provenance, provenance)
-        for kind, basis, role, rear in ((ClaimKind.TITLE, "opening_matter", "author", None), (ClaimKind.PUBLISHER, "opening_matter", None, provenance), (ClaimKind.TITLE, "package_metadata", None, provenance), (ClaimKind.TITLE, "target_metadata", None, provenance)):
+        for kind in (
+            ClaimKind.SUBTITLE,
+            ClaimKind.PUBLISHER,
+            ClaimKind.IMPRINT,
+        ):
+            with self.subTest(valid_rear_kind=kind):
+                claim = LocalClaim.create(
+                    kind=kind, observed="Bounded value", canonical="Bounded value",
+                    excerpt="Bounded value", applicability="not_applicable",
+                    basis="opening_matter", checksum="not_applicable",
+                    applicability_basis="not_applicable",
+                    rear_provenance=provenance,
+                )
+                self.assertEqual(claim.rear_provenance, provenance)
+        for kind, basis, role, rear in ((ClaimKind.TITLE, "opening_matter", "author", None), (ClaimKind.DESCRIPTION, "opening_matter", None, provenance), (ClaimKind.TITLE, "package_metadata", None, provenance), (ClaimKind.TITLE, "target_metadata", None, provenance)):
             with self.subTest(kind=kind, basis=basis, role=role, rear=rear is not None), self.assertRaises(ReportValueError):
                 LocalClaim.create(
                     kind=kind, observed="A title", canonical="A title", excerpt="A title",

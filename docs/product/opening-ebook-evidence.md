@@ -134,6 +134,20 @@ authority. Advertisements, previews, other-work notices, generic `published`
 dates, and print-edition dates do not become selected-ebook manifestation
 facts. Conversion, scanning, software, retailer, and workflow credits remain
 typed contextual evidence and never enter contributor candidates.
+Target-work subtitle, publisher, and imprint are admitted in either position
+only from explicit EPUB semantics or an exact `Subtitle:`, `Publisher:`, or
+`Imprint:` label. Publisher and imprint remain different edition fields.
+Copyright holders, printers, distributors, retailers, conversion credits, and
+promotional or other-work labels do not satisfy those cues. The same complete
+contextual-credit and promotion vocabulary is applied again after stripping an
+exact field label, including conversion, scanning, production, distribution,
+retail, and workflow forms. Nested elements that project the same labelled
+source occurrence emit it once, while genuinely repeated sibling occurrences
+remain distinct. Canonical subtitle, publisher, and imprint values use NFC and
+collapsed whitespace in both front and rear positions. Every admitted
+occurrence retains its bounded supporting excerpt and source position;
+repetition and conflicts remain evidence rather than being resolved, and rear
+position supplies no authority boost.
 
 Date-time evidence requires either `Z` or an explicit signed offset; an
 unsigned date-time is rejected as a whole and cannot fall back to its valid
@@ -370,6 +384,10 @@ item.
 A changed file fingerprint supersedes prior extraction work. Cached evidence is
 reused only when the source fingerprint, extractor version, configuration, and
 selection contract remain applicable.
+The current material-recognition contract is `epub-opening-v3`. Opening
+citations produced by `epub-opening-v2` are incompatible and fail closed rather
+than entering cache reuse or report replay. This compatibility change does not
+alter the persisted inspection or metadata-report schema versions.
 
 ## Qualification plan
 
@@ -390,6 +408,10 @@ Cover at minimum:
 - contributor-role and manifestation-publication-date recall plus explicit-
   negative precision over deterministic synthetic year/month/day/timestamp,
   signed-offset, print/original-work, conflict, repetition, and bound cases;
+- paired front/rear target-work subtitle, publisher, and imprint semantics,
+  exact labels, source bounds, conflicts, repetition, and copyright-holder,
+  printer, distributor, retailer, conversion, advertisement, preview, and
+  other-work negatives;
 - series names and integer, decimal, labelled, missing, and strictly bounded
   trailing sequence values;
 - image-only title or copyright pages without OCR fallback;
@@ -411,6 +433,8 @@ Measure:
   invalid, and unresolved ISBN counts reported separately;
 - package versus front-matter agreement and contradiction;
 - correct work, edition, contributor role, series, and omnibus classification;
+- target-work subtitle/publisher/imprint recall and explicit-negative precision
+  by front/rear source position, reported only as aggregate-safe counts;
 - candidate retrieval improvement;
 - false replacement, human correction, and unresolved rates;
 - parser failures and bounded-resource enforcement;

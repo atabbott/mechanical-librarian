@@ -19,6 +19,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_opening import (
 )
 from mechanical_librarian.adapters.evidence_extractors.epub_package import EpubPackageExtractor
 from mechanical_librarian.domain.epub_opening import (
+    EPUB_OPENING_EXTRACTOR_VERSION,
     EpubOpeningLimits,
     EpubOpeningReport,
     OpeningField,
@@ -646,8 +647,19 @@ class EpubOpeningTests(unittest.TestCase):
 
     def test_canonical_envelope_rejects_forged_versions_lineage_and_usage(self) -> None:
         report = _extract(opening_claims_complete())
+        self.assertEqual(EPUB_OPENING_EXTRACTOR_VERSION, "epub-opening-v3")
+        self.assertTrue(
+            all(
+                claim.citation.extractor_version
+                == EPUB_OPENING_EXTRACTOR_VERSION
+                for claim in report.claims
+            )
+        )
         for mutate in (
-            lambda value: value["claims"][0]["citation"].__setitem__("extractor_version", "forged-v1"),
+            lambda value: value["claims"][0]["citation"].__setitem__(
+                "extractor_version",
+                "epub-opening-v2",
+            ),
             lambda value: value["limits"].__setitem__("excerpt_characters", 1),
             lambda value: value.__setitem__("same_file_lineage", "0" * 64),
             lambda value: (

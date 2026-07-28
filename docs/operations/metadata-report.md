@@ -132,11 +132,20 @@ byte snapshot, verifies its digest, and uses that same snapshot for all EPUB
  indicia pass. The rear pass considers only the final eight accepted spine
  slots in reverse order, opens at most four XHTML/HTML resources, and never
  substitutes an excluded, missing, encrypted, image, unsupported, or duplicate
- slot. It admits only explicit title, creator, controlled contributor role,
- selected-manifestation publication date, distinct contextual date/production
- credit, or checksum-valid ISBN evidence when the same resource has a copyright
- marker; it is not whole-book mining. Production/tool credits never become
- contributors.
+ slot. It admits only explicit title, target-work subtitle, publisher, imprint,
+ creator, controlled contributor role, selected-manifestation publication
+ date, distinct contextual date/production credit, or checksum-valid ISBN
+ evidence when the same resource has a copyright marker; it is not whole-book
+ mining. Subtitle/publisher/imprint require explicit EPUB semantics or an exact
+ field label. Copyright holders, printers, distributors, retailers,
+ conversion credits, advertisements, previews, and other-work material do not
+ become those bibliographic fields. Extracted label values are checked against
+ the same conversion, scanning, production, distribution, retail, workflow,
+ and promotion vocabulary. Each complete nested or sibling label owns its
+ exact occurrence span without a synthetic combined value, while unmatched
+ split labels in the same ancestor remain assembled. Repeated equal spans
+ remain separate, including complete and split siblings with the same value.
+ Production/tool credits never become contributors.
  If that optional rear pass reaches its aggregate resource or fact limit, it
  records a bounded warning while retaining facts admitted before exhaustion as
  well as already validated package and opening-matter evidence; package and opening resource limits
@@ -158,10 +167,17 @@ metadata supports only title in this slice, while EPUB supports the complete
 local field vocabulary. Source and DOM occurrence order is retained from the
 isolated inspector through persisted replay; content-derived references never
 reorder evidence. Unsafe and oversized sentinels remain non-canonical evidence.
-Explicit opening-matter publisher and imprint observations remain distinct
-edition claims through inspection, immutable report serialization, and exact
-replay. Provider comparisons link only claims with the same role; no
-publisher/imprint hierarchy is inferred.
+Explicit front or rear opening-matter publisher and imprint observations remain
+distinct edition claims through inspection, immutable report serialization,
+database reopen, and exact replay. Target-work subtitles remain work-scoped.
+Each rear occurrence retains its exact bounded excerpt and closed
+resource/spine/tail/marker provenance; repeated and conflicting values remain in
+source order. Front and rear subtitle/publisher/imprint canonical values share
+NFC and whitespace normalization. Rear position does not increase authority.
+Provider comparisons link only claims with the same role; no publisher/imprint
+hierarchy is inferred. The exact-current persisted report and database
+discriminator is `metadata-report-v13`; earlier development reports and
+databases remain offline and require a clean current database under ADR-0013.
 
 The credential-bearing parent combines those facts with the target projection.
 Every distinct checksum-valid ISBN family across bounded package, front, and

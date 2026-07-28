@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Admit source-explicit target-work subtitle, publisher, and imprint from the
+  existing bounded rear EPUB indicia pass under the same structural-semantic or
+  exact-label rules as front matter. Reports preserve publisher versus imprint,
+  every repeated or conflicting occurrence, exact bounded excerpts, and closed
+  rear resource/spine/tail/marker provenance through canonical serialization
+  and database reopen. Copyright holders, printers, distributors, retailers,
+  conversion, scanning, production, workflow, advertisements, previews, and
+  other-work material remain excluded even when nested inside a field label.
+  Each complete nested or sibling label owns its exact occurrence span without
+  a synthetic combined value, while unmatched split labels in the same
+  ancestor remain assembled. Repeated equal spans remain separate, including
+  complete and split siblings with the same value. Front/rear canonical values
+  share NFC and whitespace normalization. Rear
+  position supplies no candidate authority or write capability. Advance
+  material-recognition and citation compatibility from
+  `epub-opening-v2` to `epub-opening-v3`; earlier opening citations are rejected
+  instead of being reused. Advance the clean exact-current report and database
+  discriminator to `metadata-report-v13`; earlier development reports and
+  databases are rejected without migration under ADR-0013.
+  (#377)
+
 - Recover source-explicit contributor roles and selected-manifestation
   publication dates from bounded package, front, and rear EPUB indicia.
   Compound bibliographic roles remain attached to their contributor occurrence;

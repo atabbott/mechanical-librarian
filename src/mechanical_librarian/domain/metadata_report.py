@@ -23,7 +23,7 @@ from mechanical_librarian.domain.cover_evidence import (
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 
 
-REPORT_SCHEMA = "metadata-report-v12"
+REPORT_SCHEMA = "metadata-report-v13"
 COMPARISON_VERSION = "same-kind-v1"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -614,7 +614,21 @@ class LocalClaim:
                 raise ReportValueError("local claim role is invalid") from error
         if self.rear_provenance is not None and type(self.rear_provenance) is not RearClaimProvenance:
             raise ReportValueError("rear claim provenance is invalid")
-        if self.rear_provenance is not None and (self.basis != "opening_matter" or self.kind not in {ClaimKind.TITLE, ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR, ClaimKind.ISBN, ClaimKind.PUBLICATION_DATE, ClaimKind.DATE_EVENT, ClaimKind.CONTEXTUAL_CREDIT}):
+        rear_kinds = {
+            ClaimKind.TITLE,
+            ClaimKind.SUBTITLE,
+            ClaimKind.CREATOR,
+            ClaimKind.CONTRIBUTOR,
+            ClaimKind.ISBN,
+            ClaimKind.PUBLICATION_DATE,
+            ClaimKind.DATE_EVENT,
+            ClaimKind.CONTEXTUAL_CREDIT,
+            ClaimKind.PUBLISHER,
+            ClaimKind.IMPRINT,
+        }
+        if self.rear_provenance is not None and (
+            self.basis != "opening_matter" or self.kind not in rear_kinds
+        ):
             raise ReportValueError("rear claim provenance is inapplicable")
         if type(self.occurrence) is not int or not 0 <= self.occurrence <= 1_000_000:
             raise ReportValueError("local claim occurrence is invalid")

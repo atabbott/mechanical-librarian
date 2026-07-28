@@ -133,8 +133,10 @@ never the remote URL.
 
 Successful output and persisted documents contain only bounded target names,
 item identity, opaque file identity/digest, current title, fact-local opening
-excerpts, controlled contributor/production roles, typed date event and
-precision claims, provider candidate edition and provider-local work
+excerpts, source-explicit target-work subtitle/publisher/imprint observations
+with closed rear resource/spine/tail/marker provenance, controlled
+contributor/production roles, typed date event and precision claims, provider
+candidate edition and provider-local work
 identities, comparison facts, and derived ISBN relationships containing only
 claim references and those already-admitted bounded identities. The
 relationship projection does not duplicate observations or excerpts. Report
@@ -148,6 +150,14 @@ before they can enter a report. Failure output is fixed and value-free.
 Production, conversion, scanning, software, retailer, and workflow credits
 remain a separate contextual claim kind and therefore cannot cross the
 bibliographic contributor or author candidate boundary.
+Copyright-holder, printer, distributor, retailer, conversion, advertisement,
+preview, and other-work text likewise cannot cross into rear
+subtitle/publisher/imprint claims. This rejection is repeated on the value
+inside an exact label and uses the complete contextual-credit and promotion
+vocabularies, including scanning, production, retail, and workflow cues. Rear
+extraction retains the existing fixed resource, byte, text, node, fact,
+excerpt, and hostile-markup bounds; source position changes provenance only
+and grants neither candidate nor write authority.
 
 Report and current-pointer publication is one SQLite transaction. Immutable
 report rows have update/delete triggers. The transaction runs the bounded

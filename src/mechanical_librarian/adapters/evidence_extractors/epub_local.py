@@ -394,6 +394,32 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
         if marker is None: continue
         provenance = EpubRearProvenance(identity, spine_item.spine_position or tail_slot, tail_slot, marker.group(0).lower(), marker.group(0))
         resource_isbns = 0
+        eligible_ordinals: set[int] = set()
+        for candidate in projection.elements:
+            if candidate.ordinal in promotion_exclusions:
+                continue
+            candidate_value = " ".join(candidate.exact_text.split())
+            if not candidate_value or len(candidate_value) > 280:
+                continue
+            try:
+                validate_projection_text(
+                    candidate_value,
+                    "rear-spine cue",
+                    280,
+                )
+            except EvidenceValueError:
+                continue
+            eligible_ordinals.add(candidate.ordinal)
+        (
+            bibliographic_labels,
+            bibliographic_label_allocations,
+        ) = opening._bibliographic_indicia_label_allocations(
+            projection.elements,
+            eligible_ordinals,
+        )
+        bibliographic_owners: list[
+            tuple[int, EpubInspectionField, str]
+        ] = []
         for element in projection.elements:
             if element.ordinal in promotion_exclusions:
                 continue
@@ -406,12 +432,32 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
                 continue
             field = canonical = None; role = None
             byline = _BYLINE.match(value)
-            admitted_cue = bool(element.semantics & {"title", "fulltitle", "contributor", "creator"}) or byline is not None
+            bibliographic_label = opening._is_bibliographic_indicia_label(value)
+            bibliographic_indicia = opening._bibliographic_indicia(
+                element.semantics,
+                value,
+                bibliographic_labels.get(element.ordinal, ()),
+            )
+            admitted_cue = (
+                bool(
+                    element.semantics
+                    & {"title", "fulltitle", "contributor", "creator"}
+                )
+                or byline is not None
+                or bool(bibliographic_indicia)
+            )
             credits = () if is_ancestor else opening._indicia_credits(value)
             dates = () if is_ancestor else opening._indicia_dates(value)
             admitted_cue = admitted_cue or bool(credits) or bool(dates)
             if is_ancestor and not admitted_cue: continue
-            if element.semantics & {"title", "fulltitle"}: field, canonical = EpubInspectionField.TITLE, normalize_title(value)
+            if (
+                element.semantics & {"title", "fulltitle"}
+                and not bibliographic_label
+            ):
+                field, canonical = (
+                    EpubInspectionField.TITLE,
+                    normalize_title(value),
+                )
             elif element.semantics & {"contributor"} and not any(
                 credit[0] is opening.OpeningField.CONTRIBUTOR
                 for credit in credits
@@ -419,6 +465,73 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             elif byline is not None and len(byline.group(1)) <= 280: field, canonical, role = EpubInspectionField.CREATOR, byline.group(1), "author"
             elif element.semantics & {"creator"}: field, canonical, role = EpubInspectionField.CREATOR, value, "author"
             if field is not None: facts.append(EpubInspectionFact(field, report.source_fingerprint, value, canonical, value, "not_applicable", "not_applicable", "not_applicable", "opening_matter", rear_provenance=provenance, role=role))
+            for indicia in bibliographic_indicia:
+                labelled = indicia.context_span is not None
+                if labelled:
+                    allocation = bibliographic_label_allocations.get(
+                        opening._bibliographic_indicia_label_key(
+                            element,
+                            indicia,
+                        )
+                    )
+                    if (
+                        allocation is None
+                        or allocation.emitter_ordinal != element.ordinal
+                    ):
+                        continue
+                try:
+                    indicia_value = validate_projection_text(
+                        indicia.value,
+                        "rear-spine bibliographic indicia",
+                        280,
+                    )
+                except EvidenceValueError:
+                    continue
+                inspection_field = {
+                    opening.OpeningField.SUBTITLE: EpubInspectionField.SUBTITLE,
+                    opening.OpeningField.PUBLISHER: EpubInspectionField.PUBLISHER,
+                    opening.OpeningField.IMPRINT: EpubInspectionField.IMPRINT,
+                }[indicia.field]
+                if not labelled and any(
+                    owner in element.ancestors
+                    and owner_field is inspection_field
+                    and owner_value == indicia_value
+                    for owner, owner_field, owner_value in bibliographic_owners
+                ):
+                    continue
+                if not labelled:
+                    bibliographic_owners.append(
+                        (element.ordinal, inspection_field, indicia_value)
+                    )
+                supporting_context = value
+                if indicia.context_span is not None:
+                    context_start, context_end = indicia.context_span
+                    supporting_context = projection.text[
+                        element.start + context_start:
+                        element.start + context_end
+                    ]
+                try:
+                    supporting_context = validate_projection_text(
+                        supporting_context,
+                        "rear-spine bibliographic context",
+                        280,
+                    )
+                except EvidenceValueError:
+                    continue
+                facts.append(
+                    EpubInspectionFact(
+                        inspection_field,
+                        report.source_fingerprint,
+                        indicia_value,
+                        opening._normal(indicia_value, indicia.field),
+                        supporting_context,
+                        "not_applicable",
+                        "not_applicable",
+                        "not_applicable",
+                        "opening_matter",
+                        rear_provenance=provenance,
+                    )
+                )
             for credit_field, credit_value, credit_role, _applicability in credits:
                 inspection_field = (
                     EpubInspectionField.CONTRIBUTOR

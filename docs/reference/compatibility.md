@@ -5,7 +5,7 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v5` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v12` plus `proposal-set-v1`, or the separate `catalogue-v1`
+  `metadata-report-v13` plus `proposal-set-v1`, or the separate `catalogue-v1`
   schema;
 - `review-case-v1`, `shadow-review-request-v2`, and the exact-current append-only
   qualification-only shadow request/attempt/dispatch/outcome schema;

@@ -26,8 +26,11 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.bootstrap.composition import reopen_metadata_report, run_metadata_report
 from mechanical_librarian.bootstrap.composition import reopen_cover_preview
 from mechanical_librarian.domain.epub_inspection import DateEvent
-from mechanical_librarian.domain.metadata_report import MetadataReport
-from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+)
+from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.cover_evidence import PREVIEW_VARIANT
 from mechanical_librarian.infrastructure.security.credentials import (
     hardcover_client as real_hardcover_client,
@@ -1269,6 +1272,256 @@ class MetadataReportCommandTests(unittest.TestCase):
             self.assertIn("rear_resource_limit", report.local_reasons)
             self.assertEqual(reopened, report)
             self.assertFalse(any(claim.rear_provenance is not None for claim in report.local_claims))
+
+    def test_rear_bibliographic_indicia_survive_installed_report_reopen(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = root / "media"
+            media.mkdir()
+            source = media / "book.epub"
+            items = tuple(
+                (
+                    f"slot{index}",
+                    f"slot{index}.xhtml",
+                    "application/xhtml+xml",
+                    "",
+                )
+                for index in range(9)
+            )
+            package = _opening_package(
+                items=items,
+                spine=tuple(identity for identity, *_rest in items),
+            )
+            source.write_bytes(
+                _opening_epub(
+                    package=package,
+                    entries=tuple(
+                        (
+                            f"EPUB/slot{index}.xhtml",
+                            (
+                                _xhtml(
+                                    "<p>All rights reserved</p>"
+                                    "<p>Subtitle: A Bounded Companion</p>"
+                                    "<p>Publisher: House One</p>"
+                                    "<p>Publisher: House Two</p>"
+                                    "<p>Imprint: Example Mark</p>"
+                                    "<p>Publisher: Printed by Printer House</p>"
+                                    "<p>Publisher: Distributed by Retail House</p>"
+                                    "<p>Publisher: Distributor: Distribution House</p>"
+                                    "<p>Publisher: Retailer: Retail House</p>"
+                                    "<p>Publisher: Copyright holder: Rights House</p>"
+                                    "<p>Imprint: EPUB conversion by Conversion House</p>"
+                                    "<p>Publisher: Printer House</p>"
+                                    "<p>Publisher: Distributor Books</p>"
+                                    "<p>Publisher: Retailer Press</p>"
+                                    "<p>Publisher: Copyright House</p>"
+                                    "<p>Imprint: Conversion Press</p>"
+                                    "<div><p><span>Publisher: Nested House</span>"
+                                    "</p></div>"
+                                    "<p><span>Imprint:</span> Inline "
+                                    "<em>Mark</em></p>"
+                                    "<p>Publisher: Cafe\u0301   House</p>"
+                                    "<p>Subtitle: Cafe\u0301   Companion</p>"
+                                )
+                                if index == 8
+                                else (
+                                    _xhtml(
+                                        '<section epub:type="titlepage">'
+                                        '<h1 epub:type="fulltitle">'
+                                        "Publisher: Front Label House"
+                                        "</h1></section>"
+                                    )
+                                    if index == 0
+                                    else _xhtml(
+                                        "<p>ordinary synthetic prose</p>"
+                                    )
+                                )
+                            ),
+                            zipfile.ZIP_STORED,
+                        )
+                        for index in range(9)
+                    ),
+                )
+            )
+            target_secret = root / "target.secret"
+            target_secret.write_text("target-token", encoding="ascii")
+            target_secret.chmod(0o600)
+            database = root / "reports.sqlite"
+            artifact_store = root / "artifacts"
+            artifact_store.mkdir(mode=0o700)
+            with _Server(_item(source.stat().st_size)) as server:
+                config = root / "config.json"
+                config.write_text(
+                    json.dumps(_config(server.endpoint, media, target_secret)),
+                    encoding="utf-8",
+                )
+                report = MetadataReport.from_json(
+                    run_metadata_report(
+                        config,
+                        database,
+                        artifact_store,
+                        "primary",
+                        "books",
+                        "item-1",
+                        0,
+                    )
+                )
+
+            reopened = MetadataReport.from_json(
+                reopen_metadata_report(database, report.report_id)
+            )
+            self.assertEqual(reopened, report)
+            self.assertEqual(report.schema_version, "metadata-report-v13")
+            front_publisher = next(
+                claim
+                for claim in report.local_claims
+                if claim.basis == "opening_matter"
+                and claim.rear_provenance is None
+                and claim.kind.value == "publisher"
+                and claim.observed == "Front Label House"
+            )
+            self.assertEqual(
+                front_publisher.excerpt,
+                "Publisher: Front Label House",
+            )
+            self.assertFalse(
+                any(
+                    claim.basis == "opening_matter"
+                    and claim.kind.value == "title"
+                    for claim in report.local_claims
+                )
+            )
+            proposal_set = evaluate_report(report)
+            title_result = next(
+                result
+                for result in proposal_set.results
+                if result.destination is TargetDestination.TITLE
+            )
+            self.assertNotIn(
+                "Front Label House",
+                {
+                    alternative.value.value
+                    for alternative in title_result.alternatives
+                },
+            )
+            publisher_result = next(
+                result
+                for result in proposal_set.results
+                if result.destination is TargetDestination.PUBLISHER
+            )
+            self.assertIn(
+                "Front Label House",
+                {
+                    alternative.value.value
+                    for alternative in publisher_result.alternatives
+                },
+            )
+            rear_claims = tuple(
+                claim
+                for claim in report.local_claims
+                if claim.rear_provenance is not None
+                and claim.kind.value in {"subtitle", "publisher", "imprint"}
+            )
+            self.assertEqual(
+                [
+                    (
+                        claim.kind.value,
+                        claim.observed,
+                        claim.excerpt,
+                    )
+                    for claim in rear_claims
+                ],
+                [
+                    (
+                        "subtitle",
+                        "A Bounded Companion",
+                        "Subtitle: A Bounded Companion",
+                    ),
+                    (
+                        "publisher",
+                        "House One",
+                        "Publisher: House One",
+                    ),
+                    (
+                        "publisher",
+                        "House Two",
+                        "Publisher: House Two",
+                    ),
+                    (
+                        "imprint",
+                        "Example Mark",
+                        "Imprint: Example Mark",
+                    ),
+                    (
+                        "publisher",
+                        "Printer House",
+                        "Publisher: Printer House",
+                    ),
+                    (
+                        "publisher",
+                        "Distributor Books",
+                        "Publisher: Distributor Books",
+                    ),
+                    (
+                        "publisher",
+                        "Retailer Press",
+                        "Publisher: Retailer Press",
+                    ),
+                    (
+                        "publisher",
+                        "Copyright House",
+                        "Publisher: Copyright House",
+                    ),
+                    (
+                        "imprint",
+                        "Conversion Press",
+                        "Imprint: Conversion Press",
+                    ),
+                    (
+                        "publisher",
+                        "Nested House",
+                        "Publisher: Nested House",
+                    ),
+                    (
+                        "imprint",
+                        "Inline Mark",
+                        "Imprint: Inline Mark",
+                    ),
+                    (
+                        "publisher",
+                        "Cafe\u0301 House",
+                        "Publisher: Cafe\u0301 House",
+                    ),
+                    (
+                        "subtitle",
+                        "Cafe\u0301 Companion",
+                        "Subtitle: Cafe\u0301 Companion",
+                    ),
+                ],
+            )
+            self.assertEqual(
+                [
+                    (claim.observed, claim.canonical)
+                    for claim in rear_claims
+                    if claim.observed
+                    in {"Cafe\u0301 House", "Cafe\u0301 Companion"}
+                ],
+                [
+                    ("Cafe\u0301 House", "Café House"),
+                    ("Cafe\u0301 Companion", "Café Companion"),
+                ],
+            )
+            self.assertEqual(
+                [claim.occurrence for claim in rear_claims],
+                sorted({claim.occurrence for claim in rear_claims}),
+            )
+            self.assertTrue(
+                all(
+                    claim.rear_provenance is not None
+                    and claim.rear_provenance.tail_slot == 1
+                    for claim in rear_claims
+                )
+            )
 
     def test_six_metadata_only_providers_do_not_consume_cover_source_capacity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
