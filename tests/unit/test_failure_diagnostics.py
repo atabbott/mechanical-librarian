@@ -148,6 +148,175 @@ class FailureDiagnosticTests(unittest.TestCase):
             reviewer_failure_diagnostic("exception:/tmp/secret").category,
         )
 
+    def test_every_frozen_category_has_an_exact_production_signal_mapping(
+        self,
+    ) -> None:
+        def provider(
+            category: str = "none",
+            *,
+            status: str | None = None,
+        ) -> FailureDiagnostic:
+            values = provider_attempt_diagnostics(
+                (_Attempt(category, "terminal"),),
+                status=status,
+            )
+            self.assertEqual(1, len(values))
+            return values[0]
+
+        signals = {
+            "reviewer.setup": reviewer_failure_diagnostic("setup"),
+            "reviewer.auth": reviewer_failure_diagnostic("auth"),
+            "provider.lookup_limit": provider(
+                status="query_limit_exceeded"
+            ),
+            "provider.graphql_errors": provider("provider_declared_error"),
+            "provider.http": provider("http_503"),
+            "provider.quota": provider("http_429"),
+            "provider.no_match": provider(status="no_match"),
+            "provider.response_malformed": provider("response_malformed"),
+            "reviewer.schema": reviewer_failure_diagnostic("schema"),
+            "reviewer.live_schema": reviewer_failure_diagnostic(
+                "response_format"
+            ),
+            "reviewer.runtime": reviewer_failure_diagnostic("runtime"),
+            "provider.transport": provider("transport_connect_error"),
+            "provider.deadline": provider("deadline"),
+            "provider.cancellation": provider("cancellation"),
+            "reviewer.malformed": reviewer_failure_diagnostic(
+                "malformed_output"
+            ),
+            "reviewer.citation": reviewer_failure_diagnostic(
+                "semantic_validation"
+            ),
+            "reviewer.identity": reviewer_failure_diagnostic("identity"),
+            "application.currentness": reviewer_failure_diagnostic(
+                "currentness"
+            ),
+            "persistence.repository": reviewer_failure_diagnostic(
+                "persistence"
+            ),
+            "unknown.fail_closed": reviewer_failure_diagnostic(
+                "unregistered"
+            ),
+        }
+        expected = {
+            "reviewer.setup": (
+                FailureCategory.SETUP_CONFIGURATION,
+                FailureComponent.REVIEWER,
+                FailureStage.SETUP,
+            ),
+            "reviewer.auth": (
+                FailureCategory.AUTHENTICATION,
+                FailureComponent.REVIEWER,
+                FailureStage.AUTHENTICATION,
+            ),
+            "provider.lookup_limit": (
+                FailureCategory.LOOKUP_CONSTRUCTION,
+                FailureComponent.PROVIDER,
+                FailureStage.LOOKUP,
+            ),
+            "provider.graphql_errors": (
+                FailureCategory.PROVIDER_DECLARED_ERROR,
+                FailureComponent.PROVIDER,
+                FailureStage.RESPONSE,
+            ),
+            "provider.http": (
+                FailureCategory.HTTP_NON_SUCCESS,
+                FailureComponent.PROVIDER,
+                FailureStage.RESPONSE,
+            ),
+            "provider.quota": (
+                FailureCategory.QUOTA_RATE_LIMIT,
+                FailureComponent.PROVIDER,
+                FailureStage.RESPONSE,
+            ),
+            "provider.no_match": (
+                FailureCategory.EMPTY_NO_MATCH,
+                FailureComponent.PROVIDER,
+                FailureStage.RESPONSE,
+            ),
+            "provider.response_malformed": (
+                FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+                FailureComponent.PROVIDER,
+                FailureStage.RESPONSE,
+            ),
+            "reviewer.schema": (
+                FailureCategory.SCHEMA_CONSTRUCTION,
+                FailureComponent.REVIEWER,
+                FailureStage.SCHEMA,
+            ),
+            "reviewer.live_schema": (
+                FailureCategory.LIVE_SCHEMA_REJECTION,
+                FailureComponent.REVIEWER,
+                FailureStage.SCHEMA,
+            ),
+            "reviewer.runtime": (
+                FailureCategory.SPAWN_RUNTIME,
+                FailureComponent.REVIEWER,
+                FailureStage.EXECUTION,
+            ),
+            "provider.transport": (
+                FailureCategory.TRANSPORT,
+                FailureComponent.PROVIDER,
+                FailureStage.REQUEST,
+            ),
+            "provider.deadline": (
+                FailureCategory.TIMEOUT,
+                FailureComponent.PROVIDER,
+                FailureStage.REQUEST,
+            ),
+            "provider.cancellation": (
+                FailureCategory.CANCELLATION,
+                FailureComponent.PROVIDER,
+                FailureStage.EXECUTION,
+            ),
+            "reviewer.malformed": (
+                FailureCategory.MALFORMED_OUTPUT,
+                FailureComponent.REVIEWER,
+                FailureStage.RESPONSE,
+            ),
+            "reviewer.citation": (
+                FailureCategory.CITATION_MEMBERSHIP,
+                FailureComponent.REVIEWER,
+                FailureStage.VALIDATION,
+            ),
+            "reviewer.identity": (
+                FailureCategory.IDENTITY,
+                FailureComponent.REVIEWER,
+                FailureStage.IDENTITY,
+            ),
+            "application.currentness": (
+                FailureCategory.CURRENTNESS,
+                FailureComponent.REVIEWER,
+                FailureStage.CURRENTNESS,
+            ),
+            "persistence.repository": (
+                FailureCategory.PERSISTENCE,
+                FailureComponent.PERSISTENCE,
+                FailureStage.PERSISTENCE,
+            ),
+            "unknown.fail_closed": (
+                FailureCategory.UNKNOWN,
+                FailureComponent.REVIEWER,
+                FailureStage.EXECUTION,
+            ),
+        }
+        self.assertEqual(set(expected), set(signals))
+        self.assertEqual(
+            set(FailureCategory),
+            {value.category for value in signals.values()},
+        )
+        for signal, diagnostic in signals.items():
+            with self.subTest(signal=signal):
+                self.assertEqual(
+                    expected[signal],
+                    (
+                        diagnostic.category,
+                        diagnostic.component,
+                        diagnostic.stage,
+                    ),
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

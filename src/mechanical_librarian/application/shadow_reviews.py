@@ -12,9 +12,11 @@ from mechanical_librarian.application.failure_diagnostics import (
     FailureDiagnostic,
     reviewer_failure_diagnostic,
 )
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.shadow_review import (
     QUALIFICATION_MODE,
     ReviewerProfileIdentity,
+    ShadowReviewIdentityError,
     ShadowReviewRequest,
     ShadowReviewResult,
     ShadowReviewValueError,
@@ -34,7 +36,9 @@ _FAILURES = frozenset(
         "response_format",
         "malformed_output",
         "semantic_validation",
+        "identity",
         "currentness",
+        "persistence",
     }
 )
 
@@ -238,6 +242,14 @@ def execute_shadow_review(
             )
             dispatched = True
 
+        def record_failure(failure: ShadowReviewError) -> None:
+            try:
+                repository.record_shadow_failure(
+                    attempt_id, failure.diagnostic.to_json()
+                )
+            except MetadataReportError as error:
+                raise ShadowReviewError("persistence") from error
+
         try:
             run_result = runner.run(request, record_dispatch)
             if type(run_result) is not ShadowReviewRunResult:
@@ -248,22 +260,31 @@ def execute_shadow_review(
             result.validate_for(request)
             repository.record_shadow_result(attempt_id, result.to_json())
         except ShadowReviewError as error:
-            repository.record_shadow_failure(
-                attempt_id, error.diagnostic.to_json()
-            )
+            record_failure(error)
             raise
+        except ShadowReviewIdentityError as error:
+            failure = ShadowReviewError("identity")
+            record_failure(failure)
+            raise failure from error
+        except ShadowReviewValueError as error:
+            failure = ShadowReviewError("semantic_validation")
+            record_failure(failure)
+            raise failure from error
+        except MetadataReportError as error:
+            raise ShadowReviewError("persistence") from error
         except Exception as error:
             code = "runtime" if dispatched else "setup"
             digest = hashlib.sha256(type(error).__name__.encode("utf-8")).hexdigest()
-            repository.record_shadow_failure(
-                attempt_id, reviewer_failure_diagnostic(code).to_json()
-            )
-            raise ShadowReviewError(code, digest=digest) from error
+            failure = ShadowReviewError(code, digest=digest)
+            record_failure(failure)
+            raise failure from error
         return inspect_shadow_review(repository, request.review_request_id, identity)
     except ShadowReviewError:
         raise
     except ReviewAdmissionStaleError as error:
         raise ShadowReviewError("currentness") from error
+    except MetadataReportError as error:
+        raise ShadowReviewError("persistence") from error
     except ShadowReviewValueError as error:
         raise ShadowReviewError("malformed_output") from error
     except Exception as error:

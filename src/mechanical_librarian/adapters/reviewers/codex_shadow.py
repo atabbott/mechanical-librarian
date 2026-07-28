@@ -31,6 +31,7 @@ from mechanical_librarian.domain.shadow_review import (
     RESULT_SCHEMA,
     ReviewerProfileIdentity,
     ShadowReviewDocumentError,
+    ShadowReviewIdentityError,
     ShadowReviewRequest,
     ShadowReviewResult,
     ShadowReviewSemanticError,
@@ -48,6 +49,7 @@ _FAILURES = frozenset(
     {
         "runtime", "setup", "auth", "profile", "timeout", "cancel", "schema",
         "response_format", "malformed_output", "semantic_validation",
+        "identity",
     }
 )
 MAX_CITATIONS = 256
@@ -1062,6 +1064,10 @@ def _validated_result(
     try:
         marker = _normalize_result_citations(raw, request)
         result = ShadowReviewResult.from_json(canonical_json(raw), request)
+    except ShadowReviewIdentityError as error:
+        raise ShadowReviewerError(
+            "identity", count=len(result_bytes), digest=digest
+        ) from error
     except ShadowReviewValueError as error:
         raise ShadowReviewerError(
             "semantic_validation", count=len(result_bytes), digest=digest

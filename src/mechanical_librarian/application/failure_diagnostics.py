@@ -60,9 +60,17 @@ _REVIEWER_FAILURES = {
         FailureCategory.CITATION_MEMBERSHIP,
         FailureStage.VALIDATION,
     ),
+    "identity": (
+        FailureCategory.IDENTITY,
+        FailureStage.IDENTITY,
+    ),
     "currentness": (
         FailureCategory.CURRENTNESS,
         FailureStage.CURRENTNESS,
+    ),
+    "persistence": (
+        FailureCategory.PERSISTENCE,
+        FailureStage.PERSISTENCE,
     ),
 }
 
@@ -79,9 +87,14 @@ def reviewer_failure_diagnostic(code: str, *, count: int = 0) -> FailureDiagnost
         if type(count) is int
         else 1
     )
+    component = (
+        FailureComponent.PERSISTENCE
+        if category is FailureCategory.PERSISTENCE
+        else FailureComponent.REVIEWER
+    )
     return FailureDiagnostic(
         category,
-        FailureComponent.REVIEWER,
+        component,
         stage,
         current=False if category is FailureCategory.CURRENTNESS else None,
         count=bounded_count,

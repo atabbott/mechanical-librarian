@@ -88,6 +88,10 @@ class ShadowReviewSemanticError(ShadowReviewValueError):
     """A canonical reviewer document violates its bound request."""
 
 
+class ShadowReviewIdentityError(ShadowReviewSemanticError):
+    """A canonical reviewer result names a different bound request."""
+
+
 def canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
@@ -741,9 +745,12 @@ class ShadowReviewResult:
     schema_version: str = RESULT_SCHEMA
 
     def validate_for(self, request: ShadowReviewRequest) -> None:
+        if self.review_request_id != request.review_request_id:
+            raise ShadowReviewIdentityError(
+                "shadow-review result identity is invalid"
+            )
         if (
             self.schema_version != RESULT_SCHEMA
-            or self.review_request_id != request.review_request_id
             or type(self.recommendations) is not tuple
         ):
             raise ShadowReviewSemanticError("shadow-review result is invalid")
@@ -1419,6 +1426,7 @@ __all__ = [
     "ShadowReviewRequest",
     "ShadowReviewResult",
     "ShadowReviewDocumentError",
+    "ShadowReviewIdentityError",
     "ShadowReviewSemanticError",
     "ShadowReviewValueError",
     "canonical_json",

@@ -60,7 +60,10 @@ and the exact bounded terminal `turn.failed` service rejection for
 `response_format 'codex_output_schema'`; that signal maps to
 `live_schema_rejection`. Any wire variance or other nonzero exit maps to
 `spawn_runtime`, while malformed result documents and zero-exit semantic or
-citation failures remain separate.
+citation failures remain separate. A typed domain identity mismatch maps to
+reviewer/identity/identity before the broader semantic catch; no exception text
+or result identifier participates in that classification. Exact repository
+faults map to persistence/persistence/persistence rather than runtime.
 
 The report database accepts only the exact new schema. ADR-0013 applies: prior
 development state is rejected before mutation and has no migration, import, or
@@ -111,5 +114,7 @@ Synthetic tests cover canonical round-trip and aggregate stability, redaction,
 malformed UTF-8 and JSON, HTTP non-success, HTTP 200 GraphQL errors,
 transport, timeout, cancellation, unknown failures, zero-exit invalid reviewer
 output, the exact live schema-rejection signal and its fail-closed variants,
-clean-schema rejection, restart, CLI redaction, and exact offline replay.
-Architecture tests continue to enforce dependency direction.
+typed request-identity mismatch, exact currentness and persistence producers,
+the complete production-signal category matrix, clean-schema rejection,
+restart, CLI redaction, and exact offline replay. Architecture tests continue
+to enforce dependency direction.

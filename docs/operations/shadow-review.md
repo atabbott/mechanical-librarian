@@ -185,8 +185,12 @@ citation cardinality remains bounded without `uniqueItems` so later duplicate
 normalization can remain compatible.
 Invalid UTF-8, JSON, duplicate keys, noncanonical JSON, and truncated documents
 are durable `malformed_output` diagnostics. A canonical parsed result that
-violates its bound request is instead `citation_membership`; neither retains
-raw bytes, rejected values, or exception digests in status.
+names a different exact request is `identity` at the reviewer identity stage.
+Other canonical results that violate their bound request remain
+`citation_membership`; none retains raw bytes, rejected values, request IDs, or
+exception digests in status. Exact repository failures map to `persistence`
+with the persistence component and stage. A store failure can prevent a new
+durable outcome, but its CLI projection remains the same bounded diagnostic.
 For a canonical document, the adapter validates every raw citation identifier
 against the exact packet allowlist and enforces the 256-item raw bound before
 normalizing each recommendation to a sorted unique set. Reordering and known
@@ -208,3 +212,6 @@ the request identity, currentness, final status, bounded total attempt count,
 and canonical aggregated diagnostics. It emits no request, packet, result,
 attempt ID/number, PID/process-group/start token, raw output, digest, or timing.
 `shadow-review-failure-v2` uses the identical diagnostic shape on CLI stderr.
+The production-signal mapping matrix covers every frozen diagnostic category;
+unknown producer signals fail closed to `unknown` rather than borrowing a
+nearby category.

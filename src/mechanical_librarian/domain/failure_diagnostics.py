@@ -55,6 +55,7 @@ class FailureStage(str, Enum):
     SPAWN = "spawn"
     EXECUTION = "execution"
     VALIDATION = "validation"
+    IDENTITY = "identity"
     CURRENTNESS = "currentness"
     PERSISTENCE = "persistence"
 

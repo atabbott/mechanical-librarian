@@ -50,7 +50,10 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
-from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.review_case import (
+    ReviewAdmissionStaleError,
+    ReviewCase,
+)
 from mechanical_librarian.domain.shadow_review import (
     MAX_LINKAGE_FORMAT_FACTS,
     MAX_LINKAGE_IDENTIFIER_FACTS,
@@ -59,6 +62,7 @@ from mechanical_librarian.domain.shadow_review import (
     MAX_REQUEST_BYTES,
     ReviewerProfileIdentity,
     ShadowReviewDocumentError,
+    ShadowReviewIdentityError,
     ShadowReviewPacket,
     ShadowReviewRequest,
     ShadowReviewResult,
@@ -908,6 +912,112 @@ class ShadowReviewTests(unittest.TestCase):
                 self.assertNotIn(forbidden, inspected)
             reopened.close()
 
+    def test_wrong_result_identity_persists_and_restarts_without_payload(
+        self,
+    ) -> None:
+        class WrongIdentityRunner:
+            def run(self, request, dispatched):
+                dispatched(12345, 12345, "777")
+                result = _result(request)
+                wrong_id = "review_request_" + (
+                    "f" if not request.review_request_id.endswith("f" * 64) else "e"
+                ) * 64
+                return ShadowReviewRunResult(
+                    ShadowReviewResult(wrong_id, result.recommendations),
+                    CitationNormalizationMarker(False, 0),
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reports.sqlite"
+            repository, case_id = self._repository(directory)
+            with self.assertRaises(ShadowReviewError) as raised:
+                execute_shadow_review(
+                    repository,
+                    case_id,
+                    _identity(),
+                    WrongIdentityRunner(),
+                    claimant=(9001, "11"),
+                )
+            self.assertEqual("identity", raised.exception.code)
+            self.assertEqual("identity", raised.exception.diagnostic.category.value)
+            self.assertEqual("reviewer", raised.exception.diagnostic.component.value)
+            self.assertEqual("identity", raised.exception.diagnostic.stage.value)
+            request_id = repository._connection.execute(
+                "SELECT review_request_id FROM shadow_review_requests"
+            ).fetchone()[0]
+            repository.close()
+
+            reopened = open_repository(database, create=False)
+            inspected = reopened.inspect_shadow_request(
+                request_id, _identity().to_json()
+            )
+            diagnostic = json.loads(inspected)["diagnostics"]
+            self.assertEqual(
+                [
+                    {
+                        "category": "identity",
+                        "component": "reviewer",
+                        "count": 1,
+                        "current": None,
+                        "retryable": None,
+                        "stage": "identity",
+                    }
+                ],
+                diagnostic,
+            )
+            for forbidden in (
+                "review_request_ffffffff",
+                "failure_code",
+                "diagnostic_digest",
+                "payload",
+            ):
+                self.assertNotIn(forbidden, inspected)
+            reopened.close()
+
+    def test_currentness_and_persistence_have_exact_application_producers(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository, case_id = self._repository(directory)
+            scenarios = (
+                (
+                    ReviewAdmissionStaleError("/tmp/private currentness"),
+                    "currentness",
+                    "reviewer",
+                    "currentness",
+                ),
+                (
+                    MetadataReportError("/tmp/private persistence"),
+                    "persistence",
+                    "persistence",
+                    "persistence",
+                ),
+            )
+            for cause, category, component, stage in scenarios:
+                with self.subTest(category=category), patch.object(
+                    repository,
+                    "prepare_shadow_request",
+                    side_effect=cause,
+                ), self.assertRaises(ShadowReviewError) as raised:
+                    execute_shadow_review(
+                        repository,
+                        case_id,
+                        _identity(),
+                        _Runner(),
+                        claimant=(9001, "11"),
+                    )
+                self.assertEqual(category, raised.exception.code)
+                self.assertEqual(
+                    (category, component, stage),
+                    (
+                        raised.exception.diagnostic.category.value,
+                        raised.exception.diagnostic.component.value,
+                        raised.exception.diagnostic.stage.value,
+                    ),
+                )
+                self.assertNotIn("/tmp/private", str(raised.exception))
+            repository.close()
+
     def test_completed_success_cannot_be_reevaluated_or_append(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository, case_id = self._repository(directory)
@@ -1162,6 +1272,27 @@ class ShadowReviewTests(unittest.TestCase):
                 ShadowReviewResult.from_json(canonical_json(malformed), request)
             repository.close()
 
+    def test_result_identity_mismatch_is_typed_before_other_semantics(
+        self,
+    ) -> None:
+        request = ShadowReviewRequest.synthetic_canary(_identity())
+        wrong_identity = _result(request).to_data()
+        wrong_identity["review_request_id"] = "review_request_" + "f" * 64
+        with self.assertRaises(ShadowReviewIdentityError):
+            ShadowReviewResult.from_json(
+                canonical_json(wrong_identity),
+                request,
+            )
+
+        missing_coverage = _result(request).to_data()
+        missing_coverage["recommendations"] = []
+        with self.assertRaises(ShadowReviewSemanticError) as raised:
+            ShadowReviewResult.from_json(
+                canonical_json(missing_coverage),
+                request,
+            )
+        self.assertNotIsInstance(raised.exception, ShadowReviewIdentityError)
+
     def test_maximum_packet_request_round_trips_and_persists(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository, case_id = self._repository(directory)
@@ -1371,6 +1502,48 @@ class ShadowReviewTests(unittest.TestCase):
         self.assertEqual(999, cli_failure["diagnostic"]["count"])
         for forbidden in ("/tmp/private", "raw stderr", "raw stdout"):
             self.assertNotIn(forbidden, errors.getvalue())
+
+        output, errors = io.StringIO(), io.StringIO()
+        private_identity = "review_request_" + "f" * 64
+        self.assertEqual(
+            1,
+            main(
+                [
+                    "shadow-review-preview",
+                    "--database",
+                    "/db",
+                    "--review-case-id",
+                    case_id,
+                    "--qualification-profile",
+                    "/profile",
+                ],
+                shadow_preview_runner=lambda *_: (_ for _ in ()).throw(
+                    ShadowReviewerError(
+                        "identity",
+                        count=1,
+                        digest=hashlib.sha256(
+                            private_identity.encode("utf-8")
+                        ).hexdigest(),
+                    )
+                ),
+                stdout=output,
+                stderr=errors,
+            ),
+        )
+        self.assertEqual("", output.getvalue())
+        cli_failure = json.loads(errors.getvalue())
+        self.assertEqual(
+            {
+                "category": "identity",
+                "component": "reviewer",
+                "count": 1,
+                "current": None,
+                "retryable": None,
+                "stage": "identity",
+            },
+            cli_failure["diagnostic"],
+        )
+        self.assertNotIn(private_identity, errors.getvalue())
 
     def test_cli_rejects_wrong_success_schema_and_exact_id(self) -> None:
         case_id = "review_case_" + "a" * 64
@@ -2121,6 +2294,25 @@ class CodexShadowAdapterTests(unittest.TestCase):
         self.assertEqual(
             hashlib.sha256(semantic_bytes).hexdigest(),
             raised.exception.digest,
+        )
+        wrong_identity = json.loads(valid)
+        wrong_identity["review_request_id"] = "review_request_" + "f" * 64
+        identity_bytes = canonical_json(wrong_identity).encode("utf-8")
+        with self.assertRaises(ShadowReviewerError) as identity_raised:
+            codex_shadow._validated_result(
+                identity_bytes,
+                request,
+                maximum=MAX_REQUEST_BYTES,
+            )
+        self.assertEqual("identity", identity_raised.exception.code)
+        self.assertEqual(len(identity_bytes), identity_raised.exception.count)
+        self.assertEqual(
+            hashlib.sha256(identity_bytes).hexdigest(),
+            identity_raised.exception.digest,
+        )
+        self.assertNotIn(
+            wrong_identity["review_request_id"],
+            str(identity_raised.exception),
         )
         with self.assertRaises(ShadowReviewDocumentError):
             ShadowReviewResult.from_json("{", request)

@@ -248,7 +248,11 @@ stderr and a bounded, strict-UTF-8 stream ending in the exact terminal
 `codex_output_schema` maps to `live_schema_rejection`. The raw message is never
 retained. Every variant, other nonzero exit, and unrecognized failure remains
 conservatively `spawn_runtime`; malformed result documents and zero-exit
-semantic or citation failures remain distinct.
+semantic or citation failures remain distinct. A canonical zero-exit result
+whose request identity differs from the bound request maps through a typed
+domain error to reviewer/identity/identity, without string matching or
+retaining either identifier. Exact repository faults map to the persistence
+component/category/stage rather than runtime.
 Request, attempt,
 dispatch, and outcome facts are append-only. Raw streams and reasoning are
 discarded. Dispatched ambiguity is `unknown`; there is no automatic retry, and
