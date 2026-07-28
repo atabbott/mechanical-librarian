@@ -888,6 +888,159 @@ class EpubChildRearSpineTests(unittest.TestCase):
                     expected,
                 )
 
+    def test_front_and_rear_labels_apply_contextual_and_promotion_vocabularies(
+        self,
+    ) -> None:
+        cases = (
+            ("Publisher", "Converted by Converter", "Conversion Press"),
+            ("Publisher", "Scanned by Archive Bot", "Scanner House"),
+            ("Publisher", "Scanning by Archive Bot", "Scanning Stories"),
+            ("Imprint", "Produced using Toolchain", "Production Imprint"),
+            ("Imprint", "Created with Toolchain", "Creative Imprint"),
+            ("Publisher", "Distributed by Distributor", "Distributor Books"),
+            ("Publisher", "Retailed by Retailer", "Retailer Press"),
+            ("Imprint", "Workflow: Synthetic Pipeline", "Workflow Press"),
+            ("Publisher", "Preview of Another Work", "Preview House"),
+            ("Imprint", "Also by Another Author", "Also House"),
+            ("Subtitle", "Sample chapter", "Sample Companion"),
+            (
+                "Subtitle",
+                "Other works by Another Author",
+                "Other Works Companion",
+            ),
+        )
+        fields = {
+            "Publisher": EpubInspectionField.PUBLISHER,
+            "Imprint": EpubInspectionField.IMPRINT,
+            "Subtitle": EpubInspectionField.SUBTITLE,
+        }
+        for label, rejected, control in cases:
+            with self.subTest(label=label, rejected=rejected):
+                markup = (
+                    "<p>All rights reserved</p>"
+                    f"<p>{label}: {rejected}</p>"
+                    f"<p>{label}: {control}</p>"
+                )
+                front_package = _opening_package(
+                    items=(
+                        ("front", "front.xhtml", "application/xhtml+xml", ""),
+                    ),
+                    spine=("front",),
+                )
+                front = self._inspect_in_child(
+                    _opening_epub(
+                        package=front_package,
+                        entries=(
+                            (
+                                "EPUB/front.xhtml",
+                                _xhtml(
+                                    '<section epub:type="copyright-page">'
+                                    f"{markup}</section>"
+                                ),
+                                zipfile.ZIP_STORED,
+                            ),
+                        ),
+                    )
+                )
+                request, (package, opening, _) = self._bundle(_xhtml(markup))
+                with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+                    rear = child._rear_facts(
+                        request,
+                        package,
+                        opening,
+                        archive,
+                    )
+                for source, facts in (("front", front.facts), ("rear", rear)):
+                    with self.subTest(source=source):
+                        self.assertEqual(
+                            [
+                                fact.canonical_value
+                                for fact in facts
+                                if fact.basis == "opening_matter"
+                                and fact.field is fields[label]
+                            ],
+                            [control],
+                        )
+
+    def test_rear_nested_labels_emit_once_and_preserve_repeated_siblings(
+        self,
+    ) -> None:
+        request, (package, opening, _) = self._bundle(
+            _xhtml(
+                "<p>All rights reserved</p>"
+                "<div><p><span>Publisher: Nested House</span></p></div>"
+                "<div><p><span>Publisher: Nested House</span></p></div>"
+                "<p><span>Imprint:</span> Inline <em>Mark</em></p>"
+            )
+        )
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package, opening, archive)
+        self.assertEqual(
+            [
+                (fact.field, fact.canonical_value)
+                for fact in facts
+                if fact.field
+                in {
+                    EpubInspectionField.PUBLISHER,
+                    EpubInspectionField.IMPRINT,
+                }
+            ],
+            [
+                (EpubInspectionField.PUBLISHER, "Nested House"),
+                (EpubInspectionField.PUBLISHER, "Nested House"),
+                (EpubInspectionField.IMPRINT, "Inline Mark"),
+            ],
+        )
+
+    def test_front_and_rear_bibliographic_canonical_values_share_normalization(
+        self,
+    ) -> None:
+        markup = (
+            "<p>All rights reserved</p>"
+            "<p>Subtitle: Cafe\u0301   Companion</p>"
+            "<p>Publisher: Cafe\u0301   House</p>"
+            "<p>Imprint: Cafe\u0301   Mark</p>"
+        )
+        front_package = _opening_package(
+            items=(("front", "front.xhtml", "application/xhtml+xml", ""),),
+            spine=("front",),
+        )
+        front = self._inspect_in_child(
+            _opening_epub(
+                package=front_package,
+                entries=(
+                    (
+                        "EPUB/front.xhtml",
+                        _xhtml(
+                            '<section epub:type="copyright-page">'
+                            f"{markup}</section>"
+                        ),
+                        zipfile.ZIP_STORED,
+                    ),
+                ),
+            )
+        )
+        request, (package, opening, _) = self._bundle(_xhtml(markup))
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            rear = child._rear_facts(request, package, opening, archive)
+        expected = [
+            (EpubInspectionField.SUBTITLE, "Café Companion"),
+            (EpubInspectionField.PUBLISHER, "Café House"),
+            (EpubInspectionField.IMPRINT, "Café Mark"),
+        ]
+        fields = {field for field, _value in expected}
+        for source, facts in (("front", front.facts), ("rear", rear)):
+            with self.subTest(source=source):
+                self.assertEqual(
+                    [
+                        (fact.field, fact.canonical_value)
+                        for fact in facts
+                        if fact.basis == "opening_matter"
+                        and fact.field in fields
+                    ],
+                    expected,
+                )
+
     def test_rear_bibliographic_indicia_preserves_conflicts_and_repetition(self) -> None:
         request, (package, opening, _) = self._bundle(
             _xhtml(

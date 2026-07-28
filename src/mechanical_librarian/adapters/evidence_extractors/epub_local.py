@@ -394,6 +394,9 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
         if marker is None: continue
         provenance = EpubRearProvenance(identity, spine_item.spine_position or tail_slot, tail_slot, marker.group(0).lower(), marker.group(0))
         resource_isbns = 0
+        bibliographic_owners: list[
+            tuple[int, EpubInspectionField, str]
+        ] = []
         for element in projection.elements:
             if element.ordinal in promotion_exclusions:
                 continue
@@ -452,16 +455,22 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
                     opening.OpeningField.PUBLISHER: EpubInspectionField.PUBLISHER,
                     opening.OpeningField.IMPRINT: EpubInspectionField.IMPRINT,
                 }[indicia_field]
+                if any(
+                    owner in element.ancestors
+                    and owner_field is inspection_field
+                    and owner_value == indicia_value
+                    for owner, owner_field, owner_value in bibliographic_owners
+                ):
+                    continue
+                bibliographic_owners.append(
+                    (element.ordinal, inspection_field, indicia_value)
+                )
                 facts.append(
                     EpubInspectionFact(
                         inspection_field,
                         report.source_fingerprint,
                         indicia_value,
-                        (
-                            normalize_title(indicia_value)
-                            if inspection_field is EpubInspectionField.SUBTITLE
-                            else indicia_value
-                        ),
+                        opening._normal(indicia_value, indicia_field),
                         value,
                         "not_applicable",
                         "not_applicable",

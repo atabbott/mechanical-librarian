@@ -152,10 +152,12 @@ remain a separate contextual claim kind and therefore cannot cross the
 bibliographic contributor or author candidate boundary.
 Copyright-holder, printer, distributor, retailer, conversion, advertisement,
 preview, and other-work text likewise cannot cross into rear
-subtitle/publisher/imprint claims. Rear extraction retains the existing fixed
-resource, byte, text, node, fact, excerpt, and hostile-markup bounds; source
-position changes provenance only and grants neither candidate nor write
-authority.
+subtitle/publisher/imprint claims. This rejection is repeated on the value
+inside an exact label and uses the complete contextual-credit and promotion
+vocabularies, including scanning, production, retail, and workflow cues. Rear
+extraction retains the existing fixed resource, byte, text, node, fact,
+excerpt, and hostile-markup bounds; source position changes provenance only
+and grants neither candidate nor write authority.
 
 Report and current-pointer publication is one SQLite transaction. Immutable
 report rows have update/delete triggers. The transaction runs the bounded

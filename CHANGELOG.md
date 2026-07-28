@@ -8,12 +8,16 @@
   every repeated or conflicting occurrence, exact bounded excerpts, and closed
   rear resource/spine/tail/marker provenance through canonical serialization
   and database reopen. Copyright holders, printers, distributors, retailers,
-  conversion credits, advertisements, previews, and other-work material remain
-  excluded, while rear position supplies no candidate authority or write
-  capability. Advance material-recognition and citation compatibility from
+  conversion, scanning, production, workflow, advertisements, previews, and
+  other-work material remain excluded even when nested inside a field label.
+  Nested projections emit one occurrence without collapsing repeated siblings,
+  and front/rear canonical values share NFC and whitespace normalization. Rear
+  position supplies no candidate authority or write capability. Advance
+  material-recognition and citation compatibility from
   `epub-opening-v2` to `epub-opening-v3`; earlier opening citations are rejected
-  instead of being reused. Existing report and inspection schema versions
-  remain unchanged.
+  instead of being reused. Advance the clean exact-current report and database
+  discriminator to `metadata-report-v13`; earlier development reports and
+  databases are rejected without migration under ADR-0013.
   (#377)
 
 - Recover source-explicit contributor roles and selected-manifestation

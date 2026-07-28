@@ -1316,6 +1316,12 @@ class MetadataReportCommandTests(unittest.TestCase):
                                     "<p>Publisher: Retailer Press</p>"
                                     "<p>Publisher: Copyright House</p>"
                                     "<p>Imprint: Conversion Press</p>"
+                                    "<div><p><span>Publisher: Nested House</span>"
+                                    "</p></div>"
+                                    "<p><span>Imprint:</span> Inline "
+                                    "<em>Mark</em></p>"
+                                    "<p>Publisher: Cafe\u0301   House</p>"
+                                    "<p>Subtitle: Cafe\u0301   Companion</p>"
                                 )
                                 if index == 8
                                 else (
@@ -1365,6 +1371,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                 reopen_metadata_report(database, report.report_id)
             )
             self.assertEqual(reopened, report)
+            self.assertEqual(report.schema_version, "metadata-report-v13")
             front_publisher = next(
                 claim
                 for claim in report.local_claims
@@ -1470,6 +1477,38 @@ class MetadataReportCommandTests(unittest.TestCase):
                         "Conversion Press",
                         "Imprint: Conversion Press",
                     ),
+                    (
+                        "publisher",
+                        "Nested House",
+                        "Publisher: Nested House",
+                    ),
+                    (
+                        "imprint",
+                        "Inline Mark",
+                        "Imprint: Inline Mark",
+                    ),
+                    (
+                        "publisher",
+                        "Cafe\u0301 House",
+                        "Publisher: Cafe\u0301 House",
+                    ),
+                    (
+                        "subtitle",
+                        "Cafe\u0301 Companion",
+                        "Subtitle: Cafe\u0301 Companion",
+                    ),
+                ],
+            )
+            self.assertEqual(
+                [
+                    (claim.observed, claim.canonical)
+                    for claim in rear_claims
+                    if claim.observed
+                    in {"Cafe\u0301 House", "Cafe\u0301 Companion"}
+                ],
+                [
+                    ("Cafe\u0301 House", "Café House"),
+                    ("Cafe\u0301 Companion", "Café Companion"),
                 ],
             )
             self.assertEqual(

@@ -123,7 +123,7 @@ workflow, job, cache, or deletion surface. Batch work stores no attempt or
 resume state; shadow-review attempts are the explicit qualification-only
 exception. These rules are the current-runtime application of repository-wide
 ADR-0013.
-The `metadata-report-v12` document retains all 16 ordered Audiobookshelf target
+The `metadata-report-v13` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
 source capability

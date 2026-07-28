@@ -23,7 +23,7 @@ from mechanical_librarian.domain.cover_evidence import (
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 
 
-REPORT_SCHEMA = "metadata-report-v12"
+REPORT_SCHEMA = "metadata-report-v13"
 COMPARISON_VERSION = "same-kind-v1"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.

@@ -137,9 +137,13 @@ and imprint recall separately from explicit-negative precision. Paired
 front/rear fixtures cover semantic and exact-labelled admission, while rear
 fixtures cover the exact excerpt bound, conflicts, repetition, hostile
 copyright-holder/printer/distributor/retailer/conversion contexts, and
-advertisement/preview/other-work isolation. Only aggregate expected, found, and
-false-positive counts are asserted or exported; fixture rows and source text
-remain private.
+advertisement/preview/other-work isolation. Focused regressions additionally
+cover nested single-emission versus repeated siblings, assembled inline
+labels, scanning/production/workflow label values, promotion cues inside
+labels, front/rear NFC and whitespace normalization, `metadata-report-v13`
+canonical replay, clean database creation, and byte-unchanged rejection of v12
+state. Only aggregate expected, found, and false-positive counts are asserted
+or exported; fixture rows and source text remain private.
 
 Hostile-input tests name a supported external actor and reachable boundary.
 Typed in-process collaborators are not attacker-controlled unless the product

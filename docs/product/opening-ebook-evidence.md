@@ -138,10 +138,16 @@ Target-work subtitle, publisher, and imprint are admitted in either position
 only from explicit EPUB semantics or an exact `Subtitle:`, `Publisher:`, or
 `Imprint:` label. Publisher and imprint remain different edition fields.
 Copyright holders, printers, distributors, retailers, conversion credits, and
-promotional or other-work labels do not satisfy those cues. Every admitted
+promotional or other-work labels do not satisfy those cues. The same complete
+contextual-credit and promotion vocabulary is applied again after stripping an
+exact field label, including conversion, scanning, production, distribution,
+retail, and workflow forms. Nested elements that project the same labelled
+source occurrence emit it once, while genuinely repeated sibling occurrences
+remain distinct. Canonical subtitle, publisher, and imprint values use NFC and
+collapsed whitespace in both front and rear positions. Every admitted
 occurrence retains its bounded supporting excerpt and source position;
-repetition and conflicts remain evidence rather than being deduplicated or
-resolved, and rear position supplies no authority boost.
+repetition and conflicts remain evidence rather than being resolved, and rear
+position supplies no authority boost.
 
 Date-time evidence requires either `Z` or an explicit signed offset; an
 unsigned date-time is rejected as a whole and cannot fall back to its valid

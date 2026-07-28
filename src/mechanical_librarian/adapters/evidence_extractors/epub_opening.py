@@ -1957,12 +1957,12 @@ def _bibliographic_indicia(
 ) -> tuple[tuple[OpeningField, str, bool], ...]:
     """Admit only structurally explicit or exactly labelled target indicia."""
 
-    if _NON_BIBLIOGRAPHIC_INDICIA.match(text) is not None:
+    if _is_non_bibliographic_indicia(text):
         return ()
     labelled = _BIBLIOGRAPHIC_INDICIA_LABEL.fullmatch(text)
     if labelled is not None:
         value = labelled.group("value")
-        if _NON_BIBLIOGRAPHIC_INDICIA.match(value) is not None:
+        if _is_non_bibliographic_indicia(value):
             return ()
         field = {
             "subtitle": OpeningField.SUBTITLE,
@@ -1978,6 +1978,17 @@ def _bibliographic_indicia(
             ("imprint", OpeningField.IMPRINT),
         )
         if token in semantics
+    )
+
+
+def _is_non_bibliographic_indicia(text: str) -> bool:
+    return (
+        _NON_BIBLIOGRAPHIC_INDICIA.match(text) is not None
+        or _INDICIA_PROMOTION_NOTICE.fullmatch(text) is not None
+        or any(
+            pattern.search(text) is not None
+            for pattern, _role in _CONTEXTUAL_CREDITS
+        )
     )
 
 

@@ -139,8 +139,11 @@ byte snapshot, verifies its digest, and uses that same snapshot for all EPUB
  mining. Subtitle/publisher/imprint require explicit EPUB semantics or an exact
  field label. Copyright holders, printers, distributors, retailers,
  conversion credits, advertisements, previews, and other-work material do not
- become those bibliographic fields. Production/tool credits never become
- contributors.
+ become those bibliographic fields. Extracted label values are checked against
+ the same conversion, scanning, production, distribution, retail, workflow,
+ and promotion vocabulary. Nested elements that project one exact label emit
+ one occurrence; repeated siblings remain separate. Production/tool credits
+ never become contributors.
  If that optional rear pass reaches its aggregate resource or fact limit, it
  records a bounded warning while retaining facts admitted before exhaustion as
  well as already validated package and opening-matter evidence; package and opening resource limits
@@ -167,8 +170,12 @@ distinct edition claims through inspection, immutable report serialization,
 database reopen, and exact replay. Target-work subtitles remain work-scoped.
 Each rear occurrence retains its exact bounded excerpt and closed
 resource/spine/tail/marker provenance; repeated and conflicting values remain in
-source order. Rear position does not increase authority. Provider comparisons
-link only claims with the same role; no publisher/imprint hierarchy is inferred.
+source order. Front and rear subtitle/publisher/imprint canonical values share
+NFC and whitespace normalization. Rear position does not increase authority.
+Provider comparisons link only claims with the same role; no publisher/imprint
+hierarchy is inferred. The exact-current persisted report and database
+discriminator is `metadata-report-v13`; earlier development reports and
+databases remain offline and require a clean current database under ADR-0013.
 
 The credential-bearing parent combines those facts with the target projection.
 Every distinct checksum-valid ISBN family across bounded package, front, and
