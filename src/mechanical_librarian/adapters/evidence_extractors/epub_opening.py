@@ -1996,6 +1996,24 @@ def _is_bibliographic_indicia_label(text: str) -> bool:
     return _BIBLIOGRAPHIC_INDICIA_LABEL.fullmatch(text) is not None
 
 
+def _bibliographic_indicia_label_ancestors(
+    elements: list[_Element],
+    eligible_ordinals: set[int],
+) -> set[int]:
+    """Return eligible ancestors whose projection contains a complete label."""
+
+    return {
+        ancestor
+        for candidate in elements
+        if (
+            candidate.ordinal in eligible_ordinals
+            and _is_bibliographic_indicia_label(candidate.exact_text)
+        )
+        for ancestor in candidate.ancestors
+        if ancestor in eligible_ordinals
+    }
+
+
 def _isbn_valid(value: str) -> bool:
     compact = "".join(character for character in value.upper() if character.isdigit() or character == "X")
     if len(compact) == 10 and compact[:9].isdigit() and (compact[9].isdigit() or compact[9] == "X"):
@@ -2601,6 +2619,15 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             )
         )
 
+    eligible_ordinals = {
+        candidate.ordinal
+        for candidate in projection.elements
+        if admissible_context_element(candidate)
+    }
+    bibliographic_label_ancestors = _bibliographic_indicia_label_ancestors(
+        projection.elements,
+        eligible_ordinals,
+    )
     claim_elements = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "dt", "dd", "li", "address", "figcaption"}
     for element in projection.elements:
         text = element.exact_text
@@ -2631,7 +2658,12 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
         if not text or element.end <= element.start:
             continue
         lowered = text.casefold()
-        if element.name not in claim_elements and not semantic & _CLAIM_SEMANTICS:
+        bibliographic_label = _is_bibliographic_indicia_label(text)
+        if (
+            element.name not in claim_elements
+            and not semantic & _CLAIM_SEMANTICS
+            and not bibliographic_label
+        ):
             continue
         title_context = any(
             scope is None or scope == element.ordinal or scope in element.ancestors
@@ -2684,8 +2716,11 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                 )
             )
 
-        bibliographic_label = _is_bibliographic_indicia_label(text)
-        bibliographic_indicia = _bibliographic_indicia(semantic, text)
+        bibliographic_indicia = (
+            ()
+            if element.ordinal in bibliographic_label_ancestors
+            else _bibliographic_indicia(semantic, text)
+        )
         for field, value, labelled in bibliographic_indicia:
             add(
                 field,

@@ -394,6 +394,28 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
         if marker is None: continue
         provenance = EpubRearProvenance(identity, spine_item.spine_position or tail_slot, tail_slot, marker.group(0).lower(), marker.group(0))
         resource_isbns = 0
+        eligible_ordinals: set[int] = set()
+        for candidate in projection.elements:
+            if candidate.ordinal in promotion_exclusions:
+                continue
+            candidate_value = " ".join(candidate.exact_text.split())
+            if not candidate_value or len(candidate_value) > 280:
+                continue
+            try:
+                validate_projection_text(
+                    candidate_value,
+                    "rear-spine cue",
+                    280,
+                )
+            except EvidenceValueError:
+                continue
+            eligible_ordinals.add(candidate.ordinal)
+        bibliographic_label_ancestors = (
+            opening._bibliographic_indicia_label_ancestors(
+                projection.elements,
+                eligible_ordinals,
+            )
+        )
         bibliographic_owners: list[
             tuple[int, EpubInspectionField, str]
         ] = []
@@ -410,9 +432,13 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             field = canonical = None; role = None
             byline = _BYLINE.match(value)
             bibliographic_label = opening._is_bibliographic_indicia_label(value)
-            bibliographic_indicia = opening._bibliographic_indicia(
-                element.semantics,
-                value,
+            bibliographic_indicia = (
+                ()
+                if element.ordinal in bibliographic_label_ancestors
+                else opening._bibliographic_indicia(
+                    element.semantics,
+                    value,
+                )
             )
             admitted_cue = (
                 bool(

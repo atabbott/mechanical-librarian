@@ -141,9 +141,10 @@ byte snapshot, verifies its digest, and uses that same snapshot for all EPUB
  conversion credits, advertisements, previews, and other-work material do not
  become those bibliographic fields. Extracted label values are checked against
  the same conversion, scanning, production, distribution, retail, workflow,
- and promotion vocabulary. Nested elements that project one exact label emit
- one occurrence; repeated siblings remain separate. Production/tool credits
- never become contributors.
+ and promotion vocabulary. Each complete nested or sibling label owns one
+ occurrence without an assembled ancestor claim; repeated siblings remain
+ separate, while an inline label split across descendants remains assembled by
+ its parent. Production/tool credits never become contributors.
  If that optional rear pass reaches its aggregate resource or fact limit, it
  records a bounded warning while retaining facts admitted before exhaustion as
  well as already validated package and opening-matter evidence; package and opening resource limits

@@ -10,8 +10,10 @@
   and database reopen. Copyright holders, printers, distributors, retailers,
   conversion, scanning, production, workflow, advertisements, previews, and
   other-work material remain excluded even when nested inside a field label.
-  Nested projections emit one occurrence without collapsing repeated siblings,
-  and front/rear canonical values share NFC and whitespace normalization. Rear
+  Each complete nested or sibling label owns one occurrence without an
+  assembled ancestor claim, while repeated siblings remain separate and split
+  inline labels remain assembled. Front/rear canonical values share NFC and
+  whitespace normalization. Rear
   position supplies no candidate authority or write capability. Advance
   material-recognition and citation compatibility from
   `epub-opening-v2` to `epub-opening-v3`; earlier opening citations are rejected
