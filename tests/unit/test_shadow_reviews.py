@@ -227,6 +227,10 @@ class ShadowReviewTests(unittest.TestCase):
         proposal = evaluate_report(report)
         case = ReviewCase.create(proposal, report)
         packet = ShadowReviewPacket.create(case, proposal, report)
+        with self.assertRaisesRegex(
+            ShadowReviewValueError, "provider source is unavailable"
+        ):
+            ShadowReviewPacket.from_json(packet.to_json())
         projected = next(
             value
             for value in packet.proposals
@@ -291,7 +295,7 @@ class ShadowReviewTests(unittest.TestCase):
         )
         published["candidates"][0]["date_event"] = "work_first_publication"
         with self.assertRaises(ShadowReviewValueError):
-            ShadowReviewPacket.from_json(canonical_json(document))
+            ShadowReviewPacket.from_json(canonical_json(document), report)
 
         def provider_date(document: dict[str, object]) -> dict[str, object]:
             return next(
@@ -319,7 +323,7 @@ class ShadowReviewTests(unittest.TestCase):
             fact[field] = invalid
             with self.subTest(field=field, invalid=invalid):
                 with self.assertRaises(ShadowReviewValueError):
-                    ShadowReviewPacket.from_json(canonical_json(document))
+                    ShadowReviewPacket.from_json(canonical_json(document), report)
 
         document = json.loads(packet.to_json())
         linked = provider_date(document)["linkage"]
@@ -329,7 +333,7 @@ class ShadowReviewTests(unittest.TestCase):
             if value["kind"] == "asin"
         )["value"] = "A000000001"
         with self.assertRaises(ShadowReviewValueError):
-            ShadowReviewPacket.from_json(canonical_json(document))
+            ShadowReviewPacket.from_json(canonical_json(document), report)
 
         for extra in ("role", "state"):
             document = json.loads(packet.to_json())
@@ -338,7 +342,7 @@ class ShadowReviewTests(unittest.TestCase):
             )
             with self.subTest(extra=extra):
                 with self.assertRaises(ShadowReviewValueError):
-                    ShadowReviewPacket.from_json(canonical_json(document))
+                    ShadowReviewPacket.from_json(canonical_json(document), report)
 
         for field, invalid in (
             ("candidate", "edition-2"),
@@ -350,17 +354,17 @@ class ShadowReviewTests(unittest.TestCase):
             provider_date(document)[field] = invalid
             with self.subTest(context=field, invalid=invalid):
                 with self.assertRaises(ShadowReviewValueError):
-                    ShadowReviewPacket.from_json(canonical_json(document))
+                    ShadowReviewPacket.from_json(canonical_json(document), report)
 
         document = json.loads(packet.to_json())
         provider_date(document)["linkage"]["identifier_facts"].pop()
         with self.assertRaises(ShadowReviewValueError):
-            ShadowReviewPacket.from_json(canonical_json(document))
+            ShadowReviewPacket.from_json(canonical_json(document), report)
 
         document = json.loads(packet.to_json())
         provider_date(document)["linkage"]["identifier_references"].pop()
         with self.assertRaises(ShadowReviewValueError):
-            ShadowReviewPacket.from_json(canonical_json(document))
+            ShadowReviewPacket.from_json(canonical_json(document), report)
 
         document = json.loads(packet.to_json())
         linked = provider_date(document)["linkage"]
@@ -369,7 +373,7 @@ class ShadowReviewTests(unittest.TestCase):
             linked["identifier_references"][0]
         )
         with self.assertRaises(ShadowReviewValueError):
-            ShadowReviewPacket.from_json(canonical_json(document))
+            ShadowReviewPacket.from_json(canonical_json(document), report)
 
         document = json.loads(packet.to_json())
         linked = provider_date(document)["linkage"]
@@ -382,20 +386,20 @@ class ShadowReviewTests(unittest.TestCase):
             for _ in range(MAX_LINKAGE_IDENTIFIER_FACTS - 1)
         )
         with self.assertRaises(ShadowReviewValueError):
-            ShadowReviewPacket.from_json(canonical_json(document))
+            ShadowReviewPacket.from_json(canonical_json(document), report)
 
         document = json.loads(packet.to_json())
         linked = provider_date(document)["linkage"]
         linked["identifier_facts"].reverse()
         linked["identifier_references"].reverse()
         with self.assertRaises(ShadowReviewValueError):
-            ShadowReviewPacket.from_json(canonical_json(document))
+            ShadowReviewPacket.from_json(canonical_json(document), report)
 
         document = json.loads(packet.to_json())
         linked = provider_date(document)["linkage"]
         linked["format_facts"][0]["role"] = "narrator"
         with self.assertRaises(ShadowReviewValueError):
-            ShadowReviewPacket.from_json(canonical_json(document))
+            ShadowReviewPacket.from_json(canonical_json(document), report)
 
         for invalid in (
             "/private/library/format",
@@ -407,20 +411,96 @@ class ShadowReviewTests(unittest.TestCase):
             ] = invalid
             with self.subTest(format_value=invalid):
                 with self.assertRaises(ShadowReviewValueError):
-                    ShadowReviewPacket.from_json(canonical_json(document))
+                    ShadowReviewPacket.from_json(canonical_json(document), report)
 
         document = json.loads(packet.to_json())
         del provider_date(document)["linkage"]
         with self.assertRaises(ShadowReviewValueError):
-            ShadowReviewPacket.from_json(canonical_json(document))
+            ShadowReviewPacket.from_json(canonical_json(document), report)
+
+        invented_identifier = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.ISBN,
+            value="9780306406157",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="ebook",
+            raw_order=7,
+        )
+        invented_identifier_data = invented_identifier.to_data()
+        invented_identifier_fact = {
+            key: invented_identifier_data[key]
+            for key in (
+                "applicability",
+                "kind",
+                "raw_order",
+                "reference",
+                "scope",
+                "value",
+            )
+        }
+        invented_format = ProviderEvidence(
+            ProviderEvidenceKind.PHYSICAL_FORMAT,
+            "hardcover",
+            ClaimScope.EDITION,
+        ).to_data()
+
+        def add_identifier(linkage: dict[str, object]) -> None:
+            linkage["identifier_facts"].append(invented_identifier_fact)
+            linkage["identifier_facts"].sort(
+                key=lambda fact: fact["reference"]
+            )
+            linkage["identifier_references"][:] = [
+                fact["reference"] for fact in linkage["identifier_facts"]
+            ]
+
+        def add_format(linkage: dict[str, object]) -> None:
+            linkage["format_facts"].append(invented_format)
+            linkage["format_facts"].sort(key=canonical_json)
+
+        for name, mutate in (
+            ("invented_valid_isbn", add_identifier),
+            ("invented_physical_format", add_format),
+        ):
+            document = json.loads(packet.to_json())
+            mutate(provider_date(document)["linkage"])
+            forged_json = canonical_json(document)
+            with self.subTest(binding=name, document="packet"):
+                with self.assertRaisesRegex(
+                    ShadowReviewValueError, "source binding is invalid"
+                ):
+                    ShadowReviewPacket.from_json(forged_json, report)
+            forged_packet = ShadowReviewPacket(
+                document["review_case_id"],
+                tuple(document["proposals"]),
+                tuple(document["citations"]),
+                tuple(document["correlations"]),
+                document["schema_version"],
+            )
+            forged_request = ShadowReviewRequest.create_from_packet(
+                _identity(), forged_packet
+            )
+            with self.subTest(binding=name, document="request"):
+                with self.assertRaises(ShadowReviewValueError):
+                    ShadowReviewRequest.from_json(
+                        forged_request.to_json(), report
+                    )
 
         request = ShadowReviewRequest.create_from_packet(_identity(), packet)
+        with self.assertRaisesRegex(
+            ShadowReviewValueError, "request is invalid"
+        ):
+            ShadowReviewRequest.from_json(request.to_json())
+        self.assertEqual(
+            request, ShadowReviewRequest.from_json(request.to_json(), report)
+        )
         request_document = json.loads(request.to_json())
         provider_date(request_document["packet"])["linkage"][
             "identifier_facts"
         ][0]["raw_order"] = 99
         with self.assertRaises(ShadowReviewValueError):
-            ShadowReviewRequest.from_json(canonical_json(request_document))
+            ShadowReviewRequest.from_json(canonical_json(request_document), report)
 
         self.assertEqual(16, MAX_LINKAGE_IDENTIFIER_FACTS)
         self.assertEqual(16, MAX_LINKAGE_FORMAT_FACTS)
@@ -471,7 +551,7 @@ class ShadowReviewTests(unittest.TestCase):
         proposal = evaluate_report(report)
         case = ReviewCase.create(proposal, report)
         packet = ShadowReviewPacket.create(case, proposal, report)
-        replayed = ShadowReviewPacket.from_json(packet.to_json())
+        replayed = ShadowReviewPacket.from_json(packet.to_json(), report)
         rich = next(
             citation["fact"]
             for citation in replayed.citations
@@ -497,12 +577,12 @@ class ShadowReviewTests(unittest.TestCase):
         document = json.loads(packet.to_json())
         del rich_date(document)["linkage"]
         with self.assertRaises(ShadowReviewValueError):
-            ShadowReviewPacket.from_json(canonical_json(document))
+            ShadowReviewPacket.from_json(canonical_json(document), report)
 
         document = json.loads(packet.to_json())
         rich_date(document)["linkage"] = {"identifier_references": []}
         with self.assertRaises(ShadowReviewValueError):
-            ShadowReviewPacket.from_json(canonical_json(document))
+            ShadowReviewPacket.from_json(canonical_json(document), report)
 
         for field, invalid in (
             ("candidate", "edition-2"),
@@ -512,12 +592,12 @@ class ShadowReviewTests(unittest.TestCase):
             rich_date(document)[field] = invalid
             with self.subTest(field=field):
                 with self.assertRaises(ShadowReviewValueError):
-                    ShadowReviewPacket.from_json(canonical_json(document))
+                    ShadowReviewPacket.from_json(canonical_json(document), report)
 
         document = json.loads(packet.to_json())
         rich_date(document)["evidence"]["kind"] = "copyright_date"
         with self.assertRaises(ShadowReviewValueError):
-            ShadowReviewPacket.from_json(canonical_json(document))
+            ShadowReviewPacket.from_json(canonical_json(document), report)
 
     def test_publication_linkage_construction_rejects_context_over_limits(
         self,
@@ -982,7 +1062,7 @@ class ShadowReviewTests(unittest.TestCase):
     def test_result_rejects_missing_coverage_and_unknown_citations(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository, case_id = self._repository(directory)
-            request = ShadowReviewRequest.from_json(
+            request = repository.validate_shadow_request(
                 repository.preview_shadow_request(
                     case_id, _identity().to_json()
                 )
@@ -1007,7 +1087,7 @@ class ShadowReviewTests(unittest.TestCase):
     def test_maximum_packet_request_round_trips_and_persists(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository, case_id = self._repository(directory)
-            base = ShadowReviewRequest.from_json(
+            base = repository.validate_shadow_request(
                 repository.preview_shadow_request(case_id, _identity().to_json())
             ).packet
 
@@ -1052,7 +1132,7 @@ class ShadowReviewTests(unittest.TestCase):
                 len(request.to_json().encode("utf-8")), MAX_REQUEST_BYTES
             )
             self.assertEqual(
-                request, ShadowReviewRequest.from_json(request.to_json())
+                request, repository.validate_shadow_request(request.to_json())
             )
             repository._connection.execute(
                 "INSERT INTO shadow_review_requests("
@@ -1074,7 +1154,7 @@ class ShadowReviewTests(unittest.TestCase):
             ).fetchone()
             self.assertIsNotNone(stored)
             self.assertEqual(
-                request, ShadowReviewRequest.from_json(stored[0])
+                request, repository.validate_shadow_request(stored[0])
             )
             self.assertEqual(
                 request,
@@ -1282,6 +1362,58 @@ class ShadowReviewTests(unittest.TestCase):
             errors.getvalue(),
         )
         self.assertTrue(request_id.startswith("review_request_"))
+
+    def test_cli_rejects_zero_exit_semantic_request_and_result_drift(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository, case_id = self._repository(directory)
+            serialized = execute_shadow_review(
+                repository,
+                case_id,
+                _identity(),
+                _Runner(),
+                claimant=(9001, "11"),
+            )
+            repository.close()
+        invalid_request = json.loads(serialized)
+        invalid_request["request"]["output_schema"] = "{}"
+        invalid_result = json.loads(serialized)
+        invalid_result["attempts"][0]["result"]["recommendations"][0][
+            "citations"
+        ] = []
+        for name, document in (
+            ("request", invalid_request),
+            ("result", invalid_result),
+        ):
+            output, errors = io.StringIO(), io.StringIO()
+            with self.subTest(document=name):
+                self.assertEqual(
+                    1,
+                    main(
+                        [
+                            "shadow-review-request",
+                            "--database",
+                            "/db",
+                            "--review-case-id",
+                            case_id,
+                            "--qualification-profile",
+                            "/profile",
+                        ],
+                        shadow_request_runner=lambda *_args, value=canonical_json(
+                            document
+                        ): value,
+                        stdout=output,
+                        stderr=errors,
+                    ),
+                )
+                self.assertEqual("", output.getvalue())
+                self.assertEqual(
+                    '{"code":"malformed_output",'
+                    '"mode":"qualification_only",'
+                    '"schema_version":"shadow-review-failure-v1"}\n',
+                    errors.getvalue(),
+                )
 
 
 class CodexShadowAdapterTests(unittest.TestCase):
@@ -1655,7 +1787,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
     def test_output_schema_is_typed_bound_and_digest_frozen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository, case_id = ShadowReviewTests()._repository(directory)
-            request = ShadowReviewRequest.from_json(
+            request = repository.validate_shadow_request(
                 repository.preview_shadow_request(case_id, _identity().to_json())
             )
             binding = codex_shadow._schema_binding(request)

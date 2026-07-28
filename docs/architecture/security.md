@@ -210,6 +210,12 @@ recomputed from public-safe provider/candidate membership and the exact fixed
 valid claim projection, including raw order, ISBN checksum, or closed ASIN
 syntax. Typed provider claims and rich date evidence both require linkage;
 rich evidence citation identities are recomputed from their closed content.
+Those internal identities do not by themselves prove that a sibling occurred
+in the source candidate. Provider-linked packet/request decode therefore
+requires the immutable persisted report and compares each complete citation
+with the projection rebuilt from that exact candidate. Missing source context
+or any invented/omitted sibling fails closed without exposing the report to
+the reviewer.
 All auth and reviewer processes serialize on one owner-only auth-store lock.
 Only the exact canonical ChatGPT subscription status on one process stream is
 accepted when the other stream is empty and the command succeeds. Mixed,

@@ -52,21 +52,27 @@ ASIN syntax, and requires its content-addressed reference to match. Its
 reference list must be a sorted, duplicate-free, exact one-to-one projection
 of those objects. Rich evidence citation IDs are likewise recomputed from
 their exact provider, candidate, and closed evidence projection. Format facts
-use the existing closed provider-evidence projection. Unknown keys, invalid or
+use the existing closed provider-evidence projection. Canonical replay of a
+provider-linked packet additionally requires the immutable source
+`MetadataReport`: each provider citation must equal the exact citation
+projection rebuilt from its actual report candidate. Standalone bytes cannot
+prove candidate membership and therefore fail closed; synthetic and
+non-provider packets remain self-contained. Unknown keys, invalid or
 private/credential-shaped values, missing linkage, opaque-only identifier
-references, noncanonical order, membership disagreement, identity
-disagreement, or a limit breach are rejected.
+references, invented or omitted siblings, noncanonical order, membership
+disagreement, identity disagreement, or a limit breach are rejected.
 
 `shadow-review-request-v3` binds the exact canonical packet, qualification
 profile, and generated result-schema bytes and digest. Profile tuple drift,
 packet-v1, request-v2, malformed or noncanonical documents, destination/date
 disagreement, provider date precision disagreement, missing typed-claim or
 rich-evidence linkage, incomplete content-addressed membership, and over-bound
-context fail closed at their existing validation boundary before
-reviewer invocation or persistence can grant dispatch authority. Stored
-exact-current documents are validated the same way when reopened. Earlier
-development state is rejected rather than migrated, imported, converted, or
-repaired under ADR-0013.
+context fail closed at their existing validation boundary before reviewer
+invocation or persistence can grant dispatch authority. Stored exact-current
+documents are decoded with their persisted report and validated the same way
+when reopened. The CLI receives only the already validated sanitized
+projection, never the report. Earlier development state is rejected rather
+than migrated, imported, converted, or repaired under ADR-0013.
 
 The reviewer remains untrusted advice with no decision, apply, target, media,
 credential, service, provider, shell, tool, network-discovery, retry, or write
@@ -125,6 +131,8 @@ Focused construction and canonical-replay tests cover exact provider date
 precision, the complete destination/date matrix, packet candidate validation,
 provider claim and rich-evidence linkage, ISBN/ASIN syntax, recomputed
 identifier fact/reference identity and membership, provider/candidate privacy,
-format fact shape, missing/duplicate/reordered/forged linkage, request replay,
-and both 16-fact limits. The full unit suite, architecture-boundary suite, and
-exact artifact qualifier must pass at the delivered head.
+format fact shape, missing/duplicate/reordered/forged linkage, authoritative
+report replay, invented checksum-valid ISBN and physical-format siblings in
+both direct packets and recomputed requests, and both 16-fact limits. The full
+unit suite, architecture-boundary suite, and exact artifact qualifier must pass
+at the delivered head.

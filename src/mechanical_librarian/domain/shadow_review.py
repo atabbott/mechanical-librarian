@@ -426,12 +426,14 @@ class ShadowReviewPacket:
             }
             for correlation_id, values in sorted(correlations.items())
         )
-        return cls(
+        value = cls(
             case.review_case_id,
             tuple(sorted(proposals, key=lambda value: value["proposal_id"])),
             citations,
             correlation_facts,
         )
+        value.validate_source(report)
+        return value
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -446,7 +448,24 @@ class ShadowReviewPacket:
         return canonical_json(self.to_data())
 
     @classmethod
-    def from_json(cls, serialized: str) -> Self:
+    def from_json(
+        cls, serialized: str, source_report: MetadataReport | None = None
+    ) -> Self:
+        return cls._from_json(serialized, source_report, source_validated=False)
+
+    @classmethod
+    def from_source_validated_json(cls, serialized: str) -> Self:
+        """Decode same-process bytes already validated with their source report."""
+        return cls._from_json(serialized, None, source_validated=True)
+
+    @classmethod
+    def _from_json(
+        cls,
+        serialized: str,
+        source_report: MetadataReport | None,
+        *,
+        source_validated: bool,
+    ) -> Self:
         raw = _canonical_object(serialized, MAX_PACKET_BYTES)
         if set(raw) != {
             "citations",
@@ -474,7 +493,25 @@ class ShadowReviewPacket:
             raise ShadowReviewValueError("shadow-review packet is invalid") from error
         if value.to_json() != serialized:
             raise ShadowReviewValueError("shadow-review packet is not canonical")
+        if _requires_provider_source(value) and not source_validated:
+            value.validate_source(source_report)
         return value
+
+    def validate_source(self, source_report: MetadataReport | None) -> None:
+        """Bind provider citations to exact candidates in an authoritative report."""
+        if type(source_report) is not MetadataReport:
+            raise ShadowReviewValueError(
+                "shadow-review provider source is unavailable"
+            )
+        evidence = _evidence_index(source_report.to_data())
+        for citation in self.citations:
+            citation_id = citation["citation_id"]
+            fact = citation["fact"]
+            if _is_provider_citation(citation_id, fact):
+                if evidence.get(citation_id) != fact:
+                    raise ShadowReviewValueError(
+                        "shadow-review provider source binding is invalid"
+                    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -643,7 +680,24 @@ class ShadowReviewRequest:
         return canonical_json(self.to_data())
 
     @classmethod
-    def from_json(cls, serialized: str) -> Self:
+    def from_json(
+        cls, serialized: str, source_report: MetadataReport | None = None
+    ) -> Self:
+        return cls._from_json(serialized, source_report, source_validated=False)
+
+    @classmethod
+    def from_source_validated_json(cls, serialized: str) -> Self:
+        """Decode same-process bytes already validated with their source report."""
+        return cls._from_json(serialized, None, source_validated=True)
+
+    @classmethod
+    def _from_json(
+        cls,
+        serialized: str,
+        source_report: MetadataReport | None,
+        *,
+        source_validated: bool,
+    ) -> Self:
         raw = _canonical_object(serialized, MAX_REQUEST_BYTES)
         if set(raw) != {
             "mode",
@@ -663,7 +717,11 @@ class ShadowReviewRequest:
                 raw["review_request_id"],  # type: ignore[arg-type]
                 raw["review_case_id"],  # type: ignore[arg-type]
                 ReviewerProfileIdentity.from_json(profile_json),
-                ShadowReviewPacket.from_json(packet_json),
+                (
+                    ShadowReviewPacket.from_source_validated_json(packet_json)
+                    if source_validated
+                    else ShadowReviewPacket.from_json(packet_json, source_report)
+                ),
                 raw["output_schema"],  # type: ignore[arg-type]
                 raw["output_schema_digest"],  # type: ignore[arg-type]
                 raw["mode"],  # type: ignore[arg-type]
@@ -1110,6 +1168,22 @@ def _contains_provider_date(value: dict[str, object]) -> bool:
             evidence.get("kind") in _PROVIDER_DATE_EVIDENCE_VALUES
             or evidence.get("date_event") is not None
         )
+    )
+
+
+def _is_provider_citation(citation_id: str, fact: dict[str, object]) -> bool:
+    return (
+        citation_id.startswith(("provider_", "evidence_"))
+        or "provider" in fact
+        or "linkage" in fact
+        or _contains_provider_date(fact)
+    )
+
+
+def _requires_provider_source(packet: ShadowReviewPacket) -> bool:
+    return any(
+        _is_provider_citation(citation["citation_id"], citation["fact"])
+        for citation in packet.citations
     )
 
 

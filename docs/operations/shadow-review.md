@@ -76,7 +76,12 @@ credential-shaped context, malformed/noncanonical facts, or over-bound
 linkage rejects the packet before invocation. Candidate date typing describes
 the target destination (`manifestation_publication` plus `year` or `day`);
 source event and precision remain in the citation. This exact packet/request
-freeze is governed by ADR-0016.
+freeze is governed by ADR-0016. Provider-linked packet/request replay is not a
+standalone operation: persistence reopens the immutable source report,
+rebuilds the complete provider citation from the actual candidate, and
+requires exact equality before dispatch or inspection. Missing report context
+and invented or omitted identifier/format siblings fail closed. The report
+itself never enters the reviewer request.
 
 ```sh
 mechanical-librarian shadow-review-request --database reports.sqlite \

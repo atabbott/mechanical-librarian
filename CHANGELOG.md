@@ -15,9 +15,13 @@
   malformed context, and context over its fixed limits. Identifier fact
   references are recomputed from exact public-safe provider/candidate
   membership and raw claim identity with ISBN/ASIN validation; cited typed
-  claims and rich date evidence cannot omit linkage. ADR-0016 supersedes
-  ADR-0015 to freeze the packet-v2/request-v3 trust boundary. The first actual
-  provider dispatch now records
+  claims and rich date evidence cannot omit linkage. Provider-linked packet
+  and request replay now also requires the authoritative immutable report and
+  rejects invented checksum-valid identifiers or physical formats even when
+  all internal identities are recomputed; non-provider replay remains
+  self-contained. ADR-0016 supersedes ADR-0015 to freeze the
+  packet-v2/request-v3 trust boundary. The first actual provider dispatch now
+  records
   one strict canonical UTC access time from the adapter's injected clock;
   retries and replay do not refresh it, and pre-egress outcomes retain an
   explicit absence. A fresh accessed observation is therefore a new immutable
