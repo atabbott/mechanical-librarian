@@ -9,7 +9,12 @@
   remain visible but non-selectable. Proposal and reviewer candidates expose
   their event and target precision, while citations retain source precision,
   candidate/work identity, provider authority, query access, and sibling
-  identifier/format context. Year and month evidence can derive only
+  identifier/format context. The first actual provider dispatch now records
+  one strict canonical UTC access time from the adapter's injected clock;
+  retries and replay do not refresh it, and pre-egress outcomes retain an
+  explicit absence. A fresh accessed observation is therefore a new immutable
+  report successor even when its bibliographic facts are unchanged. Year and
+  month evidence can derive only
   `publishedYear`; day and signed-offset timestamp evidence can derive an exact
   day without converting offsets; work-first dates cannot replace populated
   manifestation values; and conflicts remain unresolved choices. Advance the

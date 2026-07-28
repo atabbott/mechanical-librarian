@@ -81,6 +81,13 @@ exists. More than eight ISBN families return `query_limit_exceeded` before
 provider client construction and permits no subset egress. With neither an ISBN
 lane nor a complete work lane, title-only or incomplete-author input returns
 `insufficient_input` without a provider request.
+The first actual metadata-provider dispatch captures one bounded canonical UTC
+access time from the adapter's injected wall clock. Invalid, non-finite, or
+out-of-range clock output fails before egress. Disabled, insufficient-input,
+query-overflow, repeated-call, and pre-dispatch deadline or budget outcomes do
+not read that clock and retain an explicit absent time. Later lanes, retries,
+report reopen, proposal derivation, and reviewer projection reuse the original
+value; none refreshes it.
 
 Each referenced enabled Hardcover provider makes one fixed GraphQL query per
 admitted lane, with at most two bounded retries and 27 aggregate attempts.
@@ -137,7 +144,8 @@ excerpts, source-explicit target-work subtitle/publisher/imprint observations
 with closed rear resource/spine/tail/marker provenance, controlled
 contributor/production roles, typed date event and precision claims, provider
 candidate edition and provider-local work
-identities, comparison facts, and derived ISBN relationships containing only
+identities, canonical provider access time when egress occurred, comparison
+facts, and derived ISBN relationships containing only
 claim references and those already-admitted bounded identities. The
 relationship projection does not duplicate observations or excerpts. Report
 generation performs no decision and grants no write authority. The separate

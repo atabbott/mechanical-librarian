@@ -70,7 +70,8 @@ The suite covers:
   batch envelope;
 - Google Books keyed and credential-free fixed-origin requests, disabled
   zero-egress, exact ISBN/work qualification, unresolved work linkage,
-  evidence-only publication strings, deterministic replay and provider order,
+  evidence-only publication strings, deterministic exact-ID replay and
+  provider order apart from their independently captured access times,
   response/candidate/request/aggregate bounds including six attempts per query
   and 54 per observation, quota/4xx/503/no-match typing, canonical
   `Retry-After`, accepted/rejected transport classes, deadline and partial-byte
@@ -151,7 +152,12 @@ Provider-date regressions use synthetic year, month, day, and signed-offset
 timestamp values. They prove lexical/normalized replay, closed event and
 linkage typing, no precision invention, consistent date/year projection,
 non-selectability of unresolved publication text, explicit conflict choices,
-and reviewer citation coverage without exporting real-library values.
+and reviewer citation coverage without exporting real-library values. Access-
+time regressions inject fixed clocks at every metadata-provider boundary,
+exercise successful and terminal post-dispatch statuses, prove absent time for
+no-input, overflow, invalid-clock, and expired pre-dispatch paths, and verify
+canonical serialization, database/report reopen, proposal derivation, and
+reviewer projection never refresh the stored value.
 
 Hostile-input tests name a supported external actor and reachable boundary.
 Typed in-process collaborators are not attacker-controlled unless the product

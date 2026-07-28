@@ -61,6 +61,12 @@ Preview is not fresh eligibility proof. Request atomically revalidates the
 current persisted case/report/proposal/profile/packet, persists the request and
 attempt, then performs at most one foreground invocation:
 
+Provider date citations in the sanitized packet carry the exact immutable
+report `accessed_at` value alongside authority and query kind, or explicit
+`null` when the report records that no provider dispatch occurred. Preview,
+request, restart, and reevaluation never access a provider or refresh the
+stored time.
+
 ```sh
 mechanical-librarian shadow-review-request --database reports.sqlite \
   --review-case-id review_case_<64-lowercase-hex> \

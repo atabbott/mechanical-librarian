@@ -207,9 +207,11 @@ class ShadowReviewTests(unittest.TestCase):
                     ),
                     ProviderQueryKind.WORK,
                     "hardcover",
+                    accessed_at="2023-11-14T22:13:20.125000Z",
                 ),
             ),
         )
+        report = MetadataReport.from_json(report.to_json())
         proposal = evaluate_report(report)
         case = ReviewCase.create(proposal, report)
         packet = ShadowReviewPacket.create(case, proposal, report)
@@ -227,6 +229,10 @@ class ShadowReviewTests(unittest.TestCase):
         )["fact"]
         self.assertEqual("hardcover", citation["access"]["authority"])
         self.assertEqual("work", citation["access"]["query_kind"])
+        self.assertEqual(
+            "2023-11-14T22:13:20.125000Z",
+            citation["access"]["accessed_at"],
+        )
         self.assertEqual("edition-1", citation["candidate"])
         self.assertEqual("work-1", citation["work_identity"])
         self.assertEqual(

@@ -87,7 +87,11 @@ Provider lane observations are `disabled`, `insufficient_input`, `candidates`,
 `no_match`, `authentication`, `authorization`, `rate_limited`, `unavailable`,
 `malformed`, `oversized`, `candidate_limit_exceeded`, or
 `query_limit_exceeded`. One provider aggregate owns the configured authority,
-canonical candidate set, and same-provider convergence across its child lanes.
+canonical candidate set, same-provider convergence across its child lanes, and
+one optional canonical UTC access time captured at the first actual dispatch.
+Absence means the observation reached its typed outcome without provider
+access; aggregation, qualification, persistence, and replay cannot invent or
+refresh the value.
 Candidate claims record
 agreement, disagreement, incompatible, or not-comparable facts against stable
 local claim references. Open Library candidates may also retain only the closed

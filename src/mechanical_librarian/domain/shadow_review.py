@@ -747,6 +747,7 @@ def _evidence_index(value: object) -> dict[str, dict[str, object]]:
                             continue
                         rich = {
                             "access": {
+                                "accessed_at": provider.get("accessed_at"),
                                 "authority": provider.get("authority"),
                                 "query_kind": provider.get("query_kind"),
                             },
@@ -791,6 +792,7 @@ def _evidence_index(value: object) -> dict[str, dict[str, object]]:
                             continue
                         result[claim["reference"]] = {
                             "access": {
+                                "accessed_at": provider.get("accessed_at"),
                                 "authority": provider.get("authority"),
                                 "query_kind": provider.get("query_kind"),
                             },

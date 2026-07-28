@@ -43,7 +43,7 @@ from mechanical_librarian.domain.metadata_report import (
     MAX_SERIES, MAX_TAGS, ProviderCandidate, ProviderClaim,
     ProviderEvidence, ProviderEvidenceKind, ProviderObservation,
     ProviderQueryKind, ProviderStatus, canonical_json, comparison_links,
-    isbn_family, normalize_date_value,
+    isbn_family, normalize_date_value, provider_access_time,
 )
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text, validate_role_projection
 
@@ -140,12 +140,17 @@ class HardcoverMetadataProvider:
         self._jitter = jitter
         self._attempt_count = 0
         self._attempt_records: list[ProviderAttemptRecord] = []
+        self._accessed_at: str | None = None
         self._called = False
         self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
 
     @property
     def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
         return tuple(self._attempt_records)
+
+    @property
+    def accessed_at(self) -> str | None:
+        return self._accessed_at
 
     def observe(
         self,
@@ -194,7 +199,10 @@ class HardcoverMetadataProvider:
                 )
                 results.append(
                     ProviderLaneResult(
-                        lane, observation.status, observation.candidates
+                        lane,
+                        observation.status,
+                        observation.candidates,
+                        observation.accessed_at,
                     )
                 )
                 merged = merge_provider_cover_descriptors(
@@ -207,7 +215,9 @@ class HardcoverMetadataProvider:
                 )
                 if merged is None:
                     results[-1] = ProviderLaneResult(
-                        lane, ProviderStatus.MALFORMED
+                        lane,
+                        ProviderStatus.MALFORMED,
+                        accessed_at=observation.accessed_at,
                     )
                 else:
                     descriptors = merged
@@ -294,6 +304,7 @@ class HardcoverMetadataProvider:
                 references,
                 candidates,
                 lookup.kind,
+                accessed_at=self._accessed_at,
             )
         try:
             payload = self._request(body, deadline=deadline)
@@ -445,6 +456,8 @@ class HardcoverMetadataProvider:
         try:
             if deadline is not None and self._clock() >= deadline:
                 raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            if self._accessed_at is None:
+                self._accessed_at = provider_access_time(self._wall_clock())
             self._attempt_count += 1
             with self._client.stream(
                 "POST",

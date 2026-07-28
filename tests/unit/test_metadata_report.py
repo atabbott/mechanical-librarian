@@ -90,6 +90,7 @@ from mechanical_librarian.domain.metadata_report import (
     derive_identifier_evidence,
     derive_field_results,
     normalize_title,
+    provider_access_time,
     stable_reference,
 )
 from mechanical_librarian.interfaces.cli import main
@@ -145,6 +146,67 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_provider_access_time_is_canonical_bounded_and_replay_stable(
+        self,
+    ) -> None:
+        accessed_at = provider_access_time(1_700_000_000.125)
+        self.assertEqual("2023-11-14T22:13:20.125000Z", accessed_at)
+        observation = ProviderObservation(
+            "catalogue",
+            ProviderStatus.NO_MATCH,
+            query_kind=ProviderQueryKind.WORK,
+            authority="hardcover",
+            accessed_at=accessed_at,
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(observation,),
+        )
+        reopened = MetadataReport.from_json(report.to_json())
+        self.assertEqual(accessed_at, reopened.providers[0].accessed_at)
+        self.assertEqual(report.to_json(), reopened.to_json())
+        missing = report.to_data()
+        missing["providers"][0].pop("accessed_at")  # type: ignore[index]
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(missing))
+        self.assertIsNone(
+            ProviderObservation(
+                "catalogue", ProviderStatus.INSUFFICIENT_INPUT
+            ).to_data()["accessed_at"]
+        )
+
+        for invalid in (
+            True,
+            float("nan"),
+            float("inf"),
+            10**1000,
+        ):
+            with self.subTest(clock=invalid):
+                with self.assertRaises(ReportValueError):
+                    provider_access_time(invalid)  # type: ignore[arg-type]
+        for invalid in (
+            "",
+            "2023-11-14T22:13:20Z",
+            "2023-11-14T22:13:20.125000+00:00",
+            "2023-02-29T22:13:20.125000Z",
+            "2023-11-14T22:13:60.125000Z",
+        ):
+            with self.subTest(accessed_at=invalid):
+                with self.assertRaises(ReportValueError):
+                    ProviderObservation(
+                        "catalogue",
+                        ProviderStatus.NO_MATCH,
+                        accessed_at=invalid,
+                    )
+
     def test_provider_dates_preserve_lexical_normalized_precision_and_linkage(
         self,
     ) -> None:

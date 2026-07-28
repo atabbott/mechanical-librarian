@@ -18,7 +18,8 @@ The current qualification-only `shadow-review-packet-v2` contains:
   when applicable;
 - supporting and contradicting evidence summaries, with provider date
   citations retaining lexical/normalized values, source precision,
-  candidate/work linkage, authority, and query kind;
+  candidate/work linkage, authority, query kind, and the immutable provider
+  access time when an actual request occurred;
 - bounded excerpts labelled as untrusted content;
 - no images or operator-authored intent; and
 - the fixed prompt/profile/packet/output/policy identities bound by the

@@ -1098,9 +1098,17 @@ class ProviderAdapterTests(unittest.TestCase):
             )
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
-        provider = HardcoverMetadataProvider("catalogue", client, 65_536)
+        provider = HardcoverMetadataProvider(
+            "catalogue",
+            client,
+            65_536,
+            wall_clock=lambda: 1_700_000_000.125,
+        )
         observation = provider.observe(_isbn_lookup((self._claim(), self._title_claim())))
         self.assertEqual(observation.status, ProviderStatus.CANDIDATES)
+        self.assertEqual(
+            "2023-11-14T22:13:20.125000Z", observation.accessed_at
+        )
         self.assertEqual([item.identity for item in observation.candidates], ["hardcover-edition-0000000001", "hardcover-edition-0000000002"])
         claims = {claim.kind: claim for claim in observation.candidates[1].claims}
         self.assertEqual(claims[ClaimKind.ISBN].links[0].outcome, Comparison.AGREEMENT)

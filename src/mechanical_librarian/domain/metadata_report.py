@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Any, Mapping, Self
 
@@ -42,10 +43,47 @@ _REFERENCE = re.compile(r"^(?:local|provider)_[0-9a-f]{64}$")
 _LANE_IDENTITY = re.compile(r"^lane_[0-9a-f]{64}$")
 _LANE_CANDIDATE_REFERENCE = re.compile(r"^lane_candidate_[0-9a-f]{64}$")
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+_PROVIDER_ACCESS_TIME = re.compile(
+    r"^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])"
+    r"T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\.[0-9]{6}Z$"
+)
 
 
 class ReportValueError(ValueError):
     """A report or report input is outside the closed 0.4 contract."""
+
+
+def provider_access_time(timestamp: float) -> str:
+    """Return one canonical UTC access time from an injected epoch clock."""
+    if type(timestamp) not in {int, float} or isinstance(timestamp, bool):
+        raise ReportValueError("provider access clock is invalid")
+    try:
+        finite = math.isfinite(timestamp)
+    except OverflowError:
+        finite = False
+    if not finite:
+        raise ReportValueError("provider access clock is invalid")
+    try:
+        observed = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        raise ReportValueError("provider access clock is invalid") from None
+    return observed.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def validate_provider_access_time(value: object) -> str:
+    """Validate the exact persisted provider-access timestamp language."""
+    if type(value) is not str or _PROVIDER_ACCESS_TIME.fullmatch(value) is None:
+        raise ReportValueError("provider access time is invalid")
+    try:
+        observed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        raise ReportValueError("provider access time is invalid") from None
+    if (
+        observed.isoformat(timespec="microseconds").replace("+00:00", "Z")
+        != value
+    ):
+        raise ReportValueError("provider access time is invalid")
+    return value
 
 
 class ClaimKind(StrEnum):
@@ -1234,6 +1272,7 @@ class ProviderObservation:
     authority: str | None = None
     lanes: tuple[ProviderLaneObservation, ...] = ()
     convergence: tuple[ProviderConvergence, ...] = ()
+    accessed_at: str | None = None
 
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
@@ -1248,6 +1287,8 @@ class ProviderObservation:
             }
         ):
             raise ReportValueError("provider status is invalid")
+        if self.accessed_at is not None:
+            validate_provider_access_time(self.accessed_at)
         if type(self.input_references) is not tuple or tuple(sorted(set(self.input_references))) != self.input_references or any(
             _REFERENCE.fullmatch(value) is None or not value.startswith("local_")
             for value in self.input_references
@@ -1372,6 +1413,7 @@ class ProviderObservation:
             "query_kind": self.query_kind.value,
             "status": self.status.value,
             "authority": self.authority,
+            "accessed_at": self.accessed_at,
             "convergence": [value.to_data() for value in self.convergence],
             "lanes": [value.to_data() for value in self.lanes],
         }
@@ -2096,6 +2138,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
     item = _object(
         value,
         {
+            "accessed_at",
             "authority",
             "candidates",
             "convergence",
@@ -2119,6 +2162,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
             _provider_convergence_from_data(value)
             for value in _list(item["convergence"])
         ),
+        item["accessed_at"],
     )
 
 

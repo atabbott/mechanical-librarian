@@ -48,6 +48,7 @@ from mechanical_librarian.domain.metadata_report import (
     comparison_links,
     isbn_family,
     normalize_title,
+    provider_access_time,
 )
 
 
@@ -111,11 +112,16 @@ class GoogleBooksMetadataProvider:
         self._jitter = jitter
         self._attempt_count = 0
         self._attempt_records: list[ProviderAttemptRecord] = []
+        self._accessed_at: str | None = None
         self._called = False
 
     @property
     def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
         return tuple(self._attempt_records)
+
+    @property
+    def accessed_at(self) -> str | None:
+        return self._accessed_at
 
     def observe(
         self,
@@ -168,6 +174,7 @@ class GoogleBooksMetadataProvider:
                         lane,
                         observation.status,
                         observation.candidates,
+                        observation.accessed_at,
                     )
                 )
         finally:
@@ -279,6 +286,7 @@ class GoogleBooksMetadataProvider:
             candidates,
             lookup.kind,
             "google_books",
+            accessed_at=self._accessed_at,
         )
 
     def _request(
@@ -397,6 +405,8 @@ class GoogleBooksMetadataProvider:
         try:
             if deadline is not None and self._clock() >= deadline:
                 raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            if self._accessed_at is None:
+                self._accessed_at = provider_access_time(self._wall_clock())
             self._attempt_count += 1
             with self._client.stream(
                 "GET",

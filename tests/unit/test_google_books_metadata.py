@@ -136,6 +136,73 @@ class _HostileEncodedStream(httpx.SyncByteStream):
 
 
 class GoogleBooksMetadataTests(unittest.TestCase):
+    def test_access_time_is_captured_only_at_first_actual_dispatch(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"totalItems": 0, "items": []},
+            )
+
+        observation = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            wall_clock=lambda: 1_700_000_000.125,
+        ).observe(_lookup())
+        self.assertEqual(ProviderStatus.NO_MATCH, observation.status)
+        self.assertEqual(
+            "2023-11-14T22:13:20.125000Z", observation.accessed_at
+        )
+        self.assertEqual(1, len(requests))
+
+        def unexpected_clock() -> float:
+            self.fail("pre-dispatch outcome read the wall clock")
+
+        no_input = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            wall_clock=unexpected_clock,
+        ).observe(MetadataLookup(ProviderQueryKind.NONE, ()))
+        self.assertEqual(ProviderStatus.INSUFFICIENT_INPUT, no_input.status)
+        self.assertIsNone(no_input.accessed_at)
+        self.assertEqual(1, len(requests))
+
+        overflow = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            wall_clock=unexpected_clock,
+        ).observe(MetadataDiscoveryPlan((), (), True))
+        self.assertEqual(ProviderStatus.QUERY_LIMIT_EXCEEDED, overflow.status)
+        self.assertIsNone(overflow.accessed_at)
+        self.assertEqual(1, len(requests))
+
+        expired = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            clock=lambda: 1.0,
+            wall_clock=unexpected_clock,
+        ).observe(_lookup(), deadline=0.0)
+        self.assertEqual(ProviderStatus.UNAVAILABLE, expired.status)
+        self.assertIsNone(expired.accessed_at)
+        self.assertEqual(1, len(requests))
+
+        invalid_clock = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            wall_clock=lambda: float("nan"),
+        ).observe(_lookup())
+        self.assertEqual(ProviderStatus.UNAVAILABLE, invalid_clock.status)
+        self.assertIsNone(invalid_clock.accessed_at)
+        self.assertEqual(1, len(requests))
+
     def test_retry_after_deadline_and_cancellation_are_fail_closed(
         self,
     ) -> None:

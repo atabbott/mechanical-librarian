@@ -191,6 +191,32 @@ def _work(key: str = "/works/OL5W", *, cover: int | None = None) -> dict[str, ob
 
 
 class OpenLibraryMetadataTests(unittest.TestCase):
+    def test_first_dispatch_captures_injected_access_time(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"numFound": 0, "docs": []},
+            )
+
+        observation = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                headers={"User-Agent": "Mechanical-Librarian/test"},
+                transport=httpx.MockTransport(handler),
+            ),
+            65_536,
+            wall_clock=lambda: 1_700_000_000.125,
+        ).observe(_isbn_lookup((_isbn(),)))
+        self.assertEqual(ProviderStatus.NO_MATCH, observation.status)
+        self.assertEqual(
+            "2023-11-14T22:13:20.125000Z", observation.accessed_at
+        )
+        self.assertEqual(1, len(requests))
+
     def test_publication_field_accepts_year_month_day_and_signed_offset(self) -> None:
         for lexical in (
             "2024",

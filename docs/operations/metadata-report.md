@@ -258,8 +258,14 @@ All provider date facts retain the original lexical string, normalized value
 when safe, maximum stated precision, closed event, scope, and explicit or
 unresolved linkage confidence. Candidate edition/work identity, provider
 authority and query kind, and sibling identifier/format facts supply the
-bounded source/access/linkage context; no observation timestamp or numerical
-provider-truth score is manufactured.
+bounded source/access/linkage context. The adapter captures one canonical UTC
+`accessed_at` value with fixed microsecond syntax at its first actual HTTP
+dispatch and retains that value across every later lane and bounded retry in
+the observation. Disabled, insufficient-input, query-overflow, repeated-call,
+and deadline or budget outcomes reached before any dispatch retain
+`accessed_at: null`. Exact report reopen preserves the stored value and never
+reads a clock or contacts a provider. No numerical provider-truth score is
+manufactured.
 Malformed or oversized scalar claim fields remain explicit field-local states,
 so valid sibling claims and evidence survive. Every identifier entry must be
 one exact bounded `type`/`identifier` object; structurally malformed entries
@@ -288,11 +294,13 @@ its fixed provenance bounds preserves valid metadata and records that cover as
 `malformed`. Raw cover URLs and private paths are never
 serialized.
 
-The report ID is derived from the complete canonical document. Exact fresh
-re-observation returns the same ID and bytes without accumulating another row.
-Changed evidence creates an immutable successor and advances only the separate
-current pointer. Earlier reports in that exact current schema remain retrievable
-internally by stable ID.
+The report ID is derived from the complete canonical document, including any
+provider access time. Exact-ID and current-scope reopen return the same ID and
+bytes without provider access. A fresh provider re-observation records a fresh
+access time and therefore creates an immutable successor even when the
+bibliographic facts are otherwise unchanged; evidence or access-time changes
+advance only the separate current pointer. Earlier reports in that exact
+current schema remain retrievable internally by stable ID.
 
 ## Authority
 
