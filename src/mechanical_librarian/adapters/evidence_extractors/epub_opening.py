@@ -100,12 +100,49 @@ _DATE_TEXT = (
     r"(?::[0-5]\d(?:\.\d{1,6})?)?(?:Z|[+-](?:0\d|1[0-4]):[0-5]\d))?(?![\dT-])"
 )
 _DATE = re.compile(_DATE_TEXT)
-_MIXED_EDITION_DATE_EVENT = re.compile(
-    rf"(?:\bfirst\s+published|\boriginally\s+published"
-    rf"|\boriginal\s+publication(?:\s+date)?\s*[:\-]?)"
-    rf"[^.;|\n]{{0,96}}\b(?:e-?book|electronic|digital|epub)"
-    rf"(?:\s+edition)?\b[^.;|\n]{{0,96}}?(?P<date>{_DATE_TEXT})",
-    re.I,
+_WORK_FIRST_DATE_CUE_TEXT = (
+    r"(?:\bfirst\s+published\b|\boriginally\s+published\b"
+    r"|\boriginal\s+publication(?:\s+date)?\b)"
+)
+_SELECTED_EDITION_DATE_CUE_TEXT = (
+    r"(?:\bthis\s+edition\b|\b(?:this\s+)?"
+    r"(?:e-?book|electronic|digital|epub)(?:\s+edition)?\b)"
+)
+_MIXED_DATE_GAP = r"[^.;|\n]{0,96}?"
+_MIXED_EDITION_DATE_PATTERNS = tuple(
+    re.compile(_MIXED_DATE_GAP.join(order), re.I)
+    for order in (
+        (
+            _WORK_FIRST_DATE_CUE_TEXT,
+            _SELECTED_EDITION_DATE_CUE_TEXT,
+            _DATE_TEXT,
+        ),
+        (
+            _WORK_FIRST_DATE_CUE_TEXT,
+            _DATE_TEXT,
+            _SELECTED_EDITION_DATE_CUE_TEXT,
+        ),
+        (
+            _SELECTED_EDITION_DATE_CUE_TEXT,
+            _WORK_FIRST_DATE_CUE_TEXT,
+            _DATE_TEXT,
+        ),
+        (
+            _SELECTED_EDITION_DATE_CUE_TEXT,
+            _DATE_TEXT,
+            _WORK_FIRST_DATE_CUE_TEXT,
+        ),
+        (
+            _DATE_TEXT,
+            _WORK_FIRST_DATE_CUE_TEXT,
+            _SELECTED_EDITION_DATE_CUE_TEXT,
+        ),
+        (
+            _DATE_TEXT,
+            _SELECTED_EDITION_DATE_CUE_TEXT,
+            _WORK_FIRST_DATE_CUE_TEXT,
+        ),
+    )
 )
 _DATE_EVENT_PATTERNS = (
     (
@@ -1941,6 +1978,20 @@ def _date_precision(value: str) -> DatePrecision | None:
     return None
 
 
+def _mixed_edition_date_spans(value: str) -> tuple[tuple[int, int], ...]:
+    """Find same-statement date spans with conflicting work/edition cues."""
+
+    return tuple(
+        sorted(
+            {
+                match.span()
+                for pattern in _MIXED_EDITION_DATE_PATTERNS
+                for match in pattern.finditer(value)
+            }
+        )
+    )
+
+
 def _indicia_dates(
     value: str,
 ) -> tuple[tuple[str, DateEvent, DatePrecision], ...]:
@@ -1948,9 +1999,7 @@ def _indicia_dates(
 
     found: list[tuple[int, str, DateEvent, DatePrecision]] = []
     occupied: set[tuple[int, int, DateEvent]] = set()
-    ambiguous_spans = tuple(
-        match.span() for match in _MIXED_EDITION_DATE_EVENT.finditer(value)
-    )
+    ambiguous_spans = _mixed_edition_date_spans(value)
     for event, pattern in _DATE_EVENT_PATTERNS:
         for match in pattern.finditer(value):
             if any(
@@ -2487,7 +2536,7 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             add(OpeningField.PRINTING, text, EpubObservationApplicability.EDITION)
         if "revision" in lowered or "revised" in lowered:
             add(OpeningField.REVISION, text, EpubObservationApplicability.EDITION)
-        if _MIXED_EDITION_DATE_EVENT.search(text) is not None:
+        if _mixed_edition_date_spans(text):
             warnings.append("ambiguous_date_event")
         for lexical, event, precision in _indicia_dates(text):
             field = (

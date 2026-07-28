@@ -945,6 +945,8 @@ class EpubOpeningTests(unittest.TestCase):
                     '<section epub:type="copyright-page">'
                     "<p>EPUB publication date: 2024-03-05T10:30:00</p>"
                     "<p>First published as this ebook edition 2024</p>"
+                    "<p>THIS EBOOK EDITION: FIRST PUBLISHED 2025</p>"
+                    "<p>Digital edition, originally published 2026</p>"
                     "</section>"
                 )
             )
@@ -960,6 +962,63 @@ class EpubOpeningTests(unittest.TestCase):
         self.assertIn("ambiguous_date_event", report.warnings)
         self.assertIsNone(
             opening._date_precision("2024-03-05T10:30:00")
+        )
+
+        independent = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page">'
+                    "<p>First published 1998. "
+                    "This ebook edition published 2024</p>"
+                    "</section>"
+                )
+            )
+        )
+        self.assertEqual(
+            [
+                (claim.normalized_value, claim.date_event)
+                for claim in independent.claims
+                if claim.field
+                in {OpeningField.PUBLICATION_DATE, OpeningField.DATE_EVENT}
+            ],
+            [
+                ("1998", DateEvent.WORK_FIRST_PUBLICATION),
+                ("2024", DateEvent.MANIFESTATION_PUBLICATION),
+            ],
+        )
+        self.assertNotIn("ambiguous_date_event", independent.warnings)
+        for separator in (". ", "; ", "|", "\n"):
+            with self.subTest(separator=separator):
+                text = (
+                    f"First published 1998{separator}"
+                    "This ebook edition published 2024"
+                )
+                self.assertEqual(
+                    [
+                        (lexical, event)
+                        for lexical, event, _precision
+                        in opening._indicia_dates(text)
+                    ],
+                    [
+                        ("1998", DateEvent.WORK_FIRST_PUBLICATION),
+                        ("2024", DateEvent.MANIFESTATION_PUBLICATION),
+                    ],
+                )
+                self.assertEqual(
+                    opening._mixed_edition_date_spans(text),
+                    (),
+                )
+        self.assertEqual(
+            [
+                (lexical, event)
+                for lexical, event, _precision
+                in opening._indicia_dates("First published 1998")
+            ],
+            [("1998", DateEvent.WORK_FIRST_PUBLICATION)],
+        )
+        self.assertEqual(
+            opening._mixed_edition_date_spans("This ebook edition"),
+            (),
         )
 
     def test_adjacent_explicit_credits_recover_independent_people_and_roles(

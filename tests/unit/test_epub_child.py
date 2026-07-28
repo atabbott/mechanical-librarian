@@ -713,6 +713,8 @@ class EpubChildRearSpineTests(unittest.TestCase):
             _xhtml(
                 "<p>All rights reserved</p>"
                 "<p>First published as this ebook edition 2024</p>"
+                "<p>THIS EBOOK EDITION: FIRST PUBLISHED 2025</p>"
+                "<p>Digital edition, originally published 2026</p>"
                 "<p>EPUB publication date: 2024-03-05T10:30:00</p>"
             )
         )

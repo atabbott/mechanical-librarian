@@ -122,8 +122,10 @@ rows are generated fixtures only; qualification output contains aggregate
 counts/rates and no EPUB text, private corpus rows, paths, or credentials.
 Adversarial regressions additionally cover unsigned date-time prefix
 truncation, mixed work-first/selected-edition wording across front, rear, and
-installed-report paths, adjacent independent credits versus initials and
-same-person compound roles, and event-aware local-claim scope replay.
+installed-report paths in both cue orders and case/punctuation variants,
+same-statement versus unrelated-sentence bounds, adjacent independent credits
+versus initials and same-person compound roles, and event-aware local-claim
+scope replay.
 
 Hostile-input tests name a supported external actor and reachable boundary.
 Typed in-process collaborators are not attacker-controlled unless the product

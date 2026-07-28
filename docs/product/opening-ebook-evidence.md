@@ -138,11 +138,14 @@ typed contextual evidence and never enter contributor candidates.
 Date-time evidence requires either `Z` or an explicit signed offset; an
 unsigned date-time is rejected as a whole and cannot fall back to its valid
 year, month, or day prefix. Wording that mixes a work-first cue with the
-selected ebook edition, such as `First published as this ebook edition 2024`,
-is unresolved: the opening report records `ambiguous_date_event`, while neither
-front nor rear projection emits a typed date claim. The retained metadata
-report currently has no separate unresolved-date field, so this condition is
-represented there by the absence of either date event rather than by guessing.
+selected ebook edition, such as `First published as this ebook edition 2024`
+or `This ebook edition first published 2024`, is unresolved regardless of cue
+order or case: the opening report records `ambiguous_date_event`, while neither
+front nor rear projection emits a typed date claim. Sentence, semicolon, pipe,
+newline, and resource boundaries prevent unrelated cues from being combined.
+The retained metadata report currently has no separate unresolved-date field,
+so this condition is represented there by the absence of either date event
+rather than by guessing.
 Work-first-publication and creation events are work-scoped; manifestation,
 copyright, modification, conversion, and unknown events are edition-scoped,
 and durable local-claim construction and replay reject a mismatched scope.

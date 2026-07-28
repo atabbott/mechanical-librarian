@@ -1155,6 +1155,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                             _xhtml(
                                 '<section epub:type="copyright-page">'
                                 "<p>First published as this ebook edition 2024</p>"
+                                "<p>THIS EBOOK EDITION: FIRST PUBLISHED 2025</p>"
                                 "</section>"
                             ),
                             zipfile.ZIP_STORED,
@@ -1164,6 +1165,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                             _xhtml(
                                 "<p>All rights reserved</p>"
                                 "<p>First published as this ebook edition 2024</p>"
+                                "<p>Digital edition, originally published 2026</p>"
                                 "<p>EPUB publication date: "
                                 "2024-03-05T10:30:00</p>"
                             ),
@@ -1194,7 +1196,8 @@ class MetadataReportCommandTests(unittest.TestCase):
             self.assertFalse(
                 any(
                     claim.date_event is DateEvent.WORK_FIRST_PUBLICATION
-                    or claim.observed in {"2024", "2024-03-05"}
+                    or claim.observed
+                    in {"2024", "2025", "2026", "2024-03-05"}
                     for claim in report.local_claims
                 )
             )
