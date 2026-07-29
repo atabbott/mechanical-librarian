@@ -43,6 +43,7 @@ from mechanical_librarian.domain.metadata_report import (
     validate_provider_access_time,
 )
 from mechanical_librarian.application.failure_diagnostics import (
+    merge_provider_diagnostics,
     provider_attempt_diagnostics,
 )
 from mechanical_librarian.domain.cover_evidence import (
@@ -1038,10 +1039,13 @@ class GenerateMetadataReport:
                 observation.lanes,
                 observation.convergence,
                 observation.accessed_at,
-                provider_attempt_diagnostics(
-                    attempt_records,
-                    status=observation.status.value,
-                    incomplete_causes=incomplete_causes,
+                merge_provider_diagnostics(
+                    observation.diagnostics,
+                    provider_attempt_diagnostics(
+                        attempt_records,
+                        status=observation.status.value,
+                        incomplete_causes=incomplete_causes,
+                    ),
                 ),
                 observation.request_accounting,
             )

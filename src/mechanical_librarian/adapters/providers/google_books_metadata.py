@@ -624,8 +624,10 @@ def _candidate(
         "subtitle",
         "title",
     }
-    if set(info) - allowed:
-        raise ValueError("provider volume contains an unknown field")
+    # Google may add optional volumeInfo fields.  They carry no identity or
+    # required join material, so ignore them rather than discarding the safely
+    # ISBN-anchored record.  Identity and ISBN binding below remain strict.
+    # Deliberately do not retain or project unknown optional values.
     identity = "google-books-volume-" + volume_id
     identifiers = info.get("industryIdentifiers", [])
     if type(identifiers) is not list or len(identifiers) > _MAX_VALUES:
@@ -732,9 +734,12 @@ def _candidate(
         ("publishedDate", ProviderEvidenceKind.PUBLICATION_DATE_TEXT),
     ):
         if info.get(field) is not None:
-            evidence.append(
-                ProviderEvidence(kind, _text(info[field]), ClaimScope.EDITION)
-            )
+            try:
+                evidence.append(
+                    ProviderEvidence(kind, _text(info[field]), ClaimScope.EDITION)
+                )
+            except (ValueError, EvidenceValueError):
+                pass
     pages = info.get("pageCount")
     if pages is not None:
         if (
@@ -742,14 +747,15 @@ def _candidate(
             or isinstance(pages, bool)
             or not 1 <= pages <= 100_000
         ):
-            raise ValueError("provider page count is malformed")
-        evidence.append(
-            ProviderEvidence(
-                ProviderEvidenceKind.PAGE_COUNT,
-                str(pages),
-                ClaimScope.EDITION,
+            pages = None
+        if pages is not None:
+            evidence.append(
+                ProviderEvidence(
+                    ProviderEvidenceKind.PAGE_COUNT,
+                    str(pages),
+                    ClaimScope.EDITION,
+                )
             )
-        )
     for category in _optional_string_list(info.get("categories", []), _MAX_VALUES):
         evidence.append(
             ProviderEvidence(

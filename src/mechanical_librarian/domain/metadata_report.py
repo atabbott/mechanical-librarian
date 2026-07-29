@@ -1184,6 +1184,34 @@ class ProviderCandidate:
             raise ReportValueError("provider candidate claim references are duplicated")
         if tuple(value.raw_order for value in self.claims) != tuple(sorted(value.raw_order for value in self.claims)):
             raise ReportValueError("provider candidate claims are not in raw source order")
+        # Evidence is only meaningful when it remains bound to this exact
+        # edition/work pair.  Keep these invariants here so replay and every
+        # downstream consumer reject a forged cross-candidate attachment.
+        edition_only = {
+            ProviderEvidenceKind.EDITION_WORK_RELATION,
+            ProviderEvidenceKind.EDITION_COVER_ID,
+            ProviderEvidenceKind.PAGE_COUNT,
+            ProviderEvidenceKind.PAGINATION,
+            ProviderEvidenceKind.PHYSICAL_FORMAT,
+            ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+            ProviderEvidenceKind.COPYRIGHT_DATE,
+        }
+        work_only = {
+            ProviderEvidenceKind.WORK_COVER_ID,
+            ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+            ProviderEvidenceKind.AUTHOR_IDENTITY,
+            ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+        }
+        if any(
+            (value.kind in edition_only and value.scope is not ClaimScope.EDITION)
+            or (value.kind in work_only and value.scope is not ClaimScope.WORK)
+            or (
+                value.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
+                and value.value != self.work_identity
+            )
+            for value in self.evidence
+        ):
+            raise ReportValueError("provider rich evidence is misbound")
         if (
             type(self.evidence) is not tuple
             or len(self.evidence) > MAX_PROVIDER_EVIDENCE
