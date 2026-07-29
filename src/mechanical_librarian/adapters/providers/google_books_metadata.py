@@ -404,9 +404,9 @@ class GoogleBooksMetadataProvider:
         if deadline is not None:
             remaining = min(remaining, deadline - self._clock())
         if remaining <= 0:
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
         if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
         params = {
             "fields": _FIELDS,
             "maxResults": str(_MAX_RETURNED_RESULTS),

@@ -32,7 +32,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 
 
-REPORT_SCHEMA = "metadata-report-v16"
+REPORT_SCHEMA = "metadata-report-v17"
 COMPARISON_VERSION = "same-kind-v1"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -342,6 +342,7 @@ class ProviderStatus(StrEnum):
     AUTHORIZATION = "authorization"
     RATE_LIMITED = "rate_limited"
     UNAVAILABLE = "unavailable"
+    INCOMPLETE = "incomplete"
     MALFORMED = "malformed"
     OVERSIZED = "oversized"
     CANDIDATE_LIMIT_EXCEEDED = "candidate_limit_exceeded"

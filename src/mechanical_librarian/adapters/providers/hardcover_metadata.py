@@ -466,9 +466,9 @@ class HardcoverMetadataProvider:
         self, body: dict[str, object], *, deadline: float | None
     ) -> bytes:
         if self._remaining_response_bytes <= 0:
-            raise _ProviderFailure(ProviderStatus.OVERSIZED)
+            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
         if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
         if self._pacer is not None and not self._pacer.wait(
             deadline=deadline
         ):

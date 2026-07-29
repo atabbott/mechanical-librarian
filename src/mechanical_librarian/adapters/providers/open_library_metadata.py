@@ -562,18 +562,18 @@ class OpenLibraryMetadataProvider:
         is_retry: bool,
     ) -> dict[str, Any]:
         if self._remaining_response_bytes <= 0:
-            raise _ProviderFailure(ProviderStatus.OVERSIZED)
+            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
         if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
         if is_retry and self._retry_count >= _MAX_RETRIES_PER_OBSERVATION:
             raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
         if not self._pacer.wait(deadline):
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
         remaining = self._timeout_seconds
         if deadline is not None:
             remaining = min(remaining, deadline - self._clock())
         if remaining <= 0:
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
         try:
             if deadline is not None and self._clock() >= deadline:
                 raise _ProviderFailure(ProviderStatus.UNAVAILABLE)

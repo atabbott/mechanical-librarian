@@ -339,7 +339,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
-            self.assertEqual(schema_version, ("metadata-report-v16",))
+            self.assertEqual(schema_version, ("metadata-report-v17",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)

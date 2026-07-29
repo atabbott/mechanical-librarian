@@ -197,6 +197,11 @@ def provider_attempt_diagnostics(
             FailureStage.RESPONSE,
             None,
         ),
+        "incomplete": (
+            FailureCategory.TIMEOUT,
+            FailureStage.REQUEST,
+            False,
+        ),
         "unknown": (
             FailureCategory.UNKNOWN,
             FailureStage.RESPONSE,

@@ -459,6 +459,7 @@ def provider_observation(
             ProviderStatus.AUTHENTICATION,
             ProviderStatus.AUTHORIZATION,
             ProviderStatus.RATE_LIMITED,
+            ProviderStatus.INCOMPLETE,
             ProviderStatus.UNAVAILABLE,
             ProviderStatus.NO_MATCH,
         )
