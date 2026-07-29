@@ -49,6 +49,13 @@ from mechanical_librarian.domain.evidence_bounds import (
     MAX_FIELD_VALUE_LENGTH,
     validate_projection_text,
 )
+from mechanical_librarian.domain.failure_diagnostics import (
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
+    MAX_DIAGNOSTIC_COUNT,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -205,6 +212,7 @@ class OpenLibraryMetadataProvider:
         self._incomplete_causes: list[ProviderIncompleteCauseRecord] = []
         self._accessed_at: str | None = None
         self._called = False
+        self._schema_rejections = 0
         self._ledger = _DiscoveryRequestLedger("open_library", "search-v1")
         self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         self.cover_pacer = self._pacer
@@ -230,6 +238,7 @@ class OpenLibraryMetadataProvider:
         *,
         deadline: float | None = None,
     ) -> ProviderObservation:
+        self._schema_rejections = 0
         if self._called:
             return ProviderObservation(
                 self._name,
@@ -317,6 +326,7 @@ class OpenLibraryMetadataProvider:
         return provider_observation(
             self._name,
             _canonical_discovery_results(self._name, tuple(results)),
+            diagnostics=self._schema_diagnostics(),
             request_accounting=ledger.accounting(),
         )
 
@@ -393,6 +403,7 @@ class OpenLibraryMetadataProvider:
                 candidates,
                 lookup.kind,
                 accessed_at=self._accessed_at,
+                diagnostics=self._schema_diagnostics(),
             )
         try:
             with nullcontext():
@@ -483,6 +494,11 @@ class OpenLibraryMetadataProvider:
                         family,
                         work_authors,
                     )
+                    self._reject_schema_members(
+                        _optional_projection_rejections(
+                            edition, work_documents[work_key]
+                        )
+                    )
                     candidates.append(candidate)
                     cover_candidates.append(
                         (
@@ -518,6 +534,22 @@ class OpenLibraryMetadataProvider:
         return result(
             ProviderStatus.CANDIDATES,
             tuple(sorted(candidates, key=lambda candidate: candidate.identity)),
+        )
+
+    def _reject_schema_members(self, count: int) -> None:
+        if count > 0:
+            self._schema_rejections = min(
+                MAX_DIAGNOSTIC_COUNT, self._schema_rejections + count
+            )
+
+    def _schema_diagnostics(self) -> tuple[FailureDiagnostic, ...]:
+        return () if not self._schema_rejections else (
+            FailureDiagnostic(
+                FailureCategory.SCHEMA_CONSTRUCTION,
+                FailureComponent.PROVIDER,
+                FailureStage.SCHEMA,
+                count=self._schema_rejections,
+            ),
         )
 
     def _request(
@@ -1635,6 +1667,39 @@ def _optional_object_list(value: object, maximum: int) -> list[dict[str, Any]]:
     if type(value) is not list or len(value) > maximum:
         return []
     return [item for raw in value if type(raw) is dict for item in [raw]]
+
+
+def _optional_projection_rejections(*documents: dict[str, Any]) -> int:
+    """Count only discarded optional projection members; never retain values."""
+    known = {
+        "key", "works", "isbn_10", "isbn_13", "title", "subtitle",
+        "publish_date", "publishers", "languages", "authors", "description",
+        "revision", "latest_revision", "last_modified", "oclc_numbers", "lccn",
+        "dewey_decimal_class", "lc_classifications", "publish_places", "subjects",
+        "subject_people", "subject_places", "subject_times", "identifiers",
+        "physical_format", "pagination", "copyright_date", "number_of_pages",
+        "first_publish_date", "covers",
+    }
+    list_fields = {
+        "publishers", "languages", "authors", "oclc_numbers", "lccn",
+        "dewey_decimal_class", "lc_classifications", "publish_places", "subjects",
+        "subject_people", "subject_places", "subject_times", "covers",
+    }
+    count = 0
+    for document in documents:
+        count += len(set(document) - known)
+        for field in list_fields & set(document):
+            value = document[field]
+            if type(value) is not list:
+                count += 1
+            elif len(value) > _MAX_VALUES:
+                count += len(value) - _MAX_VALUES
+            else:
+                count += sum(1 for item in value if not isinstance(item, (str, dict, int)))
+        identifiers = document.get("identifiers")
+        if identifiers is not None and type(identifiers) is not dict:
+            count += 1
+    return min(count, MAX_DIAGNOSTIC_COUNT)
 
 
 def _search_authors(

@@ -50,6 +50,10 @@ from mechanical_librarian.domain.metadata_report import (
     isbn_family, normalize_date_value, provider_access_time,
 )
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text, validate_role_projection
+from mechanical_librarian.domain.failure_diagnostics import (
+    FailureCategory, FailureComponent, FailureDiagnostic, FailureStage,
+    MAX_DIAGNOSTIC_COUNT,
+)
 
 
 HARDCOVER_URL = "https://api.hardcover.app/v1/graphql"
@@ -147,6 +151,7 @@ class HardcoverMetadataProvider:
         self._incomplete_causes: list[ProviderIncompleteCauseRecord] = []
         self._accessed_at: str | None = None
         self._called = False
+        self._schema_rejections = 0
         self._ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
         self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
 
@@ -168,6 +173,7 @@ class HardcoverMetadataProvider:
         *,
         deadline: float | None = None,
     ) -> ProviderObservation:
+        self._schema_rejections = 0
         if self._called:
             return ProviderObservation(
                 self._name,
@@ -255,6 +261,7 @@ class HardcoverMetadataProvider:
         return provider_observation(
             self._name,
             tuple(results),
+            diagnostics=self._schema_diagnostics(),
             request_accounting=ledger.accounting(),
         )
 
@@ -337,6 +344,7 @@ class HardcoverMetadataProvider:
                 candidates,
                 lookup.kind,
                 accessed_at=self._accessed_at,
+                diagnostics=self._schema_diagnostics(),
             )
         try:
             payload = self._request(body, deadline=deadline)
@@ -351,6 +359,7 @@ class HardcoverMetadataProvider:
                 self._name,
                 local_claims,
             )
+            self._reject_schema_members(_optional_projection_rejections(payload))
             if (
                 lookup.kind is ProviderQueryKind.ISBN
                 and lookup.matched_family is not None
@@ -386,6 +395,22 @@ class HardcoverMetadataProvider:
             candidates,
         )
         return observation
+
+    def _reject_schema_members(self, count: int) -> None:
+        if count > 0:
+            self._schema_rejections = min(
+                MAX_DIAGNOSTIC_COUNT, self._schema_rejections + count
+            )
+
+    def _schema_diagnostics(self) -> tuple[FailureDiagnostic, ...]:
+        return () if not self._schema_rejections else (
+            FailureDiagnostic(
+                FailureCategory.SCHEMA_CONSTRUCTION,
+                FailureComponent.PROVIDER,
+                FailureStage.SCHEMA,
+                count=self._schema_rejections,
+            ),
+        )
 
     def _request(
         self, body: dict[str, object], *, deadline: float | None
@@ -1490,6 +1515,41 @@ def _optional_mapping(value: object) -> dict[str, Any] | None:
 def _optional_member(value: object, key: str) -> object:
     mapping = _optional_mapping(value)
     return None if mapping is None else mapping.get(key)
+
+
+def _optional_projection_rejections(payload: bytes) -> int:
+    """Count discarded additive/optional members without retaining payload detail."""
+    try:
+        source = json.loads(payload.decode("utf-8", "strict"))
+        data = source.get("data") if type(source) is dict else None
+    except (UnicodeError, ValueError, json.JSONDecodeError):
+        return 0
+    if type(data) is not dict:
+        return 0
+    known = {
+        "editions", "books", "tags", "id", "book_id", "isbn_10", "isbn_13",
+        "asin", "title", "subtitle", "release_date", "image", "publisher",
+        "language", "contributions", "description", "book_series", "taggings",
+        "tag", "tag_category", "position", "series", "contribution", "author",
+        "name", "parent_id", "code2", "code3", "category", "url",
+    }
+    optional_lists = {"contributions", "book_series", "taggings"}
+    count = 0
+    stack: list[object] = [data]
+    while stack:
+        value = stack.pop()
+        if type(value) is dict:
+            count += len(set(value) - known)
+            for key, item in value.items():
+                if key in optional_lists:
+                    if type(item) is not list:
+                        count += 1
+                    elif len(item) > MAX_CONTRIBUTIONS:
+                        count += len(item) - MAX_CONTRIBUTIONS
+                stack.extend(value.values())
+        elif type(value) is list:
+            stack.extend(value)
+    return min(count, MAX_DIAGNOSTIC_COUNT)
 
 
 def _identifier(value: object) -> int:
