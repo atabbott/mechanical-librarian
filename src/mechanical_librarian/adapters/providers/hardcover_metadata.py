@@ -7,6 +7,7 @@ import json
 import random
 import time
 import unicodedata
+from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
@@ -172,8 +173,13 @@ class HardcoverMetadataProvider:
             )
         self._called = True
         if type(plan) is MetadataLookup:
+            ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
+            projection = _ISBN_QUERY if plan.kind is ProviderQueryKind.ISBN else _WORK_QUERY
+            ledger.register(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=projection)
+            self._ledger = ledger
             try:
-                return self._observe_lookup(plan, deadline=deadline)
+                value, _ = ledger.resolve(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=projection, execute=lambda: self._observe_lookup(plan, deadline=deadline))
+                return replace(value, request_accounting=ledger.accounting())
             finally:
                 self._client.close()
         if type(plan) is not MetadataDiscoveryPlan:

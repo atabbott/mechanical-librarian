@@ -9,7 +9,7 @@ import re
 import time
 from collections.abc import Callable
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any
 
@@ -82,8 +82,30 @@ _MAX_SEARCH_ROWS = 3
 
 @dataclass(frozen=True, slots=True)
 class _DetailResult:
-    payload: str | None
+    payload: object | None
     status: ProviderStatus | None
+
+
+def _freeze_detail(value: object) -> object:
+    if type(value) is dict:
+        return tuple((key, _freeze_detail(item)) for key, item in value.items())
+    if type(value) is list:
+        return tuple(_freeze_detail(item) for item in value)
+    return value
+
+
+def _thaw_detail(value: object | None) -> dict[str, Any]:
+    if type(value) is not tuple:
+        raise ValueError("detail replay is malformed")
+    return {key: _thaw_detail_value(item) for key, item in value}
+
+
+def _thaw_detail_value(value: object) -> object:
+    if type(value) is tuple:
+        if value and all(type(item) is tuple and len(item) == 2 and type(item[0]) is str for item in value):
+            return {key: _thaw_detail_value(item) for key, item in value}
+        return [_thaw_detail_value(item) for item in value]
+    return value
 _MAX_VALUES = 8
 _MAX_AGGREGATE_RESPONSE_BYTES = 2_097_152
 _MAX_ATTEMPTS_PER_REQUEST = 2
@@ -204,8 +226,13 @@ class OpenLibraryMetadataProvider:
             )
         self._called = True
         if type(plan) is MetadataLookup:
+            ledger = _DiscoveryRequestLedger("open_library", "search-v1")
+            projection = ("key,editions,editions.key,editions.isbn" if plan.kind is ProviderQueryKind.ISBN else "key,author_name,editions,editions.key")
+            ledger.register(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=projection)
+            self._ledger = ledger
             try:
-                return self._observe_lookup(plan, deadline=deadline)
+                value, _ = ledger.resolve(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=projection, execute=lambda: self._observe_lookup(plan, deadline=deadline))
+                return replace(value, request_accounting=ledger.accounting())
             finally:
                 self._client.close()
         if type(plan) is not MetadataDiscoveryPlan:
@@ -405,17 +432,14 @@ class OpenLibraryMetadataProvider:
                             )
                         except _ProviderFailure as error:
                             return _DetailResult(None, error.status)
-                        return _DetailResult(
-                            json.dumps(value, sort_keys=True, separators=(",", ":")),
-                            None,
-                        )
+                        return _DetailResult(_freeze_detail(value), None)
 
                     replay, _ = self._ledger.resolve_detail(
                         identity, execute=execute
                     )
                     if replay.status is not None:
                         raise _ProviderFailure(replay.status)
-                    return json.loads(replay.payload or "{}")
+                    return _thaw_detail(replay.payload)
 
                 work_documents: dict[str, dict[str, Any]] = {}
                 candidates: list[ProviderCandidate] = []
@@ -473,6 +497,7 @@ class OpenLibraryMetadataProvider:
             RecursionError,
             json.JSONDecodeError,
         ):
+            self._ledger.finalize_pending_details()
             return result(ProviderStatus.MALFORMED)
         return result(
             ProviderStatus.CANDIDATES,

@@ -7,6 +7,7 @@ import json
 import random
 import re
 import time
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Callable
 
@@ -144,8 +145,12 @@ class GoogleBooksMetadataProvider:
             )
         self._called = True
         if type(plan) is MetadataLookup:
+            ledger = _DiscoveryRequestLedger("google_books", "volumes-v1")
+            ledger.register(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=_FIELDS)
+            self._ledger = ledger
             try:
-                return self._observe_lookup(plan, deadline=deadline)
+                value, _ = ledger.resolve(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=_FIELDS, execute=lambda: self._observe_lookup(plan, deadline=deadline))
+                return replace(value, request_accounting=ledger.accounting())
             finally:
                 self._client.close()
         if type(plan) is not MetadataDiscoveryPlan:

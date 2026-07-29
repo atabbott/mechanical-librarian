@@ -36,7 +36,7 @@ class ForegroundBatchRunTests(unittest.TestCase):
         self.assertEqual((lines[0]["outcome"], result), ("stopped", False))
 
     def test_provider_stops_after_durable_item(self) -> None:
-        for status in (ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION, ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE, ProviderStatus.MALFORMED, ProviderStatus.OVERSIZED):
+        for status in (ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION, ProviderStatus.RATE_LIMITED, ProviderStatus.INCOMPLETE, ProviderStatus.UNAVAILABLE, ProviderStatus.MALFORMED, ProviderStatus.OVERSIZED):
             first, second = entry(), entry("item-2"); selections=(BatchSelection("primary","books","library","item","a"*64,"singular-supported",True),BatchSelection("primary","books","library","item-2","a"*64,"singular-supported",True)); lines=[]; calls=[]
             result=ForegroundBatchRun(snapshot=CatalogueSnapshot(1,"b"*64,(first,second)),selections=selections,projection=lambda:"p",expected_projection="p",current_entry=lambda *_: second if _[-1][-1]=="item-2" else first,report=lambda value:(calls.append(value.item_id) or ("report",(status,))),emit=lines.append).run()
             self.assertEqual((calls,[line.get("outcome") for line in lines[:-1]],lines[-1]["summary"]["stopped"],result),(["item"],["completed","stopped"],True,False))
