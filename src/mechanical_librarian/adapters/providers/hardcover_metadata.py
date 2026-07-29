@@ -860,12 +860,12 @@ def _parse_candidates(
     }
     # Tags are optional enrichment.  A broken taxonomy row or link must not
     # invalidate the edition/work identity and independently valid fields.
-    taxonomy_issue = False
+    taxonomy_unavailable = False
     taxonomy_oversized = False
     indexed_tags: dict[int, dict[str, Any]] = {}
     ambiguous_tag_ids: set[int] = set()
     if type(tags) is not list:
-        taxonomy_issue = True
+        taxonomy_unavailable = True
         rejected.reject()
     elif len(tags) > _MAX_TAG_ROWS:
         taxonomy_oversized = True
@@ -873,14 +873,29 @@ def _parse_candidates(
     else:
         for raw_tag in tags:
             try:
-                tag = _closed(raw_tag, {"id", "tag", "tag_category"})
-                tag_id = _identifier(tag["id"])
+                tag_id = _identifier(
+                    raw_tag.get("id") if type(raw_tag) is dict else None
+                )
+            except (TypeError, ValueError):
+                rejected.reject()
+                continue
+            try:
                 if tag_id in indexed_tags or tag_id in ambiguous_tag_ids:
                     indexed_tags.pop(tag_id, None)
                     ambiguous_tag_ids.add(tag_id)
                     raise ValueError("duplicate tag")
+                tag = _closed(raw_tag, {"id", "tag", "tag_category"})
+                _text(tag["tag"], MAX_SCALAR_CHARACTERS)
+                category = _closed(
+                    tag["tag_category"],
+                    {"id", "category"},
+                )
+                _identifier(category["id"])
+                _text(category["category"], MAX_SCALAR_CHARACTERS)
             except (TypeError, ValueError):
-                taxonomy_issue = True; rejected.reject()
+                indexed_tags.pop(tag_id, None)
+                ambiguous_tag_ids.add(tag_id)
+                rejected.reject()
                 continue
             indexed_tags[tag_id] = tag
     indexed: dict[int, dict[str, Any]] = {}
@@ -891,7 +906,7 @@ def _parse_candidates(
         book = {key: book.get(key) for key in work_keys}
         raw_taggings = book["taggings"]
         taggings: list[dict[str, Any]] = []
-        book_taxonomy_issue = taxonomy_issue
+        book_taxonomy_issue = taxonomy_unavailable
         book_taxonomy_oversized = taxonomy_oversized
         if type(raw_taggings) is not list:
             book_taxonomy_issue = True; rejected.reject()
@@ -1213,6 +1228,16 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
         series = _optional_closed(item["series"], {"id", "name"}, rejected)
         claims.append(_claim(provider, identity, ClaimKind.SERIES, None if series is None else series["name"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset, rejected))
         claims.append(_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, item["position"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset, rejected))
+    if series_invalid:
+        claims.extend(
+            _state_claim(
+                provider, identity, kind, FieldState.MALFORMED, ClaimScope.WORK,
+                local, len(claims) + offset + index,
+            )
+            for index, kind in enumerate(
+                (ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE)
+            )
+        )
     if book.get("_taxonomy_oversized"):
         claims.extend(
             _state_claim(
@@ -1227,16 +1252,6 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
             for index, kind in enumerate((ClaimKind.GENRE, ClaimKind.TAG))
         )
         return claims
-    if series_invalid:
-        claims.extend(
-            _state_claim(
-                provider, identity, kind, FieldState.MALFORMED, ClaimScope.WORK,
-                local, len(claims) + offset + index,
-            )
-            for index, kind in enumerate(
-                (ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE)
-            )
-        )
     if book.get("_taxonomy_issue"):
         claims.extend(
             _state_claim(

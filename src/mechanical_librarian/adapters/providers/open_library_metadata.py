@@ -467,7 +467,10 @@ class OpenLibraryMetadataProvider:
                         return _DetailResult(
                             _freeze_detail(value),
                             None,
-                            _unknown_projection_rejections(value)
+                            _unknown_projection_rejections(
+                                value,
+                                schema=_detail_projection_schema(identity),
+                            )
                             + _parser_optional_rejections(value),
                         )
 
@@ -516,7 +519,10 @@ class OpenLibraryMetadataProvider:
                     ):
                         diagnosed_search_documents.add(id(search_work))
                         self._reject_schema_members(
-                            _unknown_projection_rejections(search_work)
+                            _unknown_projection_rejections(
+                                search_work,
+                                schema="search",
+                            )
                             + _parser_optional_rejections(
                                 search_work,
                                 search_projection=True,
@@ -1093,17 +1099,16 @@ def _candidate(
         ClaimScope.WORK,
         state=FieldState.UNSUPPORTED,
     )
-    for kind in (
-        ClaimKind.SERIES,
-        ClaimKind.SERIES_SEQUENCE,
-        ClaimKind.TAG,
-        ClaimKind.GENRE,
-    ):
+    for kind in (ClaimKind.TAG, ClaimKind.GENRE):
         add(kind, None, ClaimScope.WORK, state=FieldState.UNSUPPORTED)
-    for value in _optional_string_list(work.get("series", []), _MAX_VALUES):
+    series, sequences, series_state = _series_projection(work)
+    for value in series:
         add(ClaimKind.SERIES, value, ClaimScope.WORK)
-    for value in _optional_string_list(work.get("series_number", []), _MAX_VALUES):
+    for value in sequences:
         add(ClaimKind.SERIES_SEQUENCE, value, ClaimScope.WORK)
+    if series_state is not None:
+        for kind in (ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE):
+            add(kind, None, ClaimScope.WORK, state=series_state)
 
     evidence: list[ProviderEvidence] = [
         ProviderEvidence(
@@ -1116,21 +1121,8 @@ def _candidate(
         evidence.append(ProviderEvidence(ProviderEvidenceKind.PUBLICATION_DATE_TEXT, publication_date_text, ClaimScope.EDITION))
     _provenance(evidence, edition, ClaimScope.EDITION)
     _provenance(evidence, work, ClaimScope.WORK)
-    for value in _optional_string_list(edition.get("by_statement", []), _MAX_VALUES):
+    for value in _by_statement_values(edition.get("by_statement")):
         evidence.append(ProviderEvidence(ProviderEvidenceKind.RESPONSIBILITY_STATEMENT, value, ClaimScope.EDITION))
-    if isinstance(edition.get("by_statement"), str):
-        try:
-            by_statement = _text(edition["by_statement"])
-        except (ValueError, EvidenceValueError):
-            pass
-        else:
-            evidence.append(
-                ProviderEvidence(
-                    ProviderEvidenceKind.RESPONSIBILITY_STATEMENT,
-                    by_statement,
-                    ClaimScope.EDITION,
-                )
-            )
     for value in _optional_string_list(edition.get("distributors", []), _MAX_VALUES):
         evidence.append(ProviderEvidence(ProviderEvidenceKind.DISTRIBUTOR, value, ClaimScope.EDITION))
     for field, kind in (("edition_name", ProviderEvidenceKind.EDITION_STATEMENT), ("edition_statement", ProviderEvidenceKind.EDITION_STATEMENT), ("translation_of", ProviderEvidenceKind.TRANSLATION_STATEMENT)):
@@ -1722,7 +1714,14 @@ def _cover_provenance(
                 designation,
                 work_identity,
                 edition_identity,
-                _open_library_cover_context(source),
+                _open_library_cover_context(
+                    source,
+                    schema=(
+                        "work_detail"
+                        if edition_identity is None
+                        else "edition_detail"
+                    ),
+                ),
             ),
             None,
         )
@@ -1741,40 +1740,58 @@ def _cover_provenance(
 
 def _open_library_cover_context(
     source: dict[str, Any],
+    *,
+    schema: str = "edition_detail",
 ) -> tuple[CoverContext, ...]:
     values: set[CoverContext] = set()
-    for key in ("isbn_10", "isbn_13"):
-        for value in _string_list(source.get(key, []), _MAX_VALUES):
-            values.add(CoverContext(CoverContextField.ISBN, value))
-    for item in _object_list(source.get("languages", []), _MAX_VALUES):
-        match = _LANGUAGE_KEY.fullmatch(_key(item.get("key"), _LANGUAGE_KEY))
-        if match is None:
-            raise ValueError("cover language is malformed")
-        values.add(CoverContext(CoverContextField.LANGUAGE, match.group(1)))
-    for value in _string_list(source.get("publishers", []), _MAX_VALUES):
-        values.add(CoverContext(CoverContextField.PUBLISHER, value))
-    for value in _string_list(source.get("publish_places", []), _MAX_VALUES):
-        values.add(CoverContext(CoverContextField.PUBLICATION_PLACE, value))
-    if source.get("publish_country") is not None:
-        values.add(
-            CoverContext(
-                CoverContextField.COUNTRY,
-                _cover_context_text(source["publish_country"]),
+    if schema == "edition_detail":
+        for key in ("isbn_10", "isbn_13"):
+            for value in _string_list(source.get(key, []), _MAX_VALUES):
+                values.add(CoverContext(CoverContextField.ISBN, value))
+        for item in _object_list(source.get("languages", []), _MAX_VALUES):
+            match = _LANGUAGE_KEY.fullmatch(
+                _key(item.get("key"), _LANGUAGE_KEY)
             )
-        )
-    for field in ("publish_date", "first_publish_date"):
-        if source.get(field) is not None:
+            if match is None:
+                raise ValueError("cover language is malformed")
             values.add(
                 CoverContext(
-                    CoverContextField.PUBLICATION_DATE,
-                    _text(source[field]),
+                    CoverContextField.LANGUAGE,
+                    match.group(1),
                 )
             )
-    if source.get("physical_format") is not None:
+        for value in _string_list(source.get("publishers", []), _MAX_VALUES):
+            values.add(CoverContext(CoverContextField.PUBLISHER, value))
+        for value in _string_list(
+            source.get("publish_places", []), _MAX_VALUES
+        ):
+            values.add(
+                CoverContext(CoverContextField.PUBLICATION_PLACE, value)
+            )
+        if source.get("publish_country") is not None:
+            values.add(
+                CoverContext(
+                    CoverContextField.COUNTRY,
+                    _cover_context_text(source["publish_country"]),
+                )
+            )
+        if source.get("physical_format") is not None:
+            values.add(
+                CoverContext(
+                    CoverContextField.FORMAT,
+                    _text(source["physical_format"]),
+                )
+            )
+        date_field = "publish_date"
+    elif schema == "work_detail":
+        date_field = "first_publish_date"
+    else:
+        raise ValueError("cover context schema is invalid")
+    if source.get(date_field) is not None:
         values.add(
             CoverContext(
-                CoverContextField.FORMAT,
-                _text(source["physical_format"]),
+                CoverContextField.PUBLICATION_DATE,
+                _text(source[date_field]),
             )
         )
     return tuple(
@@ -1879,26 +1896,142 @@ def _optional_object_list(value: object, maximum: int) -> list[dict[str, Any]]:
     return [item for raw in value if type(raw) is dict for item in [raw]]
 
 
-def _unknown_projection_rejections(*documents: dict[str, Any]) -> int:
-    """Count unknown additive members once per observed response document."""
-    known = {
-        "key", "works", "isbn_10", "isbn_13", "isbn", "title", "subtitle",
-        "publish_date", "publishers", "languages", "authors", "description",
-        "alternate_titles", "alternative_titles", "imprints", "imprint", "distributors",
-        "by_statement", "edition_name", "edition_statement", "translation_of",
-        "contributions", "series", "series_number",
-        "publisher", "language", "edition_key", "editions", "docs",
-        "author_name", "author_key",
-        "revision", "latest_revision", "last_modified", "oclc_numbers", "lccn",
-        "dewey_decimal_class", "lc_classifications", "publish_places", "subjects",
-        "subject_people", "subject_places", "subject_times", "identifiers",
-        "physical_format", "pagination", "copyright_date", "number_of_pages",
-        "first_publish_date", "covers",
-    }
+_COMMON_DETAIL_FIELDS = {
+    "key",
+    "title",
+    "subtitle",
+    "description",
+    "authors",
+    "revision",
+    "latest_revision",
+    "last_modified",
+    "identifiers",
+    "covers",
+}
+_PROJECTION_FIELDS = {
+    "edition_detail": _COMMON_DETAIL_FIELDS
+    | {
+        "works",
+        "isbn_10",
+        "isbn_13",
+        "publish_date",
+        "publishers",
+        "languages",
+        "alternate_titles",
+        "alternative_titles",
+        "imprints",
+        "imprint",
+        "distributors",
+        "by_statement",
+        "edition_name",
+        "edition_statement",
+        "translation_of",
+        "contributions",
+        "oclc_numbers",
+        "lccn",
+        "dewey_decimal_class",
+        "lc_classifications",
+        "publish_places",
+        "publish_country",
+        "physical_format",
+        "pagination",
+        "copyright_date",
+        "number_of_pages",
+    },
+    "work_detail": _COMMON_DETAIL_FIELDS
+    | {
+        "alternate_titles",
+        "series",
+        "series_number",
+        "subjects",
+        "subject_people",
+        "subject_places",
+        "subject_times",
+        "first_publish_date",
+    },
+    "search": {
+        "key",
+        "publisher",
+        "publish_date",
+        "language",
+        "edition_key",
+        "editions",
+        "author_name",
+        "author_key",
+    },
+}
+
+
+def _detail_projection_schema(identity: str) -> str:
+    if _EDITION_KEY.fullmatch(identity) is not None:
+        return "edition_detail"
+    if _WORK_KEY.fullmatch(identity) is not None:
+        return "work_detail"
+    raise ValueError("detail identity is malformed")
+
+
+def _unknown_projection_rejections(
+    *documents: dict[str, Any], schema: str
+) -> int:
+    """Count members outside the trusted physical response context."""
+    known = _PROJECTION_FIELDS.get(schema)
+    if known is None:
+        raise ValueError("provider projection schema is invalid")
     return min(
         sum(len(set(document) - known) for document in documents),
         MAX_DIAGNOSTIC_COUNT,
     )
+
+
+def _by_statement_projection(value: object) -> tuple[tuple[str, ...], int]:
+    if value is None:
+        return (), 0
+    if type(value) is str:
+        try:
+            return (_text(value),), 0
+        except (ValueError, EvidenceValueError):
+            return (), 1
+    if type(value) is not list or len(value) > _MAX_VALUES:
+        return (), 1
+    values: list[str] = []
+    rejected = 0
+    for member in value:
+        try:
+            values.append(_text(member))
+        except (ValueError, EvidenceValueError):
+            rejected += 1
+    return tuple(values), rejected
+
+
+def _by_statement_values(value: object) -> tuple[str, ...]:
+    return _by_statement_projection(value)[0]
+
+
+def _series_projection(
+    work: dict[str, Any],
+) -> tuple[tuple[str, ...], tuple[str, ...], FieldState | None]:
+    raw_series = work.get("series", [])
+    raw_sequences = work.get("series_number", [])
+    if (
+        type(raw_series) is list
+        and len(raw_series) > _MAX_VALUES
+        or type(raw_sequences) is list
+        and len(raw_sequences) > _MAX_VALUES
+    ):
+        return (), (), FieldState.OVERSIZED
+
+    malformed = type(raw_series) is not list or type(raw_sequences) is not list
+    series = _optional_string_list(raw_series, _MAX_VALUES)
+    sequences = _optional_string_list(raw_sequences, _MAX_VALUES)
+    if type(raw_series) is list and len(series) != len(raw_series):
+        malformed = True
+    if type(raw_sequences) is list and len(sequences) != len(raw_sequences):
+        malformed = True
+    if malformed or (not series and bool(sequences)):
+        return series, sequences, FieldState.MALFORMED
+    if not series and not sequences:
+        return (), (), FieldState.UNSUPPORTED
+    return series, sequences, None
 
 
 def _parser_optional_rejections(
@@ -1917,13 +2050,15 @@ def _parser_optional_rejections(
         list_fields.add("publish_date")
     object_lists = {"works", "languages", "authors"}
     scalar_fields = {
-        "publish_date", "physical_format", "pagination", "by_statement", "imprint",
+        "publish_date", "physical_format", "pagination", "imprint",
         "edition_name", "edition_statement", "translation_of", "description",
         "copyright_date", "number_of_pages", "first_publish_date",
     }
     if search_projection:
         scalar_fields.remove("publish_date")
     count = 0
+    if "by_statement" in document:
+        count += _by_statement_projection(document["by_statement"])[1]
     for field in list_fields & set(document):
         value = document[field]
         if type(value) is not list or len(value) > _MAX_VALUES:
@@ -2010,11 +2145,17 @@ def _parser_optional_rejections(
 # Compatibility for private parser tests; semantic accounting lives in the
 # parser-owned function above while this boundary remains unknown-key-only.
 def _optional_projection_rejections(
-    *documents: dict[str, Any], search_projection: bool = False
+    *documents: dict[str, Any],
+    search_projection: bool = False,
+    schema: str = "work_detail",
 ) -> int:
+    resolved_schema = "search" if search_projection else schema
     return min(
         sum(
-            _unknown_projection_rejections(document)
+            _unknown_projection_rejections(
+                document,
+                schema=resolved_schema,
+            )
             + _parser_optional_rejections(document, search_projection=search_projection)
             for document in documents
         ),

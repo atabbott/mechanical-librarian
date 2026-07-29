@@ -3214,6 +3214,277 @@ class ProviderAdapterTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(expected, states)
 
+    def test_series_and_taxonomy_terminal_states_are_independent(self) -> None:
+        book = {
+            "id": 1,
+            "title": "Current title",
+            "book_series": [{"id": 1}],
+            "taggings": [
+                {
+                    "id": index + 1,
+                    "tag": {
+                        "id": index + 1,
+                        "tag": f"Mood {index}",
+                        "tag_category": {
+                            "id": 1,
+                            "category": "Mood",
+                        },
+                    },
+                }
+                for index in range(hardcover_metadata.MAX_TAGS + 1)
+            ],
+        }
+        payload = self._envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": "9780306406157",
+                }
+            ],
+            [book],
+        )
+        observation = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
+                )
+            ),
+            65_536,
+        ).observe(_isbn_lookup((self._claim(),)))
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        states = {
+            claim.kind: claim.state
+            for claim in observation.candidates[0].claims
+            if claim.kind
+            in {
+                ClaimKind.SERIES,
+                ClaimKind.SERIES_SEQUENCE,
+                ClaimKind.GENRE,
+                ClaimKind.TAG,
+            }
+        }
+        self.assertEqual(
+            {
+                ClaimKind.SERIES: FieldState.MALFORMED,
+                ClaimKind.SERIES_SEQUENCE: FieldState.MALFORMED,
+                ClaimKind.GENRE: FieldState.OVERSIZED,
+                ClaimKind.TAG: FieldState.OVERSIZED,
+            },
+            states,
+        )
+        self.assertEqual(2, observation.diagnostics[0].count)
+        self.assertTrue(
+            any(
+                claim.kind is ClaimKind.TITLE
+                and claim.value == "Current title"
+                and claim.state is FieldState.VALID
+                for claim in observation.candidates[0].claims
+            )
+        )
+
+    def test_malformed_taxonomy_rows_are_local_to_referencing_works(self) -> None:
+        payload = self._envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": "9780306406157",
+                },
+                {
+                    "id": 2,
+                    "book_id": 2,
+                    "isbn_10": None,
+                    "isbn_13": "9780306406157",
+                },
+            ],
+            [
+                {
+                    "id": 1,
+                    "title": "First work",
+                    "taggings": [
+                        {
+                            "id": 1,
+                            "tag": {
+                                "id": 2,
+                                "tag": "Broken",
+                                "tag_category": {
+                                    "id": 3,
+                                    "category": "Mood",
+                                },
+                            },
+                        }
+                    ],
+                },
+                {
+                    "id": 2,
+                    "title": "Second work",
+                    "taggings": [
+                        {
+                            "id": 2,
+                            "tag": {
+                                "id": 9,
+                                "tag": "Hopeful",
+                                "tag_category": {
+                                    "id": 3,
+                                    "category": "Mood",
+                                },
+                            },
+                        }
+                    ],
+                },
+            ],
+        )
+        payload["data"]["tags"][0]["tag_category"] = {"id": 3}
+        observation = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
+                )
+            ),
+            65_536,
+        ).observe(_isbn_lookup((self._claim(),)))
+
+        candidates = {
+            candidate.work_identity: candidate
+            for candidate in observation.candidates
+        }
+        first_states = {
+            claim.state
+            for claim in candidates["hardcover-work-0000000001"].claims
+            if claim.kind in {ClaimKind.GENRE, ClaimKind.TAG}
+        }
+        second_claims = tuple(
+            claim
+            for claim in candidates["hardcover-work-0000000002"].claims
+            if claim.kind in {ClaimKind.GENRE, ClaimKind.TAG}
+        )
+        self.assertEqual({FieldState.MALFORMED}, first_states)
+        self.assertNotIn(
+            FieldState.MALFORMED,
+            {claim.state for claim in second_claims},
+        )
+        self.assertIn(
+            "Hopeful",
+            {claim.value for claim in second_claims},
+        )
+        self.assertEqual(2, observation.diagnostics[0].count)
+
+    def test_unreferenced_malformed_taxonomy_rows_are_diagnostic_only(
+        self,
+    ) -> None:
+        payload = self._envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": "9780306406157",
+                }
+            ],
+            [{"id": 1, "title": "Current title", "taggings": []}],
+        )
+        payload["data"]["tags"] = [
+            {
+                "id": 99,
+                "tag": "Broken",
+                "tag_category": {"id": 3},
+            },
+            {"tag": "Unidentifiable", "tag_category": {"id": 3}},
+        ]
+        observation = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
+                )
+            ),
+            65_536,
+        ).observe(_isbn_lookup((self._claim(),)))
+
+        self.assertEqual(2, observation.diagnostics[0].count)
+        self.assertEqual(
+            {FieldState.ABSENT},
+            {
+                claim.state
+                for claim in observation.candidates[0].claims
+                if claim.kind in {ClaimKind.GENRE, ClaimKind.TAG}
+            },
+        )
+
+    def test_unavailable_or_oversized_taxonomy_root_is_global(self) -> None:
+        base = self._envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": "9780306406157",
+                }
+            ],
+            [{"id": 1, "title": "Current title", "taggings": []}],
+        )
+        for label, tags, expected in (
+            ("unavailable", None, FieldState.MALFORMED),
+            (
+                "oversized",
+                [
+                    {
+                        "id": index + 1,
+                        "tag": f"Tag {index}",
+                        "tag_category": {
+                            "id": 3,
+                            "category": "Mood",
+                        },
+                    }
+                    for index in range(hardcover_metadata._MAX_TAG_ROWS + 1)
+                ],
+                FieldState.OVERSIZED,
+            ),
+        ):
+            payload = json.loads(json.dumps(base))
+            payload["data"]["tags"] = tags
+            observation = HardcoverMetadataProvider(
+                "catalogue",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda request, value=payload: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            json=value,
+                        )
+                    )
+                ),
+                65_536,
+            ).observe(_isbn_lookup((self._claim(),)))
+            with self.subTest(label=label):
+                self.assertEqual(
+                    {expected},
+                    {
+                        claim.state
+                        for claim in observation.candidates[0].claims
+                        if claim.kind in {ClaimKind.GENRE, ClaimKind.TAG}
+                    },
+                )
+                self.assertEqual(1, observation.diagnostics[0].count)
+
     def test_multiple_inputs_are_selected_deterministically_and_statuses_do_not_retry(self) -> None:
         second = LocalClaim.create(
             kind=ClaimKind.ISBN,
