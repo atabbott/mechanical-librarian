@@ -686,7 +686,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 self.assertEqual(1 if oversized else 2, len(requests))
                 self.assertEqual(
                     (
-                        {ProviderStatus.OVERSIZED}
+                        {ProviderStatus.OVERSIZED, ProviderStatus.INCOMPLETE}
                         if oversized
                         else {ProviderStatus.NO_MATCH}
                     ),

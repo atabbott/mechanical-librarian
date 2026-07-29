@@ -189,7 +189,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             clock=lambda: 1.0,
             wall_clock=unexpected_clock,
         ).observe(_lookup(), deadline=0.0)
-        self.assertEqual(ProviderStatus.UNAVAILABLE, expired.status)
+        self.assertEqual(ProviderStatus.INCOMPLETE, expired.status)
         self.assertIsNone(expired.accessed_at)
         self.assertEqual(1, len(requests))
 
@@ -943,7 +943,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             ),
             65_536,
         ).observe(_lookup(), deadline=0.0)
-        self.assertEqual(ProviderStatus.UNAVAILABLE, expired.status)
+        self.assertEqual(ProviderStatus.INCOMPLETE, expired.status)
         self.assertEqual([], requests)
 
     def test_malformed_and_duplicate_json_never_escape_as_raw_artifacts(self) -> None:

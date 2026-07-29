@@ -310,7 +310,9 @@ class GoogleBooksMetadataProvider:
             started = self._clock()
             attempts_before_dispatch = self._attempt_count
             try:
-                value = self._request_once(query, deadline=deadline)
+                value = self._request_once(
+                    query, deadline=deadline, is_retry=retry_index > 0
+                )
             except (asyncio.CancelledError, KeyboardInterrupt):
                 if self._attempt_count != attempts_before_dispatch:
                     self._record_attempt(
@@ -396,7 +398,7 @@ class GoogleBooksMetadataProvider:
         raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
 
     def _request_once(
-        self, query: str, *, deadline: float | None
+        self, query: str, *, deadline: float | None, is_retry: bool
     ) -> dict[str, Any]:
         if self._remaining_response_bytes <= 0:
             raise _ProviderFailure(ProviderStatus.OVERSIZED)
@@ -422,7 +424,7 @@ class GoogleBooksMetadataProvider:
                 raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
             if self._accessed_at is None:
                 self._accessed_at = provider_access_time(self._wall_clock())
-            self._ledger.dispatch(retry=False)
+            self._ledger.dispatch(retry=is_retry)
             self._attempt_count += 1
             with self._client.stream(
                 "GET",

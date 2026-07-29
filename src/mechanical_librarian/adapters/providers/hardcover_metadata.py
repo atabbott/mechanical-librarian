@@ -383,7 +383,9 @@ class HardcoverMetadataProvider:
             started = self._clock()
             attempts_before_dispatch = self._attempt_count
             try:
-                payload = self._request_once(body, deadline=deadline)
+                payload = self._request_once(
+                    body, deadline=deadline, is_retry=retry_index > 0
+                )
             except (asyncio.CancelledError, KeyboardInterrupt):
                 if self._attempt_count != attempts_before_dispatch:
                     self._record_attempt(
@@ -463,7 +465,7 @@ class HardcoverMetadataProvider:
         raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
 
     def _request_once(
-        self, body: dict[str, object], *, deadline: float | None
+        self, body: dict[str, object], *, deadline: float | None, is_retry: bool
     ) -> bytes:
         if self._remaining_response_bytes <= 0:
             raise _ProviderFailure(ProviderStatus.INCOMPLETE)
@@ -483,7 +485,7 @@ class HardcoverMetadataProvider:
                 raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
             if self._accessed_at is None:
                 self._accessed_at = provider_access_time(self._wall_clock())
-            self._ledger.dispatch(retry=False)
+            self._ledger.dispatch(retry=is_retry)
             self._attempt_count += 1
             with self._client.stream(
                 "POST",
