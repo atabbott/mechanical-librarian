@@ -2466,20 +2466,21 @@ class ProviderAdapterTests(unittest.TestCase):
         )
         self.assertEqual(([], True, False), (values, overflow, invalid))
 
-    def test_hardcover_optional_projection_diagnostics_are_semantic_and_non_traversing(self) -> None:
+    def test_hardcover_optional_projection_diagnostics_only_count_unknown_additive_keys(self) -> None:
         diagnostic = hardcover_metadata._optional_projection_rejections
         tag = {"id": 1, "tag_id": 1, "tag": {"id": 1, "tag": "T", "tag_category": {"id": 1, "category": "Mood"}}}
         self.assertEqual(0, diagnostic(json.dumps(self._envelope([], [{"id": 1, "title": "T", "taggings": [tag]}])).encode()))
         self.assertEqual(0, diagnostic(json.dumps(self._envelope([], [{"id": 1, "title": "T", "taggings": [tag] * 18}])).encode()))
-        self.assertEqual(1, diagnostic(json.dumps(self._envelope([], [{"id": 1, "title": "T", "taggings": [tag] * 34}])).encode()))
-        self.assertEqual(1, diagnostic(json.dumps(self._envelope([{"id": 1, "book_id": 1, "contributions": ["hostile" for _ in range(18)]}], [])).encode()))
-        self.assertEqual(1, diagnostic(json.dumps(self._envelope([], [{"id": 1, "title": "T", "release_date": "not-a-date"}])).encode()))
+        self.assertEqual(0, diagnostic(json.dumps(self._envelope([], [{"id": 1, "title": "T", "taggings": [tag] * 34}])).encode()))
+        self.assertEqual(0, diagnostic(json.dumps(self._envelope([{"id": 1, "book_id": 1, "contributions": ["hostile" for _ in range(18)]}], [])).encode()))
+        self.assertEqual(0, diagnostic(json.dumps(self._envelope([], [{"id": 1, "title": "T", "release_date": "not-a-date"}])).encode()))
         subject = {**tag, "tag": {"id": 1, "tag": "T", "tag_category": {"id": 1, "category": "Subject"}}}
-        self.assertEqual(1, diagnostic(json.dumps(self._envelope([], [{"id": 1, "title": "T", "taggings": [subject]}])).encode()))
-        self.assertEqual(1, diagnostic(b'{"data":{"editions":[],"books":[{"id":1,"taggings":[{"id":1,"tag_id":"bad"}]}],"tags":[]}}'))
-        self.assertEqual(1, diagnostic(b'{"data":{"editions":[{"id":1,"book_id":1,"contributions":[{"id":1,"author":{"id":{}}}]}],"books":[],"tags":[]}}'))
-        self.assertEqual(1, diagnostic(b'{"data":{"editions":[],"books":[{"id":1,"book_series":[{"id":1,"series":"bad"}]}],"tags":[]}}'))
-        self.assertEqual(2, diagnostic(b'{"data":{"editions":[{"id":1,"publisher":{"id":1,"parent_id":{}},"image":{"url":7}}],"books":[],"tags":[]}}'))
+        self.assertEqual(0, diagnostic(json.dumps(self._envelope([], [{"id": 1, "title": "T", "taggings": [subject]}])).encode()))
+        self.assertEqual(0, diagnostic(b'{"data":{"editions":[],"books":[{"id":1,"taggings":[{"id":1,"tag_id":"bad"}]}],"tags":[]}}'))
+        self.assertEqual(0, diagnostic(b'{"data":{"editions":[{"id":1,"book_id":1,"contributions":[{"id":1,"author":{"id":{}}}]}],"books":[],"tags":[]} }'))
+        self.assertEqual(0, diagnostic(b'{"data":{"editions":[],"books":[{"id":1,"book_series":[{"id":1,"series":"bad"}]}],"tags":[]} }'))
+        self.assertEqual(0, diagnostic(b'{"data":{"editions":[{"id":1,"publisher":{"id":1,"parent_id":{}},"image":{"url":7}}],"books":[],"tags":[]} }'))
+        self.assertEqual(1, diagnostic(b'{"data":{"editions":[],"books":[{"id":1,"new_optional_value":true}],"tags":[]} }'))
 
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:
         calls: list[int] = []

@@ -86,6 +86,16 @@ _WORK_QUERY = (
 _QUERY = _ISBN_QUERY
 
 
+class _OptionalRejections:
+    """One bounded, payload-free count for optional projection rejections."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def reject(self) -> None:
+        self.count = min(MAX_DIAGNOSTIC_COUNT, self.count + 1)
+
+
 class HardcoverPacer:
     """Share Hardcover's one-request-per-second start rate."""
 
@@ -152,6 +162,7 @@ class HardcoverMetadataProvider:
         self._accessed_at: str | None = None
         self._called = False
         self._schema_rejections = 0
+        self._optional_rejections = _OptionalRejections()
         self._ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
         self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
 
@@ -174,6 +185,7 @@ class HardcoverMetadataProvider:
         deadline: float | None = None,
     ) -> ProviderObservation:
         self._schema_rejections = 0
+        self._optional_rejections = _OptionalRejections()
         if self._called:
             return ProviderObservation(
                 self._name,
@@ -358,6 +370,7 @@ class HardcoverMetadataProvider:
                 payload,
                 self._name,
                 local_claims,
+                self._optional_rejections,
             )
             self._reject_schema_members(_optional_projection_rejections(payload))
             if (
@@ -387,6 +400,7 @@ class HardcoverMetadataProvider:
                 payload,
                 self._name,
                 lookup.kind,
+                self._optional_rejections,
             )
         except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
             self.cover_descriptors = ()
@@ -403,12 +417,13 @@ class HardcoverMetadataProvider:
             )
 
     def _schema_diagnostics(self) -> tuple[FailureDiagnostic, ...]:
-        return () if not self._schema_rejections else (
+        count = min(MAX_DIAGNOSTIC_COUNT, self._schema_rejections + self._optional_rejections.count)
+        return () if not count else (
             FailureDiagnostic(
                 FailureCategory.SCHEMA_CONSTRUCTION,
                 FailureComponent.PROVIDER,
                 FailureStage.SCHEMA,
-                count=self._schema_rejections,
+                count=count,
             ),
         )
 
@@ -819,7 +834,9 @@ def _parse_candidates(
     payload: bytes,
     provider: str,
     local_claims: tuple[LocalClaim, ...],
+    rejected: _OptionalRejections | None = None,
 ) -> tuple[ProviderCandidate, ...]:
+    rejected = rejected or _OptionalRejections()
     source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
     root = _closed(source, {"data"})
     data = _closed(root["data"], {"editions", "books", "tags"})
@@ -848,8 +865,10 @@ def _parse_candidates(
     indexed_tags: dict[int, dict[str, Any]] = {}
     if type(tags) is not list:
         taxonomy_issue = True
+        rejected.reject()
     elif len(tags) > _MAX_TAG_ROWS:
         taxonomy_oversized = True
+        rejected.reject()
     else:
         for raw_tag in tags:
             try:
@@ -858,7 +877,7 @@ def _parse_candidates(
                 if tag_id in indexed_tags:
                     raise ValueError("duplicate tag")
             except (TypeError, ValueError):
-                taxonomy_issue = True
+                taxonomy_issue = True; rejected.reject()
                 continue
             indexed_tags[tag_id] = tag
     indexed: dict[int, dict[str, Any]] = {}
@@ -872,9 +891,10 @@ def _parse_candidates(
         book_taxonomy_issue = taxonomy_issue
         book_taxonomy_oversized = taxonomy_oversized
         if type(raw_taggings) is not list:
-            book_taxonomy_issue = True
+            book_taxonomy_issue = True; rejected.reject()
         elif len(raw_taggings) > MAX_TAGS:
             book_taxonomy_oversized = True
+            rejected.reject()
         else:
             for raw_tagging in raw_taggings:
                 try:
@@ -883,7 +903,7 @@ def _parse_candidates(
                     tag_id = _identifier(tagging["tag_id"])
                     tag = indexed_tags[tag_id]
                 except (KeyError, TypeError, ValueError):
-                    book_taxonomy_issue = True
+                    book_taxonomy_issue = True; rejected.reject()
                     continue
                 taggings.append({"id": tagging["id"], "tag": tag})
         book = {
@@ -922,9 +942,9 @@ def _parse_candidates(
             provider,
             identity,
             row,
-            local_claims,
+            local_claims, rejected,
         )
-        claims.extend(_work_claims(provider, identity, indexed[book_id], local_claims, len(claims)))
+        claims.extend(_work_claims(provider, identity, indexed[book_id], local_claims, len(claims), rejected))
         candidates.append(
             ProviderCandidate(
                 identity,
@@ -942,7 +962,9 @@ def _parse_cover_descriptors(
     payload: bytes,
     provider: str,
     query_kind: ProviderQueryKind,
+    rejected: _OptionalRejections | None = None,
 ) -> tuple[ProviderCoverDescriptor, ...]:
+    rejected = rejected or _OptionalRejections()
     source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
     data = _closed(
         _closed(source, {"data"})["data"],
@@ -963,7 +985,7 @@ def _parse_cover_descriptors(
             row_value = {**row_value, "image": None}
         row = _anchored_projection(row_value, {"id", "book_id"}, {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"})
         row = {key: row.get(key) for key in {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"}}
-        url, terminal_state = _cover_url(row["image"])
+        url, terminal_state = _cover_url(row["image"], rejected)
         edition_id = _identifier(row["id"])
         book_id = _identifier(row["book_id"])
         work_identity = f"hardcover-work-{book_id:010d}"
@@ -986,7 +1008,7 @@ def _parse_cover_descriptors(
                     ),
                     work_identity,
                     edition_identity,
-                    _edition_cover_context(row),
+                    _edition_cover_context(row, rejected),
                 ),
                 terminal_state=terminal_state,
             )
@@ -1005,7 +1027,7 @@ def _parse_cover_descriptors(
         book = _anchored_projection(raw_book, {"id"}, work_keys)
         book = {key: book.get(key) for key in work_keys}
         book_id = _identifier(book["id"])
-        url, terminal_state = _cover_url(book["image"])
+        url, terminal_state = _cover_url(book["image"], rejected)
         descriptors.append(
             ProviderCoverDescriptor(
                 provider,
@@ -1019,7 +1041,7 @@ def _parse_cover_descriptors(
                     provider,
                     CoverDesignation.DEFAULT,
                     f"hardcover-work-{book_id:010d}",
-                    context=_work_cover_context(book),
+                    context=_work_cover_context(book, rejected),
                 ),
                 terminal_state=terminal_state,
             )
@@ -1027,41 +1049,46 @@ def _parse_cover_descriptors(
     return tuple(descriptors)
 
 
-def _cover_url(value: object) -> tuple[str | None, CoverSourceState | None]:
+def _cover_url(value: object, rejected: _OptionalRejections | None = None) -> tuple[str | None, CoverSourceState | None]:
     try:
         image = _closed_or_none(value, {"url"})
     except (TypeError, ValueError):
+        if rejected: rejected.reject()
         return None, CoverSourceState.UNSAFE_REMOTE
     if image is None:
         return None, None
     url = image["url"]
     if type(url) is not str or not url:
+        if rejected: rejected.reject()
         return None, CoverSourceState.UNSAFE_REMOTE
     if len(url) > 2048:
+        if rejected: rejected.reject()
         return None, CoverSourceState.OVERSIZED
     return url, None
 
 
-def _work_cover_context(book: dict[str, Any]) -> tuple[CoverContext, ...]:
+def _work_cover_context(book: dict[str, Any], rejected: _OptionalRejections | None = None) -> tuple[CoverContext, ...]:
     if book["release_date"] is None:
         return ()
     try:
         value = _text(book["release_date"], MAX_SCALAR_CHARACTERS)
         normalize_date_value(value)
     except ValueError:
+        if rejected: rejected.reject()
         return ()
     return (CoverContext(CoverContextField.PUBLICATION_DATE, value),)
 
 
-def _edition_cover_context(row: dict[str, Any]) -> tuple[CoverContext, ...]:
+def _edition_cover_context(row: dict[str, Any], rejected: _OptionalRejections | None = None) -> tuple[CoverContext, ...]:
     values: set[CoverContext] = set()
     for key in ("isbn_10", "isbn_13"):
         if row[key] is not None:
             try:
                 values.add(CoverContext(CoverContextField.ISBN, _text(row[key], MAX_SCALAR_CHARACTERS)))
             except ValueError:
+                if rejected: rejected.reject()
                 pass
-    language = _optional_mapping(row["language"])
+    language = _optional_mapping(row["language"], rejected)
     if language is not None:
         for key in ("code2", "code3"):
             try:
@@ -1073,6 +1100,7 @@ def _edition_cover_context(row: dict[str, Any]) -> tuple[CoverContext, ...]:
     try:
         publisher = _text(_optional_member(row["publisher"], "name"), MAX_SCALAR_CHARACTERS)
     except ValueError:
+        if rejected: rejected.reject()
         publisher = None
     if publisher is not None:
         values.add(CoverContext(CoverContextField.PUBLISHER, publisher))
@@ -1082,6 +1110,7 @@ def _edition_cover_context(row: dict[str, Any]) -> tuple[CoverContext, ...]:
             normalize_date_value(value)
             values.add(CoverContext(CoverContextField.PUBLICATION_DATE, value))
         except ValueError:
+            if rejected: rejected.reject()
             pass
     return tuple(
         sorted(values, key=lambda value: (value.field.value, value.value))
@@ -1093,10 +1122,11 @@ def _edition_claims(
     identity: str,
     row: dict[str, Any],
     local: tuple[LocalClaim, ...],
+    rejected: _OptionalRejections | None = None,
 ) -> list[ProviderClaim]:
     claims: list[ProviderClaim] = []
     def add(kind: ClaimKind, value: object, scope: ClaimScope = ClaimScope.EDITION, applicability: str = "not_applicable") -> None:
-        claims.append(_claim(provider, identity, kind, value, scope, applicability, None, local, len(claims)))
+        claims.append(_claim(provider, identity, kind, value, scope, applicability, None, local, len(claims), rejected))
     for key, kind in (("isbn_10", ClaimKind.ISBN), ("isbn_13", ClaimKind.ISBN), ("asin", ClaimKind.ASIN), ("title", ClaimKind.TITLE), ("subtitle", ClaimKind.SUBTITLE), ("release_date", ClaimKind.PUBLICATION_DATE)):
         add(
             kind,
@@ -1108,35 +1138,35 @@ def _edition_claims(
                 else "not_applicable"
             ),
         )
-    add(ClaimKind.PUBLISHER, _optional_member(row["publisher"], "name"))
+    add(ClaimKind.PUBLISHER, _optional_member(row["publisher"], "name", rejected))
     claims.append(_state_claim(provider, identity, ClaimKind.IMPRINT, FieldState.UNSUPPORTED, ClaimScope.EDITION, local, len(claims)))
-    language = _optional_mapping(row["language"])
+    language = _optional_mapping(row["language"], rejected)
     # Code siblings are optional alternatives: a bad code2 cannot discard a
     # valid code3 (or the inverse).
     language_value = None
     if language is not None:
         for key in ("code2", "code3"):
             if language.get(key) is not None:
-                state, candidate = _field(ClaimKind.LANGUAGE, language.get(key))
+                state, candidate = _field(ClaimKind.LANGUAGE, language.get(key), rejected)
                 if state is FieldState.VALID:
                     language_value = candidate
                     break
     add(ClaimKind.LANGUAGE, language_value)
-    claims.extend(_contributions(provider, identity, row["contributions"], ClaimScope.EDITION, local, len(claims)))
+    claims.extend(_contributions(provider, identity, row["contributions"], ClaimScope.EDITION, local, len(claims), rejected))
     return claims
 
 
-def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tuple[LocalClaim, ...], offset: int) -> list[ProviderClaim]:
-    claims = [_claim(provider, identity, ClaimKind.TITLE, book["title"], ClaimScope.WORK, "not_applicable", None, local, offset), _claim(provider, identity, ClaimKind.DESCRIPTION, book["description"], ClaimScope.WORK, "not_applicable", None, local, offset + 1)]
-    claims.extend(_contributions(provider, identity, book["contributions"], ClaimScope.WORK, local, len(claims) + offset))
-    series, series_overflow, series_invalid = _optional_bounded_list(book["book_series"], MAX_SERIES, {"id", "position", "series"})
+def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tuple[LocalClaim, ...], offset: int, rejected: _OptionalRejections | None = None) -> list[ProviderClaim]:
+    claims = [_claim(provider, identity, ClaimKind.TITLE, book["title"], ClaimScope.WORK, "not_applicable", None, local, offset, rejected), _claim(provider, identity, ClaimKind.DESCRIPTION, book["description"], ClaimScope.WORK, "not_applicable", None, local, offset + 1, rejected)]
+    claims.extend(_contributions(provider, identity, book["contributions"], ClaimScope.WORK, local, len(claims) + offset, rejected))
+    series, series_overflow, series_invalid = _optional_bounded_list(book["book_series"], MAX_SERIES, {"id", "position", "series"}, rejected)
     if series_overflow:
         claims.extend((_state_claim(provider, identity, ClaimKind.SERIES, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset), _state_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset + 1)))
         series = []
     for item in series:
-        series = _optional_closed(item["series"], {"id", "name"})
-        claims.append(_claim(provider, identity, ClaimKind.SERIES, None if series is None else series["name"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
-        claims.append(_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, item["position"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
+        series = _optional_closed(item["series"], {"id", "name"}, rejected)
+        claims.append(_claim(provider, identity, ClaimKind.SERIES, None if series is None else series["name"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset, rejected))
+        claims.append(_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, item["position"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset, rejected))
     if book.get("_taxonomy_oversized"):
         claims.extend(
             _state_claim(
@@ -1174,22 +1204,23 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
             )
             for index, kind in enumerate((ClaimKind.GENRE, ClaimKind.TAG))
         )
-    taggings, taggings_overflow, taggings_invalid = _optional_bounded_list(book["taggings"], MAX_TAGS, {"id", "tag"})
+    taggings, taggings_overflow, taggings_invalid = _optional_bounded_list(book["taggings"], MAX_TAGS, {"id", "tag"}, rejected)
     categorized: list[tuple[ClaimKind, str]] = []
     seen: dict[str, ClaimKind] = {}
     malformed_taxonomy = False
     for item in taggings:
-        tag = _optional_closed(item["tag"], {"id", "tag", "tag_category"})
+        tag = _optional_closed(item["tag"], {"id", "tag", "tag_category"}, rejected)
         if tag is None:
             malformed_taxonomy = True
             continue
         try:
             _identifier(tag["id"])
         except ValueError:
+            if rejected: rejected.reject()
             malformed_taxonomy = True
             continue
         category = _optional_closed(
-            tag["tag_category"], {"id", "category"}
+            tag["tag_category"], {"id", "category"}, rejected
         )
         if category is None:
             malformed_taxonomy = True
@@ -1199,6 +1230,7 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
             name = _text(tag["tag"], MAX_SCALAR_CHARACTERS)
             category_name = _text(category["category"], MAX_SCALAR_CHARACTERS)
         except ValueError:
+            if rejected: rejected.reject()
             malformed_taxonomy = True
             continue
         if category_name == "Genre":
@@ -1206,6 +1238,7 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
         elif category_name in {"Mood", "ContentWarning"}:
             kind = ClaimKind.TAG
         else:
+            if rejected: rejected.reject()
             malformed_taxonomy = True
             continue
         taxonomy_identity = " ".join(
@@ -1213,6 +1246,7 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
         ).casefold()
         previous = seen.get(taxonomy_identity)
         if previous is not None and previous is not kind:
+            if rejected: rejected.reject()
             malformed_taxonomy = True
             continue
         if previous is None:
@@ -1360,9 +1394,9 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
     )
 
 
-def _contributions(provider: str, identity: str, value: object, scope: ClaimScope, local: tuple[LocalClaim, ...], offset: int) -> list[ProviderClaim]:
+def _contributions(provider: str, identity: str, value: object, scope: ClaimScope, local: tuple[LocalClaim, ...], offset: int, rejected: _OptionalRejections | None = None) -> list[ProviderClaim]:
     claims: list[ProviderClaim] = []
-    contributions, overflow, invalid = _optional_bounded_list(value, MAX_CONTRIBUTIONS, {"id", "contribution", "author"})
+    contributions, overflow, invalid = _optional_bounded_list(value, MAX_CONTRIBUTIONS, {"id", "contribution", "author"}, rejected)
     if overflow:
         # No prefix can determine which roles occur in an unadmitted source
         # collection, so expose the two supported contribution fields only.
@@ -1374,27 +1408,34 @@ def _contributions(provider: str, identity: str, value: object, scope: ClaimScop
         try:
             role = validate_role_projection(item["contribution"]).casefold()
         except EvidenceValueError:
+            if rejected: rejected.reject()
             claims.append(_state_claim(provider, identity, ClaimKind.CONTRIBUTOR, FieldState.MALFORMED, scope, local, offset + len(claims)))
             continue
         kind = ClaimKind.CREATOR if role == "author" else ClaimKind.CONTRIBUTOR
-        author = _field_local_author(item["author"])
+        author = _field_local_author(item["author"], rejected)
         if author is None:
             claims.append(_state_claim(provider, identity, kind, FieldState.MALFORMED, scope, local, offset + len(claims)))
             continue
+        try:
+            _identifier(author["id"])
+        except ValueError:
+            if rejected:
+                rejected.reject()
         claims.append(_claim(provider, identity, kind, author["name"], scope, "not_applicable", "author" if kind is ClaimKind.CREATOR else role, local, offset + len(claims)))
     if invalid:
         claims.append(_state_claim(provider, identity, ClaimKind.CONTRIBUTOR, FieldState.MALFORMED, scope, local, offset + len(claims)))
     return claims
 
 
-def _field_local_author(value: object) -> dict[str, Any] | None:
+def _field_local_author(value: object, rejected: _OptionalRejections | None = None) -> dict[str, Any] | None:
     if type(value) is not dict or set(value) != {"id", "name"}:
+        if rejected: rejected.reject()
         return None
     return value
 
 
-def _claim(provider: str, identity: str, kind: ClaimKind, value: object, scope: ClaimScope, applicability: str, role: str | None, local: tuple[LocalClaim, ...], raw_order: int) -> ProviderClaim:
-    state, text = _field(kind, value)
+def _claim(provider: str, identity: str, kind: ClaimKind, value: object, scope: ClaimScope, applicability: str, role: str | None, local: tuple[LocalClaim, ...], raw_order: int, rejected: _OptionalRejections | None = None) -> ProviderClaim:
+    state, text = _field(kind, value, rejected)
     bare = ProviderClaim.create(provider=provider, candidate=identity, kind=kind, value=text, state=state, scope=scope, applicability=applicability, role=role, raw_order=raw_order)
     return ProviderClaim.create(provider=provider, candidate=identity, kind=kind, value=text, state=state, scope=scope, applicability=applicability, role=role, raw_order=raw_order, links=comparison_links(bare, local))
 
@@ -1404,7 +1445,7 @@ def _state_claim(provider: str, identity: str, kind: ClaimKind, state: FieldStat
     return ProviderClaim.create(provider=provider, candidate=identity, kind=kind, value=None, state=state, scope=scope, applicability="not_applicable", raw_order=raw_order, links=comparison_links(bare, local))
 
 
-def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
+def _field(kind: ClaimKind, value: object, rejected: _OptionalRejections | None = None) -> tuple[FieldState, str | None]:
     if value is None:
         return FieldState.ABSENT, None
     maximum = MAX_DESCRIPTION_CHARACTERS if kind is ClaimKind.DESCRIPTION else MAX_SCALAR_CHARACTERS
@@ -1429,6 +1470,7 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
             text = _position(text)
         return FieldState.VALID, text
     except (ValueError, EvidenceValueError):
+        if rejected: rejected.reject()
         return (FieldState.OVERSIZED if type(value) is str and len(value) > maximum else FieldState.MALFORMED), None
 
 
@@ -1440,13 +1482,16 @@ def _bounded_list(value: object, maximum: int, keys: set[str]) -> tuple[list[dic
 
 
 def _optional_bounded_list(
-    value: object, maximum: int, keys: set[str]
+    value: object, maximum: int, keys: set[str], rejected: _OptionalRejections | None = None
 ) -> tuple[list[dict[str, Any]], bool, bool]:
     """Retain valid optional members only after a whole-field cap check."""
     if type(value) is not list:
+        if rejected: rejected.reject()
         return [], False, True
     if len(value) > maximum:
         # Cardinality is authoritative: do not inspect or retain a prefix.
+        if rejected:
+            rejected.reject()
         return [], True, False
     values: list[dict[str, Any]] = []
     invalid = False
@@ -1454,6 +1499,7 @@ def _optional_bounded_list(
         try:
             values.append(_closed(item, keys))
         except ValueError:
+            if rejected: rejected.reject()
             invalid = True
     return values, False, invalid
 
@@ -1491,25 +1537,33 @@ def _closed_or_none(value: object, keys: set[str]) -> dict[str, Any] | None:
     return None if value is None else _closed(value, keys)
 
 
-def _optional_closed(value: object, keys: set[str]) -> dict[str, Any] | None:
+def _optional_closed(value: object, keys: set[str], rejected: _OptionalRejections | None = None) -> dict[str, Any] | None:
     try:
         return _closed_or_none(value, keys)
     except ValueError:
+        if rejected: rejected.reject()
         return None
 
 
-def _optional_mapping(value: object) -> dict[str, Any] | None:
+def _optional_mapping(value: object, rejected: _OptionalRejections | None = None) -> dict[str, Any] | None:
     """An optional parent is not an anchor; validate its children locally."""
-    return value if type(value) is dict else None
+    if type(value) is dict:
+        return value
+    if value is not None and rejected: rejected.reject()
+    return None
 
 
-def _optional_member(value: object, key: str) -> object:
-    mapping = _optional_mapping(value)
+def _optional_member(value: object, key: str, rejected: _OptionalRejections | None = None) -> object:
+    mapping = _optional_mapping(value, rejected)
     return None if mapping is None else mapping.get(key)
 
 
 def _optional_projection_rejections(payload: bytes) -> int:
-    """Count discarded additive/optional members without retaining payload detail."""
+    """Count only unknown additive keys not owned by a field parser.
+
+    Strict anchor and join keys are deliberately exempt: their validation is
+    fatal in the candidate parser, rather than an optional diagnostic.
+    """
     try:
         source = json.loads(payload.decode("utf-8", "strict"))
         data = source.get("data") if type(source) is dict else None
@@ -1524,59 +1578,13 @@ def _optional_projection_rejections(payload: bytes) -> int:
         "tag", "tag_id", "tag_category", "position", "series", "contribution", "author",
         "name", "parent_id", "code2", "code3", "category", "url",
     }
-    optional_lists = {
-        "contributions": MAX_CONTRIBUTIONS,
-        "book_series": MAX_SERIES,
-        "taggings": MAX_TAGS,
-    }
     count = 0
-    # Every response node is visited once.  This is deliberately separate from
-    # candidate parsing: additive fields are diagnostic-only and must not turn
-    # a safely anchored edition/work join into a record-level failure.
     stack: list[object] = [data]
     while stack:
         value = stack.pop()
         if type(value) is dict:
             count += len(set(value) - known)
-            children: list[object] = []
-            for key, item in value.items():
-                if key in optional_lists:
-                    if type(item) is not list:
-                        count += 1
-                    else:
-                        maximum = optional_lists[key]
-                        if len(item) > maximum:
-                            # Cardinality rejection is one field-level event;
-                            # avoid traversing an unadmitted collection.
-                            count += 1
-                            continue
-                        # Optional collections may be partially usable, but a
-                        # non-object occurrence is still a single rejected
-                        # provider member (never a recursive multiplier).
-                        count += sum(1 for member in item if type(member) is not dict)
-                children.append(item)
-            release_date = value.get("release_date")
-            if release_date is not None:
-                try:
-                    normalize_date_value(release_date) if type(release_date) is str else (_ for _ in ()).throw(ValueError())
-                except (ValueError, EvidenceValueError):
-                    count += 1
-            if "tag_id" in value and (type(value["tag_id"]) is not int or not 1 <= value["tag_id"] <= 2_147_483_647):
-                count += 1
-            category = value.get("category")
-            if category is not None and category not in {"Mood", "Genre", "ContentWarning"}:
-                count += 1
-            author = value.get("author")
-            if author is not None and (type(author) is not dict or type(author.get("id")) is not int or not 1 <= author["id"] <= 2_147_483_647):
-                count += 1
-            series = value.get("series")
-            if series is not None and (type(series) is not dict or type(series.get("id")) is not int or not 1 <= series["id"] <= 2_147_483_647 or type(series.get("name")) is not str):
-                count += 1
-            if "parent_id" in value and (value["parent_id"] is not None and (type(value["parent_id"]) is not int or not 1 <= value["parent_id"] <= 2_147_483_647)):
-                count += 1
-            if "image" in value and value["image"] is not None and (type(value["image"]) is not dict or type(value["image"].get("url")) is not str):
-                count += 1
-            stack.extend(children)
+            stack.extend(value.values())
         elif type(value) is list:
             stack.extend(value)
     return min(count, MAX_DIAGNOSTIC_COUNT)
