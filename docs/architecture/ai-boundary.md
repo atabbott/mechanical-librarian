@@ -8,7 +8,7 @@ change policy, construct service requests, or execute writes.
 
 ## Reviewer contract
 
-The current qualification-only `shadow-review-packet-v2` contains:
+The current qualification-only `shadow-review-packet-v3` contains:
 
 - only the opaque content-addressed ReviewCase ID, never the connection,
   library, item, file identity, path, or service identifier;
@@ -17,7 +17,8 @@ The current qualification-only `shadow-review-packet-v2` contains:
 - explicit candidate values, including closed date event and target precision
   when applicable;
 - supporting and contradicting evidence summaries, with provider date
-  citations retaining lexical/normalized values, source precision,
+  citations retaining lexical/normalized values, source precision, the closed
+  publication-date relation and independently shared precision,
   candidate/work linkage, authority, query kind, and the immutable provider
   access time when an actual request occurred, plus at most 16 allowlisted
   sibling identifier fact objects and 16 physical-format facts whose
@@ -28,7 +29,7 @@ The current qualification-only `shadow-review-packet-v2` contains:
 - the fixed prompt/profile/packet/output/policy identities bound by the
   qualification profile.
 
-ADR-0016 freezes this projection and `shadow-review-request-v3`. Missing,
+ADR-0019 supersedes this projection with `shadow-review-request-v4`. Missing,
 opaque-only, malformed, noncanonical, or over-bound provider date linkage
 fails before reviewer invocation. This applies to cited typed provider claims
 and rich date evidence; rich evidence citation IDs are also recomputed from
@@ -41,6 +42,8 @@ equality. A syntactically valid invented ISBN or physical format therefore
 cannot become source evidence merely by recomputing packet/request identities.
 The report stays inside the trusted persistence boundary and is never added to
 the reviewer projection.
+Event- and manifestation-incompatible publication facts remain visible through
+these closed links even though they never become proposal candidates.
 
 Packet assembly records candidate and policy versions, source completeness, and
 the join provenance for every authoritative row. If the current snapshot,

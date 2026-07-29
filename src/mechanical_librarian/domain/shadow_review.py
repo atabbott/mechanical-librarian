@@ -16,6 +16,9 @@ from mechanical_librarian.domain.evidence_bounds import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
+    Comparison,
+    ComparisonLink,
+    ComparisonMethod,
     DateLinkConfidence,
     FieldState,
     MAX_SCALAR_CHARACTERS,
@@ -23,15 +26,16 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
+    PublicationDateRelation,
     ReportValueError,
     TargetDestination,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
 from mechanical_librarian.domain.review_case import ReviewCase
 
-PACKET_SCHEMA = "shadow-review-packet-v2"
+PACKET_SCHEMA = "shadow-review-packet-v3"
 RESULT_SCHEMA = "shadow-review-result-v1"
-REQUEST_SCHEMA = "shadow-review-request-v3"
+REQUEST_SCHEMA = "shadow-review-request-v4"
 PROFILE_IDENTITY_SCHEMA = "reviewer-profile-identity-v1"
 QUALIFICATION_MODE = "qualification_only"
 MAX_PACKET_BYTES = 1_048_576
@@ -416,6 +420,11 @@ class ShadowReviewPacket:
                 }
             )
         evidence = _evidence_index(report.to_data())
+        references.update(
+            reference
+            for reference, fact in evidence.items()
+            if _contains_provider_date(fact)
+        )
         if not references.issubset(evidence):
             raise ShadowReviewValueError("shadow-review evidence binding is invalid")
         citations = tuple(
@@ -1116,6 +1125,7 @@ def _validate_provider_citation(
                     if fact["date_confidence"] is None
                     else DateLinkConfidence(fact["date_confidence"])
                 ),
+                links=_comparison_links(fact["links"]),
             )
         except (ReportValueError, TypeError, ValueError) as error:
             raise ShadowReviewValueError(
@@ -1138,6 +1148,7 @@ def _validate_provider_citation(
         "date_normalized",
         "date_precision",
         "kind",
+        "links",
         "role",
         "scope",
         "source_ordinal",
@@ -1167,6 +1178,7 @@ def _validate_provider_citation(
                 else DateLinkConfidence(evidence_data["date_confidence"])
             ),
             evidence_data["source_ordinal"],
+            _comparison_links(evidence_data["links"]),
         )
     except (ReportValueError, TypeError, ValueError) as error:
         raise ShadowReviewValueError(
@@ -1193,6 +1205,50 @@ def _validate_provider_citation(
         )
     ):
         raise ShadowReviewValueError("shadow-review provider citation is invalid")
+
+
+def _comparison_links(value: object) -> tuple[ComparisonLink, ...]:
+    if type(value) is not list:
+        raise ShadowReviewValueError(
+            "shadow-review provider date comparison is invalid"
+        )
+    links: list[ComparisonLink] = []
+    for item in value:
+        if type(item) is not dict or set(item) != {
+            "local_reference",
+            "method",
+            "outcome",
+            "publication_date_relation",
+            "shared_date_precision",
+        }:
+            raise ShadowReviewValueError(
+                "shadow-review provider date comparison is invalid"
+            )
+        try:
+            links.append(
+                ComparisonLink(
+                    item["local_reference"],
+                    Comparison(item["outcome"]),
+                    ComparisonMethod(item["method"]),
+                    (
+                        None
+                        if item["publication_date_relation"] is None
+                        else PublicationDateRelation(
+                            item["publication_date_relation"]
+                        )
+                    ),
+                    (
+                        None
+                        if item["shared_date_precision"] is None
+                        else DatePrecision(item["shared_date_precision"])
+                    ),
+                )
+            )
+        except (ReportValueError, TypeError, ValueError) as error:
+            raise ShadowReviewValueError(
+                "shadow-review provider date comparison is invalid"
+            ) from error
+    return tuple(links)
 
 
 def _contains_provider_date(value: dict[str, object]) -> bool:
@@ -1328,6 +1384,7 @@ def _validate_provider_linkage(
                 "date_normalized",
                 "date_precision",
                 "kind",
+                "links",
                 "role",
                 "scope",
                 "source_ordinal",
@@ -1340,6 +1397,7 @@ def _validate_provider_linkage(
             or fact["scope"] not in {"work", "edition"}
             or type(fact["source_ordinal"]) is not int
             or fact["source_ordinal"] < 0
+            or fact["links"] != []
             or any(
                 fact[key] is not None
                 for key in (

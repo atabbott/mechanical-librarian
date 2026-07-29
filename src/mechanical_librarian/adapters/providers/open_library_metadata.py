@@ -1268,6 +1268,7 @@ def _candidate(
                 ),
             ),
             local_claims,
+            provider,
         ),
         edition_cover,
         work_cover,

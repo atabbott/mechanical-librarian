@@ -30,9 +30,10 @@ context and consequences rather than reproducing code.
 | [0013](0013-pre-release-clean-schema.md) | accepted | Require clean schemas until the first production release |
 | [0014](0014-review-case-admission.md) | accepted | Atomically admit immutable review cases from current ProposalSets |
 | [0015](0015-isolated-shadow-reviewer.md) | superseded by 0016 | Isolate one exact qualification-only Codex shadow reviewer |
-| [0016](0016-freeze-explainable-shadow-reviewer.md) | accepted | Freeze explainable publication-date shadow review |
+| [0016](0016-freeze-explainable-shadow-reviewer.md) | superseded in its publication-date packet projection by 0019 | Freeze explainable publication-date shadow review |
 | [0017](0017-bounded-failure-diagnostics.md) | accepted | Bound provider and reviewer failure diagnostics |
 | [0018](0018-closed-title-creator-comparison.md) | accepted | Close title and complete-creator comparison |
+| [0019](0019-publication-date-precision-comparison.md) | accepted | Close precision-aware publication-date comparison and manifestation binding |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

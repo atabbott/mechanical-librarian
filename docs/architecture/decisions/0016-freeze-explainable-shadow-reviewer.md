@@ -1,10 +1,10 @@
 # ADR-0016: Freeze explainable publication-date shadow review
 
-- Status: accepted
+- Status: superseded in its publication-date packet projection by ADR-0019
 - Date: 2026-07-28
 - Owners: project maintainers
 - Supersedes: ADR-0015
-- Superseded by: none
+- Superseded by: ADR-0019 (publication-date packet projection only)
 
 ## Context
 

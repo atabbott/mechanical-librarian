@@ -87,6 +87,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderIdentityBinding,
     ProviderQueryKind,
     ProviderStatus,
+    PublicationDateRelation,
     RearClaimProvenance,
     ReportValueError,
     TargetDestination,
@@ -100,7 +101,9 @@ from mechanical_librarian.domain.metadata_report import (
     derive_identifier_evidence,
     derive_field_results,
     finalize_candidate_comparisons,
+    manifestation_publication_compatible,
     normalize_title,
+    publication_date_relation,
     provider_access_time,
     stable_reference,
 )
@@ -353,8 +356,19 @@ class MetadataReportTests(unittest.TestCase):
                 default_target_fields(None),
             ),
             file=FileFacts(0, "a" * 64, "b" * 64),
-            local_claims=(),
-            local_reasons=("no_opening_claims",),
+            local_claims=(
+                LocalClaim.create(
+                    kind=ClaimKind.ISBN,
+                    observed="9780306406157",
+                    canonical="9780306406157",
+                    excerpt="9780306406157",
+                    applicability="unknown",
+                    checksum="valid_isbn_13",
+                    applicability_basis="unlabelled",
+                    scope=ClaimScope.EDITION,
+                ),
+            ),
+            local_reasons=("opening_matter_isbn",),
             providers=(
                 ProviderObservation(
                     "catalogue",
@@ -364,7 +378,27 @@ class MetadataReportTests(unittest.TestCase):
                         ProviderCandidate(
                             "edition-1",
                             "work-1",
-                            (claim,),
+                            (
+                                ProviderClaim.create(
+                                    provider="catalogue",
+                                    candidate="edition-1",
+                                    kind=ClaimKind.ISBN,
+                                    value="9780306406157",
+                                    state=FieldState.VALID,
+                                    scope=ClaimScope.EDITION,
+                                    applicability="unknown",
+                                ),
+                                ProviderClaim.create(
+                                    provider="catalogue",
+                                    candidate="edition-1",
+                                    kind=ClaimKind.PUBLICATION_DATE,
+                                    value=lexical,
+                                    state=FieldState.VALID,
+                                    scope=ClaimScope.EDITION,
+                                    applicability="not_applicable",
+                                    raw_order=1,
+                                ),
+                            ),
                             (),
                         ),
                     ),
@@ -372,7 +406,7 @@ class MetadataReportTests(unittest.TestCase):
             ),
         )
         replay_data = report.to_data()
-        replay_data["providers"][0]["candidates"][0]["claims"][0][
+        replay_data["providers"][0]["candidates"][0]["claims"][1][
             "date_precision"
         ] = "day"
         with self.assertRaises(ReportValueError):
@@ -881,7 +915,7 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v20", report.schema_version)
+        self.assertEqual("metadata-report-v21", report.schema_version)
         previous = report.to_data()
         previous["schema_version"] = "metadata-report-v13"
         with self.assertRaises(ReportValueError):
@@ -2508,7 +2542,9 @@ class MetadataReportTests(unittest.TestCase):
                 ComparisonLink(
                     positive_offset.reference,
                     Comparison.AGREEMENT,
-                    ComparisonMethod.CLOSED_FIELD_NORMALIZATION,
+                    ComparisonMethod.EXACT,
+                    PublicationDateRelation.EXACT,
+                    DatePrecision.DAY,
                 ),
             ),
             comparison_links(
@@ -2521,7 +2557,9 @@ class MetadataReportTests(unittest.TestCase):
                 ComparisonLink(
                     rollover.reference,
                     Comparison.AGREEMENT,
-                    ComparisonMethod.CLOSED_FIELD_NORMALIZATION,
+                    ComparisonMethod.EXACT,
+                    PublicationDateRelation.EXACT,
+                    DatePrecision.DAY,
                 ),
             ),
             comparison_links(
@@ -2544,6 +2582,226 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(
             "2024-03-05T10:30:00-04:00",
             negative_offset.date_lexical,
+        )
+
+    def test_publication_date_relation_preserves_shared_precision_and_conflict(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "2021-09-14",
+                DatePrecision.DAY,
+                "2021",
+                DatePrecision.YEAR,
+                PublicationDateRelation.YEAR_COMPATIBLE,
+                DatePrecision.YEAR,
+            ),
+            (
+                "2021-09-14",
+                DatePrecision.DAY,
+                "2021-09",
+                DatePrecision.MONTH,
+                PublicationDateRelation.MONTH_COMPATIBLE,
+                DatePrecision.MONTH,
+            ),
+            (
+                "2021-09-14",
+                DatePrecision.DAY,
+                "2021-09-20",
+                DatePrecision.DAY,
+                PublicationDateRelation.FINER_CONFLICT,
+                DatePrecision.MONTH,
+            ),
+            (
+                "2021-09",
+                DatePrecision.MONTH,
+                "2021-10",
+                DatePrecision.MONTH,
+                PublicationDateRelation.FINER_CONFLICT,
+                DatePrecision.YEAR,
+            ),
+            (
+                "2021",
+                DatePrecision.YEAR,
+                "2022",
+                DatePrecision.YEAR,
+                PublicationDateRelation.FINER_CONFLICT,
+                None,
+            ),
+        )
+        for (
+            left,
+            left_precision,
+            right,
+            right_precision,
+            expected_relation,
+            expected_shared,
+        ) in cases:
+            with self.subTest(left=left, right=right):
+                self.assertEqual(
+                    (expected_relation, expected_shared),
+                    publication_date_relation(
+                        left_value=left,
+                        left_event=DateEvent.MANIFESTATION_PUBLICATION,
+                        left_precision=left_precision,
+                        right_value=right,
+                        right_event=DateEvent.MANIFESTATION_PUBLICATION,
+                        right_precision=right_precision,
+                    ),
+                )
+        self.assertEqual(
+            (PublicationDateRelation.EVENT_INCOMPATIBLE, None),
+            publication_date_relation(
+                left_value="2021",
+                left_event=DateEvent.WORK_FIRST_PUBLICATION,
+                left_precision=DatePrecision.YEAR,
+                right_value="2021",
+                right_event=DateEvent.MANIFESTATION_PUBLICATION,
+                right_precision=DatePrecision.YEAR,
+            ),
+        )
+        self.assertEqual(
+            (PublicationDateRelation.MANIFESTATION_INCOMPATIBLE, None),
+            publication_date_relation(
+                left_value="2021",
+                left_event=DateEvent.MANIFESTATION_PUBLICATION,
+                left_precision=DatePrecision.YEAR,
+                right_value="2021",
+                right_event=DateEvent.MANIFESTATION_PUBLICATION,
+                right_precision=DatePrecision.YEAR,
+                manifestation_compatible=False,
+            ),
+        )
+
+    def test_candidate_finalization_promotes_only_safe_manifestation_dates(
+        self,
+    ) -> None:
+        local_isbn = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="9780306406157",
+            applicability="unknown",
+            checksum="valid_isbn_13",
+            applicability_basis="unlabelled",
+            scope=ClaimScope.EDITION,
+        )
+        local_date = LocalClaim.create(
+            kind=ClaimKind.PUBLICATION_DATE,
+            observed="2021-09",
+            canonical="2021-09",
+            excerpt="2021-09",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            date_event=DateEvent.MANIFESTATION_PUBLICATION,
+            date_precision=DatePrecision.MONTH,
+        )
+        provider_isbn = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.ISBN,
+            value="9780306406157",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="unknown",
+        )
+        date_text = ProviderEvidence(
+            ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+            "2021-09-14",
+            ClaimScope.EDITION,
+        )
+        candidate = ProviderCandidate(
+            "edition-1",
+            "work-1",
+            (provider_isbn,),
+            (date_text,),
+        )
+        local = (local_isbn, local_date)
+        self.assertTrue(manifestation_publication_compatible(candidate, local))
+        safe = finalize_candidate_comparisons(candidate, local, "catalogue")
+        publication = next(
+            claim
+            for claim in safe.claims
+            if claim.kind is ClaimKind.PUBLICATION_DATE
+        )
+        self.assertEqual("2021-09-14", publication.date_lexical)
+        self.assertEqual(
+            PublicationDateRelation.MONTH_COMPATIBLE,
+            publication.links[0].publication_date_relation,
+        )
+        self.assertEqual(
+            DatePrecision.MONTH,
+            publication.links[0].shared_date_precision,
+        )
+        self.assertFalse(
+            any(
+                evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                for evidence in safe.evidence
+            )
+        )
+
+        print_candidate = replace(
+            candidate,
+            evidence=(
+                ProviderEvidence(
+                    ProviderEvidenceKind.PHYSICAL_FORMAT,
+                    "Hardcover",
+                    ClaimScope.EDITION,
+                    source_ordinal=1,
+                ),
+                date_text,
+            ),
+        )
+        unsafe = finalize_candidate_comparisons(
+            print_candidate, local, "catalogue"
+        )
+        self.assertFalse(
+            any(
+                claim.kind is ClaimKind.PUBLICATION_DATE
+                for claim in unsafe.claims
+            )
+        )
+        retained = next(
+            evidence
+            for evidence in unsafe.evidence
+            if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual(
+            PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+            retained.links[0].publication_date_relation,
+        )
+
+        unsafe_without_local_date = finalize_candidate_comparisons(
+            print_candidate, (local_isbn,), "catalogue"
+        )
+        retained = next(
+            evidence
+            for evidence in unsafe_without_local_date.evidence
+            if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual(
+            PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+            retained.links[0].publication_date_relation,
+        )
+
+        work_first = finalize_candidate_comparisons(
+            replace(
+                candidate,
+                evidence=(
+                    ProviderEvidence(
+                        ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                        "2021",
+                        ClaimScope.WORK,
+                    ),
+                ),
+            ),
+            (local_isbn,),
+            "catalogue",
+        )
+        self.assertEqual(
+            PublicationDateRelation.EVENT_INCOMPATIBLE,
+            work_first.evidence[0].links[0].publication_date_relation,
         )
 
     def test_identifier_evidence_classifies_provider_local_work_relations(self) -> None:

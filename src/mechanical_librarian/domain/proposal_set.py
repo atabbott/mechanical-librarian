@@ -29,7 +29,6 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderCandidate,
     ProviderClaim,
-    ProviderEvidenceKind,
     TargetDestination,
     TargetField,
     TargetFieldState,
@@ -43,7 +42,7 @@ from mechanical_librarian.domain.metadata_report import (
 
 
 PROPOSAL_SCHEMA = "proposal-set-v2"
-POLICY_VERSION = "fixed-conservative-v2"
+POLICY_VERSION = "fixed-conservative-v3"
 MAX_PROPOSAL_BYTES = 2_097_152
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
@@ -919,9 +918,7 @@ def _series_from_claims(
     )
 
 
-def _date_observations(
-    report: MetadataReport, target: TargetField
-) -> tuple[_Observed, ...]:
+def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
     values: list[_Observed] = []
     for claim in report.local_claims:
         if (
@@ -968,35 +965,6 @@ def _date_observations(
                             claim.date_precision,
                         )
                     )
-    if values or target.state is TargetFieldState.VALUE:
-        return tuple(values)
-    for provider in report.providers:
-        for candidate in provider.candidates:
-            for evidence in candidate.evidence:
-                if (
-                    evidence.kind is ProviderEvidenceKind.FIRST_PUBLICATION_DATE
-                    and evidence.scope is ClaimScope.WORK
-                    and evidence.date_event is DateEvent.WORK_FIRST_PUBLICATION
-                    and type(evidence.date_precision) is DatePrecision
-                    and evidence.date_normalized is not None
-                ):
-                    values.append(
-                        _Observed(
-                            ProposalValue(
-                                ProposalValueKind.TEXT,
-                                evidence.date_normalized,
-                            ),
-                            (
-                                _rich_reference(
-                                    provider.provider, candidate, evidence.to_data()
-                                ),
-                            ),
-                            _provider_correlation(provider),
-                            ProposalScope.WORK,
-                            evidence.date_event,
-                            evidence.date_precision,
-                        )
-                    )
     return tuple(values)
 
 
@@ -1005,7 +973,7 @@ def _publication_results(
 ) -> dict[TargetDestination, ProposalResult]:
     date_target = targets[TargetDestination.PUBLISHED_DATE]
     year_target = targets[TargetDestination.PUBLISHED_YEAR]
-    publication_values = _date_observations(report, date_target)
+    publication_values = _date_observations(report)
     dates = tuple(
         _Observed(
             ProposalValue(
@@ -1074,10 +1042,7 @@ def _publication_results(
         )
         if str(selected.value.value) != date_target.value[:4]:
             year_result = _unresolved(year_result, "date_year_conflict")
-    if (
-        date_result.selected_alternative_id is not None
-        and year_target.state is TargetFieldState.VALUE
-    ):
+    if date_result.selected_alternative_id is not None:
         selected = next(
             value
             for value in date_result.alternatives
@@ -1498,20 +1463,6 @@ def _unresolved(result: ProposalResult, reason: str) -> ProposalResult:
         tuple(sorted(set((*result.reasons, reason)))),
         result.dependencies,
     )
-
-
-def _rich_reference(
-    provider: str, candidate: ProviderCandidate, evidence: dict[str, object]
-) -> str:
-    return "evidence_" + hashlib.sha256(
-        canonical_json(
-            {
-                "candidate": candidate.identity,
-                "evidence": evidence,
-                "provider": provider,
-            }
-        ).encode("utf-8")
-    ).hexdigest()
 
 
 def _correlation(value: str) -> str:

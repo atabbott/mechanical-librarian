@@ -16,8 +16,8 @@ material are never stored in the application database. The tuple is fixed to:
 - model `gpt-5.6-sol`, reasoning `medium`;
 - prompt `shadow-review-prompt-v2`;
 - profile `codex-shadow-profile-v1`;
-- packet `shadow-review-packet-v2`;
-- request `shadow-review-request-v3`;
+- packet `shadow-review-packet-v3`;
+- request `shadow-review-request-v4`;
 - output `shadow-review-result-v1`;
 - policy `qualification-only-policy-v1`; and
 - sandbox `bubblewrap-v1`.
@@ -176,7 +176,7 @@ parser, semantic validator, and cleanup as an ordinary request, and therefore
 uses the exact ordinary wrapped command from empty `/job`, including
 `--skip-git-repo-check`. It never sends a holdout and blocks the cohort on
 failure. Each request binds the canonical structured-output schema bytes and
-SHA-256 into `shadow-review-request-v3` and its identity; the executor uses
+SHA-256 into `shadow-review-request-v4` and its identity; the executor uses
 those exact bytes. The complete canonical request envelope is bounded at
 3,227,648 bytes, and the exact-current SQLite column has the same byte capacity;
 there is no truncation. The generated schema is restricted to the pinned

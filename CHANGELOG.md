@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Preserve publication-date precision and incompatibility explicitly under
+  `closed-title-creator-publication-v4`. Date links distinguish exact,
+  month-compatible, year-compatible, finer-conflict, event-incompatible, and
+  manifestation-incompatible observations while separately retaining shared
+  year/month/day precision. Provider dates can vote only through an exact
+  checksum-valid local/provider ISBN-family binding with ebook or unknown
+  applicability and no closed format or work contradiction; Google Books
+  `publishedDate` text is promoted only through that same gate. Work-first and
+  unsafe manifestation evidence remains reviewer-visible but non-voting.
+  `publishedYear` uses shared year support, while full-day `publishedDate`
+  always requires two independent sources. Advance exact-current contracts to
+  `metadata-report-v21`, `fixed-conservative-v3`,
+  `shadow-review-packet-v3`, and `shadow-review-request-v4`; earlier
+  pre-release schemas are rejected without migration under ADR-0013. (#409)
+
 - Preserve high-confidence work-scoped title and complete ordered creator
   agreement when original values differ only by one closed, explainable
   comparison form: exact bytes; NFC/case/whitespace normalization; mapped

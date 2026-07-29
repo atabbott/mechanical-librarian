@@ -41,11 +41,13 @@ from mechanical_librarian.application.failure_diagnostics import (
     reviewer_failure_diagnostic,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     FieldState,
     FileFacts,
+    LocalClaim,
     MetadataReport,
     ProviderCandidate,
     ProviderClaim,
@@ -95,7 +97,7 @@ def _identity() -> ReviewerProfileIdentity:
         "medium",
         "shadow-review-prompt-v2",
         "codex-shadow-profile-v1",
-        "shadow-review-packet-v2",
+        "shadow-review-packet-v3",
         "shadow-review-result-v1",
         "qualification-only-policy-v1",
         120,
@@ -103,6 +105,19 @@ def _identity() -> ReviewerProfileIdentity:
         536_870_912,
         16,
         131_072,
+    )
+
+
+def _local_isbn() -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780061120084",
+        canonical="9780061120084",
+        excerpt="9780061120084",
+        applicability="unknown",
+        checksum="valid_isbn_13",
+        applicability_basis="unlabelled",
+        scope=ClaimScope.EDITION,
     )
 
 
@@ -283,8 +298,8 @@ class ShadowReviewTests(unittest.TestCase):
                 default_target_fields(None),
             ),
             file=FileFacts(0, "a" * 64, "b" * 64),
-            local_claims=(),
-            local_reasons=("no_opening_claims",),
+            local_claims=(_local_isbn(),),
+            local_reasons=("package_metadata_isbn",),
             providers=(
                 ProviderObservation(
                     "catalogue",
@@ -618,8 +633,22 @@ class ShadowReviewTests(unittest.TestCase):
                 default_target_fields(None),
             ),
             file=FileFacts(0, "a" * 64, "b" * 64),
-            local_claims=(),
-            local_reasons=("no_opening_claims",),
+            local_claims=(
+                _local_isbn(),
+                LocalClaim.create(
+                    kind=ClaimKind.PUBLICATION_DATE,
+                    observed="2002",
+                    canonical="2002",
+                    excerpt="2002",
+                    applicability="not_applicable",
+                    checksum="not_applicable",
+                    applicability_basis="not_applicable",
+                    scope=ClaimScope.EDITION,
+                    date_event=DateEvent.MANIFESTATION_PUBLICATION,
+                    date_precision=DatePrecision.YEAR,
+                ),
+            ),
+            local_reasons=("package_metadata_isbn",),
             providers=(
                 ProviderObservation(
                     "catalogue",
@@ -650,6 +679,10 @@ class ShadowReviewTests(unittest.TestCase):
         self.assertEqual(
             [identifier.reference],
             rich["linkage"]["identifier_references"],
+        )
+        self.assertEqual(
+            "event_incompatible",
+            rich["evidence"]["links"][0]["publication_date_relation"],
         )
         self.assertEqual(0, rich["linkage"]["identifier_facts"][0]["raw_order"])
 
@@ -702,8 +735,8 @@ class ShadowReviewTests(unittest.TestCase):
                     default_target_fields(None),
                 ),
                 file=FileFacts(0, "a" * 64, "b" * 64),
-                local_claims=(),
-                local_reasons=("no_opening_claims",),
+                local_claims=(_local_isbn(),),
+                local_reasons=("package_metadata_isbn",),
                 providers=(
                     ProviderObservation(
                         "catalogue",
@@ -724,7 +757,16 @@ class ShadowReviewTests(unittest.TestCase):
             case = ReviewCase.create(proposal, report)
             ShadowReviewPacket.create(case, proposal, report)
 
-        identifiers = tuple(
+        isbn = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.ISBN,
+            value="9780061120084",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="ebook",
+        )
+        identifiers = (isbn, *tuple(
             ProviderClaim.create(
                 provider="catalogue",
                 candidate="edition-1",
@@ -733,10 +775,10 @@ class ShadowReviewTests(unittest.TestCase):
                 state=FieldState.VALID,
                 scope=ClaimScope.EDITION,
                 applicability="ebook",
-                raw_order=order,
+                raw_order=order + 1,
             )
-            for order in range(MAX_LINKAGE_IDENTIFIER_FACTS + 1)
-        )
+            for order in range(MAX_LINKAGE_IDENTIFIER_FACTS)
+        ))
         publication = ProviderClaim.create(
             provider="catalogue",
             candidate="edition-1",
@@ -768,9 +810,9 @@ class ShadowReviewTests(unittest.TestCase):
             scope=ClaimScope.EDITION,
             applicability="not_applicable",
         )
-        packet_for((publication,), formats[:-1])
+        packet_for((isbn, publication), formats[:-1])
         with self.assertRaises(ShadowReviewValueError):
-            packet_for((publication,), formats)
+            packet_for((isbn, publication), formats)
 
         private_candidate = "/private/library/edition-1"
         private_publication = ProviderClaim.create(
@@ -790,8 +832,8 @@ class ShadowReviewTests(unittest.TestCase):
                 default_target_fields(None),
             ),
             file=FileFacts(0, "a" * 64, "b" * 64),
-            local_claims=(),
-            local_reasons=("no_opening_claims",),
+            local_claims=(_local_isbn(),),
+            local_reasons=("package_metadata_isbn",),
             providers=(
                 ProviderObservation(
                     "catalogue",
@@ -801,7 +843,18 @@ class ShadowReviewTests(unittest.TestCase):
                         ProviderCandidate(
                             private_candidate,
                             "work-1",
-                            (private_publication,),
+                            (
+                                ProviderClaim.create(
+                                    provider="catalogue",
+                                    candidate=private_candidate,
+                                    kind=ClaimKind.ISBN,
+                                    value="9780061120084",
+                                    state=FieldState.VALID,
+                                    scope=ClaimScope.EDITION,
+                                    applicability="ebook",
+                                ),
+                                private_publication,
+                            ),
                         ),
                     ),
                 ),
@@ -1589,7 +1642,7 @@ class ShadowReviewTests(unittest.TestCase):
                 "mode": "qualification_only",
                 "model": "gpt-5.6-sol",
                 "output_version": "shadow-review-result-v1",
-                "packet_version": "shadow-review-packet-v2",
+                "packet_version": "shadow-review-packet-v3",
                 "policy_version": "qualification-only-policy-v1",
                 "profile_version": "codex-shadow-profile-v1",
                     "prompt_version": "shadow-review-prompt-v2",
@@ -2042,7 +2095,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
             "medium",
             "shadow-review-prompt-v2",
             "codex-shadow-profile-v1",
-            "shadow-review-packet-v2",
+            "shadow-review-packet-v3",
             "shadow-review-result-v1",
             "qualification-only-policy-v1",
             120,

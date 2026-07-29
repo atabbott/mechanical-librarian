@@ -151,7 +151,7 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v20'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v21'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -165,7 +165,7 @@ def _create_prior_schema(
 ) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v20'", f"= '{version}'"
+            "= 'metadata-report-v21'", f"= '{version}'"
         ),
         metadata_persistence._CURRENT_SQL,
         metadata_persistence._CURRENT_LINEAGE_SQL,
@@ -265,6 +265,13 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ),
             ),
             (
+                "previous v20",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v20",
+                ),
+            ),
+            (
                 "F09k report schema",
                 lambda connection: (
                     connection.execute(
@@ -360,7 +367,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
-            self.assertEqual(schema_version, ("metadata-report-v20",))
+            self.assertEqual(schema_version, ("metadata-report-v21",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)

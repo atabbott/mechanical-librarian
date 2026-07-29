@@ -92,7 +92,7 @@ The suite covers:
   54/27/49 Google Books/Hardcover/Open Library metadata-attempt maxima, one
   shared pacer per paced adapter across foreground entries, and no persisted
   attempt diagnostics;
-- deterministic `metadata-report-v20` serialization and database reopen preserve
+- deterministic `metadata-report-v21` serialization and database reopen preserve
   claim raw order, rich-evidence canonical order, duplicate source occurrences,
   source ordinals, scopes, roles, field states and diagnostics byte-for-byte.
   Application tests merge parser, attempt and incomplete-outcome diagnostics
@@ -132,7 +132,7 @@ CLI against a disposable loopback target, synthetic media, private secrets, and
 an absent database. Unit proposal-policy coverage includes whitespace, case, and
 width variants of the controlled package creator placeholder. The installed
 proposal path uses a whitespace/case variant and requires a nonmutating authors
-result under `fixed-conservative-v2`. Persistence tests reject both a
+result under `fixed-conservative-v3`. Persistence tests reject both a
 `fixed-conservative-v1` document and the prior proposal-store table shape
 without mutation, then prove exact deterministic replay under the current
 policy. Every synthetic EPUB member has a fixed timestamp so the probe identity
@@ -160,7 +160,7 @@ cover nested single-emission, multiple exact sibling labels, mixed complete and
 split labels in one ancestor, repeated equal complete/split siblings, multiple
 assembled labels, scanning/production/workflow label values, promotion cues
 inside labels, the exact 16-fact rear cap, front/rear NFC and whitespace
-normalization, `metadata-report-v20`
+normalization, `metadata-report-v21`
 canonical replay, clean database creation, and byte-unchanged rejection of v13
 state. Only aggregate expected, found, and false-positive counts are asserted
 or exported; fixture rows and source text remain private.
