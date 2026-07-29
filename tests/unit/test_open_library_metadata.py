@@ -427,6 +427,10 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                         "key": "/works/OL5W",
                         "author_name": ["Ada Example"],
                         "author_key": ["/authors/OL7A"],
+                        "publisher": ["Search Press"],
+                        "publish_date": ["not a typed publication date"],
+                        "language": ["eng"],
+                        "edition_key": ["OL1M"],
                         "editions": {"docs": [{"key": "/books/OL1M"}]},
                     }
                 ]
@@ -455,7 +459,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         self.assertEqual("Local work title", requests[0].url.params["title"])
         self.assertEqual("Ada Example", requests[0].url.params["author"])
         self.assertEqual(
-            "key,author_name,author_key,editions,editions.key",
+            "key,author_name,author_key,publisher,publish_date,language,edition_key,editions,editions.key",
             requests[0].url.params["fields"],
         )
         qualified = qualify_provider_observation(observation, lookup)
@@ -488,6 +492,26 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         self.assertIn(
             ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
             {value.kind for value in candidate.evidence},
+        )
+        search_evidence = {
+            (value.kind, value.value, value.scope)
+            for value in observation.candidates[0].evidence
+            if value.kind
+            in {
+                ProviderEvidenceKind.SEARCH_PUBLISHER,
+                ProviderEvidenceKind.SEARCH_PUBLICATION_DATE,
+                ProviderEvidenceKind.SEARCH_LANGUAGE,
+                ProviderEvidenceKind.SEARCH_EDITION,
+            }
+        }
+        self.assertEqual(
+            {
+                (ProviderEvidenceKind.SEARCH_PUBLISHER, "Search Press", ClaimScope.WORK),
+                (ProviderEvidenceKind.SEARCH_PUBLICATION_DATE, "not a typed publication date", ClaimScope.WORK),
+                (ProviderEvidenceKind.SEARCH_LANGUAGE, "eng", ClaimScope.WORK),
+                (ProviderEvidenceKind.SEARCH_EDITION, "OL1M", ClaimScope.WORK),
+            },
+            search_evidence,
         )
 
     def test_exact_search_details_rich_evidence_and_covers_are_bounded(self) -> None:

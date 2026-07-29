@@ -87,6 +87,8 @@ _WORK_KEY = re.compile(r"^/works/OL[1-9][0-9]*W$")
 _AUTHOR_KEY = re.compile(r"^/authors/OL[1-9][0-9]*A$")
 _LANGUAGE_KEY = re.compile(r"^/languages/([a-z]{2,3})$")
 _MAX_SEARCH_ROWS = 3
+_ISBN_SEARCH_PROJECTION = "key,editions,editions.key,editions.isbn"
+_WORK_SEARCH_PROJECTION = "key,author_name,author_key,publisher,publish_date,language,edition_key,editions,editions.key"
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,7 +254,7 @@ class OpenLibraryMetadataProvider:
         self._called = True
         if type(plan) is MetadataLookup:
             ledger = _DiscoveryRequestLedger("open_library", "search-v1")
-            projection = ("key,editions,editions.key,editions.isbn" if plan.kind is ProviderQueryKind.ISBN else "key,author_name,author_key,editions,editions.key")
+            projection = (_ISBN_SEARCH_PROJECTION if plan.kind is ProviderQueryKind.ISBN else _WORK_SEARCH_PROJECTION)
             ledger.register(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=projection)
             self._ledger = ledger
             try:
@@ -270,7 +272,7 @@ class OpenLibraryMetadataProvider:
         results: list[ProviderLaneResult] = []
         ledger = _DiscoveryRequestLedger("open_library", "search-v1")
         for lane in plan.lanes:
-            ledger.register(kind=lane.kind.value, matched_family=lane.matched_family, title=lane.title, authors=lane.authors, projection=("key,editions,editions.key,editions.isbn" if lane.kind is ProviderQueryKind.ISBN else "key,author_name,author_key,editions,editions.key"))
+            ledger.register(kind=lane.kind.value, matched_family=lane.matched_family, title=lane.title, authors=lane.authors, projection=(_ISBN_SEARCH_PROJECTION if lane.kind is ProviderQueryKind.ISBN else _WORK_SEARCH_PROJECTION))
         self._ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         try:
@@ -289,9 +291,9 @@ class OpenLibraryMetadataProvider:
                     title=lookup.title,
                     authors=lookup.authors,
                     projection=(
-                        "key,editions,editions.key,editions.isbn"
+                        _ISBN_SEARCH_PROJECTION
                         if lookup.kind is ProviderQueryKind.ISBN
-                        else "key,author_name,author_key,editions,editions.key"
+                        else _WORK_SEARCH_PROJECTION
                     ),
                     execute=lambda: self._observe_lookup(lookup, deadline=deadline),
                 )
@@ -412,7 +414,7 @@ class OpenLibraryMetadataProvider:
                         OPEN_LIBRARY_SEARCH_URL,
                         params={
                             "q": f"isbn:{family}",
-                            "fields": "key,editions,editions.key,editions.isbn",
+                            "fields": _ISBN_SEARCH_PROJECTION,
                             "limit": str(_MAX_SEARCH_ROWS),
                         },
                         deadline=deadline,
@@ -429,7 +431,7 @@ class OpenLibraryMetadataProvider:
                         params={
                             "title": lookup.title or "",
                             "author": " ".join(lookup.authors),
-                            "fields": "key,author_name,author_key,editions,editions.key",
+                            "fields": _WORK_SEARCH_PROJECTION,
                             "limit": str(_MAX_SEARCH_ROWS),
                         },
                         deadline=deadline,
@@ -493,10 +495,11 @@ class OpenLibraryMetadataProvider:
                         local_claims,
                         family,
                         work_authors,
+                        _search_work_document(search, work_key),
                     )
                     self._reject_schema_members(
                         _optional_projection_rejections(
-                            edition, work_documents[work_key]
+                            edition, work_documents[work_key], _search_work_document(search, work_key)
                         )
                     )
                     candidates.append(candidate)
@@ -895,6 +898,7 @@ def _candidate(
     local_claims: tuple[LocalClaim, ...],
     requested_family: str | None,
     work_authors: tuple[tuple[str, str | None], ...] = (),
+    search_work: dict[str, Any] | None = None,
 ) -> tuple[ProviderCandidate, _CoverId, _CoverId]:
     if _key(edition.get("key"), _EDITION_KEY) != edition_key:
         raise ValueError("edition identity is malformed")
@@ -960,21 +964,33 @@ def _candidate(
     add(ClaimKind.ASIN, None, ClaimScope.EDITION, state=FieldState.UNSUPPORTED)
     add(ClaimKind.TITLE, edition.get("title"), ClaimScope.EDITION)
     add(ClaimKind.SUBTITLE, edition.get("subtitle"), ClaimScope.EDITION)
-    add(
-        ClaimKind.PUBLICATION_DATE,
-        edition.get("publish_date"),
-        ClaimScope.EDITION,
-    )
+    publication_date_text: str | None = None
+    publication_date = edition.get("publish_date")
+    if publication_date is None:
+        add(ClaimKind.PUBLICATION_DATE, None, ClaimScope.EDITION)
+    else:
+        state, text = _field(ClaimKind.PUBLICATION_DATE, publication_date)
+        if state is FieldState.VALID:
+            add(ClaimKind.PUBLICATION_DATE, publication_date, ClaimScope.EDITION)
+        elif text is None:
+            try:
+                publication_date_text = _text(publication_date)
+            except (ValueError, EvidenceValueError):
+                pass
+    for value in _optional_string_list(edition.get("alternate_titles", []), _MAX_VALUES):
+        add(ClaimKind.TITLE, value, ClaimScope.EDITION)
+    for value in _optional_string_list(edition.get("alternative_titles", []), _MAX_VALUES):
+        add(ClaimKind.TITLE, value, ClaimScope.EDITION)
     for publisher in _optional_string_list(edition.get("publishers", []), _MAX_VALUES):
         add(ClaimKind.PUBLISHER, publisher, ClaimScope.EDITION)
     if not edition.get("publishers"):
         add(ClaimKind.PUBLISHER, None, ClaimScope.EDITION)
-    add(
-        ClaimKind.IMPRINT,
-        None,
-        ClaimScope.EDITION,
-        state=FieldState.UNSUPPORTED,
-    )
+    for imprint in _optional_string_list(edition.get("imprints", []), _MAX_VALUES):
+        add(ClaimKind.IMPRINT, imprint, ClaimScope.EDITION)
+    if isinstance(edition.get("imprint"), str):
+        add(ClaimKind.IMPRINT, edition["imprint"], ClaimScope.EDITION)
+    if not edition.get("imprints"):
+        add(ClaimKind.IMPRINT, None, ClaimScope.EDITION, state=FieldState.UNSUPPORTED)
     for language in _optional_object_list(edition.get("languages", []), _MAX_VALUES):
         try:
             match = _LANGUAGE_KEY.fullmatch(_key(language.get("key"), _LANGUAGE_KEY))
@@ -996,8 +1012,13 @@ def _candidate(
         ClaimScope.EDITION,
         state=FieldState.UNSUPPORTED,
     )
+    for contribution in _optional_string_list(edition.get("contributions", []), _MAX_VALUES):
+        add(ClaimKind.CONTRIBUTOR, contribution, ClaimScope.EDITION)
 
     add(ClaimKind.TITLE, work.get("title"), ClaimScope.WORK)
+    add(ClaimKind.SUBTITLE, work.get("subtitle"), ClaimScope.WORK)
+    for value in _optional_string_list(work.get("alternate_titles", []), _MAX_VALUES):
+        add(ClaimKind.TITLE, value, ClaimScope.WORK)
     add(ClaimKind.DESCRIPTION, _description(work.get("description")), ClaimScope.WORK)
     if work_authors:
         for author, _ in work_authors:
@@ -1027,6 +1048,10 @@ def _candidate(
         ClaimKind.GENRE,
     ):
         add(kind, None, ClaimScope.WORK, state=FieldState.UNSUPPORTED)
+    for value in _optional_string_list(work.get("series", []), _MAX_VALUES):
+        add(ClaimKind.SERIES, value, ClaimScope.WORK)
+    for value in _optional_string_list(work.get("series_number", []), _MAX_VALUES):
+        add(ClaimKind.SERIES_SEQUENCE, value, ClaimScope.WORK)
 
     evidence: list[ProviderEvidence] = [
         ProviderEvidence(
@@ -1035,8 +1060,23 @@ def _candidate(
             ClaimScope.EDITION,
         )
     ]
+    if publication_date_text is not None:
+        evidence.append(ProviderEvidence(ProviderEvidenceKind.PUBLICATION_DATE_TEXT, publication_date_text, ClaimScope.EDITION))
     _provenance(evidence, edition, ClaimScope.EDITION)
     _provenance(evidence, work, ClaimScope.WORK)
+    for value in _optional_string_list(edition.get("by_statement", []), _MAX_VALUES):
+        evidence.append(ProviderEvidence(ProviderEvidenceKind.RESPONSIBILITY_STATEMENT, value, ClaimScope.EDITION))
+    if isinstance(edition.get("by_statement"), str):
+        evidence.append(ProviderEvidence(ProviderEvidenceKind.RESPONSIBILITY_STATEMENT, _text(edition["by_statement"]), ClaimScope.EDITION))
+    for value in _optional_string_list(edition.get("distributors", []), _MAX_VALUES):
+        evidence.append(ProviderEvidence(ProviderEvidenceKind.DISTRIBUTOR, value, ClaimScope.EDITION))
+    for field, kind in (("edition_name", ProviderEvidenceKind.EDITION_STATEMENT), ("edition_statement", ProviderEvidenceKind.EDITION_STATEMENT), ("translation_of", ProviderEvidenceKind.TRANSLATION_STATEMENT)):
+        if isinstance(edition.get(field), str):
+            try:
+                evidence.append(ProviderEvidence(kind, _text(edition[field]), ClaimScope.EDITION))
+            except (ValueError, EvidenceValueError):
+                pass
+    _search_work_evidence(evidence, search_work)
     for author in _optional_object_list(edition.get("authors", []), _MAX_VALUES):
         try:
             evidence.append(
@@ -1075,6 +1115,12 @@ def _candidate(
         _optional_string_evidence(evidence, work, field, kind, ClaimScope.WORK)
     _optional_identifier_evidence(evidence, edition, ClaimScope.EDITION)
     _optional_identifier_evidence(evidence, work, ClaimScope.WORK)
+    for field, kind, scope in (("description", ProviderEvidenceKind.EDITION_DESCRIPTION, ClaimScope.EDITION),):
+        if field in edition and edition[field] is not None:
+            try:
+                evidence.append(ProviderEvidence(kind, _description(edition[field]), scope))
+            except (ValueError, EvidenceValueError):
+                pass
     for field, kind in (
         ("physical_format", ProviderEvidenceKind.PHYSICAL_FORMAT),
         ("pagination", ProviderEvidenceKind.PAGINATION),
@@ -1674,6 +1720,10 @@ def _optional_projection_rejections(*documents: dict[str, Any]) -> int:
     known = {
         "key", "works", "isbn_10", "isbn_13", "title", "subtitle",
         "publish_date", "publishers", "languages", "authors", "description",
+        "alternate_titles", "alternative_titles", "imprints", "imprint", "distributors",
+        "by_statement", "edition_name", "edition_statement", "translation_of",
+        "contributions", "series", "series_number",
+        "publisher", "language", "edition_key",
         "revision", "latest_revision", "last_modified", "oclc_numbers", "lccn",
         "dewey_decimal_class", "lc_classifications", "publish_places", "subjects",
         "subject_people", "subject_places", "subject_times", "identifiers",
@@ -1684,6 +1734,9 @@ def _optional_projection_rejections(*documents: dict[str, Any]) -> int:
         "publishers", "languages", "authors", "oclc_numbers", "lccn",
         "dewey_decimal_class", "lc_classifications", "publish_places", "subjects",
         "subject_people", "subject_places", "subject_times", "covers",
+        "alternate_titles", "alternative_titles", "imprints", "distributors",
+        "contributions", "series", "series_number",
+        "publisher", "publish_date", "language", "edition_key",
     }
     count = 0
     for document in documents:
@@ -1700,6 +1753,38 @@ def _optional_projection_rejections(*documents: dict[str, Any]) -> int:
         if identifiers is not None and type(identifiers) is not dict:
             count += 1
     return min(count, MAX_DIAGNOSTIC_COUNT)
+
+
+def _search_work_document(source: dict[str, Any], work_key: str) -> dict[str, Any] | None:
+    """Find the exact search document without making optional fields identity-bearing."""
+    docs = source.get("docs")
+    if type(docs) is not list or len(docs) > _MAX_SEARCH_ROWS:
+        return None
+    for raw in docs:
+        if type(raw) is not dict:
+            continue
+        try:
+            if _key(raw.get("key"), _WORK_KEY) == work_key:
+                return raw
+        except ValueError:
+            continue
+    return None
+
+
+def _search_work_evidence(
+    evidence: list[ProviderEvidence], source: dict[str, Any] | None
+) -> None:
+    """Search projection is work-scoped context, never a manifestation claim."""
+    if source is None:
+        return
+    for field, kind in (
+        ("publisher", ProviderEvidenceKind.SEARCH_PUBLISHER),
+        ("publish_date", ProviderEvidenceKind.SEARCH_PUBLICATION_DATE),
+        ("language", ProviderEvidenceKind.SEARCH_LANGUAGE),
+        ("edition_key", ProviderEvidenceKind.SEARCH_EDITION),
+    ):
+        for value in _optional_string_list(source.get(field, []), _MAX_VALUES):
+            evidence.append(ProviderEvidence(kind, value, ClaimScope.WORK))
 
 
 def _search_authors(

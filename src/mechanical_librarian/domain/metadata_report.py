@@ -139,6 +139,15 @@ class ProviderEvidenceKind(StrEnum):
     FIRST_PUBLICATION_DATE = "first_publication_date"
     EDITION_COVER_ID = "edition_cover_id"
     WORK_COVER_ID = "work_cover_id"
+    RESPONSIBILITY_STATEMENT = "responsibility_statement"
+    DISTRIBUTOR = "distributor"
+    EDITION_STATEMENT = "edition_statement"
+    TRANSLATION_STATEMENT = "translation_statement"
+    EDITION_DESCRIPTION = "edition_description"
+    SEARCH_PUBLISHER = "search_publisher"
+    SEARCH_PUBLICATION_DATE = "search_publication_date"
+    SEARCH_LANGUAGE = "search_language"
+    SEARCH_EDITION = "search_edition"
 
 
 class DateLinkConfidence(StrEnum):
@@ -1195,12 +1204,21 @@ class ProviderCandidate:
             ProviderEvidenceKind.PHYSICAL_FORMAT,
             ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
             ProviderEvidenceKind.COPYRIGHT_DATE,
+            ProviderEvidenceKind.RESPONSIBILITY_STATEMENT,
+            ProviderEvidenceKind.DISTRIBUTOR,
+            ProviderEvidenceKind.EDITION_STATEMENT,
+            ProviderEvidenceKind.TRANSLATION_STATEMENT,
+            ProviderEvidenceKind.EDITION_DESCRIPTION,
         }
         work_only = {
             ProviderEvidenceKind.WORK_COVER_ID,
             ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
             ProviderEvidenceKind.AUTHOR_IDENTITY,
             ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+            ProviderEvidenceKind.SEARCH_PUBLISHER,
+            ProviderEvidenceKind.SEARCH_PUBLICATION_DATE,
+            ProviderEvidenceKind.SEARCH_LANGUAGE,
+            ProviderEvidenceKind.SEARCH_EDITION,
         }
         if any(
             (value.kind in edition_only and value.scope is not ClaimScope.EDITION)
