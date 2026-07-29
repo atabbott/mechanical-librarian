@@ -480,6 +480,173 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                             reopened.close()
                     self.assertEqual(report, persisted)
 
+    def test_revision_aliases_are_independent_and_replay_one_preferred_value(
+        self,
+    ) -> None:
+        missing = object()
+        cases = (
+            (
+                "edition malformed revision with valid latest",
+                "edition",
+                {},
+                31,
+                "31",
+                1,
+                True,
+            ),
+            (
+                "work malformed revision with valid latest",
+                "work",
+                "bad",
+                41,
+                "41",
+                1,
+                False,
+            ),
+            (
+                "edition valid revision with malformed latest",
+                "edition",
+                3,
+                {},
+                "3",
+                1,
+                False,
+            ),
+            (
+                "work latest only",
+                "work",
+                missing,
+                44,
+                "44",
+                0,
+                False,
+            ),
+            (
+                "edition revision only",
+                "edition",
+                3,
+                missing,
+                "3",
+                0,
+                False,
+            ),
+            (
+                "work both valid prefers revision",
+                "work",
+                4,
+                45,
+                "4",
+                0,
+                False,
+            ),
+            (
+                "edition both malformed",
+                "edition",
+                {},
+                "bad",
+                None,
+                2,
+                False,
+            ),
+        )
+        for (
+            name,
+            document,
+            revision,
+            latest_revision,
+            expected,
+            diagnostic_count,
+            persist,
+        ) in cases:
+            with self.subTest(name=name):
+                edition = _edition("/books/OL1M")
+                work = _work()
+                target = edition if document == "edition" else work
+                if revision is missing:
+                    target.pop("revision", None)
+                else:
+                    target["revision"] = revision
+                if latest_revision is missing:
+                    target.pop("latest_revision", None)
+                else:
+                    target["latest_revision"] = latest_revision
+                values = {
+                    "/search.json": _search("/books/OL1M"),
+                    "/books/OL1M.json": edition,
+                    "/works/OL5W.json": work,
+                }
+                observation = OpenLibraryMetadataProvider(
+                    "open_library",
+                    httpx.Client(
+                        transport=httpx.MockTransport(
+                            lambda request: httpx.Response(
+                                200,
+                                headers={"content-type": "application/json"},
+                                json=values[request.url.path],
+                            )
+                        )
+                    ),
+                    65_536,
+                    pacer=OpenLibraryPacer(sleep=lambda _: None),
+                ).observe(_isbn_lookup((_isbn(),)))
+
+                self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+                self.assertEqual(
+                    (() if diagnostic_count == 0 else (diagnostic_count,)),
+                    tuple(value.count for value in observation.diagnostics),
+                )
+                scope = (
+                    ClaimScope.EDITION
+                    if document == "edition"
+                    else ClaimScope.WORK
+                )
+                revisions = [
+                    value
+                    for value in observation.candidates[0].evidence
+                    if value.kind is ProviderEvidenceKind.REVISION
+                    and value.scope is scope
+                ]
+                self.assertEqual(
+                    [] if expected is None else [expected],
+                    [value.value for value in revisions],
+                )
+                if revisions:
+                    self.assertEqual(
+                        1 if scope is ClaimScope.EDITION else 3,
+                        revisions[0].source_ordinal,
+                    )
+                report = MetadataReport.create(
+                    target=TargetFacts(
+                        "primary",
+                        "ebooks",
+                        f"item-revision-{document}",
+                        default_target_fields("Current title"),
+                    ),
+                    file=FileFacts(0, "a" * 64, "b" * 64),
+                    local_claims=(_isbn(),),
+                    local_reasons=("not_applicable",),
+                    providers=(observation,),
+                )
+                replayed = MetadataReport.from_json(report.to_json())
+                self.assertEqual(report, replayed)
+
+                if persist:
+                    with tempfile.TemporaryDirectory() as directory:
+                        path = Path(directory) / "reports.sqlite"
+                        repository = open_repository(path)
+                        try:
+                            repository.publish(report, lambda: True)
+                        finally:
+                            repository.close()
+                        reopened = open_repository(path, create=False)
+                        try:
+                            persisted = MetadataReport.from_json(
+                                reopened.get(report.report_id)
+                            )
+                        finally:
+                            reopened.close()
+                    self.assertEqual(report, persisted)
+
     def test_nested_work_author_evidence_persists_with_exact_source_semantics(self) -> None:
         search = _search("/books/OL1M")
         search["docs"][0].update(  # type: ignore[index]

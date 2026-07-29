@@ -1428,10 +1428,7 @@ def _provenance(
     source: dict[str, Any],
     scope: ClaimScope,
 ) -> None:
-    try:
-        revision = _revision_value(source)
-    except ValueError:
-        revision = None
+    revision, _ = _revision_projection(source)
     if revision is not None:
         evidence.append(
             ProviderEvidence(
@@ -1452,17 +1449,23 @@ def _provenance(
         )
 
 
-def _revision_value(source: dict[str, Any]) -> str | None:
-    revision = source.get("revision", source.get("latest_revision"))
-    if revision is None:
-        return None
-    if (
-        type(revision) is not int
-        or isinstance(revision, bool)
-        or not 1 <= revision <= 2_147_483_647
-    ):
-        raise ValueError("provider revision is malformed")
-    return str(revision)
+def _revision_projection(source: dict[str, Any]) -> tuple[str | None, int]:
+    """Validate both recognized aliases while retaining one revision value."""
+    valid: list[str] = []
+    rejected = 0
+    for field in ("revision", "latest_revision"):
+        revision = source.get(field)
+        if revision is None:
+            continue
+        if (
+            type(revision) is not int
+            or isinstance(revision, bool)
+            or not 1 <= revision <= 2_147_483_647
+        ):
+            rejected += 1
+            continue
+        valid.append(str(revision))
+    return (valid[0] if valid else None), rejected
 
 
 def _last_modified_value(source: dict[str, Any]) -> str | None:
@@ -1894,11 +1897,12 @@ def _parser_optional_rejections(
                     count += 1
                 else:
                     count += sum(1 for value in values if type(value) is not str)
-    for parser in (_revision_value, _last_modified_value):
-        try:
-            parser(document)
-        except (ValueError, EvidenceValueError):
-            count += 1
+    _, revision_rejections = _revision_projection(document)
+    count += revision_rejections
+    try:
+        _last_modified_value(document)
+    except (ValueError, EvidenceValueError):
+        count += 1
     return min(count, MAX_DIAGNOSTIC_COUNT)
 
 
