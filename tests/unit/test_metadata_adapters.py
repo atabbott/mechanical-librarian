@@ -2262,8 +2262,16 @@ class ProviderAdapterTests(unittest.TestCase):
             contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": "A"}} for index in range(17)]
             contributions[bad] = {"id": bad, "contribution": "Author"}
             payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions}], [{"id": 1, "title": None}])
-            with self.assertRaises(ValueError):
-                hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())
+            claims = hardcover_metadata._parse_candidates(
+                json.dumps(payload).encode(), "catalogue", ()
+            )[0].claims
+            self.assertTrue(
+                any(
+                    claim.kind in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}
+                    and claim.state is FieldState.OVERSIZED
+                    for claim in claims
+                )
+            )
 
     def test_nullable_contribution_roles_preserve_candidate_with_typed_malformed_claims(self) -> None:
         contribution = {
@@ -2391,12 +2399,7 @@ class ProviderAdapterTests(unittest.TestCase):
                 payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", **edition}], [{"id": 1, "title": None, **work}])
                 provider = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request, value=payload: httpx.Response(200, headers={"content-type": "application/json"}, json=value))), 65_536)
                 observation = provider.observe(_isbn_lookup((self._claim(),)))
-                expected = (
-                    ProviderStatus.CANDIDATES
-                    if "taggings" in work
-                    else ProviderStatus.MALFORMED
-                )
-                self.assertEqual(observation.status, expected)
+                self.assertEqual(observation.status, ProviderStatus.CANDIDATES)
 
     def test_series_positions_and_code3_are_retained_at_projection_bounds(self) -> None:
         for position, expected in (("10", "10"), ("20.0", "20"), ("100", "100"), (10, "10")):
@@ -2412,6 +2415,41 @@ class ProviderAdapterTests(unittest.TestCase):
             payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], [{"id": 1, "title": None, "book_series": [{"id": 1, "position": position, "series": {"id": 1, "name": "S"}}]}])
             claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())[0].claims
             self.assertEqual(next(claim.state for claim in claims if claim.kind is ClaimKind.SERIES_SEQUENCE), state)
+
+    def test_optional_hardcover_projection_members_are_field_local(self) -> None:
+        row = {
+            "id": 1, "book_id": 1, "isbn_10": None,
+            "isbn_13": "9780306406157", "title": "Edition",
+            "release_date": "2024-02-30",
+            "publisher": {"name": "Independent Press", "parent_id": {}},
+            "language": {"code2": {}, "code3": "eng"},
+            "contributions": [{"id": 1, "contribution": "Author", "author": {"name": "Ada"}}],
+        }
+        book = {
+            "id": 1, "title": "Work", "release_date": "2020",
+            "contributions": [{"id": 1, "contribution": "Translator", "author": {"id": 2, "name": "Bea"}}, "bad"],
+            "book_series": [{"id": 1, "position": "1", "series": {"name": "Series"}}, "bad"],
+            "taggings": [],
+        }
+        candidate = hardcover_metadata._parse_candidates(
+            json.dumps(self._envelope([row], [book])).encode(), "catalogue", ()
+        )[0]
+        claims = candidate.claims
+        self.assertEqual(
+            "Independent Press",
+            next(value.value for value in claims if value.kind is ClaimKind.PUBLISHER),
+        )
+        self.assertEqual(
+            "eng", next(value.value for value in claims if value.kind is ClaimKind.LANGUAGE)
+        )
+        self.assertEqual(
+            FieldState.MALFORMED,
+            next(value.state for value in claims if value.kind is ClaimKind.PUBLICATION_DATE),
+        )
+        self.assertEqual(
+            {ProviderEvidenceKind.FIRST_PUBLICATION_DATE, ProviderEvidenceKind.CONTRIBUTOR_IDENTITY},
+            {value.kind for value in candidate.evidence},
+        )
 
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:
         calls: list[int] = []

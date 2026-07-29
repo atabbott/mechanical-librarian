@@ -799,7 +799,12 @@ def _parse_candidates(
     root = _closed(source, {"data"})
     data = _closed(root["data"], {"editions", "books", "tags"})
     rows, books, tags = data["editions"], data["books"], data["tags"]
-    if type(rows) is not list or type(books) is not list or len(rows) > MAX_CANDIDATES:
+    if (
+        type(rows) is not list
+        or type(books) is not list
+        or len(rows) > MAX_CANDIDATES
+        or len(books) > MAX_CANDIDATES
+    ):
         raise _CandidateLimit if type(rows) is list and len(rows) > MAX_CANDIDATES else ValueError("provider rows invalid")
     work_keys = {
         "id",
@@ -833,7 +838,10 @@ def _parse_candidates(
             indexed_tags[tag_id] = tag
     indexed: dict[int, dict[str, Any]] = {}
     for raw_book in books:
-        book = _closed(raw_book, work_keys)
+        # Only the work identity is part of the anchor.  Every other work
+        # member is independently projected below.
+        book = _closed_subset(raw_book, {"id"}, work_keys)
+        book = {key: book.get(key) for key in work_keys}
         raw_taggings = book["taggings"]
         taggings: list[dict[str, Any]] = []
         book_taxonomy_issue = taxonomy_issue
@@ -870,7 +878,15 @@ def _parse_candidates(
     for row_value in rows:
         if type(row_value) is dict and "image" not in row_value:
             row_value = {**row_value, "image": None}
-        row = _closed(row_value, {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"})
+        row = _closed_subset(
+            row_value,
+            {"id", "book_id"},
+            {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"},
+        )
+        row = {
+            key: row.get(key)
+            for key in {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"}
+        }
         edition_id, book_id = _identifier(row["id"]), _identifier(row["book_id"])
         if book_id not in indexed:
             raise ValueError("provider unreferenced work")
@@ -913,14 +929,15 @@ def _parse_cover_descriptors(
         type(rows) is not list
         or len(rows) > MAX_CANDIDATES
         or type(books) is not list
-        or len(books) > MAX_CANDIDATES + 1
+        or len(books) > MAX_CANDIDATES
     ):
         raise ValueError("provider rows invalid")
     descriptors: list[ProviderCoverDescriptor] = []
     for row_value in rows:
         if type(row_value) is dict and "image" not in row_value:
             row_value = {**row_value, "image": None}
-        row = _closed(row_value, {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"})
+        row = _closed_subset(row_value, {"id", "book_id"}, {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"})
+        row = {key: row.get(key) for key in {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"}}
         url, terminal_state = _cover_url(row["image"])
         edition_id = _identifier(row["id"])
         book_id = _identifier(row["book_id"])
@@ -960,7 +977,8 @@ def _parse_cover_descriptors(
         "taggings",
     }
     for raw_book in books:
-        book = _closed(raw_book, work_keys)
+        book = _closed_subset(raw_book, {"id"}, work_keys)
+        book = {key: book.get(key) for key in work_keys}
         book_id = _identifier(book["id"])
         url, terminal_state = _cover_url(book["image"])
         descriptors.append(
@@ -1002,8 +1020,11 @@ def _cover_url(value: object) -> tuple[str | None, CoverSourceState | None]:
 def _work_cover_context(book: dict[str, Any]) -> tuple[CoverContext, ...]:
     if book["release_date"] is None:
         return ()
-    value = _text(book["release_date"], MAX_SCALAR_CHARACTERS)
-    normalize_date_value(value)
+    try:
+        value = _text(book["release_date"], MAX_SCALAR_CHARACTERS)
+        normalize_date_value(value)
+    except ValueError:
+        return ()
     return (CoverContext(CoverContextField.PUBLICATION_DATE, value),)
 
 
@@ -1011,41 +1032,32 @@ def _edition_cover_context(row: dict[str, Any]) -> tuple[CoverContext, ...]:
     values: set[CoverContext] = set()
     for key in ("isbn_10", "isbn_13"):
         if row[key] is not None:
-            values.add(
-                CoverContext(
-                    CoverContextField.ISBN,
-                    _text(row[key], MAX_SCALAR_CHARACTERS),
-                )
-            )
-    language = _closed_or_none(
-        row["language"], {"id", "code2", "code3", "language"}
-    )
-    if language is not None and (language["code2"] or language["code3"]):
-        values.add(
-            CoverContext(
-                CoverContextField.LANGUAGE,
-                _text(
-                    language["code2"] or language["code3"],
-                    MAX_SCALAR_CHARACTERS,
-                ),
-            )
-        )
-    publisher = _closed_or_none(
-        row["publisher"], {"id", "name", "parent_id"}
-    )
-    if publisher is not None and publisher["name"] is not None:
-        values.add(
-            CoverContext(
-                CoverContextField.PUBLISHER,
-                _text(publisher["name"], MAX_SCALAR_CHARACTERS),
-            )
-        )
+            try:
+                values.add(CoverContext(CoverContextField.ISBN, _text(row[key], MAX_SCALAR_CHARACTERS)))
+            except ValueError:
+                pass
+    language = _optional_mapping(row["language"])
+    if language is not None:
+        for key in ("code2", "code3"):
+            try:
+                value = _text(language.get(key), MAX_SCALAR_CHARACTERS)
+            except ValueError:
+                continue
+            values.add(CoverContext(CoverContextField.LANGUAGE, value))
+            break
+    try:
+        publisher = _text(_optional_member(row["publisher"], "name"), MAX_SCALAR_CHARACTERS)
+    except ValueError:
+        publisher = None
+    if publisher is not None:
+        values.add(CoverContext(CoverContextField.PUBLISHER, publisher))
     if row["release_date"] is not None:
-        value = _text(row["release_date"], MAX_SCALAR_CHARACTERS)
-        normalize_date_value(value)
-        values.add(
-            CoverContext(CoverContextField.PUBLICATION_DATE, value)
-        )
+        try:
+            value = _text(row["release_date"], MAX_SCALAR_CHARACTERS)
+            normalize_date_value(value)
+            values.add(CoverContext(CoverContextField.PUBLICATION_DATE, value))
+        except ValueError:
+            pass
     return tuple(
         sorted(values, key=lambda value: (value.field.value, value.value))
     )
@@ -1071,11 +1083,20 @@ def _edition_claims(
                 else "not_applicable"
             ),
         )
-    publisher = _closed_or_none(row["publisher"], {"id", "name", "parent_id"})
-    add(ClaimKind.PUBLISHER, None if publisher is None else publisher["name"])
+    add(ClaimKind.PUBLISHER, _optional_member(row["publisher"], "name"))
     claims.append(_state_claim(provider, identity, ClaimKind.IMPRINT, FieldState.UNSUPPORTED, ClaimScope.EDITION, local, len(claims)))
-    language = _closed_or_none(row["language"], {"id", "code2", "code3", "language"})
-    add(ClaimKind.LANGUAGE, None if language is None else (language["code2"] or language["code3"]))
+    language = _optional_mapping(row["language"])
+    # Code siblings are optional alternatives: a bad code2 cannot discard a
+    # valid code3 (or the inverse).
+    language_value = None
+    if language is not None:
+        for key in ("code2", "code3"):
+            if language.get(key) is not None:
+                state, candidate = _field(ClaimKind.LANGUAGE, language.get(key))
+                if state is FieldState.VALID:
+                    language_value = candidate
+                    break
+    add(ClaimKind.LANGUAGE, language_value)
     claims.extend(_contributions(provider, identity, row["contributions"], ClaimScope.EDITION, local, len(claims)))
     return claims
 
@@ -1083,14 +1104,12 @@ def _edition_claims(
 def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tuple[LocalClaim, ...], offset: int) -> list[ProviderClaim]:
     claims = [_claim(provider, identity, ClaimKind.TITLE, book["title"], ClaimScope.WORK, "not_applicable", None, local, offset), _claim(provider, identity, ClaimKind.DESCRIPTION, book["description"], ClaimScope.WORK, "not_applicable", None, local, offset + 1)]
     claims.extend(_contributions(provider, identity, book["contributions"], ClaimScope.WORK, local, len(claims) + offset))
-    series, series_overflow = _bounded_list(book["book_series"], MAX_SERIES, {"id", "position", "series"})
-    for item in series:
-        _closed_or_none(item["series"], {"id", "name"})
+    series, series_overflow, series_invalid = _optional_bounded_list(book["book_series"], MAX_SERIES, {"id", "position", "series"})
     if series_overflow:
         claims.extend((_state_claim(provider, identity, ClaimKind.SERIES, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset), _state_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset + 1)))
         series = []
     for item in series:
-        series = _closed_or_none(item["series"], {"id", "name"})
+        series = _optional_closed(item["series"], {"id", "name"})
         claims.append(_claim(provider, identity, ClaimKind.SERIES, None if series is None else series["name"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
         claims.append(_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, item["position"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
     if book.get("_taxonomy_oversized"):
@@ -1107,6 +1126,16 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
             for index, kind in enumerate((ClaimKind.GENRE, ClaimKind.TAG))
         )
         return claims
+    if series_invalid:
+        claims.extend(
+            _state_claim(
+                provider, identity, kind, FieldState.MALFORMED, ClaimScope.WORK,
+                local, len(claims) + offset + index,
+            )
+            for index, kind in enumerate(
+                (ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE)
+            )
+        )
     if book.get("_taxonomy_issue"):
         claims.extend(
             _state_claim(
@@ -1120,12 +1149,12 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
             )
             for index, kind in enumerate((ClaimKind.GENRE, ClaimKind.TAG))
         )
-    taggings, taggings_overflow = _bounded_list(book["taggings"], MAX_TAGS, {"id", "tag"})
+    taggings, taggings_overflow, taggings_invalid = _optional_bounded_list(book["taggings"], MAX_TAGS, {"id", "tag"})
     categorized: list[tuple[ClaimKind, str]] = []
     seen: dict[str, ClaimKind] = {}
     malformed_taxonomy = False
     for item in taggings:
-        tag = _closed_or_none(item["tag"], {"id", "tag", "tag_category"})
+        tag = _optional_closed(item["tag"], {"id", "tag", "tag_category"})
         if tag is None:
             malformed_taxonomy = True
             continue
@@ -1134,7 +1163,7 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
         except ValueError:
             malformed_taxonomy = True
             continue
-        category = _closed_or_none(
+        category = _optional_closed(
             tag["tag_category"], {"id", "category"}
         )
         if category is None:
@@ -1192,7 +1221,7 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
                 len(claims) + offset,
             )
         )
-    if malformed_taxonomy:
+    if malformed_taxonomy or taggings_invalid:
         claims.extend(
             _state_claim(
                 provider,
@@ -1242,7 +1271,7 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
                     ClaimScope.WORK,
                 )
             )
-    contributions, overflow = _bounded_list(
+    contributions, overflow, _invalid = _optional_bounded_list(
         book["contributions"],
         MAX_CONTRIBUTIONS,
         {"id", "contribution", "author"},
@@ -1308,10 +1337,10 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
 
 def _contributions(provider: str, identity: str, value: object, scope: ClaimScope, local: tuple[LocalClaim, ...], offset: int) -> list[ProviderClaim]:
     claims: list[ProviderClaim] = []
-    contributions, overflow = _bounded_list(value, MAX_CONTRIBUTIONS, {"id", "contribution", "author"})
+    contributions, overflow, invalid = _optional_bounded_list(value, MAX_CONTRIBUTIONS, {"id", "contribution", "author"})
     if overflow:
         for item in contributions:
-            _closed_or_none(item["author"], {"id", "name"})
+            _field_local_author(item["author"])
         # The admitted max+1 probe preserves every role family present without
         # retaining an unbounded contribution list.
         kinds: set[ClaimKind] = set()
@@ -1323,7 +1352,7 @@ def _contributions(provider: str, identity: str, value: object, scope: ClaimScop
             try:
                 role = validate_role_projection(role).casefold()
             except EvidenceValueError:
-                raise ValueError("provider contribution role invalid") from None
+                kinds.add(ClaimKind.CONTRIBUTOR)
             kinds.add(ClaimKind.CREATOR if role == "author" else ClaimKind.CONTRIBUTOR)
         return [_state_claim(provider, identity, kind, FieldState.OVERSIZED, scope, local, offset + index) for index, kind in enumerate(sorted(kinds, key=lambda value: value.value))]
     for item in contributions:
@@ -1338,6 +1367,8 @@ def _contributions(provider: str, identity: str, value: object, scope: ClaimScop
             claims.append(_state_claim(provider, identity, kind, FieldState.MALFORMED, scope, local, offset + len(claims)))
             continue
         claims.append(_claim(provider, identity, kind, author["name"], scope, "not_applicable", "author" if kind is ClaimKind.CREATOR else role, local, offset + len(claims)))
+    if invalid:
+        claims.append(_state_claim(provider, identity, ClaimKind.CONTRIBUTOR, FieldState.MALFORMED, scope, local, offset + len(claims)))
     return claims
 
 
@@ -1393,6 +1424,33 @@ def _bounded_list(value: object, maximum: int, keys: set[str]) -> tuple[list[dic
     return values, len(values) > maximum
 
 
+def _optional_bounded_list(
+    value: object, maximum: int, keys: set[str]
+) -> tuple[list[dict[str, Any]], bool, bool]:
+    """Retain valid optional members only after a whole-field cap check."""
+    if type(value) is not list:
+        return [], False, True
+    if len(value) > maximum:
+        # A capped projection retains no member as evidence, but its bounded
+        # max+1 probe is enough to emit the relevant field diagnostic.
+        values: list[dict[str, Any]] = []
+        invalid = False
+        for item in value[: maximum + 1]:
+            try:
+                values.append(_closed(item, keys))
+            except ValueError:
+                invalid = True
+        return values, True, invalid
+    values: list[dict[str, Any]] = []
+    invalid = False
+    for item in value:
+        try:
+            values.append(_closed(item, keys))
+        except ValueError:
+            invalid = True
+    return values, False, invalid
+
+
 def _closed(value: object, keys: set[str]) -> dict[str, Any]:
     if type(value) is not dict or set(value) != keys:
         raise ValueError("provider object invalid")
@@ -1415,6 +1473,23 @@ def _closed_subset(
 
 def _closed_or_none(value: object, keys: set[str]) -> dict[str, Any] | None:
     return None if value is None else _closed(value, keys)
+
+
+def _optional_closed(value: object, keys: set[str]) -> dict[str, Any] | None:
+    try:
+        return _closed_or_none(value, keys)
+    except ValueError:
+        return None
+
+
+def _optional_mapping(value: object) -> dict[str, Any] | None:
+    """An optional parent is not an anchor; validate its children locally."""
+    return value if type(value) is dict else None
+
+
+def _optional_member(value: object, key: str) -> object:
+    mapping = _optional_mapping(value)
+    return None if mapping is None else mapping.get(key)
 
 
 def _identifier(value: object) -> int:
