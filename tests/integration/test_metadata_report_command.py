@@ -1398,7 +1398,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                 reopen_metadata_report(database, report.report_id)
             )
             self.assertEqual(reopened, report)
-            self.assertEqual(report.schema_version, "metadata-report-v15")
+            self.assertEqual(report.schema_version, "metadata-report-v17")
             front_publisher = next(
                 claim
                 for claim in report.local_claims

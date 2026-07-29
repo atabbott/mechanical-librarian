@@ -27,6 +27,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderLaneCandidate,
     ProviderLaneObservation,
     ProviderObservation,
+    ProviderRequestAccounting,
     ProviderQueryKind,
     ProviderStatus,
     TargetDestination,
@@ -356,6 +357,7 @@ def provider_observation(
     results: tuple[ProviderLaneResult, ...],
     *,
     authority: str | None = None,
+    request_accounting: ProviderRequestAccounting = ProviderRequestAccounting(),
 ) -> ProviderObservation:
     access_times = {
         result.accessed_at for result in results if result.accessed_at is not None
@@ -458,6 +460,7 @@ def provider_observation(
             ProviderStatus.AUTHENTICATION,
             ProviderStatus.AUTHORIZATION,
             ProviderStatus.RATE_LIMITED,
+            ProviderStatus.INCOMPLETE,
             ProviderStatus.UNAVAILABLE,
             ProviderStatus.NO_MATCH,
         )
@@ -498,6 +501,7 @@ def provider_observation(
         authority,
         tuple(sorted(lanes, key=lambda value: value.identity)),
         accessed_at=accessed_at,
+        request_accounting=request_accounting,
     )
 
 
@@ -1020,6 +1024,10 @@ class GenerateMetadataReport:
                 attempt_records = getattr(provider, "attempt_records", ())
             except Exception:
                 attempt_records = None
+            try:
+                incomplete_causes = getattr(provider, "incomplete_causes", ())
+            except Exception:
+                incomplete_causes = None
             observation = ProviderObservation(
                 observation.provider,
                 observation.status,
@@ -1033,7 +1041,9 @@ class GenerateMetadataReport:
                 provider_attempt_diagnostics(
                     attempt_records,
                     status=observation.status.value,
+                    incomplete_causes=incomplete_causes,
                 ),
+                observation.request_accounting,
             )
             observations.append(observation)
             candidate_descriptors = getattr(provider, "cover_descriptors", ())

@@ -100,6 +100,13 @@ provider makes one fixed Volumes query per lane, with at most five retries and
 deadline; Hardcover and Open Library also use shared one-second request-start
 pacers.
 
+Within one provider observation, semantically identical provider lookups are
+coalesced before dispatch and later lanes replay the exact immutable result.
+The private request key contains provider authority and pinned revision,
+operation, canonical provider arguments, and response projection; it excludes
+local references and raw query text. Coalescing is not a cache and never adds
+request, retry, byte, pacing, or deadline authority.
+
 Retries are provider-local and fixed. Only HTTP 500, 502, 503, and 504 are
 transient for Hardcover and Open Library; Google Books retries only 503.
 Hardcover 429 retries only when one canonical, bounded `Retry-After` value fits

@@ -8,6 +8,7 @@ import httpcore
 import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
+    _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
     transient_transport_failure,
@@ -22,6 +23,59 @@ def _caused(
 
 
 class ProviderRetrySafetyTests(unittest.TestCase):
+    def test_discovery_ledger_coalesces_only_identical_redacted_semantics(
+        self,
+    ) -> None:
+        ledger = _DiscoveryRequestLedger("provider", "revision")
+        calls: list[str] = []
+
+        def execute() -> object:
+            calls.append("sent")
+            return object()
+
+        first, replay = ledger.resolve(
+            kind="work",
+            matched_family=None,
+            title="private title",
+            authors=("Second", "First"),
+            projection="fixed",
+            execute=execute,
+        )
+        second, replayed = ledger.resolve(
+            kind="work",
+            matched_family=None,
+            title="private title",
+            authors=("First", "Second"),
+            projection="fixed",
+            execute=execute,
+        )
+        third, distinct = ledger.resolve(
+            kind="isbn",
+            matched_family="9780000000000",
+            title="private title",
+            authors=("First", "Second"),
+            projection="fixed",
+            execute=execute,
+        )
+
+        self.assertFalse(replay)
+        self.assertTrue(replayed)
+        self.assertFalse(distinct)
+        self.assertIs(first, second)
+        self.assertIsNot(first, third)
+        self.assertEqual(["sent", "sent"], calls)
+
+    def test_discovery_ledger_reserves_registered_initials_before_retry(self) -> None:
+        ledger = _DiscoveryRequestLedger("provider", "revision")
+        ledger.register(
+            kind="isbn", matched_family="9780000000000", title=None,
+            authors=(), projection="fixed",
+        )
+        ledger.register_detail("/books/OL1M")
+        self.assertFalse(ledger.allows_retry(47, 49))
+        ledger.begin_detail("/books/OL1M")
+        self.assertTrue(ledger.allows_retry(47, 49))
+
     def test_attempt_elapsed_is_finite_and_bounded(self) -> None:
         self.assertEqual(0.0, bounded_attempt_elapsed(2.0, 1.0))
         self.assertEqual(0.0, bounded_attempt_elapsed(0.0, float("inf")))

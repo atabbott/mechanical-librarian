@@ -32,7 +32,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 
 
-REPORT_SCHEMA = "metadata-report-v15"
+REPORT_SCHEMA = "metadata-report-v17"
 COMPARISON_VERSION = "same-kind-v1"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -342,10 +342,45 @@ class ProviderStatus(StrEnum):
     AUTHORIZATION = "authorization"
     RATE_LIMITED = "rate_limited"
     UNAVAILABLE = "unavailable"
+    INCOMPLETE = "incomplete"
     MALFORMED = "malformed"
     OVERSIZED = "oversized"
     CANDIDATE_LIMIT_EXCEEDED = "candidate_limit_exceeded"
     QUERY_LIMIT_EXCEEDED = "query_limit_exceeded"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRequestAccounting:
+    """Closed aggregate-safe accounting for one provider observation."""
+
+    logical_requests: int = 0
+    initial_dispatches: int = 0
+    retry_dispatches: int = 0
+    replays: int = 0
+    undispatched_incomplete: int = 0
+
+    def __post_init__(self) -> None:
+        values = (
+            self.logical_requests, self.initial_dispatches,
+            self.retry_dispatches, self.replays, self.undispatched_incomplete,
+        )
+        if any(type(value) is not int or value < 0 for value in values):
+            raise ReportValueError("provider request accounting is invalid")
+        if self.logical_requests != (
+            self.initial_dispatches + self.replays + self.undispatched_incomplete
+        ):
+            raise ReportValueError("provider logical request accounting is inconsistent")
+        if self.retry_dispatches and not self.initial_dispatches:
+            raise ReportValueError("provider retry request accounting is inconsistent")
+
+    def to_data(self) -> dict[str, int]:
+        return {
+            "initial_dispatches": self.initial_dispatches,
+            "logical_requests": self.logical_requests,
+            "replays": self.replays,
+            "retry_dispatches": self.retry_dispatches,
+            "undispatched_incomplete": self.undispatched_incomplete,
+        }
 
 
 class ProviderQueryKind(StrEnum):
@@ -1310,6 +1345,7 @@ class ProviderObservation:
     convergence: tuple[ProviderConvergence, ...] = ()
     accessed_at: str | None = None
     diagnostics: tuple[FailureDiagnostic, ...] = ()
+    request_accounting: ProviderRequestAccounting = ProviderRequestAccounting()
 
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
@@ -1326,6 +1362,8 @@ class ProviderObservation:
             raise ReportValueError("provider status is invalid")
         if self.accessed_at is not None:
             validate_provider_access_time(self.accessed_at)
+        if type(self.request_accounting) is not ProviderRequestAccounting:
+            raise ReportValueError("provider request accounting is invalid")
         if not diagnostics_are_canonical(self.diagnostics) or any(
             value.component is not FailureComponent.PROVIDER
             or _PROVIDER_DIAGNOSTIC_STAGES.get(value.category) is not value.stage
@@ -1460,6 +1498,7 @@ class ProviderObservation:
             "accessed_at": self.accessed_at,
             "convergence": [value.to_data() for value in self.convergence],
             "diagnostics": [value.to_data() for value in self.diagnostics],
+            "request_accounting": self.request_accounting.to_data(),
             "lanes": [value.to_data() for value in self.lanes],
         }
 
@@ -2202,6 +2241,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
             "lanes",
             "provider",
             "query_kind",
+            "request_accounting",
             "status",
         },
     )
@@ -2223,7 +2263,19 @@ def _provider_from_data(value: object) -> ProviderObservation:
             FailureDiagnostic.from_json(canonical_json(value))
             for value in _list(item["diagnostics"])
         ),
+        _request_accounting(item["request_accounting"]),
     )
+
+
+def _request_accounting(value: object) -> ProviderRequestAccounting:
+    item = _object(value, {
+        "initial_dispatches", "logical_requests", "replays", "retry_dispatches",
+        "undispatched_incomplete",
+    })
+    try:
+        return ProviderRequestAccounting(**item)
+    except (TypeError, ReportValueError):
+        raise ReportValueError("provider request accounting is invalid") from None
 
 
 def _provider_lane_from_data(value: object) -> ProviderLaneObservation:

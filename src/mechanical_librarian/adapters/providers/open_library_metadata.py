@@ -9,7 +9,7 @@ import re
 import time
 from collections.abc import Callable
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any
 
@@ -17,6 +17,9 @@ import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderAttemptRecord,
+    ProviderIncompleteCause,
+    ProviderIncompleteCauseRecord,
+    _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
     transient_transport_failure,
@@ -77,6 +80,43 @@ _WORK_KEY = re.compile(r"^/works/OL[1-9][0-9]*W$")
 _AUTHOR_KEY = re.compile(r"^/authors/OL[1-9][0-9]*A$")
 _LANGUAGE_KEY = re.compile(r"^/languages/([a-z]{2,3})$")
 _MAX_SEARCH_ROWS = 3
+
+
+@dataclass(frozen=True, slots=True)
+class _DetailResult:
+    payload: object | None
+    status: ProviderStatus | None
+
+
+def _freeze_detail(value: object) -> object:
+    if type(value) is dict:
+        return ("mapping", tuple((key, _freeze_detail(item)) for key, item in value.items()))
+    if type(value) is list:
+        return ("sequence", tuple(_freeze_detail(item) for item in value))
+    return value
+
+
+def _thaw_detail(value: object | None) -> dict[str, Any]:
+    thawed = _thaw_detail_value(value)
+    if type(thawed) is not dict:
+        raise ValueError("detail replay is malformed")
+    return thawed
+
+
+def _thaw_detail_value(value: object) -> object:
+    if type(value) is tuple and len(value) == 2 and value[0] == "mapping":
+        items = value[1]
+        if type(items) is not tuple or any(type(item) is not tuple or len(item) != 2 or type(item[0]) is not str for item in items):
+            raise ValueError("detail replay is malformed")
+        return {key: _thaw_detail_value(item) for key, item in items}
+    if type(value) is tuple and len(value) == 2 and value[0] == "sequence":
+        items = value[1]
+        if type(items) is not tuple:
+            raise ValueError("detail replay is malformed")
+        return [_thaw_detail_value(item) for item in items]
+    if type(value) is tuple:
+        raise ValueError("detail replay is malformed")
+    return value
 _MAX_VALUES = 8
 _MAX_AGGREGATE_RESPONSE_BYTES = 2_097_152
 _MAX_ATTEMPTS_PER_REQUEST = 2
@@ -162,8 +202,10 @@ class OpenLibraryMetadataProvider:
         self._attempt_count = 0
         self._retry_count = 0
         self._attempt_records: list[ProviderAttemptRecord] = []
+        self._incomplete_causes: list[ProviderIncompleteCauseRecord] = []
         self._accessed_at: str | None = None
         self._called = False
+        self._ledger = _DiscoveryRequestLedger("open_library", "search-v1")
         self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         self.cover_pacer = self._pacer
         self.cover_kind = CoverSourceKind.OPEN_LIBRARY
@@ -173,6 +215,10 @@ class OpenLibraryMetadataProvider:
     @property
     def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
         return tuple(self._attempt_records)
+
+    @property
+    def incomplete_causes(self) -> tuple[ProviderIncompleteCauseRecord, ...]:
+        return tuple(self._incomplete_causes)
 
     @property
     def accessed_at(self) -> str | None:
@@ -196,8 +242,13 @@ class OpenLibraryMetadataProvider:
             )
         self._called = True
         if type(plan) is MetadataLookup:
+            ledger = _DiscoveryRequestLedger("open_library", "search-v1")
+            projection = ("key,editions,editions.key,editions.isbn" if plan.kind is ProviderQueryKind.ISBN else "key,author_name,editions,editions.key")
+            ledger.register(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=projection)
+            self._ledger = ledger
             try:
-                return self._observe_lookup(plan, deadline=deadline)
+                value, _ = ledger.resolve(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=projection, execute=lambda: self._observe_lookup(plan, deadline=deadline))
+                return replace(value, request_accounting=ledger.accounting())
             finally:
                 self._client.close()
         if type(plan) is not MetadataDiscoveryPlan:
@@ -208,6 +259,10 @@ class OpenLibraryMetadataProvider:
                 self._name, ProviderStatus.QUERY_LIMIT_EXCEEDED
             )
         results: list[ProviderLaneResult] = []
+        ledger = _DiscoveryRequestLedger("open_library", "search-v1")
+        for lane in plan.lanes:
+            ledger.register(kind=lane.kind.value, matched_family=lane.matched_family, title=lane.title, authors=lane.authors, projection=("key,editions,editions.key,editions.isbn" if lane.kind is ProviderQueryKind.ISBN else "key,author_name,editions,editions.key"))
+        self._ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         try:
             for lane in plan.lanes:
@@ -219,9 +274,19 @@ class OpenLibraryMetadataProvider:
                     lane.authors,
                     lane.matched_family,
                 )
-                observation = qualify_provider_observation(
-                    self._observe_lookup(lookup, deadline=deadline), lookup
+                physical, _replayed = ledger.resolve(
+                    kind=lookup.kind.value,
+                    matched_family=lookup.matched_family,
+                    title=lookup.title,
+                    authors=lookup.authors,
+                    projection=(
+                        "key,editions,editions.key,editions.isbn"
+                        if lookup.kind is ProviderQueryKind.ISBN
+                        else "key,author_name,editions,editions.key"
+                    ),
+                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),
                 )
+                observation = qualify_provider_observation(physical, lookup)
                 results.append(
                     ProviderLaneResult(
                         lane,
@@ -252,6 +317,7 @@ class OpenLibraryMetadataProvider:
         return provider_observation(
             self._name,
             _canonical_discovery_results(self._name, tuple(results)),
+            request_accounting=ledger.accounting(),
         )
 
     def _observe_lookup(
@@ -362,6 +428,35 @@ class OpenLibraryMetadataProvider:
                     return result(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
                 if not admitted:
                     return result(ProviderStatus.NO_MATCH)
+                # The complete, bounded detail set is known from the search
+                # response. Reserve it before a detail retry can consume the
+                # observation's remaining dispatch authority.
+                detail_keys = {
+                    identity
+                    for edition_key, work_key, _ in admitted
+                    for identity in (edition_key, work_key)
+                }
+                for identity in sorted(detail_keys):
+                    self._ledger.register_detail(identity)
+
+                def detail(identity: str) -> dict[str, Any]:
+                    def execute() -> _DetailResult:
+                        try:
+                            value = self._request(
+                                OPEN_LIBRARY_ORIGIN + identity + ".json",
+                                deadline=deadline,
+                            )
+                        except _ProviderFailure as error:
+                            return _DetailResult(None, error.status)
+                        return _DetailResult(_freeze_detail(value), None)
+
+                    replay, _ = self._ledger.resolve_detail(
+                        identity, execute=execute
+                    )
+                    if replay.status is not None:
+                        raise _ProviderFailure(replay.status)
+                    return _thaw_detail(replay.payload)
+
                 work_documents: dict[str, dict[str, Any]] = {}
                 candidates: list[ProviderCandidate] = []
                 cover_candidates: list[
@@ -375,15 +470,9 @@ class OpenLibraryMetadataProvider:
                     ]
                 ] = []
                 for edition_key, work_key, work_authors in admitted:
-                    edition = self._request(
-                        OPEN_LIBRARY_ORIGIN + edition_key + ".json",
-                        deadline=deadline,
-                    )
+                    edition = detail(edition_key)
                     if work_key not in work_documents:
-                        work_documents[work_key] = self._request(
-                            OPEN_LIBRARY_ORIGIN + work_key + ".json",
-                            deadline=deadline,
-                        )
+                        work_documents[work_key] = detail(work_key)
                     candidate, edition_cover, work_cover = _candidate(
                         self._name,
                         edition_key,
@@ -413,6 +502,7 @@ class OpenLibraryMetadataProvider:
                     self.cover_user_agent,
                 )
         except _ProviderFailure as error:
+            self._ledger.finalize_pending_details()
             return result(error.status)
         except (
             EvidenceValueError,
@@ -423,6 +513,7 @@ class OpenLibraryMetadataProvider:
             RecursionError,
             json.JSONDecodeError,
         ):
+            self._ledger.finalize_pending_details()
             return result(ProviderStatus.MALFORMED)
         return result(
             ProviderStatus.CANDIDATES,
@@ -464,6 +555,7 @@ class OpenLibraryMetadataProvider:
                     and self._retry_count < _MAX_RETRIES_PER_OBSERVATION
                     and self._attempt_count
                     < _MAX_ATTEMPTS_PER_OBSERVATION
+                    and self._ledger.allows_retry(self._attempt_count, _MAX_ATTEMPTS_PER_OBSERVATION)
                 )
                 delay = (
                     (
@@ -534,23 +626,24 @@ class OpenLibraryMetadataProvider:
         is_retry: bool,
     ) -> dict[str, Any]:
         if self._remaining_response_bytes <= 0:
-            raise _ProviderFailure(ProviderStatus.OVERSIZED)
+            raise self._incomplete(ProviderIncompleteCause.AGGREGATE_BYTES)
         if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise self._incomplete(ProviderIncompleteCause.DISPATCH_COUNT)
         if is_retry and self._retry_count >= _MAX_RETRIES_PER_OBSERVATION:
             raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
         if not self._pacer.wait(deadline):
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise self._incomplete(ProviderIncompleteCause.DEADLINE)
         remaining = self._timeout_seconds
         if deadline is not None:
             remaining = min(remaining, deadline - self._clock())
         if remaining <= 0:
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise self._incomplete(ProviderIncompleteCause.DEADLINE)
         try:
             if deadline is not None and self._clock() >= deadline:
-                raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+                raise self._incomplete(ProviderIncompleteCause.DEADLINE)
             if self._accessed_at is None:
                 self._accessed_at = provider_access_time(self._wall_clock())
+            self._ledger.dispatch(retry=is_retry)
             self._attempt_count += 1
             if is_retry:
                 self._retry_count += 1
@@ -656,6 +749,12 @@ class OpenLibraryMetadataProvider:
         if self._remaining_response_bytes < 0:
             self._remaining_response_bytes = 0
             raise _ProviderFailure(ProviderStatus.OVERSIZED)
+
+    def _incomplete(
+        self, cause: ProviderIncompleteCause
+    ) -> _ProviderFailure:
+        self._incomplete_causes.append(ProviderIncompleteCauseRecord(cause))
+        return _ProviderFailure(ProviderStatus.INCOMPLETE)
 
     def _retry_delay(self) -> float:
         jitter = self._jitter()

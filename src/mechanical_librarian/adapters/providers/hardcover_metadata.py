@@ -7,6 +7,7 @@ import json
 import random
 import time
 import unicodedata
+from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
@@ -14,6 +15,9 @@ import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderAttemptRecord,
+    ProviderIncompleteCause,
+    ProviderIncompleteCauseRecord,
+    _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
     transient_transport_failure,
@@ -140,13 +144,19 @@ class HardcoverMetadataProvider:
         self._jitter = jitter
         self._attempt_count = 0
         self._attempt_records: list[ProviderAttemptRecord] = []
+        self._incomplete_causes: list[ProviderIncompleteCauseRecord] = []
         self._accessed_at: str | None = None
         self._called = False
+        self._ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
         self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
 
     @property
     def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
         return tuple(self._attempt_records)
+
+    @property
+    def incomplete_causes(self) -> tuple[ProviderIncompleteCauseRecord, ...]:
+        return tuple(self._incomplete_causes)
 
     @property
     def accessed_at(self) -> str | None:
@@ -170,8 +180,13 @@ class HardcoverMetadataProvider:
             )
         self._called = True
         if type(plan) is MetadataLookup:
+            ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
+            projection = _ISBN_QUERY if plan.kind is ProviderQueryKind.ISBN else _WORK_QUERY
+            ledger.register(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=projection)
+            self._ledger = ledger
             try:
-                return self._observe_lookup(plan, deadline=deadline)
+                value, _ = ledger.resolve(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=projection, execute=lambda: self._observe_lookup(plan, deadline=deadline))
+                return replace(value, request_accounting=ledger.accounting())
             finally:
                 self._client.close()
         if type(plan) is not MetadataDiscoveryPlan:
@@ -182,6 +197,10 @@ class HardcoverMetadataProvider:
                 self._name, ProviderStatus.QUERY_LIMIT_EXCEEDED
             )
         results: list[ProviderLaneResult] = []
+        ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
+        for lane in plan.lanes:
+            ledger.register(kind=lane.kind.value, matched_family=lane.matched_family, title=lane.title, authors=lane.authors, projection=(_ISBN_QUERY if lane.kind is ProviderQueryKind.ISBN else _WORK_QUERY))
+        self._ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         try:
             for lane in plan.lanes:
@@ -193,10 +212,19 @@ class HardcoverMetadataProvider:
                     lane.authors,
                     lane.matched_family,
                 )
-                observation = qualify_provider_observation(
-                    self._observe_lookup(lookup, deadline=deadline),
-                    lookup,
+                physical, _replayed = ledger.resolve(
+                    kind=lookup.kind.value,
+                    matched_family=lookup.matched_family,
+                    title=lookup.title,
+                    authors=lookup.authors,
+                    projection=(
+                        _ISBN_QUERY
+                        if lookup.kind is ProviderQueryKind.ISBN
+                        else _WORK_QUERY
+                    ),
+                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),
                 )
+                observation = qualify_provider_observation(physical, lookup)
                 results.append(
                     ProviderLaneResult(
                         lane,
@@ -224,7 +252,11 @@ class HardcoverMetadataProvider:
         finally:
             self._client.close()
         self.cover_descriptors = descriptors
-        return provider_observation(self._name, tuple(results))
+        return provider_observation(
+            self._name,
+            tuple(results),
+            request_accounting=ledger.accounting(),
+        )
 
     def _observe_lookup(
         self,
@@ -362,7 +394,9 @@ class HardcoverMetadataProvider:
             started = self._clock()
             attempts_before_dispatch = self._attempt_count
             try:
-                payload = self._request_once(body, deadline=deadline)
+                payload = self._request_once(
+                    body, deadline=deadline, is_retry=retry_index > 0
+                )
             except (asyncio.CancelledError, KeyboardInterrupt):
                 if self._attempt_count != attempts_before_dispatch:
                     self._record_attempt(
@@ -379,6 +413,7 @@ class HardcoverMetadataProvider:
                     error.retryable
                     and retry_index + 1 < _MAX_ATTEMPTS_PER_QUERY
                     and self._attempt_count < _MAX_ATTEMPTS_PER_OBSERVATION
+                    and self._ledger.allows_retry(self._attempt_count, _MAX_ATTEMPTS_PER_OBSERVATION)
                 )
                 delay = (
                     (
@@ -441,26 +476,27 @@ class HardcoverMetadataProvider:
         raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
 
     def _request_once(
-        self, body: dict[str, object], *, deadline: float | None
+        self, body: dict[str, object], *, deadline: float | None, is_retry: bool
     ) -> bytes:
         if self._remaining_response_bytes <= 0:
-            raise _ProviderFailure(ProviderStatus.OVERSIZED)
+            raise self._incomplete(ProviderIncompleteCause.AGGREGATE_BYTES)
         if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise self._incomplete(ProviderIncompleteCause.DISPATCH_COUNT)
         if self._pacer is not None and not self._pacer.wait(
             deadline=deadline
         ):
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise self._incomplete(ProviderIncompleteCause.DEADLINE)
         remaining = self._timeout_seconds
         if deadline is not None:
             remaining = min(remaining, deadline - self._clock())
         if remaining <= 0:
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise self._incomplete(ProviderIncompleteCause.DEADLINE)
         try:
             if deadline is not None and self._clock() >= deadline:
-                raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+                raise self._incomplete(ProviderIncompleteCause.DEADLINE)
             if self._accessed_at is None:
                 self._accessed_at = provider_access_time(self._wall_clock())
+            self._ledger.dispatch(retry=is_retry)
             self._attempt_count += 1
             with self._client.stream(
                 "POST",
@@ -579,6 +615,12 @@ class HardcoverMetadataProvider:
         if self._remaining_response_bytes < 0:
             self._remaining_response_bytes = 0
             raise _ResponseOversized
+
+    def _incomplete(
+        self, cause: ProviderIncompleteCause
+    ) -> _ProviderFailure:
+        self._incomplete_causes.append(ProviderIncompleteCauseRecord(cause))
+        return _ProviderFailure(ProviderStatus.INCOMPLETE)
 
     def _retry_delay(self, retry_index: int) -> float:
         jitter = self._jitter()

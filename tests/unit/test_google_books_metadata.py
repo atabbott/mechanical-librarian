@@ -189,7 +189,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             clock=lambda: 1.0,
             wall_clock=unexpected_clock,
         ).observe(_lookup(), deadline=0.0)
-        self.assertEqual(ProviderStatus.UNAVAILABLE, expired.status)
+        self.assertEqual(ProviderStatus.INCOMPLETE, expired.status)
         self.assertIsNone(expired.accessed_at)
         self.assertEqual(1, len(requests))
 
@@ -943,7 +943,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             ),
             65_536,
         ).observe(_lookup(), deadline=0.0)
-        self.assertEqual(ProviderStatus.UNAVAILABLE, expired.status)
+        self.assertEqual(ProviderStatus.INCOMPLETE, expired.status)
         self.assertEqual([], requests)
 
     def test_malformed_and_duplicate_json_never_escape_as_raw_artifacts(self) -> None:
@@ -967,6 +967,43 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             ).observe(_lookup())
             self.assertEqual(ProviderStatus.MALFORMED, observation.status)
             self.assertNotIn("secret-value", repr(observation))
+
+    def test_undispatched_causes_are_once_per_physical_lookup_and_closed(
+        self,
+    ) -> None:
+        def provider() -> GoogleBooksMetadataProvider:
+            return GoogleBooksMetadataProvider(
+                "google_books", httpx.Client(transport=httpx.MockTransport(
+                    lambda _: self.fail("undispatched request")
+                )), 65_536,
+            )
+
+        aggregate_bytes = provider()
+        aggregate_bytes._remaining_response_bytes = 0
+        observation = aggregate_bytes.observe(_lookup())
+        self.assertEqual(ProviderStatus.INCOMPLETE, observation.status)
+        self.assertEqual(
+            ["aggregate_bytes"],
+            [record.cause.value for record in aggregate_bytes.incomplete_causes],
+        )
+
+        dispatch_count = provider()
+        dispatch_count._attempt_count = 999
+        dispatch_count.observe(_lookup())
+        self.assertEqual(
+            ["dispatch_count"],
+            [record.cause.value for record in dispatch_count.incomplete_causes],
+        )
+
+        deadline = provider()
+        deadline.observe(_lookup(), deadline=0.0)
+        self.assertEqual(
+            ["deadline"],
+            [record.cause.value for record in deadline.incomplete_causes],
+        )
+        serialized = repr(deadline.incomplete_causes)
+        for forbidden in ("credential", "private", "secret", "query", "path"):
+            self.assertNotIn(forbidden, serialized)
 
     def test_report_proposal_admission_and_review_packet_replay_google_evidence(
         self,

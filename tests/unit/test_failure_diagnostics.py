@@ -31,6 +31,12 @@ class _MalformedAttempt:
         raise RuntimeError("credential=/private/library/secret")
 
 
+@dataclass(frozen=True)
+class _IncompleteCause:
+    cause: object
+    private_query: str = "credential=/private/library/secret"
+
+
 class FailureDiagnosticTests(unittest.TestCase):
     def test_category_vocabulary_is_exact_and_closed(self) -> None:
         self.assertEqual(
@@ -158,6 +164,48 @@ class FailureDiagnosticTests(unittest.TestCase):
             "credential",
             "".join(value.to_json() for value in diagnostics),
         )
+
+    def test_incomplete_causes_are_closed_truthful_and_redacted(self) -> None:
+        diagnostics = provider_attempt_diagnostics(
+            (),
+            status="incomplete",
+            incomplete_causes=(
+                _IncompleteCause("deadline"),
+                _IncompleteCause("aggregate_bytes"),
+                _IncompleteCause("dispatch_count"),
+            ),
+        )
+
+        self.assertEqual(
+            (
+                FailureCategory.LOOKUP_CONSTRUCTION,
+                FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+                FailureCategory.TIMEOUT,
+            ),
+            tuple(value.category for value in diagnostics),
+        )
+        self.assertNotIn(
+            FailureCategory.TIMEOUT,
+            tuple(value.category for value in diagnostics[:2]),
+        )
+        serialized = "".join(value.to_json() for value in diagnostics)
+        for forbidden in ("credential", "private", "secret", "query", "path"):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_incomplete_causes_fail_closed_when_absent_or_malformed(self) -> None:
+        for causes in (
+            (),
+            (_IncompleteCause("credential=/private/library/secret"),),
+            [_IncompleteCause("deadline")],
+        ):
+            with self.subTest(causes=type(causes).__name__):
+                diagnostics = provider_attempt_diagnostics(
+                    (), status="incomplete", incomplete_causes=causes
+                )
+                self.assertEqual(
+                    (FailureCategory.UNKNOWN,),
+                    tuple(value.category for value in diagnostics),
+                )
 
     def test_reviewer_codes_map_to_same_closed_contract_and_unknown_fails_closed(
         self,

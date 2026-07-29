@@ -176,8 +176,9 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v15`; earlier development reports and
-databases remain offline and require a clean current database under ADR-0013.
+discriminator is `metadata-report-v17`; `metadata-report-v16` is legacy and,
+like all earlier development reports and databases, remains offline and requires
+a clean current database under ADR-0013.
 
 The credential-bearing parent combines those facts with the target projection.
 Every distinct checksum-valid ISBN family across bounded package, front, and
@@ -191,6 +192,11 @@ selecting a subset. Candidate admission then requires one exact normalized work 
 complete ordered author list, one provider-local work identity, and no
 translation, adaptation, or uncertain abridgement marker. Competing works and
 same-title/different-author results are `no_match`.
+
+One observation coalesces semantically identical provider lookups only. Each
+logical discovery lane remains visible with its original provenance and replays
+the completed immutable provider result; no result survives the observation or
+adds request authority.
 
 Every referenced, enabled Hardcover connection makes one fixed credential-bearing
 GraphQL query per lane and at most 27 attempts. Every referenced, enabled Open

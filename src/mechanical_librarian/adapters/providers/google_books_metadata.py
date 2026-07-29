@@ -7,6 +7,7 @@ import json
 import random
 import re
 import time
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Callable
 
@@ -14,6 +15,9 @@ import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderAttemptRecord,
+    ProviderIncompleteCause,
+    ProviderIncompleteCauseRecord,
+    _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
     transient_transport_failure,
@@ -112,12 +116,18 @@ class GoogleBooksMetadataProvider:
         self._jitter = jitter
         self._attempt_count = 0
         self._attempt_records: list[ProviderAttemptRecord] = []
+        self._incomplete_causes: list[ProviderIncompleteCauseRecord] = []
         self._accessed_at: str | None = None
         self._called = False
+        self._ledger = _DiscoveryRequestLedger("google_books", "volumes-v1")
 
     @property
     def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
         return tuple(self._attempt_records)
+
+    @property
+    def incomplete_causes(self) -> tuple[ProviderIncompleteCauseRecord, ...]:
+        return tuple(self._incomplete_causes)
 
     @property
     def accessed_at(self) -> str | None:
@@ -142,8 +152,12 @@ class GoogleBooksMetadataProvider:
             )
         self._called = True
         if type(plan) is MetadataLookup:
+            ledger = _DiscoveryRequestLedger("google_books", "volumes-v1")
+            ledger.register(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=_FIELDS)
+            self._ledger = ledger
             try:
-                return self._observe_lookup(plan, deadline=deadline)
+                value, _ = ledger.resolve(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=_FIELDS, execute=lambda: self._observe_lookup(plan, deadline=deadline))
+                return replace(value, request_accounting=ledger.accounting())
             finally:
                 self._client.close()
         if type(plan) is not MetadataDiscoveryPlan:
@@ -156,6 +170,10 @@ class GoogleBooksMetadataProvider:
                 authority="google_books",
             )
         results: list[ProviderLaneResult] = []
+        ledger = _DiscoveryRequestLedger("google_books", "volumes-v1")
+        for lane in plan.lanes:
+            ledger.register(kind=lane.kind.value, matched_family=lane.matched_family, title=lane.title, authors=lane.authors, projection=_FIELDS)
+        self._ledger = ledger
         try:
             for lane in plan.lanes:
                 lookup = MetadataLookup(
@@ -165,10 +183,15 @@ class GoogleBooksMetadataProvider:
                     lane.authors,
                     lane.matched_family,
                 )
-                observation = qualify_provider_observation(
-                    self._observe_lookup(lookup, deadline=deadline),
-                    lookup,
+                physical, _replayed = ledger.resolve(
+                    kind=lookup.kind.value,
+                    matched_family=lookup.matched_family,
+                    title=lookup.title,
+                    authors=lookup.authors,
+                    projection=_FIELDS,
+                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),
                 )
+                observation = qualify_provider_observation(physical, lookup)
                 results.append(
                     ProviderLaneResult(
                         lane,
@@ -183,6 +206,7 @@ class GoogleBooksMetadataProvider:
             self._name,
             tuple(results),
             authority="google_books",
+            request_accounting=ledger.accounting(),
         )
 
     def _observe_lookup(
@@ -296,7 +320,9 @@ class GoogleBooksMetadataProvider:
             started = self._clock()
             attempts_before_dispatch = self._attempt_count
             try:
-                value = self._request_once(query, deadline=deadline)
+                value = self._request_once(
+                    query, deadline=deadline, is_retry=retry_index > 0
+                )
             except (asyncio.CancelledError, KeyboardInterrupt):
                 if self._attempt_count != attempts_before_dispatch:
                     self._record_attempt(
@@ -314,6 +340,7 @@ class GoogleBooksMetadataProvider:
                     error.retryable
                     and retry_index + 1 < _MAX_ATTEMPTS_PER_QUERY
                     and self._attempt_count < _MAX_ATTEMPTS_PER_OBSERVATION
+                    and self._ledger.allows_retry(self._attempt_count, _MAX_ATTEMPTS_PER_OBSERVATION)
                 )
                 delay = (
                     (
@@ -381,17 +408,17 @@ class GoogleBooksMetadataProvider:
         raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
 
     def _request_once(
-        self, query: str, *, deadline: float | None
+        self, query: str, *, deadline: float | None, is_retry: bool
     ) -> dict[str, Any]:
         if self._remaining_response_bytes <= 0:
-            raise _ProviderFailure(ProviderStatus.OVERSIZED)
+            raise self._incomplete(ProviderIncompleteCause.AGGREGATE_BYTES)
         remaining = self._timeout_seconds
         if deadline is not None:
             remaining = min(remaining, deadline - self._clock())
         if remaining <= 0:
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise self._incomplete(ProviderIncompleteCause.DEADLINE)
         if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise self._incomplete(ProviderIncompleteCause.DISPATCH_COUNT)
         params = {
             "fields": _FIELDS,
             "maxResults": str(_MAX_RETURNED_RESULTS),
@@ -404,9 +431,10 @@ class GoogleBooksMetadataProvider:
             params["key"] = self._api_key
         try:
             if deadline is not None and self._clock() >= deadline:
-                raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+                raise self._incomplete(ProviderIncompleteCause.DEADLINE)
             if self._accessed_at is None:
                 self._accessed_at = provider_access_time(self._wall_clock())
+            self._ledger.dispatch(retry=is_retry)
             self._attempt_count += 1
             with self._client.stream(
                 "GET",
@@ -485,6 +513,12 @@ class GoogleBooksMetadataProvider:
         if self._remaining_response_bytes < 0:
             self._remaining_response_bytes = 0
             raise _ProviderFailure(ProviderStatus.OVERSIZED)
+
+    def _incomplete(
+        self, cause: ProviderIncompleteCause
+    ) -> _ProviderFailure:
+        self._incomplete_causes.append(ProviderIncompleteCauseRecord(cause))
+        return _ProviderFailure(ProviderStatus.INCOMPLETE)
 
     def _retry_delay(self, retry_index: int) -> float:
         jitter = self._jitter()

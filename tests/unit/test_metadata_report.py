@@ -874,7 +874,7 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v15", report.schema_version)
+        self.assertEqual("metadata-report-v17", report.schema_version)
         previous = report.to_data()
         previous["schema_version"] = "metadata-report-v13"
         with self.assertRaises(ReportValueError):
@@ -2698,7 +2698,7 @@ class MetadataReportTests(unittest.TestCase):
         )
         self.assertEqual(observed[0][1], observed[1][1])
 
-    def test_malformed_optional_attempt_record_property_is_unknown(self) -> None:
+    def test_incomplete_cause_property_is_mapped_without_private_material(self) -> None:
         selected = TargetFile("a" * 64, "book.epub", "epub")
         snapshot = TargetSnapshot("ebook", "Current title", (selected,))
         target = _Target([snapshot, snapshot])
@@ -2708,11 +2708,15 @@ class MetadataReportTests(unittest.TestCase):
         class Provider:
             @property
             def attempt_records(self):
-                raise RuntimeError("credential=/private/library/secret")
+                return ()
+
+            @property
+            def incomplete_causes(self):
+                return (type("Cause", (), {"cause": "aggregate_bytes"})(),)
 
             def observe(self, _plan, *, deadline):
                 return ProviderObservation(
-                    "catalogue", ProviderStatus.NO_MATCH
+                    "catalogue", ProviderStatus.INCOMPLETE
                 )
 
         service = GenerateMetadataReport(
@@ -2740,11 +2744,17 @@ class MetadataReportTests(unittest.TestCase):
         report = MetadataReport.from_json(service.run("item-1", 0))
 
         self.assertEqual(
-            [FailureCategory.UNKNOWN],
+            [
+                FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+            ],
             [
                 diagnostic.category
                 for diagnostic in report.providers[0].diagnostics
             ],
+        )
+        self.assertNotIn(
+            FailureCategory.TIMEOUT,
+            [diagnostic.category for diagnostic in report.providers[0].diagnostics],
         )
         self.assertNotIn("credential", report.to_json())
         self.assertNotIn("/private/library", report.to_json())

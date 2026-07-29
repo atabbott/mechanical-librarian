@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Coalesce semantically identical provider discovery lookups within one
+  report-only observation. Each discovery lane retains its own provenance while
+  replaying the immutable completed provider result, so coalescing does not
+  create a cross-report cache or widen provider request authority. (#398)
+
 - Expose one closed, aggregate-safe provider and reviewer failure taxonomy
   without copying exception text, credentials, paths, prompts, packets,
   provider bodies or records, process streams, headers, timings, digests, or
@@ -29,7 +34,7 @@
   persistence/persistence/persistence producer.
   Malformed output and every other nonzero exit remain separate. Advance clean
   exact-current contracts to
-  `metadata-report-v15`, `shadow-review-inspect-v2`, and
+  `metadata-report-v17`, `shadow-review-inspect-v2`, and
   `shadow-review-failure-v2`; proposal, packet, request, and result bytes remain
   unchanged. Earlier development report databases are rejected without
   migration under ADR-0013. ADR-0017 freezes the privacy and replay boundary.

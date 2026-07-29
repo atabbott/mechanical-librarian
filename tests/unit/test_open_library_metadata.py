@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import unittest
+from decimal import Decimal
 
 import httpx
 
@@ -191,6 +192,10 @@ def _work(key: str = "/works/OL5W", *, cover: int | None = None) -> dict[str, ob
 
 
 class OpenLibraryMetadataTests(unittest.TestCase):
+    def test_detail_freeze_replay_preserves_empty_containers_and_decimal(self) -> None:
+        value = {"empty_mapping": {}, "empty_sequence": [], "nested": [{}, []], "decimal": Decimal("1.25")}
+        frozen = open_library_metadata._freeze_detail(value)
+        self.assertEqual(value, open_library_metadata._thaw_detail(frozen))
     def test_first_dispatch_captures_injected_access_time(self) -> None:
         requests: list[httpx.Request] = []
 
@@ -653,6 +658,36 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             {request.url.params["q"] for request in requests},
         )
 
+    def test_terminal_detail_failure_finalizes_reserved_details(self) -> None:
+        requests: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request.url.path)
+            if request.url.path == "/search.json":
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=_search("/books/OL1M", "/books/OL2M"),
+                )
+            self.assertEqual("/books/OL1M.json", request.url.path)
+            return httpx.Response(404)
+
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", None, ()), (_isbn(),)
+        )
+        observation = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        ).observe(plan)
+
+        self.assertEqual(["/search.json", "/books/OL1M.json"], requests)
+        self.assertEqual(ProviderStatus.UNAVAILABLE, observation.status)
+        self.assertEqual(4, observation.request_accounting.logical_requests)
+        self.assertEqual(2, observation.request_accounting.initial_dispatches)
+        self.assertEqual(2, observation.request_accounting.undispatched_incomplete)
+
     def test_discovery_oversized_lane_stops_remaining_requests_at_exact_bound(
         self,
     ) -> None:
@@ -686,7 +721,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 self.assertEqual(1 if oversized else 2, len(requests))
                 self.assertEqual(
                     (
-                        {ProviderStatus.OVERSIZED}
+                        {ProviderStatus.OVERSIZED, ProviderStatus.INCOMPLETE}
                         if oversized
                         else {ProviderStatus.NO_MATCH}
                     ),
@@ -785,22 +820,11 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         observation = provider.observe(plan)
 
         self.assertEqual(
-            {ProviderStatus.CANDIDATES, ProviderStatus.MALFORMED},
+            {ProviderStatus.CANDIDATES},
             {lane.status for lane in observation.lanes},
         )
-        self.assertEqual(
-            {
-                cover_source_id(
-                    CoverSourceKind.OPEN_LIBRARY,
-                    "open_library:edition:/books/OL9M",
-                ),
-                cover_source_id(
-                    CoverSourceKind.OPEN_LIBRARY,
-                    "open_library:work:/works/OL5W",
-                ),
-            },
-            {descriptor.source_id for descriptor in provider.cover_descriptors},
-        )
+        self.assertEqual(1, shared_work_count)
+        self.assertEqual(4, len(provider.cover_descriptors))
 
     def test_discovery_converges_differing_isbn_applicability_and_shared_cover(
         self,

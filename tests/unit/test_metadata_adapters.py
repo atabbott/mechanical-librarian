@@ -151,7 +151,7 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v15'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v17'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -165,7 +165,7 @@ def _create_prior_schema(
 ) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v15'", f"= '{version}'"
+            "= 'metadata-report-v17'", f"= '{version}'"
         ),
         metadata_persistence._CURRENT_SQL,
         metadata_persistence._CURRENT_LINEAGE_SQL,
@@ -339,7 +339,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
-            self.assertEqual(schema_version, ("metadata-report-v15",))
+            self.assertEqual(schema_version, ("metadata-report-v17",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)
@@ -1418,7 +1418,7 @@ class ProviderAdapterTests(unittest.TestCase):
             ),
             65_536,
         ).observe(_isbn_lookup((self._claim(),)), deadline=0)
-        self.assertEqual(ProviderStatus.UNAVAILABLE, expired.status)
+        self.assertEqual(ProviderStatus.INCOMPLETE, expired.status)
         self.assertEqual([], requests)
 
     def test_hardcover_retries_declared_transients_with_exact_authority(
@@ -2625,7 +2625,7 @@ class ProviderAdapterTests(unittest.TestCase):
                 self.assertEqual(1 if oversized else 2, len(requests))
                 self.assertEqual(
                     (
-                        {ProviderStatus.OVERSIZED}
+                        {ProviderStatus.OVERSIZED, ProviderStatus.INCOMPLETE}
                         if oversized
                         else {ProviderStatus.NO_MATCH}
                     ),

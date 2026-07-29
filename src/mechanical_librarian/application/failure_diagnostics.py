@@ -111,6 +111,7 @@ def provider_attempt_diagnostics(
     attempts: object,
     *,
     status: str | None = None,
+    incomplete_causes: object = (),
 ) -> tuple[FailureDiagnostic, ...]:
     """Discard attempt payload details and return deterministic bounded aggregates."""
 
@@ -203,6 +204,35 @@ def provider_attempt_diagnostics(
             None,
         ),
     }
+    invalid_incomplete_causes = False
+    if status == "incomplete":
+        if type(incomplete_causes) is not tuple:
+            invalid_incomplete_causes = True
+        else:
+            cause_mapping = {
+                "deadline": (FailureCategory.TIMEOUT, FailureStage.REQUEST),
+                "aggregate_bytes": (
+                    FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+                    FailureStage.RESPONSE,
+                ),
+                "dispatch_count": (
+                    FailureCategory.LOOKUP_CONSTRUCTION,
+                    FailureStage.LOOKUP,
+                ),
+            }
+            for record in incomplete_causes:
+                try:
+                    cause = getattr(record, "cause", None)
+                except Exception:
+                    cause = None
+                mapped = cause_mapping.get(cause) if isinstance(cause, str) else None
+                if mapped is None:
+                    invalid_incomplete_causes = True
+                    continue
+                counts[(mapped[0], mapped[1], False)] = min(
+                    counts[(mapped[0], mapped[1], False)] + 1,
+                    MAX_DIAGNOSTIC_COUNT,
+                )
     required = status_mapping.get(status)
     if (
         required is not None
@@ -210,6 +240,10 @@ def provider_attempt_diagnostics(
         and not any(category is required[0] for category, _, _ in counts)
     ):
         counts[required] = 1
+    if status == "incomplete" and (
+        invalid_incomplete_causes or not incomplete_causes
+    ):
+        counts[(FailureCategory.UNKNOWN, FailureStage.RESPONSE, None)] = 1
     return tuple(
         FailureDiagnostic(
             category,
