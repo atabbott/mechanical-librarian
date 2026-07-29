@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Coalesce semantically identical provider discovery lookups within one
+  report-only observation. Each discovery lane retains its own provenance while
+  replaying the immutable completed provider result, so coalescing does not
+  create a cross-report cache or widen provider request authority. (#398)
+
 - Expose one closed, aggregate-safe provider and reviewer failure taxonomy
   without copying exception text, credentials, paths, prompts, packets,
   provider bodies or records, process streams, headers, timings, digests, or

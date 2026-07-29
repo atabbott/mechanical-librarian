@@ -9,6 +9,7 @@ import ssl
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import format_datetime
+from typing import Callable, TypeVar
 
 import httpcore
 import httpx
@@ -25,6 +26,53 @@ _SAFE_OS_ERRNOS = frozenset(
         errno.ETIMEDOUT,
     }
 )
+
+
+_Result = TypeVar("_Result")
+
+
+class _DiscoveryRequestLedger:
+    """Keep one provider observation's semantically identical lane work private.
+
+    The key deliberately contains only provider-controlled request semantics.  It
+    never retains local references, credentials, raw response content, or the
+    caller's lane identity.  Values are immutable provider observations, so a
+    later lane can only replay the exact completed result.
+    """
+
+    def __init__(self, authority: str, revision: str) -> None:
+        self._authority = authority
+        self._revision = revision
+        self._completed: dict[tuple[object, ...], object] = {}
+
+    def resolve(
+        self,
+        *,
+        kind: str,
+        matched_family: str | None,
+        title: str | None,
+        authors: tuple[str, ...],
+        projection: str,
+        execute: Callable[[], _Result],
+    ) -> tuple[_Result, bool]:
+        # ISBN and work requests have different canonical arguments.  Sorting
+        # author names matches the providers' set-like discovery contract while
+        # retaining the explicit operation discriminator.
+        key = (
+            self._authority,
+            self._revision,
+            kind,
+            projection,
+            matched_family if kind == "isbn" else None,
+            title if kind == "work" else None,
+            tuple(sorted(authors)) if kind == "work" else (),
+        )
+        completed = self._completed.get(key)
+        if completed is not None:
+            return completed, True  # type: ignore[return-value]
+        result = execute()
+        self._completed[key] = result
+        return result, False
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +186,7 @@ def _is_safe_cause(cause: BaseException) -> bool:
 
 
 __all__ = [
+    "_DiscoveryRequestLedger",
     "ProviderAttemptRecord",
     "bounded_attempt_elapsed",
     "bounded_retry_after",

@@ -14,6 +14,7 @@ import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderAttemptRecord,
+    _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
     transient_transport_failure,
@@ -182,6 +183,7 @@ class HardcoverMetadataProvider:
                 self._name, ProviderStatus.QUERY_LIMIT_EXCEEDED
             )
         results: list[ProviderLaneResult] = []
+        ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         try:
             for lane in plan.lanes:
@@ -193,10 +195,19 @@ class HardcoverMetadataProvider:
                     lane.authors,
                     lane.matched_family,
                 )
-                observation = qualify_provider_observation(
-                    self._observe_lookup(lookup, deadline=deadline),
-                    lookup,
+                physical, _replayed = ledger.resolve(
+                    kind=lookup.kind.value,
+                    matched_family=lookup.matched_family,
+                    title=lookup.title,
+                    authors=lookup.authors,
+                    projection=(
+                        _ISBN_QUERY
+                        if lookup.kind is ProviderQueryKind.ISBN
+                        else _WORK_QUERY
+                    ),
+                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),
                 )
+                observation = qualify_provider_observation(physical, lookup)
                 results.append(
                     ProviderLaneResult(
                         lane,

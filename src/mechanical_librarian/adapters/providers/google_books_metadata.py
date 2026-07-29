@@ -14,6 +14,7 @@ import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderAttemptRecord,
+    _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
     transient_transport_failure,
@@ -156,6 +157,7 @@ class GoogleBooksMetadataProvider:
                 authority="google_books",
             )
         results: list[ProviderLaneResult] = []
+        ledger = _DiscoveryRequestLedger("google_books", "volumes-v1")
         try:
             for lane in plan.lanes:
                 lookup = MetadataLookup(
@@ -165,10 +167,15 @@ class GoogleBooksMetadataProvider:
                     lane.authors,
                     lane.matched_family,
                 )
-                observation = qualify_provider_observation(
-                    self._observe_lookup(lookup, deadline=deadline),
-                    lookup,
+                physical, _replayed = ledger.resolve(
+                    kind=lookup.kind.value,
+                    matched_family=lookup.matched_family,
+                    title=lookup.title,
+                    authors=lookup.authors,
+                    projection=_FIELDS,
+                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),
                 )
+                observation = qualify_provider_observation(physical, lookup)
                 results.append(
                     ProviderLaneResult(
                         lane,

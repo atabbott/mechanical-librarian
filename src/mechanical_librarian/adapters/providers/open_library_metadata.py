@@ -17,6 +17,7 @@ import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderAttemptRecord,
+    _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
     transient_transport_failure,
@@ -208,6 +209,7 @@ class OpenLibraryMetadataProvider:
                 self._name, ProviderStatus.QUERY_LIMIT_EXCEEDED
             )
         results: list[ProviderLaneResult] = []
+        ledger = _DiscoveryRequestLedger("open_library", "search-v1")
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         try:
             for lane in plan.lanes:
@@ -219,9 +221,19 @@ class OpenLibraryMetadataProvider:
                     lane.authors,
                     lane.matched_family,
                 )
-                observation = qualify_provider_observation(
-                    self._observe_lookup(lookup, deadline=deadline), lookup
+                physical, _replayed = ledger.resolve(
+                    kind=lookup.kind.value,
+                    matched_family=lookup.matched_family,
+                    title=lookup.title,
+                    authors=lookup.authors,
+                    projection=(
+                        "key,editions,editions.key,editions.isbn"
+                        if lookup.kind is ProviderQueryKind.ISBN
+                        else "key,author_name,editions,editions.key"
+                    ),
+                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),
                 )
+                observation = qualify_provider_observation(physical, lookup)
                 results.append(
                     ProviderLaneResult(
                         lane,

@@ -192,6 +192,11 @@ complete ordered author list, one provider-local work identity, and no
 translation, adaptation, or uncertain abridgement marker. Competing works and
 same-title/different-author results are `no_match`.
 
+One observation coalesces semantically identical provider lookups only. Each
+logical discovery lane remains visible with its original provenance and replays
+the completed immutable provider result; no result survives the observation or
+adds request authority.
+
 Every referenced, enabled Hardcover connection makes one fixed credential-bearing
 GraphQL query per lane and at most 27 attempts. Every referenced, enabled Open
 Library connection makes at most nine exact Search queries, with at most two
