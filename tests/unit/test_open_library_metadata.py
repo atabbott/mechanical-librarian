@@ -1419,6 +1419,27 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         qualified = qualify_provider_observation(observation, lookup)
         self.assertEqual(ProviderStatus.CANDIDATES, qualified.status)
         candidate = qualified.candidates[0]
+        self.assertEqual(1, len(candidate.identity_bindings))
+        binding = candidate.identity_bindings[0]
+        bound_claim = next(
+            claim
+            for claim in candidate.claims
+            if claim.reference == binding.claim_reference
+        )
+        self.assertEqual(
+            (
+                binding.identity,
+                binding.scope,
+                binding.role,
+                bound_claim.value,
+            ),
+            (
+                "open-library-author-OL7A",
+                ClaimScope.WORK,
+                "author",
+                "Ada Example",
+            ),
+        )
         self.assertFalse(
             {ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLISHER}
             & {claim.kind for claim in candidate.claims}

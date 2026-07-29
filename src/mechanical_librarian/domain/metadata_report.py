@@ -7,7 +7,7 @@ import json
 import math
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Any, Mapping, Self
@@ -32,8 +32,8 @@ from mechanical_librarian.domain.failure_diagnostics import (
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 
 
-REPORT_SCHEMA = "metadata-report-v18"
-COMPARISON_VERSION = "same-kind-v1"
+REPORT_SCHEMA = "metadata-report-v20"
+COMPARISON_VERSION = "closed-title-creator-v3"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
 MAX_REPORT_BYTES = 2_097_152
@@ -406,6 +406,18 @@ class Comparison(StrEnum):
     NOT_COMPARABLE = "not_comparable"
 
 
+class ComparisonMethod(StrEnum):
+    """Closed explanation for one deterministic comparison outcome."""
+
+    NONE = "none"
+    EXACT = "exact"
+    CLOSED_FIELD_NORMALIZATION = "closed_field_normalization"
+    UNICODE_CASE_WHITESPACE = "unicode_case_whitespace"
+    TYPOGRAPHIC_PUNCTUATION = "typographic_punctuation"
+    CONSERVATIVE_COMMA_INVERSION = "conservative_comma_inversion"
+    STRUCTURAL_IDENTITY_BINDING = "structural_identity_binding"
+
+
 class IdentifierRelation(StrEnum):
     """Closed relationship between an ISBN claim and the selected ebook."""
 
@@ -513,13 +525,31 @@ class ClaimScope(StrEnum):
 class ComparisonLink:
     local_reference: str
     outcome: Comparison
+    method: ComparisonMethod = ComparisonMethod.NONE
 
     def __post_init__(self) -> None:
-        if _REFERENCE.fullmatch(self.local_reference) is None or not self.local_reference.startswith("local_") or type(self.outcome) is not Comparison:
+        if (
+            _REFERENCE.fullmatch(self.local_reference) is None
+            or not self.local_reference.startswith("local_")
+            or type(self.outcome) is not Comparison
+            or type(self.method) is not ComparisonMethod
+            or (
+                self.outcome is Comparison.AGREEMENT
+                and self.method is ComparisonMethod.NONE
+            )
+            or (
+                self.outcome is not Comparison.AGREEMENT
+                and self.method is not ComparisonMethod.NONE
+            )
+        ):
             raise ReportValueError("comparison link is invalid")
 
     def to_data(self) -> dict[str, str]:
-        return {"local_reference": self.local_reference, "outcome": self.outcome.value}
+        return {
+            "local_reference": self.local_reference,
+            "method": self.method.value,
+            "outcome": self.outcome.value,
+        }
 
 
 def canonical_json(value: object) -> str:
@@ -1177,11 +1207,48 @@ class ProviderEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderIdentityBinding:
+    """One structurally parsed provider name-to-identity relationship."""
+
+    claim_reference: str
+    identity: str
+    scope: ClaimScope
+    role: str
+    source_ordinal: int = 0
+
+    def __post_init__(self) -> None:
+        if (
+            _REFERENCE.fullmatch(self.claim_reference) is None
+            or not self.claim_reference.startswith("provider_")
+            or type(self.scope) is not ClaimScope
+            or self.role != "author"
+            or type(self.source_ordinal) is not int
+            or not 0 <= self.source_ordinal <= 2_147_483_647
+        ):
+            raise ReportValueError("provider identity binding is invalid")
+        _text(self.identity, "provider identity binding identity", 128)
+        try:
+            validate_role_projection(self.role)
+        except EvidenceValueError as error:
+            raise ReportValueError("provider identity binding role is invalid") from error
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "claim_reference": self.claim_reference,
+            "identity": self.identity,
+            "role": self.role,
+            "scope": self.scope.value,
+            "source_ordinal": self.source_ordinal,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderCandidate:
     identity: str
     work_identity: str
     claims: tuple[ProviderClaim, ...]
     evidence: tuple[ProviderEvidence, ...] = ()
+    identity_bindings: tuple[ProviderIdentityBinding, ...] = ()
 
     def __post_init__(self) -> None:
         _text(self.identity, "provider candidate identity", 128)
@@ -1193,6 +1260,52 @@ class ProviderCandidate:
             raise ReportValueError("provider candidate claim references are duplicated")
         if tuple(value.raw_order for value in self.claims) != tuple(sorted(value.raw_order for value in self.claims)):
             raise ReportValueError("provider candidate claims are not in raw source order")
+        claims_by_reference = {value.reference: value for value in self.claims}
+        if (
+            type(self.identity_bindings) is not tuple
+            or len(self.identity_bindings) > MAX_CONTRIBUTIONS
+            or any(
+                type(value) is not ProviderIdentityBinding
+                for value in self.identity_bindings
+            )
+            or len(set(self.identity_bindings)) != len(self.identity_bindings)
+            or len(
+                {value.claim_reference for value in self.identity_bindings}
+            )
+            != len(self.identity_bindings)
+            or len(
+                {
+                    (value.scope, value.role, value.source_ordinal)
+                    for value in self.identity_bindings
+                }
+            )
+            != len(self.identity_bindings)
+            or self.identity_bindings
+            != tuple(
+                sorted(
+                    self.identity_bindings,
+                    key=lambda value: (
+                        value.scope.value,
+                        value.role,
+                        value.source_ordinal,
+                        value.identity,
+                        value.claim_reference,
+                    ),
+                )
+            )
+        ):
+            raise ReportValueError("provider identity bindings are invalid")
+        for binding in self.identity_bindings:
+            claim = claims_by_reference.get(binding.claim_reference)
+            if (
+                claim is None
+                or claim.kind is not ClaimKind.CREATOR
+                or claim.state is not FieldState.VALID
+                or claim.value is None
+                or claim.scope is not binding.scope
+                or claim.role != binding.role
+            ):
+                raise ReportValueError("provider identity binding is misbound")
         # Evidence is only meaningful when it remains bound to this exact
         # edition/work pair.  Keep these invariants here so replay and every
         # downstream consumer reject a forged cross-candidate attachment.
@@ -1272,6 +1385,9 @@ class ProviderCandidate:
             "claims": [value.to_data() for value in self.claims],
             "evidence": [value.to_data() for value in self.evidence],
             "identity": self.identity,
+            "identity_bindings": [
+                value.to_data() for value in self.identity_bindings
+            ],
             "work_identity": self.work_identity,
         }
 
@@ -1638,10 +1754,15 @@ class MetadataReport:
             not {link.local_reference for link in claim.links}.issubset(known) for claim in provider_claims
         ):
             raise ReportValueError("provider candidate claim references are invalid")
-        for claim in provider_claims:
-            expected = comparison_links(claim, self.local_claims)
-            if claim.links != expected:
-                raise ReportValueError("provider comparison links are inconsistent")
+        for provider in self.providers:
+            for candidate in provider.candidates:
+                expected = finalize_candidate_comparisons(
+                    candidate, self.local_claims
+                )
+                if candidate != expected:
+                    raise ReportValueError(
+                        "provider comparison links are inconsistent"
+                    )
         expected = f"report_{hashlib.sha256(canonical_json(self._identity_data()).encode('utf-8')).hexdigest()}"
         if self.report_id != expected:
             raise ReportValueError("report identity is inconsistent")
@@ -2070,14 +2191,453 @@ def comparison_links(provider: ProviderClaim, local: tuple[LocalClaim, ...]) -> 
             or claim.role != provider.role
         ):
             outcome = Comparison.NOT_COMPARABLE
-        elif _comparison_value(provider.kind, provider.value) == _comparison_value(claim.kind, claim.canonical):
+            method = ComparisonMethod.NONE
+        elif (
+            method := _comparison_method(
+                provider.kind,
+                provider.value,
+                claim.observed,
+            )
+        ) is not ComparisonMethod.NONE:
             outcome = Comparison.AGREEMENT
         elif provider.kind in {ClaimKind.ISBN, ClaimKind.ASIN}:
             outcome = Comparison.INCOMPATIBLE
+            method = ComparisonMethod.NONE
         else:
             outcome = Comparison.DISAGREEMENT
-        links.append(ComparisonLink(claim.reference, outcome))
+            method = ComparisonMethod.NONE
+        links.append(ComparisonLink(claim.reference, outcome, method))
     return tuple(sorted(links, key=lambda link: link.local_reference))
+
+
+_TYPOGRAPHIC_TRANSLATION = str.maketrans(
+    {
+        "\u00a0": " ",
+        "\u2013": "-",
+        "\u2014": "-",
+    }
+)
+_TITLE_VARIANT_MARKER = re.compile(
+    r"(?:^|[\s(\[{:;,'\"\-\u2013\u2014\u2018-\u201d])"
+    r"(?:abridged|abridgement|abridgment|adapted|adaptation|translated|translation|variant)"
+    r"(?:$|[\s)\]}:;,'\",\-\u2013\u2014\u2018-\u201d])",
+    re.IGNORECASE,
+)
+_NAME_SUFFIX = re.compile(
+    r"^(?:jr|sr|i{2,3}|iv|v|esq|mbe|obe|cbe|kbe|qc|kc|ph\.?d|m\.?d|dphil|dsc)$",
+    re.IGNORECASE,
+)
+_ORGANIZATION_MARKER = re.compile(
+    r"\b(?:association|committee|company|corporation|foundation|group|inc\.?|"
+    r"house|institute|librar(?:y|ies)|ltd\.?|llc|media|orchestra|press|"
+    r"productions?|publishing|records|society|studios?|team|university)\b",
+    re.IGNORECASE,
+)
+_AMBIGUOUS_NAME_JOIN = re.compile(r"(?:\s(?:and|&)\s|[;/])", re.IGNORECASE)
+_METHOD_STRENGTH = {
+    ComparisonMethod.EXACT: 0,
+    ComparisonMethod.CLOSED_FIELD_NORMALIZATION: 1,
+    ComparisonMethod.UNICODE_CASE_WHITESPACE: 1,
+    ComparisonMethod.TYPOGRAPHIC_PUNCTUATION: 2,
+    ComparisonMethod.CONSERVATIVE_COMMA_INVERSION: 3,
+    ComparisonMethod.STRUCTURAL_IDENTITY_BINDING: 4,
+}
+
+
+def finalize_candidate_comparisons(
+    candidate: ProviderCandidate,
+    local: tuple[LocalClaim, ...],
+) -> ProviderCandidate:
+    """Finalize candidate-aware links without altering source claims or evidence."""
+    claims = tuple(
+        replace(
+            claim,
+            links=(
+                _creator_comparison_links(candidate, claim, local)
+                if claim.kind is ClaimKind.CREATOR
+                else comparison_links(claim, local)
+            ),
+        )
+        for claim in candidate.claims
+    )
+    return replace(candidate, claims=claims)
+
+
+def _creator_comparison_links(
+    candidate: ProviderCandidate,
+    provider: ProviderClaim,
+    local: tuple[LocalClaim, ...],
+) -> tuple[ComparisonLink, ...]:
+    compatible_provider = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.CREATOR
+        and claim.scope is provider.scope
+        and claim.role == provider.role
+    )
+    local_groups: dict[tuple[str, ClaimScope, str | None], list[LocalClaim]] = {}
+    for claim in local:
+        if claim.kind is ClaimKind.CREATOR:
+            local_groups.setdefault(
+                (claim.basis, claim.scope, claim.role), []
+            ).append(claim)
+    agreements: dict[str, ComparisonMethod] = {}
+    if (
+        provider.role == "author"
+        and compatible_provider
+        and all(
+            claim.state is FieldState.VALID and claim.value is not None
+            for claim in compatible_provider
+        )
+    ):
+        provider_values = tuple(
+            claim.value for claim in compatible_provider if claim.value is not None
+        )
+        for (_, scope, role), group in local_groups.items():
+            if (
+                scope is not provider.scope
+                or role != provider.role
+                or not group
+                or any(
+                    claim.state is not FieldState.VALID
+                    or claim.canonical is None
+                    or claim.applicability != provider.applicability
+                    for claim in group
+                )
+            ):
+                continue
+            local_values = tuple(
+                claim.observed for claim in group if claim.canonical is not None
+            )
+            complete_bindings = complete_creator_identity_bindings(
+                candidate, compatible_provider
+            )
+            if complete_bindings is not None:
+                bound_matches = _bound_creator_sequence_match(
+                    candidate,
+                    compatible_provider,
+                    local_values,
+                )
+                bound_match = bound_matches.get(provider.reference)
+                if bound_match is not None:
+                    local_index, method = bound_match
+                    agreements[group[local_index].reference] = method
+            else:
+                methods = _creator_sequence_methods(
+                    provider_values, local_values
+                )
+                if methods:
+                    provider_index = compatible_provider.index(provider)
+                    agreements[group[provider_index].reference] = methods[
+                        provider_index
+                    ]
+
+    links: list[ComparisonLink] = []
+    for claim in local:
+        if claim.kind is not ClaimKind.CREATOR:
+            continue
+        method = agreements.get(claim.reference, ComparisonMethod.NONE)
+        if method is not ComparisonMethod.NONE:
+            outcome = Comparison.AGREEMENT
+        elif (
+            provider.state is not FieldState.VALID
+            or provider.value is None
+            or claim.state is not FieldState.VALID
+            or claim.canonical is None
+            or claim.scope is not provider.scope
+            or claim.applicability != provider.applicability
+            or claim.role != provider.role
+        ):
+            outcome = Comparison.NOT_COMPARABLE
+        else:
+            outcome = Comparison.DISAGREEMENT
+        links.append(ComparisonLink(claim.reference, outcome, method))
+    return tuple(sorted(links, key=lambda link: link.local_reference))
+
+
+def _bound_creator_sequence_match(
+    candidate: ProviderCandidate,
+    provider_claims: tuple[ProviderClaim, ...],
+    local_values: tuple[str, ...],
+) -> dict[str, tuple[int, ComparisonMethod]]:
+    claims_by_reference = {
+        claim.reference: claim for claim in provider_claims
+    }
+    bindings = complete_creator_identity_bindings(
+        candidate, provider_claims
+    )
+    if bindings is None:
+        return {}
+    ordered_identities: list[str] = []
+    aliases: dict[str, list[ProviderClaim]] = {}
+    for binding in bindings:
+        claim = claims_by_reference[binding.claim_reference]
+        if (
+            binding.scope is not claim.scope
+            or binding.role != claim.role
+            or claim.value is None
+        ):
+            return {}
+        if binding.identity not in aliases:
+            ordered_identities.append(binding.identity)
+            aliases[binding.identity] = []
+        aliases[binding.identity].append(claim)
+    if len(ordered_identities) != len(local_values):
+        return {}
+    if _has_creator_duplicates(local_values):
+        return {}
+    if any(
+        len(claims)
+        != len(
+            {
+                creator_comparison_key(claim.value)
+                for claim in claims
+                if claim.value is not None
+            }
+        )
+        for claims in aliases.values()
+    ):
+        return {}
+    identities_by_value: dict[str, str] = {}
+    for identity, claims in aliases.items():
+        for claim in claims:
+            if claim.value is None:
+                return {}
+            key = creator_comparison_key(claim.value)
+            owner = identities_by_value.setdefault(key, identity)
+            if owner != identity:
+                return {}
+    matches: dict[str, tuple[int, ComparisonMethod]] = {}
+    for local_index, (identity, local_value) in enumerate(
+        zip(ordered_identities, local_values, strict=True)
+    ):
+        alias_methods = {
+            claim.reference: _comparison_method(
+                ClaimKind.CREATOR,
+                claim.value,
+                local_value,
+                allow_comma_inversion=len(local_values) == 1,
+            )
+            for claim in aliases[identity]
+            if claim.value is not None
+        }
+        if not any(
+            method is not ComparisonMethod.NONE
+            for method in alias_methods.values()
+        ):
+            return {}
+        matches.update(
+            {
+                reference: (
+                    local_index,
+                    method
+                    if method is not ComparisonMethod.NONE
+                    else ComparisonMethod.STRUCTURAL_IDENTITY_BINDING,
+                )
+                for reference, method in alias_methods.items()
+            }
+        )
+    return matches
+
+
+def complete_creator_identity_bindings(
+    candidate: ProviderCandidate,
+    claims: tuple[ProviderClaim, ...],
+) -> tuple[ProviderIdentityBinding, ...] | None:
+    """Return authoritative bindings only for one completely covered claim set."""
+    if not claims:
+        return None
+    bindings = tuple(
+        sorted(
+            (
+                binding
+                for binding in candidate.identity_bindings
+                if binding.scope is claims[0].scope
+                and binding.role == claims[0].role
+            ),
+            key=lambda binding: (
+                binding.source_ordinal,
+                binding.identity,
+                binding.claim_reference,
+            ),
+        )
+    )
+    if (
+        len(bindings) != len(claims)
+        or {binding.claim_reference for binding in bindings}
+        != {claim.reference for claim in claims}
+    ):
+        return None
+    return bindings
+
+
+def _creator_sequence_methods(
+    provider_values: tuple[str, ...],
+    local_values: tuple[str, ...],
+) -> tuple[ComparisonMethod, ...]:
+    if (
+        len(provider_values) != len(local_values)
+        or not provider_values
+        or _has_creator_duplicates(provider_values)
+        or _has_creator_duplicates(local_values)
+    ):
+        return ()
+    methods = tuple(
+        _comparison_method(
+            ClaimKind.CREATOR,
+            provider_value,
+            local_value,
+            allow_comma_inversion=len(provider_values) == 1,
+        )
+        for provider_value, local_value in zip(
+            provider_values, local_values, strict=True
+        )
+    )
+    if ComparisonMethod.NONE in methods:
+        return ()
+    return methods
+
+
+def _comparison_method(
+    kind: ClaimKind,
+    provider_value: str,
+    local_value: str,
+    *,
+    allow_comma_inversion: bool = False,
+) -> ComparisonMethod:
+    if provider_value == local_value:
+        return ComparisonMethod.EXACT
+    if kind not in {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.CREATOR}:
+        return (
+            ComparisonMethod.CLOSED_FIELD_NORMALIZATION
+            if _comparison_value(kind, provider_value)
+            == _comparison_value(kind, local_value)
+            else ComparisonMethod.NONE
+        )
+    provider_typographic = _typographic_text(provider_value)
+    local_typographic = _typographic_text(local_value)
+    if kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE} and (
+        _has_title_variant_marker(provider_value, provider_typographic)
+        or _has_title_variant_marker(local_value, local_typographic)
+    ):
+        return ComparisonMethod.NONE
+    provider_normalized = _comparison_text(provider_value)
+    local_normalized = _comparison_text(local_value)
+    if provider_normalized == local_normalized:
+        return ComparisonMethod.UNICODE_CASE_WHITESPACE
+    if (
+        provider_typographic is not None
+        and local_typographic is not None
+        and provider_typographic == local_typographic
+    ):
+        return ComparisonMethod.TYPOGRAPHIC_PUNCTUATION
+    if (
+        allow_comma_inversion
+        and kind is ClaimKind.CREATOR
+        and provider_typographic is not None
+        and local_typographic is not None
+        and (
+            _comma_inverted(provider_value) == local_typographic
+            or _comma_inverted(local_value) == provider_typographic
+        )
+    ):
+        return ComparisonMethod.CONSERVATIVE_COMMA_INVERSION
+    return ComparisonMethod.NONE
+
+
+def _has_title_variant_marker(
+    value: str, typographic: str | None
+) -> bool:
+    return (
+        _TITLE_VARIANT_MARKER.search(value) is not None
+        or typographic is not None
+        and _TITLE_VARIANT_MARKER.search(typographic) is not None
+    )
+
+
+def _comparison_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFC", value).casefold()
+    return " ".join(
+        part
+        for part in re.split(r"[\t\n\r\f\v ]+", normalized)
+        if part
+    )
+
+
+def _typographic_text(value: str) -> str | None:
+    paired = {
+        "\u2018": ("'", True),
+        "\u2019": ("'", False),
+        "\u201c": ('"', True),
+        "\u201d": ('"', False),
+    }
+    stack: list[str] = []
+    translated: list[str] = []
+    for character in value:
+        quote = paired.get(character)
+        if quote is None:
+            translated.append(character.translate(_TYPOGRAPHIC_TRANSLATION))
+            continue
+        mark, opening = quote
+        if opening:
+            stack.append(mark)
+        elif not stack or stack.pop() != mark:
+            return None
+        translated.append(mark)
+    if stack:
+        return None
+    return _comparison_text("".join(translated))
+
+
+def creator_comparison_key(value: str) -> str:
+    """Return the closed comparison key used to reject creator duplicates."""
+    return _typographic_text(value) or _comparison_text(value)
+
+
+def _has_creator_duplicates(values: tuple[str, ...]) -> bool:
+    return len({creator_comparison_key(value) for value in values}) != len(
+        values
+    )
+
+
+def _comma_inverted(value: str) -> str | None:
+    if value.count(",") != 1:
+        return None
+    typographic = _typographic_text(value)
+    if typographic is None or typographic.count(",") != 1:
+        return None
+    family, given = (
+        _comparison_text(part) for part in typographic.split(",", 1)
+    )
+    if (
+        not family
+        or not given
+        or len(family) > 128
+        or len(given) > 128
+        or _ORGANIZATION_MARKER.search(value)
+        or _AMBIGUOUS_NAME_JOIN.search(value)
+        or not _personal_name_side(family)
+        or not _personal_name_side(given)
+        or any(
+            _NAME_SUFFIX.fullmatch(token.rstrip("."))
+            for token in (*family.split(), *given.split())
+        )
+    ):
+        return None
+    return f"{given} {family}"
+
+
+def _personal_name_side(value: str) -> bool:
+    tokens = value.split()
+    return (
+        1 <= len(tokens) <= 8
+        and any(unicodedata.category(character).startswith("L") for character in value)
+        and all(
+            unicodedata.category(character)[0] in {"L", "M"}
+            or character in {" ", ".", "'", "-"}
+            for character in value
+        )
+    )
 
 
 def _comparison_value(kind: ClaimKind, value: str) -> str:
@@ -2375,18 +2935,39 @@ def _provider_convergence_from_data(value: object) -> ProviderConvergence:
 
 
 def _candidate_from_data(value: object) -> ProviderCandidate:
-    item = _object(value, {"claims", "evidence", "identity", "work_identity"})
+    item = _object(
+        value,
+        {
+            "claims",
+            "evidence",
+            "identity",
+            "identity_bindings",
+            "work_identity",
+        },
+    )
     return ProviderCandidate(
         item["identity"],
         item["work_identity"],
         tuple(_provider_claim_from_data(claim) for claim in _list(item["claims"])),
         tuple(_provider_evidence_from_data(evidence) for evidence in _list(item["evidence"])),
+        tuple(
+            _provider_identity_binding_from_data(binding)
+            for binding in _list(item["identity_bindings"])
+        ),
     )
 
 
 def _provider_claim_from_data(value: object) -> ProviderClaim:
     item = _object(value, {"applicability", "date_confidence", "date_event", "date_lexical", "date_precision", "kind", "links", "raw_order", "reference", "role", "scope", "state", "value"})
-    links = tuple(ComparisonLink(_object(link, {"local_reference", "outcome"})["local_reference"], Comparison(_object(link, {"local_reference", "outcome"})["outcome"])) for link in _list(item["links"]))
+    links = tuple(
+        ComparisonLink(
+            parsed["local_reference"],
+            Comparison(parsed["outcome"]),
+            ComparisonMethod(parsed["method"]),
+        )
+        for link in _list(item["links"])
+        for parsed in (_object(link, {"local_reference", "method", "outcome"}),)
+    )
     return ProviderClaim(
         item["reference"],
         ClaimKind(item["kind"]),
@@ -2405,6 +2986,28 @@ def _provider_claim_from_data(value: object) -> ProviderClaim:
             if item["date_confidence"] is None
             else DateLinkConfidence(item["date_confidence"])
         ),
+    )
+
+
+def _provider_identity_binding_from_data(
+    value: object,
+) -> ProviderIdentityBinding:
+    item = _object(
+        value,
+        {
+            "claim_reference",
+            "identity",
+            "role",
+            "scope",
+            "source_ordinal",
+        },
+    )
+    return ProviderIdentityBinding(
+        item["claim_reference"],
+        item["identity"],
+        ClaimScope(item["scope"]),
+        item["role"],
+        item["source_ordinal"],
     )
 
 
@@ -2494,15 +3097,18 @@ def _valid_isbn(value: str, checksum: str) -> bool:
 
 
 __all__ = [
-    "ClaimKind", "ClaimScope", "COMPARISON_VERSION", "Comparison", "ComparisonLink", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
+    "ClaimKind", "ClaimScope", "COMPARISON_VERSION", "Comparison", "ComparisonLink", "ComparisonMethod", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
     "IdentifierEvidence", "IdentifierEvidenceBasis", "IdentifierRelation",
     "MAX_REPORT_BYTES", "MetadataReport", "ProviderCandidate", "ProviderClaim",
-    "ProviderEvidence", "ProviderEvidenceKind", "DateLinkConfidence",
+    "ProviderEvidence", "ProviderEvidenceKind", "ProviderIdentityBinding", "DateLinkConfidence",
     "ProviderConvergence", "ProviderLaneCandidate", "ProviderLaneObservation",
     "ProviderObservation", "ProviderQueryKind", "ProviderStatus",
     "REPORT_SCHEMA", "ReportValueError",
     "TargetDestination", "TargetFacts", "TargetField", "TargetFieldState",
     "TargetSeries", "canonical_json", "claim_scope", "comparison_links",
+    "complete_creator_identity_bindings",
+    "creator_comparison_key",
+    "finalize_candidate_comparisons",
     "default_target_fields",
     "derive_identifier_evidence", "isbn_family", "normalize_date_value", "normalize_title",
     "provider_lane_candidate_reference", "stable_reference",

@@ -35,6 +35,8 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     TargetSeries,
     canonical_json,
+    complete_creator_identity_bindings,
+    creator_comparison_key,
     normalize_date_value,
     normalize_title,
 )
@@ -709,6 +711,17 @@ def _list_observations(
             for claim in members
             if claim.state is FieldState.VALID and claim.canonical is not None
         )
+        if (
+            destination is TargetDestination.AUTHORS
+            and len(
+                {
+                    creator_comparison_key(claim.canonical)
+                    for claim in claims
+                }
+            )
+            != len(claims)
+        ):
+            continue
         if claims:
             values.append(
                 _Observed(
@@ -750,6 +763,24 @@ def _list_observations(
                 for claim in members
                 if claim.state is FieldState.VALID and claim.value is not None
             )
+            if (
+                destination is TargetDestination.AUTHORS
+                and not _provider_author_bindings_allow_observation(
+                    candidate, claims
+                )
+            ):
+                continue
+            if (
+                destination is TargetDestination.AUTHORS
+                and len(
+                    {
+                        creator_comparison_key(claim.value)
+                        for claim in claims
+                    }
+                )
+                != len(claims)
+            ):
+                continue
             if claims:
                 values.append(
                     _Observed(
@@ -760,6 +791,18 @@ def _list_observations(
                     )
                 )
     return tuple(values)
+
+
+def _provider_author_bindings_allow_observation(
+    candidate: ProviderCandidate,
+    claims: tuple[ProviderClaim, ...],
+) -> bool:
+    bindings = complete_creator_identity_bindings(
+        candidate, claims
+    )
+    if bindings is None:
+        return True
+    return len({binding.identity for binding in bindings}) == len(bindings)
 
 
 def _controlled_creator_placeholder(claim: LocalClaim) -> bool:

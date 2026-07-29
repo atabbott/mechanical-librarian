@@ -68,10 +68,12 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
+    ProviderIdentityBinding,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
     comparison_links,
+    finalize_candidate_comparisons,
     isbn_family,
     normalize_date_value,
     normalize_title,
@@ -955,6 +957,7 @@ def _candidate(
     identity = "open-library-edition-" + edition_key.removeprefix("/books/")
     work_identity = "open-library-work-" + work_key.removeprefix("/works/")
     claims: list[ProviderClaim] = []
+    identity_bindings: list[ProviderIdentityBinding] = []
 
     def add(
         kind: ClaimKind,
@@ -963,21 +966,21 @@ def _candidate(
         applicability: str = "not_applicable",
         role: str | None = None,
         state: FieldState | None = None,
-    ) -> None:
-        claims.append(
-            _claim(
-                provider,
-                identity,
-                kind,
-                value,
-                scope,
-                applicability,
-                role,
-                local_claims,
-                len(claims),
-                state,
-            )
+    ) -> ProviderClaim:
+        claim = _claim(
+            provider,
+            identity,
+            kind,
+            value,
+            scope,
+            applicability,
+            role,
+            local_claims,
+            len(claims),
+            state,
         )
+        claims.append(claim)
+        return claim
 
     edition_isbns: list[str] = []
     for key in ("isbn_10", "isbn_13"):
@@ -1079,13 +1082,23 @@ def _candidate(
     else:
         add(ClaimKind.DESCRIPTION, work_description, ClaimScope.WORK)
     if work_authors:
-        for author, _ in work_authors:
-            add(
+        for source_ordinal, (author, author_key) in enumerate(work_authors):
+            claim = add(
                 ClaimKind.CREATOR,
                 author,
                 ClaimScope.WORK,
                 role="author",
             )
+            if author_key is not None:
+                identity_bindings.append(
+                    ProviderIdentityBinding(
+                        claim.reference,
+                        _author_identity(author_key),
+                        ClaimScope.WORK,
+                        "author",
+                        source_ordinal,
+                    )
+                )
     else:
         add(
             ClaimKind.CREATOR,
@@ -1235,11 +1248,26 @@ def _candidate(
     if len(canonical_evidence) > MAX_PROVIDER_EVIDENCE:
         raise ValueError("provider rich evidence exceeds its bound")
     return (
-        ProviderCandidate(
-            identity,
-            work_identity,
-            tuple(claims),
-            canonical_evidence,
+        finalize_candidate_comparisons(
+            ProviderCandidate(
+                identity,
+                work_identity,
+                tuple(claims),
+                canonical_evidence,
+                tuple(
+                    sorted(
+                        identity_bindings,
+                        key=lambda value: (
+                            value.scope.value,
+                            value.role,
+                            value.source_ordinal,
+                            value.identity,
+                            value.claim_reference,
+                        ),
+                    )
+                ),
+            ),
+            local_claims,
         ),
         edition_cover,
         work_cover,
@@ -1332,7 +1360,7 @@ def _canonical_discovery_results(
             )
         ]
         raw_order = max((claim.raw_order for claim in claims), default=-1) + 1
-        claims.extend(
+        recreated_creators = tuple(
             ProviderClaim.create(
                 provider=provider,
                 candidate=identity,
@@ -1347,11 +1375,40 @@ def _canonical_discovery_results(
             )
             for index, creator in enumerate(creators)
         )
+        claims.extend(recreated_creators)
+        recreated_references = {
+            original.reference: recreated.reference
+            for original, recreated in zip(
+                creators, recreated_creators, strict=True
+            )
+        }
+        identity_bindings = tuple(
+            sorted(
+                (
+                    replace(
+                        binding,
+                        claim_reference=recreated_references[
+                            binding.claim_reference
+                        ],
+                    )
+                    for binding in work.identity_bindings
+                    if binding.claim_reference in recreated_references
+                ),
+                key=lambda value: (
+                    value.scope.value,
+                    value.role,
+                    value.source_ordinal,
+                    value.identity,
+                    value.claim_reference,
+                ),
+            )
+        )
         merged[identity] = ProviderCandidate(
             identity,
             edition.work_identity,
             tuple(claims),
             evidence,
+            identity_bindings,
         )
     if not merged:
         return results

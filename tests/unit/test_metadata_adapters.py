@@ -151,7 +151,7 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v18'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v20'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -165,7 +165,7 @@ def _create_prior_schema(
 ) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v18'", f"= '{version}'"
+            "= 'metadata-report-v20'", f"= '{version}'"
         ),
         metadata_persistence._CURRENT_SQL,
         metadata_persistence._CURRENT_LINEAGE_SQL,
@@ -248,6 +248,20 @@ class MetadataPersistenceTests(unittest.TestCase):
                 lambda connection: _create_prior_schema(
                     connection,
                     "metadata-report-v17",
+                ),
+            ),
+            (
+                "previous v18",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v18",
+                ),
+            ),
+            (
+                "previous v19",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v19",
                 ),
             ),
             (
@@ -346,7 +360,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
-            self.assertEqual(schema_version, ("metadata-report-v18",))
+            self.assertEqual(schema_version, ("metadata-report-v20",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)
@@ -3957,6 +3971,58 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(
             {candidate.work_identity for candidate in same_work},
             {"hardcover-work-0000000010"},
+        )
+        structurally_bound = hardcover_metadata._parse_candidates(
+            json.dumps(
+                self._envelope(
+                    [
+                        {
+                            "id": 1,
+                            "book_id": 10,
+                            "isbn_10": None,
+                            "isbn_13": None,
+                        }
+                    ],
+                    [
+                        {
+                            "id": 10,
+                            "title": None,
+                            "contributions": [
+                                {
+                                    "id": 1,
+                                    "contribution": "Author",
+                                    "author": {
+                                        "id": 7,
+                                        "name": "Ada Example",
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                )
+            ).encode(),
+            "catalogue",
+            (),
+        )[0]
+        binding = structurally_bound.identity_bindings[0]
+        bound_claim = next(
+            claim
+            for claim in structurally_bound.claims
+            if claim.reference == binding.claim_reference
+        )
+        self.assertEqual(
+            (
+                binding.identity,
+                binding.scope,
+                binding.role,
+                bound_claim.value,
+            ),
+            (
+                "hardcover-author-0000000007",
+                ClaimScope.WORK,
+                "author",
+                "Ada Example",
+            ),
         )
         different_works = hardcover_metadata._parse_candidates(
             json.dumps(self._envelope(

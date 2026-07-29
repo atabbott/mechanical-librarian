@@ -813,18 +813,25 @@ def qualify_provider_observation(
         ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
         ProviderEvidenceKind.WORK_COVER_ID,
     }
+    filtered_claims = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK and claim.kind in allowed_claims
+    )
+    filtered_references = {claim.reference for claim in filtered_claims}
     filtered = ProviderCandidate(
         candidate.identity,
         candidate.work_identity,
-        tuple(
-            claim
-            for claim in candidate.claims
-            if claim.scope is ClaimScope.WORK and claim.kind in allowed_claims
-        ),
+        filtered_claims,
         tuple(
             value
             for value in candidate.evidence
             if value.scope is ClaimScope.WORK and value.kind in allowed_evidence
+        ),
+        tuple(
+            binding
+            for binding in candidate.identity_bindings
+            if binding.claim_reference in filtered_references
         ),
     )
     return ProviderObservation(

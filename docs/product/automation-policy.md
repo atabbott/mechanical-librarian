@@ -110,8 +110,11 @@ Ambiguity risk facts include generic or very short titles, initial-only or
 collapsed author names, narrator/author role confusion, swapped title and
 author fields, conflicting series orders, and release-name debris. These facts
 raise the evidence required for replacement but do not turn a hard-coded list
-or fuzzy-match score into authority. Initial-aware name comparison may support
-identity while preserving the full observed and proposed names.
+or fuzzy-match score into authority. The report's closed NFC/case/whitespace
+and typographic forms, plus conservative single-author comma inversion, may
+explain agreement only when complete ordered creator identity and role remain
+intact. Structurally bound aliases may support identity while preserving every
+full observed and proposed name; unbound aliases remain neutral.
 
 An embedded value is not automatically true, and a catalogue value is not automatically edition-applicable. However, imperfect evidence can still support a non-destructive improvement when the competing explanation is materially less plausible.
 

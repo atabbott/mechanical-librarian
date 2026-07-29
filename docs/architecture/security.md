@@ -120,7 +120,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v18`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v20`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -165,10 +165,13 @@ with closed rear resource/spine/tail/marker provenance, controlled
 contributor/production roles, typed date event and precision claims, provider
 candidate edition and provider-local work
 identities, canonical provider access time when egress occurred, comparison
-facts, closed provider evidence kinds with work/edition scope, controlled
+facts and their closed method, structurally parsed provider name-to-identity
+bindings, closed provider evidence kinds with work/edition scope, controlled
 contributor roles and occurrence ordinals, and derived ISBN relationships
 containing only
-claim references and those already-admitted bounded identities. The
+claim references and those already-admitted bounded identities. Comparison
+normalization is closed, never strips diacritics, never uses fuzzy distance,
+and cannot turn aliases, rank, or repeated queries into another source. The
 relationship projection does not duplicate observations or excerpts. Report
 generation performs no decision and grants no write authority. The separate
 ProposalSet contains only bounded alternatives, assessments, stable evidence

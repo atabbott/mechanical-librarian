@@ -57,6 +57,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
     comparison_links,
+    finalize_candidate_comparisons,
     isbn_family,
     normalize_title,
     provider_access_time,
@@ -838,11 +839,14 @@ def _candidate(
     )
     if len(canonical_evidence) > MAX_PROVIDER_EVIDENCE:
         raise ValueError("provider rich evidence exceeds its bound")
-    return ProviderCandidate(
-        identity,
-        "unresolved",
-        tuple(claims),
-        canonical_evidence,
+    return finalize_candidate_comparisons(
+        ProviderCandidate(
+            identity,
+            "unresolved",
+            tuple(claims),
+            canonical_evidence,
+        ),
+        local_claims,
     )
 
 

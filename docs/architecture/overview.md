@@ -128,7 +128,7 @@ workflow, job, cache, or deletion surface. Batch work stores no attempt or
 resume state; shadow-review attempts are the explicit qualification-only
 exception. These rules are the current-runtime application of repository-wide
 ADR-0013.
-The `metadata-report-v18` document retains all 16 ordered Audiobookshelf target
+The `metadata-report-v20` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
 source capability
@@ -139,6 +139,11 @@ and the optional
 complete-title/author lane remain separate; provider-local work convergence is
 recorded without becoming independent corroboration. The relational
 envelope remains only its scope, identity, digest, and schema-version index.
+Candidate-aware domain finalization adds only deterministic comparison links:
+original provider claims and evidence remain unchanged, while exact structural
+name-to-identity bindings can support aliases and complete ordered creator-set
+validation. Adapters parse and bind source relationships; they do not own
+comparison policy.
 Within the exact current schema, a current-scope
 lookup follows the separate pointer offline, while an exact-ID lookup never
 changes a predecessor.
