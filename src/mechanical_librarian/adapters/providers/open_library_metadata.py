@@ -17,6 +17,8 @@ import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderAttemptRecord,
+    ProviderIncompleteCause,
+    ProviderIncompleteCauseRecord,
     _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
@@ -200,6 +202,7 @@ class OpenLibraryMetadataProvider:
         self._attempt_count = 0
         self._retry_count = 0
         self._attempt_records: list[ProviderAttemptRecord] = []
+        self._incomplete_causes: list[ProviderIncompleteCauseRecord] = []
         self._accessed_at: str | None = None
         self._called = False
         self._ledger = _DiscoveryRequestLedger("open_library", "search-v1")
@@ -212,6 +215,10 @@ class OpenLibraryMetadataProvider:
     @property
     def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
         return tuple(self._attempt_records)
+
+    @property
+    def incomplete_causes(self) -> tuple[ProviderIncompleteCauseRecord, ...]:
+        return tuple(self._incomplete_causes)
 
     @property
     def accessed_at(self) -> str | None:
@@ -619,21 +626,21 @@ class OpenLibraryMetadataProvider:
         is_retry: bool,
     ) -> dict[str, Any]:
         if self._remaining_response_bytes <= 0:
-            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
+            raise self._incomplete(ProviderIncompleteCause.AGGREGATE_BYTES)
         if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
-            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
+            raise self._incomplete(ProviderIncompleteCause.DISPATCH_COUNT)
         if is_retry and self._retry_count >= _MAX_RETRIES_PER_OBSERVATION:
             raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
         if not self._pacer.wait(deadline):
-            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
+            raise self._incomplete(ProviderIncompleteCause.DEADLINE)
         remaining = self._timeout_seconds
         if deadline is not None:
             remaining = min(remaining, deadline - self._clock())
         if remaining <= 0:
-            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
+            raise self._incomplete(ProviderIncompleteCause.DEADLINE)
         try:
             if deadline is not None and self._clock() >= deadline:
-                raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+                raise self._incomplete(ProviderIncompleteCause.DEADLINE)
             if self._accessed_at is None:
                 self._accessed_at = provider_access_time(self._wall_clock())
             self._ledger.dispatch(retry=is_retry)
@@ -742,6 +749,12 @@ class OpenLibraryMetadataProvider:
         if self._remaining_response_bytes < 0:
             self._remaining_response_bytes = 0
             raise _ProviderFailure(ProviderStatus.OVERSIZED)
+
+    def _incomplete(
+        self, cause: ProviderIncompleteCause
+    ) -> _ProviderFailure:
+        self._incomplete_causes.append(ProviderIncompleteCauseRecord(cause))
+        return _ProviderFailure(ProviderStatus.INCOMPLETE)
 
     def _retry_delay(self) -> float:
         jitter = self._jitter()

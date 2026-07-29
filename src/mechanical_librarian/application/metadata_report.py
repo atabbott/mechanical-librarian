@@ -1024,6 +1024,10 @@ class GenerateMetadataReport:
                 attempt_records = getattr(provider, "attempt_records", ())
             except Exception:
                 attempt_records = None
+            try:
+                incomplete_causes = getattr(provider, "incomplete_causes", ())
+            except Exception:
+                incomplete_causes = None
             observation = ProviderObservation(
                 observation.provider,
                 observation.status,
@@ -1037,6 +1041,7 @@ class GenerateMetadataReport:
                 provider_attempt_diagnostics(
                     attempt_records,
                     status=observation.status.value,
+                    incomplete_causes=incomplete_causes,
                 ),
                 observation.request_accounting,
             )

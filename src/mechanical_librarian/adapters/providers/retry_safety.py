@@ -9,6 +9,7 @@ import ssl
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import format_datetime
+from enum import Enum
 from typing import Callable, TypeVar
 
 import httpcore
@@ -31,6 +32,21 @@ _SAFE_OS_ERRNOS = frozenset(
 
 
 _Result = TypeVar("_Result")
+
+
+class ProviderIncompleteCause(str, Enum):
+    """Closed, process-local reasons that prevent a provider dispatch."""
+
+    DEADLINE = "deadline"
+    AGGREGATE_BYTES = "aggregate_bytes"
+    DISPATCH_COUNT = "dispatch_count"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderIncompleteCauseRecord:
+    """Aggregate-safe evidence for one undispatched provider request."""
+
+    cause: ProviderIncompleteCause
 
 
 class _DiscoveryRequestLedger:
@@ -290,6 +306,8 @@ def _is_safe_cause(cause: BaseException) -> bool:
 __all__ = [
     "_DiscoveryRequestLedger",
     "ProviderAttemptRecord",
+    "ProviderIncompleteCause",
+    "ProviderIncompleteCauseRecord",
     "bounded_attempt_elapsed",
     "bounded_retry_after",
     "transient_transport_failure",
