@@ -1339,6 +1339,14 @@ class ProviderEvidence:
             link.publication_date_relation is None for link in self.links
         ) or (not is_date and self.links):
             raise ReportValueError("provider date evidence links are inconsistent")
+        if any(link.local_reference is None for link in self.links) and not (
+            is_publication_text
+            and self.date_normalized is not None
+            and type(self.date_precision) is DatePrecision
+            and self.date_event is DateEvent.MANIFESTATION_PUBLICATION
+            and self.date_confidence is DateLinkConfidence.UNRESOLVED
+        ):
+            raise ReportValueError("provider date evidence links are inconsistent")
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -1901,6 +1909,7 @@ def _target_backed_work_lookup(
 def _unbound_manifestation_link_allowed(
     target: TargetFacts,
     provider: ProviderObservation,
+    evidence: ProviderEvidence,
     link: ComparisonLink,
 ) -> bool:
     return (
@@ -1910,6 +1919,11 @@ def _unbound_manifestation_link_allowed(
         and link.publication_date_relation
         is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
         and link.shared_date_precision is None
+        and evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        and evidence.date_normalized is not None
+        and type(evidence.date_precision) is DatePrecision
+        and evidence.date_event is DateEvent.MANIFESTATION_PUBLICATION
+        and evidence.date_confidence is DateLinkConfidence.UNRESOLVED
         and _target_backed_work_lookup(target, provider)
     )
 
@@ -1999,6 +2013,7 @@ class MetadataReport:
             and not _unbound_manifestation_link_allowed(
                 self.target,
                 provider,
+                evidence,
                 link,
             )
             for provider in self.providers
@@ -2869,6 +2884,8 @@ def finalize_candidate_comparisons(
                     ),
                 ),
             )
+        elif value.links:
+            value = replace(value, links=())
         promoted_evidence.append(value)
 
     provisional = replace(

@@ -55,7 +55,10 @@ the reviewer packet but never vote for `publishedYear` or `publishedDate`.
 When a title-and-authors target metadata lookup has no local input claim, an
 unsafe manifestation link records `local_reference: null` rather than
 inventing a local claim reference. That unbound form is valid only for
-`manifestation_incompatible` and remains non-comparable and non-voting.
+normalized provider publication text reclassified as manifestation
+publication with a `manifestation_incompatible` relation; malformed text and
+all other event kinds cannot retain it. It remains non-comparable and
+non-voting.
 Shared year evidence may support `publishedYear`; a full-day
 `publishedDate` requires two materially independent sources.
 

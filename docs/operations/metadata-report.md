@@ -342,8 +342,11 @@ the exact ISBN-family manifestation binding above. Otherwise they remain
 evidence with an explicit manifestation-incompatible relation. If a
 title-and-authors target metadata lookup has no triggering local claim, that
 relation uses `local_reference: null`; null never denotes a local claim and is
-accepted only for a non-comparable `manifestation_incompatible` link from that
-target-backed work lookup.
+accepted only for normalized publication text reclassified as manifestation
+publication with a non-comparable `manifestation_incompatible` link from that
+target-backed work lookup. Malformed publication text and copyright,
+modification, work-first, unknown, or other date events cannot retain an
+unbound link.
 All provider date facts retain the original lexical string, normalized value
 when safe, maximum stated precision, closed event, scope, and explicit or
 unresolved linkage confidence. Candidate edition/work identity, provider

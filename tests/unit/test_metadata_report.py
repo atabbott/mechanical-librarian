@@ -3027,6 +3027,80 @@ class MetadataReportTests(unittest.TestCase):
             unbound_report,
             MetadataReport.from_json(unbound_report.to_json()),
         )
+        valid_unbound_evidence = unbound_report.providers[0].candidates[
+            0
+        ].evidence[0]
+        unbound_link = valid_unbound_evidence.links[0]
+
+        def target_report(evidence: ProviderEvidence) -> MetadataReport:
+            return MetadataReport.create(
+                target=unbound_report.target,
+                file=unbound_report.file,
+                local_claims=(),
+                local_reasons=("no_opening_claims",),
+                providers=(
+                    ProviderObservation(
+                        "catalogue",
+                        ProviderStatus.CANDIDATES,
+                        candidates=(
+                            replace(candidate, evidence=(evidence,)),
+                        ),
+                        query_kind=ProviderQueryKind.WORK,
+                    ),
+                ),
+            )
+
+        unlinked_evidence = (
+            ProviderEvidence(
+                ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+                "not-a-date",
+                ClaimScope.EDITION,
+                date_event=DateEvent.MANIFESTATION_PUBLICATION,
+                date_confidence=DateLinkConfidence.UNRESOLVED,
+            ),
+            ProviderEvidence(
+                ProviderEvidenceKind.COPYRIGHT_DATE,
+                "2001",
+                ClaimScope.EDITION,
+            ),
+            ProviderEvidence(
+                ProviderEvidenceKind.LAST_MODIFIED,
+                "2001-02-03",
+                ClaimScope.EDITION,
+            ),
+        )
+        for evidence in unlinked_evidence:
+            with self.subTest(kind=evidence.kind):
+                with self.assertRaises(ReportValueError):
+                    replace(evidence, links=(unbound_link,))
+                sanitized = target_report(evidence)
+                self.assertEqual(
+                    (),
+                    sanitized.providers[0].candidates[0].evidence[0].links,
+                )
+                forged_report = unbound_report.to_data()
+                forged_evidence = evidence.to_data()
+                forged_evidence["links"] = [unbound_link.to_data()]
+                forged_report["providers"][0]["candidates"][0]["evidence"] = [
+                    forged_evidence
+                ]
+                with self.assertRaises(ReportValueError):
+                    MetadataReport.from_json(canonical_json(forged_report))
+
+        with self.assertRaises(ReportValueError):
+            replace(
+                valid_unbound_evidence,
+                date_event=DateEvent.UNKNOWN,
+            )
+        contradictory_report = unbound_report.to_data()
+        contradictory_evidence = valid_unbound_evidence.to_data()
+        contradictory_evidence["date_event"] = DateEvent.UNKNOWN.value
+        contradictory_report["providers"][0]["candidates"][0]["evidence"] = [
+            contradictory_evidence
+        ]
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(contradictory_report))
+
         tampered_unbound_report = unbound_report.to_data()
         tampered_unbound_report["providers"][0]["candidates"][0]["evidence"][0][
             "links"
