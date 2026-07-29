@@ -1326,14 +1326,10 @@ def _canonical_discovery_results(
             for claim in edition.claims
             if claim.kind is not ClaimKind.CREATOR
         }
-        if (
-            not work_claim_content.issubset(edition_claim_content)
-            or not {
-                _evidence_semantic_key(value) for value in work.evidence
-            }.issubset(
-                _evidence_semantic_key(value) for value in edition.evidence
-            )
-        ):
+        if not work_claim_content.issubset(edition_claim_content):
+            continue
+        evidence = _canonical_evidence_union(edition.evidence, work.evidence)
+        if evidence is None:
             continue
         claims = [
             claim
@@ -1363,7 +1359,7 @@ def _canonical_discovery_results(
             identity,
             edition.work_identity,
             tuple(claims),
-            edition.evidence,
+            evidence,
         )
     if not merged:
         return results
@@ -1393,6 +1389,47 @@ def _evidence_semantic_key(value: ProviderEvidence) -> tuple[object, ...]:
         value.date_normalized,
         value.date_confidence,
     )
+
+
+def _evidence_sort_key(value: ProviderEvidence) -> tuple[str, str, str, str]:
+    return (
+        value.scope.value,
+        value.kind.value,
+        value.value,
+        value.role or "",
+    )
+
+
+def _canonical_evidence_union(
+    canonical: tuple[ProviderEvidence, ...],
+    optional: tuple[ProviderEvidence, ...],
+) -> tuple[ProviderEvidence, ...] | None:
+    """Union compatible evidence with stable ISBN-lane ordinal precedence.
+
+    Canonical-lane evidence keeps its original source ordinals. Work-lane
+    evidence that adds new semantic content is allocated after that ordinal
+    range in its original source order. The persisted tuple remains sorted by
+    the provider's canonical evidence ordering.
+    """
+    selected: dict[tuple[object, ...], ProviderEvidence] = {}
+    for value in canonical:
+        selected.setdefault(_evidence_semantic_key(value), value)
+    next_ordinal = max(
+        (value.source_ordinal for value in selected.values()),
+        default=-1,
+    ) + 1
+    for value in sorted(
+        optional,
+        key=lambda item: (item.source_ordinal, _evidence_sort_key(item)),
+    ):
+        key = _evidence_semantic_key(value)
+        if key in selected:
+            continue
+        selected[key] = replace(value, source_ordinal=next_ordinal)
+        next_ordinal += 1
+        if len(selected) > MAX_PROVIDER_EVIDENCE:
+            return None
+    return tuple(sorted(selected.values(), key=_evidence_sort_key))
 
 
 def _candidate_semantic_key(candidate: ProviderCandidate) -> tuple[object, ...]:

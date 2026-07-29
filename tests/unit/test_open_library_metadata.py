@@ -223,6 +223,31 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             tuple(sorted(value.source_ordinal for value in candidate.evidence)),
         )
 
+    def test_candidate_semantics_keep_required_work_join_strict(self) -> None:
+        candidate, _, _ = open_library_metadata._candidate(
+            "open_library",
+            "/books/OL1M",
+            "/works/OL5W",
+            _edition("/books/OL1M"),
+            _work(),
+            (_isbn(),),
+            "9780306406157",
+        )
+        conflicting = replace(
+            candidate,
+            work_identity="open-library-work-OL9W",
+            evidence=tuple(
+                replace(value, value="open-library-work-OL9W")
+                if value.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
+                else value
+                for value in candidate.evidence
+            ),
+        )
+        self.assertNotEqual(
+            open_library_metadata._candidate_semantic_key(candidate),
+            open_library_metadata._candidate_semantic_key(conflicting),
+        )
+
     def test_search_author_pairs_keep_safe_names_without_misbinding_keys(self) -> None:
         self.assertEqual(
             (
@@ -1588,7 +1613,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         self.assertEqual(1, shared_work_count)
         self.assertEqual(4, len(provider.cover_descriptors))
 
-    def test_discovery_converges_differing_isbn_applicability_and_shared_cover(
+    def test_discovery_converges_lane_local_evidence_authors_and_isbn_applicability(
         self,
     ) -> None:
         ebook = _isbn()
@@ -1622,7 +1647,12 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                     search["docs"][0]["editions"]["docs"][0]["isbn"] = [  # type: ignore[index]
                         family_query.removeprefix("isbn:")
                     ]
-                    search["docs"][0]["publisher"] = ["bad\x00publisher"]  # type: ignore[index]
+                    publishers = (
+                        ["First Press", "Second Press", "bad\x00publisher"]
+                        if family_query == "isbn:9780306406157"
+                        else ["Second Press", "First Press", "bad\x00publisher"]
+                    )
+                    search["docs"][0]["publisher"] = publishers  # type: ignore[index]
                     value = search
                 else:
                     value = {
@@ -1630,7 +1660,12 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                             {
                                 "key": "/works/OL5W",
                                 "author_name": ["Zed Author", "Ada Author"],
-                                "publisher": ["bad\x00publisher"],
+                                "author_key": ["OL9A", "OL7A"],
+                                "publisher": [
+                                    "First Press",
+                                    "Second Press",
+                                    "bad\x00publisher",
+                                ],
                                 "editions": {
                                     "docs": [{"key": "/books/OL1M"}]
                                 },
@@ -1698,6 +1733,65 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 if claim.kind is ClaimKind.CREATOR
                 and claim.state.value == "valid"
                 and claim.role == "author"
+            ),
+        )
+        identities = tuple(
+            evidence
+            for evidence in observation.candidates[0].evidence
+            if evidence.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY
+        )
+        self.assertEqual(
+            {
+                "open-library-author-OL7A",
+                "open-library-author-OL9A",
+            },
+            {evidence.value for evidence in identities},
+        )
+        extra_identity = next(
+            evidence
+            for evidence in identities
+            if evidence.value == "open-library-author-OL9A"
+        )
+        self.assertEqual(
+            max(
+                evidence.source_ordinal
+                for evidence in observation.candidates[0].evidence
+            ),
+            extra_identity.source_ordinal,
+        )
+        publishers = tuple(
+            evidence
+            for evidence in observation.candidates[0].evidence
+            if evidence.kind is ProviderEvidenceKind.SEARCH_PUBLISHER
+        )
+        self.assertEqual(
+            {"First Press", "Second Press"},
+            {evidence.value for evidence in publishers},
+        )
+        self.assertEqual(
+            2,
+            len({evidence.source_ordinal for evidence in publishers}),
+        )
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", fields),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(title, ebook, print_only),
+            local_reasons=("target_metadata_title",),
+            providers=(observation,),
+        )
+        replay = MetadataReport.from_json(report.to_json())
+        self.assertEqual(
+            observation.candidates[0],
+            replay.providers[0].candidates[0],
+        )
+        self.assertEqual(
+            tuple(
+                evidence.source_ordinal
+                for evidence in observation.candidates[0].evidence
+            ),
+            tuple(
+                evidence.source_ordinal
+                for evidence in replay.providers[0].candidates[0].evidence
             ),
         )
         self.assertEqual(
