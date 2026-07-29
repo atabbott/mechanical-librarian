@@ -8,11 +8,14 @@
   non-breaking spaces, paired curly quotes, and en/em dashes; or conservative
   single-author `Family, Given` inversion. Structurally parsed provider
   name-to-identity bindings may support aliases without replacing any source
-  claim or creating another provider. Partial, reordered, duplicated,
-  role/scope-incompatible, diacritic-stripped, fuzzy, subtitle-composed, or
-  marked variant/translation/abridgement values remain disagreement or
-  non-comparable. Persist the strongest method in `metadata-report-v19` under
-  comparison policy `closed-title-creator-v2`; v18 and earlier databases are
+  claim or creating another provider. Incomplete optional bindings remain
+  field-local and cannot override direct complete-name comparison; conflicting
+  complete bindings, reordered or duplicated names, role/scope incompatibility,
+  diacritic stripping, fuzzy or subtitle-composed values, and marked
+  variant/translation/abridgement values remain disagreement or non-comparable.
+  Persist each truthful lexical, closed-field normalization, or
+  structural identity-binding explanation in `metadata-report-v20` under
+  comparison policy `closed-title-creator-v3`; v19 and earlier databases are
   rejected without mutation or migration. (#399)
 
 - Preserve every independently valid, bounded Google Books, Hardcover, and

@@ -881,7 +881,7 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v19", report.schema_version)
+        self.assertEqual("metadata-report-v20", report.schema_version)
         previous = report.to_data()
         previous["schema_version"] = "metadata-report-v13"
         with self.assertRaises(ReportValueError):
@@ -2026,6 +2026,23 @@ class MetadataReportTests(unittest.TestCase):
                         else Comparison.DISAGREEMENT
                     ),
                 )
+        for organization in ("Library", "Libraries"):
+            organization_local = (
+                local(f"British {organization}"),
+            )
+            organization_candidate = finalize_candidate_comparisons(
+                ProviderCandidate(
+                    "candidate",
+                    "work",
+                    (provider(f"{organization}, British", 0),),
+                ),
+                organization_local,
+            )
+            with self.subTest(organization=organization):
+                self.assertIs(
+                    organization_candidate.claims[0].links[0].outcome,
+                    Comparison.DISAGREEMENT,
+                )
 
     def test_identity_bound_aliases_collapse_only_one_complete_creator_set(self) -> None:
         local_claims = tuple(
@@ -2096,6 +2113,11 @@ class MetadataReportTests(unittest.TestCase):
                 (
                     claim.value,
                     next(
+                        link.method
+                        for link in claim.links
+                        if link.outcome is Comparison.AGREEMENT
+                    ),
+                    next(
                         link.local_reference
                         for link in claim.links
                         if link.outcome is Comparison.AGREEMENT
@@ -2104,9 +2126,21 @@ class MetadataReportTests(unittest.TestCase):
                 for claim in candidate.claims
             ),
             (
-                ("A. Example", local_claims[0].reference),
-                ("Ada Example", local_claims[0].reference),
-                ("Bob Example", local_claims[1].reference),
+                (
+                    "A. Example",
+                    ComparisonMethod.STRUCTURAL_IDENTITY_BINDING,
+                    local_claims[0].reference,
+                ),
+                (
+                    "Ada Example",
+                    ComparisonMethod.EXACT,
+                    local_claims[0].reference,
+                ),
+                (
+                    "Bob Example",
+                    ComparisonMethod.EXACT,
+                    local_claims[1].reference,
+                ),
             ),
         )
         replay = MetadataReport.create(
@@ -2470,14 +2504,26 @@ class MetadataReportTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            (ComparisonLink(positive_offset.reference, Comparison.AGREEMENT, ComparisonMethod.EXACT),),
+            (
+                ComparisonLink(
+                    positive_offset.reference,
+                    Comparison.AGREEMENT,
+                    ComparisonMethod.CLOSED_FIELD_NORMALIZATION,
+                ),
+            ),
             comparison_links(
                 provider("2024-03-05T10:30:00Z"),
                 (positive_offset,),
             ),
         )
         self.assertEqual(
-            (ComparisonLink(rollover.reference, Comparison.AGREEMENT, ComparisonMethod.EXACT),),
+            (
+                ComparisonLink(
+                    rollover.reference,
+                    Comparison.AGREEMENT,
+                    ComparisonMethod.CLOSED_FIELD_NORMALIZATION,
+                ),
+            ),
             comparison_links(
                 provider("2024-03-06T00:30:00+01:00"),
                 (rollover,),
@@ -3124,6 +3170,29 @@ class MetadataReportTests(unittest.TestCase):
         provider_imprint = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.IMPRINT, value="Press", state=FieldState.VALID, scope=ClaimScope.EDITION, applicability="not_applicable")
         self.assertEqual(comparison_links(provider, (local, imprint)), (ComparisonLink(local.reference, Comparison.AGREEMENT, ComparisonMethod.EXACT),))
         self.assertEqual(comparison_links(provider_imprint, (local, imprint)), (ComparisonLink(imprint.reference, Comparison.AGREEMENT, ComparisonMethod.EXACT),))
+        normalized_provider = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.PUBLISHER, value="PRESS", state=FieldState.VALID, scope=ClaimScope.EDITION, applicability="not_applicable")
+        self.assertEqual(
+            comparison_links(normalized_provider, (local,)),
+            (
+                ComparisonLink(
+                    local.reference,
+                    Comparison.AGREEMENT,
+                    ComparisonMethod.CLOSED_FIELD_NORMALIZATION,
+                ),
+            ),
+        )
+        normalized_local = LocalClaim.create(kind=ClaimKind.PUBLISHER, observed="Press  House", canonical="Press House", excerpt="Press  House", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.EDITION)
+        canonical_provider = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.PUBLISHER, value="Press House", state=FieldState.VALID, scope=ClaimScope.EDITION, applicability="not_applicable")
+        self.assertEqual(
+            comparison_links(canonical_provider, (normalized_local,)),
+            (
+                ComparisonLink(
+                    normalized_local.reference,
+                    Comparison.AGREEMENT,
+                    ComparisonMethod.CLOSED_FIELD_NORMALIZATION,
+                ),
+            ),
+        )
 
     def test_non_valid_title_sentinel_cannot_become_canonical(self) -> None:
         sentinel = "unsafe-source-text-sha256:" + "a" * 64

@@ -32,8 +32,8 @@ from mechanical_librarian.domain.failure_diagnostics import (
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 
 
-REPORT_SCHEMA = "metadata-report-v19"
-COMPARISON_VERSION = "closed-title-creator-v2"
+REPORT_SCHEMA = "metadata-report-v20"
+COMPARISON_VERSION = "closed-title-creator-v3"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
 MAX_REPORT_BYTES = 2_097_152
@@ -411,9 +411,11 @@ class ComparisonMethod(StrEnum):
 
     NONE = "none"
     EXACT = "exact"
+    CLOSED_FIELD_NORMALIZATION = "closed_field_normalization"
     UNICODE_CASE_WHITESPACE = "unicode_case_whitespace"
     TYPOGRAPHIC_PUNCTUATION = "typographic_punctuation"
     CONSERVATIVE_COMMA_INVERSION = "conservative_comma_inversion"
+    STRUCTURAL_IDENTITY_BINDING = "structural_identity_binding"
 
 
 class IdentifierRelation(StrEnum):
@@ -2194,16 +2196,7 @@ def comparison_links(provider: ProviderClaim, local: tuple[LocalClaim, ...]) -> 
             method := _comparison_method(
                 provider.kind,
                 provider.value,
-                (
-                    claim.observed
-                    if provider.kind
-                    in {
-                        ClaimKind.TITLE,
-                        ClaimKind.SUBTITLE,
-                        ClaimKind.CREATOR,
-                    }
-                    else claim.canonical
-                ),
+                claim.observed,
             )
         ) is not ComparisonMethod.NONE:
             outcome = Comparison.AGREEMENT
@@ -2236,16 +2229,18 @@ _NAME_SUFFIX = re.compile(
 )
 _ORGANIZATION_MARKER = re.compile(
     r"\b(?:association|committee|company|corporation|foundation|group|inc\.?|"
-    r"house|institute|ltd\.?|llc|media|orchestra|press|productions?|publishing|"
-    r"records|society|studios?|team|university)\b",
+    r"house|institute|librar(?:y|ies)|ltd\.?|llc|media|orchestra|press|"
+    r"productions?|publishing|records|society|studios?|team|university)\b",
     re.IGNORECASE,
 )
 _AMBIGUOUS_NAME_JOIN = re.compile(r"(?:\s(?:and|&)\s|[;/])", re.IGNORECASE)
 _METHOD_STRENGTH = {
     ComparisonMethod.EXACT: 0,
+    ComparisonMethod.CLOSED_FIELD_NORMALIZATION: 1,
     ComparisonMethod.UNICODE_CASE_WHITESPACE: 1,
     ComparisonMethod.TYPOGRAPHIC_PUNCTUATION: 2,
     ComparisonMethod.CONSERVATIVE_COMMA_INVERSION: 3,
+    ComparisonMethod.STRUCTURAL_IDENTITY_BINDING: 4,
 }
 
 
@@ -2318,15 +2313,15 @@ def _creator_comparison_links(
                 candidate, compatible_provider
             )
             if complete_bindings is not None:
-                method, local_index_by_claim = _bound_creator_sequence_match(
+                bound_matches = _bound_creator_sequence_match(
                     candidate,
                     compatible_provider,
                     local_values,
                 )
-                if method is not ComparisonMethod.NONE:
-                    local_index = local_index_by_claim.get(provider.reference)
-                    if local_index is not None:
-                        agreements[group[local_index].reference] = method
+                bound_match = bound_matches.get(provider.reference)
+                if bound_match is not None:
+                    local_index, method = bound_match
+                    agreements[group[local_index].reference] = method
             else:
                 method = _creator_sequence_method(
                     provider_values, local_values
@@ -2362,7 +2357,7 @@ def _bound_creator_sequence_match(
     candidate: ProviderCandidate,
     provider_claims: tuple[ProviderClaim, ...],
     local_values: tuple[str, ...],
-) -> tuple[ComparisonMethod, dict[str, int]]:
+) -> dict[str, tuple[int, ComparisonMethod]]:
     claims_by_reference = {
         claim.reference: claim for claim in provider_claims
     }
@@ -2370,10 +2365,9 @@ def _bound_creator_sequence_match(
         candidate, provider_claims
     )
     if bindings is None:
-        return ComparisonMethod.NONE, {}
+        return {}
     ordered_identities: list[str] = []
-    aliases: dict[str, list[str]] = {}
-    identity_by_claim: dict[str, str] = {}
+    aliases: dict[str, list[ProviderClaim]] = {}
     for binding in bindings:
         claim = claims_by_reference[binding.claim_reference]
         if (
@@ -2381,64 +2375,67 @@ def _bound_creator_sequence_match(
             or binding.role != claim.role
             or claim.value is None
         ):
-            return ComparisonMethod.NONE, {}
+            return {}
         if binding.identity not in aliases:
             ordered_identities.append(binding.identity)
             aliases[binding.identity] = []
-        aliases[binding.identity].append(claim.value)
-        identity_by_claim[claim.reference] = binding.identity
+        aliases[binding.identity].append(claim)
     if len(ordered_identities) != len(local_values):
-        return ComparisonMethod.NONE, {}
+        return {}
     if _has_creator_duplicates(local_values):
-        return ComparisonMethod.NONE, {}
+        return {}
     if any(
-        len(values)
+        len(claims)
         != len(
             {
-                creator_comparison_key(value)
-                for value in values
+                creator_comparison_key(claim.value)
+                for claim in claims
+                if claim.value is not None
             }
         )
-        for values in aliases.values()
+        for claims in aliases.values()
     ):
-        return ComparisonMethod.NONE, {}
+        return {}
     identities_by_value: dict[str, str] = {}
-    for identity, values in aliases.items():
-        for value in values:
-            key = creator_comparison_key(value)
+    for identity, claims in aliases.items():
+        for claim in claims:
+            if claim.value is None:
+                return {}
+            key = creator_comparison_key(claim.value)
             owner = identities_by_value.setdefault(key, identity)
             if owner != identity:
-                return ComparisonMethod.NONE, {}
-    methods: list[ComparisonMethod] = []
-    for identity, local_value in zip(ordered_identities, local_values, strict=True):
-        admitted = tuple(
-            method
-            for alias in aliases[identity]
-            if (
-                method := _comparison_method(
-                    ClaimKind.CREATOR,
-                    alias,
-                    local_value,
-                    allow_comma_inversion=len(local_values) == 1,
-                )
+                return {}
+    matches: dict[str, tuple[int, ComparisonMethod]] = {}
+    for local_index, (identity, local_value) in enumerate(
+        zip(ordered_identities, local_values, strict=True)
+    ):
+        alias_methods = {
+            claim.reference: _comparison_method(
+                ClaimKind.CREATOR,
+                claim.value,
+                local_value,
+                allow_comma_inversion=len(local_values) == 1,
             )
-            is not ComparisonMethod.NONE
+            for claim in aliases[identity]
+            if claim.value is not None
+        }
+        if not any(
+            method is not ComparisonMethod.NONE
+            for method in alias_methods.values()
+        ):
+            return {}
+        matches.update(
+            {
+                reference: (
+                    local_index,
+                    method
+                    if method is not ComparisonMethod.NONE
+                    else ComparisonMethod.STRUCTURAL_IDENTITY_BINDING,
+                )
+                for reference, method in alias_methods.items()
+            }
         )
-        if not admitted:
-            return ComparisonMethod.NONE, {}
-        methods.append(min(admitted, key=_METHOD_STRENGTH.__getitem__))
-    local_index_by_identity = {
-        identity: index for index, identity in enumerate(ordered_identities)
-    }
-    return (
-        max(methods, key=_METHOD_STRENGTH.__getitem__),
-        {
-            claim.reference: local_index_by_identity[
-                identity_by_claim[claim.reference]
-            ]
-            for claim in provider_claims
-        },
-    )
+    return matches
 
 
 def complete_creator_identity_bindings(
@@ -2510,7 +2507,7 @@ def _comparison_method(
         return ComparisonMethod.EXACT
     if kind not in {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.CREATOR}:
         return (
-            ComparisonMethod.EXACT
+            ComparisonMethod.CLOSED_FIELD_NORMALIZATION
             if _comparison_value(kind, provider_value)
             == _comparison_value(kind, local_value)
             else ComparisonMethod.NONE

@@ -18,14 +18,16 @@ and could increase downstream evidence authority.
 
 ## Decision
 
-`closed-title-creator-v2` is the only current comparison policy. It records the
-strongest deterministic method on every agreement link in this order:
+`closed-title-creator-v3` is the only current comparison policy. It records a
+truthful deterministic method on every agreement link:
 
 1. exact source bytes;
-2. Unicode NFC, case folding, and ASCII-whitespace normalization;
-3. the same form after mapping non-breaking spaces, paired curly quotation
+2. closed field-specific normalization for retained byte-different non-title
+   and non-creator values;
+3. Unicode NFC, case folding, and ASCII-whitespace normalization;
+4. the same form after mapping non-breaking spaces, paired curly quotation
    marks, and en/em dashes; or
-4. conservative `Family, Given` inversion for exactly one author-role value.
+5. conservative `Family, Given` inversion for exactly one author-role value.
 
 NFC does not strip or transliterate diacritics. Comma inversion requires exactly
 one comma and two non-empty bounded sides and rejects suffix and organization
@@ -38,15 +40,19 @@ name-to-identity binding only when it parsed that exact structural relationship.
 The binding references the exact immutable provider claim. Multiple bound
 claims for one identity may act as aliases, but every claim must have one
 unambiguous binding and the resulting distinct identity sequence must still
-match the complete local creator sequence. Bindings never replace a claim,
-become a provider, or create corroboration.
+match the complete local creator sequence. An incomplete optional binding set
+is non-authoritative and leaves direct complete-name comparison unchanged.
+Bindings never replace a claim,
+become a provider, or create corroboration. Each lexically matching alias
+retains its own closed lexical method; a nonmatching sibling admitted only by
+the complete identity binding records `structural_identity_binding`.
 
 Adapters continue to emit original claims and evidence. A domain finalization
 seam adds comparison links after the complete candidate is assembled.
 Construction and replay run the same finalizer and reject any non-canonical
 link or binding. `ComparisonMethod.NONE` is valid only for disagreement,
 incompatible, or not-comparable outcomes. The exact-current report and
-database schema advances to `metadata-report-v19`; ADR-0013 rejects v18 and all
+database schema advances to `metadata-report-v20`; ADR-0013 rejects v19 and all
 earlier state without migration or compatibility parsing.
 
 ## Consequences
