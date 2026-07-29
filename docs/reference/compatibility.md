@@ -21,7 +21,10 @@ The current installed contract is intentionally narrow:
   referenced enabled providers: at most eight exact ISBN-family lanes plus one exact
   title-plus-complete-author work lane, with no partial egress on overflow;
   Hardcover selections use at most three relationship levels and reject
-  provider-declared GraphQL errors before considering partial data;
+  provider-declared GraphQL errors before considering partial data; safely
+  anchored records retain independently valid bounded optional fields and
+  members while strict response shape, candidate identity, cardinality and
+  required edition/work joins fail closed;
 - report-only bounded cover evidence from ABS, an EPUB-declared cover, and
   configured cover-enabled providers: at most eight provider sources overall
   and four per provider, with explicit provider/gallery truncation;

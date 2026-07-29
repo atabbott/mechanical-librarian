@@ -14,7 +14,8 @@ EPUB. It contains:
 - independent provider observations with stable input references and zero or
   more provider-identity-ordered candidates, each with an opaque provider-local
   work identity distinct from its edition identity and an optional closed,
-  canonical, bounded tuple of provider-specific rich evidence;
+  canonical, bounded tuple of provider-specific rich evidence whose occurrence
+  ordinals preserve source order before canonical sorting;
 - bounded ABS, EPUB, and provider cover outcomes with safe typed provenance,
   artifact facts, and explicit truncation; and
 - one derived ISBN relationship for every local and provider ISBN claim.
@@ -94,9 +95,14 @@ access; aggregation, qualification, persistence, and replay cannot invent or
 refresh the value.
 Candidate claims record
 agreement, disagreement, incompatible, or not-comparable facts against stable
-local claim references. Open Library candidates may also retain only the closed
-finite evidence kinds declared by `ProviderEvidenceKind`, never arbitrary
-upstream properties or raw payloads. No outcome is a decision or winner.
+local claim references. Google Books, Hardcover and Open Library candidates may
+also retain only the closed finite evidence kinds declared by
+`ProviderEvidenceKind`, never arbitrary upstream properties or raw payloads.
+Each evidence item retains its exact bounded value, work/edition scope,
+controlled contributor role where applicable, and pre-canonical
+`source_ordinal`; repeated equal occurrences remain distinct. Invalid optional
+values are excluded rather than represented as evidence. No outcome is a
+decision or winner.
 Provider-local work identity may associate alternate ebook or print ISBNs with
 an accepted identifier, but it cannot corroborate another provider or make an
 unresolved claim accepted.

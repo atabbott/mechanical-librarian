@@ -2,12 +2,22 @@
 
 ## Unreleased
 
-- Preserve safely anchored Hardcover edition and work claims when optional
-  taxonomy rows, links, categories, or bounded tag collections are malformed.
-  Valid taxonomy members remain in source order; malformed members produce
-  field-local closed-state claims and oversized collections are rejected as a
-  field without retaining a prefix. Required candidate identity and
-  edition-to-work joins remain fail-closed. (#400)
+- Preserve every independently valid, bounded Google Books, Hardcover, and
+  Open Library claim or closed rich-evidence value from a safely anchored
+  provider record when an optional sibling is absent, unsupported, malformed,
+  oversized, or untyped. Valid collection members and repeated occurrences
+  retain source order; an over-cap collection is rejected as one field without
+  retaining a prefix. Required response shape, candidate identity and
+  edition-to-work joins remain fail-closed. Provider-owned parser/schema
+  rejections become one bounded, aggregate-safe diagnostic per rejected source
+  occurrence and merge once with attempt diagnostics across persistence and
+  reopen. Extend the closed rich-evidence vocabulary, work/edition scopes and
+  controlled contributor roles, and bind reviewer evidence identities to the
+  occurrence's pre-canonical `source_ordinal`. Advance the clean exact-current
+  report contract to `metadata-report-v18`; deterministic replay preserves
+  claims, rich evidence, duplicate occurrences, provenance, scopes, roles,
+  states, raw/source order, source ordinals, and diagnostics. Earlier report
+  databases are rejected without mutation or migration under ADR-0013. (#400)
 
 - Coalesce semantically identical provider discovery lookups within one
   report-only observation. Each discovery lane retains its own provenance while

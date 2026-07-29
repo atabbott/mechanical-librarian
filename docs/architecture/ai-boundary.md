@@ -32,7 +32,9 @@ ADR-0016 freezes this projection and `shadow-review-request-v3`. Missing,
 opaque-only, malformed, noncanonical, or over-bound provider date linkage
 fails before reviewer invocation. This applies to cited typed provider claims
 and rich date evidence; rich evidence citation IDs are also recomputed from
-their exact closed content. Replaying provider-linked packet or request bytes
+their exact closed content, including work/edition scope, controlled role and
+the occurrence's pre-canonical `source_ordinal`. Replaying provider-linked
+packet or request bytes
 also requires the authoritative immutable report: the runtime rebuilds each
 complete citation from the actual provider candidate and requires exact
 equality. A syntactically valid invented ISBN or physical format therefore
