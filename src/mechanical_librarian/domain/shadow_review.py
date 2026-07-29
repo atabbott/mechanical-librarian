@@ -237,6 +237,7 @@ class ShadowReviewPacket:
             raise ShadowReviewValueError("shadow-review packet is invalid")
         proposal_ids: list[str] = []
         citation_ids: list[str] = []
+        proposal_evidence_references: set[str] = set()
         provider_date_references: set[str] = set()
         for proposal in self.proposals:
             if type(proposal) is not dict or set(proposal) != {
@@ -296,6 +297,9 @@ class ShadowReviewPacket:
                 ):
                     raise ShadowReviewValueError("shadow-review packet is invalid")
                 candidate_ids.append(candidate.get("candidate_id"))
+                proposal_evidence_references.update(
+                    candidate["evidence_references"]
+                )
                 if destination in {
                     TargetDestination.PUBLISHED_YEAR.value,
                     TargetDestination.PUBLISHED_DATE.value,
@@ -337,6 +341,10 @@ class ShadowReviewPacket:
             citation_ids.append(citation_id)
         if citation_ids != sorted(set(citation_ids)):
             raise ShadowReviewValueError("shadow-review packet is invalid")
+        if not proposal_evidence_references.issubset(citation_ids):
+            raise ShadowReviewValueError(
+                "shadow-review proposal evidence binding is invalid"
+            )
         correlation_ids: list[str] = []
         for correlation in self.correlations:
             if (
@@ -521,12 +529,21 @@ class ShadowReviewPacket:
             citation["citation_id"]: citation["fact"]
             for citation in self.citations
         }
-        if any(
-            cited.get(reference) != evidence.get(reference)
-            for reference in _date_link_local_references(source_report)
+        expected_references = set(_proposal_evidence_references(self))
+        expected_references.update(
+            reference
+            for reference, fact in evidence.items()
+            if _contains_provider_date(fact)
+        )
+        expected_references.update(
+            _date_link_local_references(source_report)
+        )
+        if set(cited) != expected_references or any(
+            cited[reference] != evidence.get(reference)
+            for reference in expected_references
         ):
             raise ShadowReviewValueError(
-                "shadow-review local date source binding is invalid"
+                "shadow-review source binding is invalid: evidence closure"
             )
         for citation in self.citations:
             citation_id = citation["citation_id"]
@@ -1313,10 +1330,28 @@ def _is_provider_citation(citation_id: str, fact: dict[str, object]) -> bool:
     )
 
 
+def _proposal_evidence_references(
+    packet: ShadowReviewPacket,
+) -> frozenset[str]:
+    return frozenset(
+        reference
+        for proposal in packet.proposals
+        for candidate in proposal["candidates"]
+        for reference in candidate["evidence_references"]
+    )
+
+
 def _requires_provider_source(packet: ShadowReviewPacket) -> bool:
     return any(
-        _is_provider_citation(citation["citation_id"], citation["fact"])
-        for citation in packet.citations
+        proposal["destination"]
+        in {
+            TargetDestination.PUBLISHED_YEAR.value,
+            TargetDestination.PUBLISHED_DATE.value,
+        }
+        for proposal in packet.proposals
+    ) or any(
+        reference.startswith(("provider_", "evidence_"))
+        for reference in _proposal_evidence_references(packet)
     )
 
 

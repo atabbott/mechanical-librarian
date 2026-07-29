@@ -2304,6 +2304,113 @@ class ProposalSetTests(unittest.TestCase):
                             date.outcome,
                         )
 
+    def test_timestamp_offset_eligibility_is_identical_in_report_and_proposals(
+        self,
+    ) -> None:
+        local_date = LocalClaim.create(
+            kind=ClaimKind.PUBLICATION_DATE,
+            observed="2001-02-03",
+            canonical="2001-02-03",
+            excerpt="2001-02-03",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.EDITION,
+            date_event=DateEvent.MANIFESTATION_PUBLICATION,
+            date_precision=DatePrecision.DAY,
+        )
+        cases = (
+            ("2001-02-03T04:05:06Z", True),
+            ("2001-02-03T04:05:06+01:00", True),
+            ("2001-02-03T04:05:06+00:00:30", False),
+            ("2001-02-03T04:05:06+01:02:03.500000", False),
+        )
+        for lexical, expected_voting in cases:
+            for provider_count in (1, 2):
+                for include_local_date in (False, True):
+                    providers = tuple(
+                        _publication_provider(
+                            f"catalogue_{index}",
+                            f"edition-{index}",
+                            (lexical,),
+                        )
+                        for index in range(provider_count)
+                    )
+                    provider_references = {
+                        claim.reference
+                        for provider in providers
+                        for candidate in provider.candidates
+                        for claim in candidate.claims
+                        if claim.kind is ClaimKind.PUBLICATION_DATE
+                    }
+                    report = MetadataReport.from_json(
+                        _report(
+                            fields=_fields(
+                                published_year=TargetField(
+                                    TargetDestination.PUBLISHED_YEAR,
+                                    TargetFieldState.MISSING,
+                                ),
+                                published_date=TargetField(
+                                    TargetDestination.PUBLISHED_DATE,
+                                    TargetFieldState.MISSING,
+                                ),
+                            ),
+                            local_claims=(
+                                _publication_local_isbn(),
+                                *((local_date,) if include_local_date else ()),
+                            ),
+                            providers=providers,
+                        ).to_json()
+                    )
+                    retained_claims = [
+                        claim
+                        for provider in report.providers
+                        for candidate in provider.candidates
+                        for claim in candidate.claims
+                        if claim.kind is ClaimKind.PUBLICATION_DATE
+                    ]
+                    retained_text = [
+                        evidence
+                        for provider in report.providers
+                        for candidate in provider.candidates
+                        for evidence in candidate.evidence
+                        if evidence.kind
+                        is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                        and evidence.value == lexical
+                    ]
+                    proposal = evaluate_report(report)
+                    proposal_references = {
+                        reference
+                        for result in proposal.results
+                        for alternative in result.alternatives
+                        for reference in alternative.evidence_references
+                    }
+                    with self.subTest(
+                        lexical=lexical,
+                        providers=provider_count,
+                        local_date=include_local_date,
+                    ):
+                        self.assertEqual(
+                            provider_count if expected_voting else 0,
+                            len(retained_claims),
+                        )
+                        self.assertEqual(
+                            0 if expected_voting else provider_count,
+                            len(retained_text),
+                        )
+                        if expected_voting:
+                            self.assertTrue(
+                                provider_references.issubset(
+                                    proposal_references
+                                )
+                            )
+                        else:
+                            self.assertTrue(
+                                provider_references.isdisjoint(
+                                    proposal_references
+                                )
+                            )
+
     def test_unresolved_provider_publication_text_is_visible_but_nonselectable(
         self,
     ) -> None:

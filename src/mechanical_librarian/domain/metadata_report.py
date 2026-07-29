@@ -48,6 +48,7 @@ _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
 _REFERENCE = re.compile(r"^(?:local|provider)_[0-9a-f]{64}$")
 _ASIN = re.compile(r"^B[0-9A-Z]{9}$")
+_EXPLICIT_TIMESTAMP_OFFSET = re.compile(r"[+-]\d{2}:\d{2}$")
 _LANE_IDENTITY = re.compile(r"^lane_[0-9a-f]{64}$")
 _LANE_CANDIDATE_REFERENCE = re.compile(r"^lane_candidate_[0-9a-f]{64}$")
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -732,6 +733,21 @@ def normalize_date_value(value: str) -> tuple[str, DatePrecision]:
     if offset is not None and abs(offset) > timedelta(hours=14):
         raise ReportValueError("date lexical value is invalid")
     return parsed.isoformat(), DatePrecision.TIMESTAMP
+
+
+def publication_date_is_voting(
+    value: str, precision: DatePrecision
+) -> bool:
+    """Accept only date values whose retained precision can vote."""
+    if type(precision) is not DatePrecision:
+        raise ReportValueError("date precision is inconsistent")
+    normalized, actual = normalize_date_value(value)
+    if actual is not precision:
+        raise ReportValueError("date precision is inconsistent")
+    return (
+        precision is not DatePrecision.TIMESTAMP
+        or _EXPLICIT_TIMESTAMP_OFFSET.search(normalized) is not None
+    )
 
 
 def validate_observed_title(value: object) -> str:
@@ -2804,7 +2820,7 @@ def finalize_candidate_comparisons(
             and claim.value is not None
             and type(claim.date_event) is DateEvent
             and type(claim.date_precision) is DatePrecision
-            and _publication_precision_is_voting(
+            and publication_date_is_voting(
                 claim.value, claim.date_precision
             )
         ):
@@ -2831,7 +2847,7 @@ def finalize_candidate_comparisons(
             and type(value.date_precision) is DatePrecision
             and compatible
             and provider is not None
-            and _publication_precision_is_voting(
+            and publication_date_is_voting(
                 value.date_normalized, value.date_precision
             )
         ):
@@ -2878,7 +2894,7 @@ def finalize_candidate_comparisons(
                     precision=value.date_precision,
                     local=(
                         local
-                        if _publication_precision_is_voting(
+                        if publication_date_is_voting(
                             value.date_normalized, value.date_precision
                         )
                         else tuple(
@@ -3340,7 +3356,7 @@ def _comparison_value(kind: ClaimKind, value: str) -> str:
         normalized, precision = normalize_date_value(value)
         if precision is DatePrecision.TIMESTAMP:
             instant = datetime.fromisoformat(normalized)
-            if instant.utcoffset() is None:
+            if not publication_date_is_voting(normalized, precision):
                 raise ReportValueError(
                     "comparison timestamp requires an explicit offset"
                 )
@@ -3350,14 +3366,6 @@ def _comparison_value(kind: ClaimKind, value: str) -> str:
         _projection_text(value, "comparison description", MAX_DESCRIPTION_CHARACTERS)
         return " ".join(unicodedata.normalize("NFC", value).split()).casefold()
     return normalize_title(value).casefold()
-
-
-def _publication_precision_is_voting(
-    value: str, precision: DatePrecision
-) -> bool:
-    if precision is not DatePrecision.TIMESTAMP:
-        return True
-    return datetime.fromisoformat(value).utcoffset() is not None
 
 
 def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_claims: tuple[LocalClaim, ...], local_status: str, local_reasons: tuple[str, ...], providers: tuple[ProviderObservation, ...], field_results: tuple[FieldResult, ...], identifier_evidence: tuple[IdentifierEvidence, ...], cover_sources: tuple[CoverSource, ...]) -> dict[str, object]:
@@ -3834,7 +3842,7 @@ __all__ = [
     "manifestation_publication_compatible",
     "publication_date_relation",
     "default_target_fields",
-    "derive_identifier_evidence", "isbn_family", "normalize_date_value", "normalize_title",
+    "derive_identifier_evidence", "isbn_family", "normalize_date_value", "normalize_title", "publication_date_is_voting",
     "provider_lane_candidate_reference", "stable_reference",
     "validate_observed_title",
 ]

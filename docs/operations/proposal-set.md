@@ -93,8 +93,9 @@ The policy is deliberately conservative:
   become a `publishedDate` candidate, while a signed-offset timestamp may
   reduce to that exact stated day without offset conversion. Its source
   precision remains in the cited report fact;
-- a timestamp without an explicit UTC designator or signed offset remains
-  visible in the report but supplies neither a year nor day vote;
+- a timestamp without `Z` or an exact signed `HH:MM` offset remains visible in
+  the report but supplies neither a year nor day vote; this includes naive and
+  parser-admitted offset-second forms;
 - a day plus an agreeing year or month supports the shared year twice but the
   day only once. Finer same-year conflicts preserve their shared coarse year;
   they never manufacture month or day agreement;

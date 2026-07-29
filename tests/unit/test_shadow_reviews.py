@@ -175,6 +175,9 @@ def _request_with_citations(
         }
         for index in range(count)
     ]
+    packet["proposals"][0]["candidates"][0]["evidence_references"] = [
+        citation["citation_id"] for citation in packet["citations"]
+    ]
     return ShadowReviewRequest.create_from_packet(
         profile_identity,
         ShadowReviewPacket(
@@ -295,6 +298,18 @@ class ShadowReviewTests(unittest.TestCase):
             applicability="ebook",
             raw_order=1,
         )
+        local_date = LocalClaim.create(
+            kind=ClaimKind.PUBLICATION_DATE,
+            observed="2024-03-05",
+            canonical="2024-03-05",
+            excerpt="2024-03-05",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.EDITION,
+            date_event=DateEvent.MANIFESTATION_PUBLICATION,
+            date_precision=DatePrecision.DAY,
+        )
         report = MetadataReport.create(
             target=TargetFacts(
                 "primary",
@@ -303,7 +318,7 @@ class ShadowReviewTests(unittest.TestCase):
                 default_target_fields(None),
             ),
             file=FileFacts(0, "a" * 64, "b" * 64),
-            local_claims=(_local_isbn(),),
+            local_claims=(_local_isbn(), local_date),
             local_reasons=("package_metadata_isbn",),
             providers=(
                 ProviderObservation(
@@ -345,6 +360,69 @@ class ShadowReviewTests(unittest.TestCase):
         )["candidates"][0]
         self.assertEqual("manifestation_publication", projected["date_event"])
         self.assertEqual("day", projected["date_precision"])
+        provider_reference = next(
+            reference
+            for reference in projected["evidence_references"]
+            if reference.startswith("provider_")
+        )
+        local_reference = local_date.reference
+        for name, removed, remove_candidate_reference in (
+            ("provider", {provider_reference}, False),
+            ("linked_local", {local_reference}, False),
+            (
+                "provider_and_linked_local",
+                {provider_reference, local_reference},
+                False,
+            ),
+            (
+                "provider_local_and_candidate_reference",
+                {provider_reference, local_reference},
+                True,
+            ),
+        ):
+            document = json.loads(packet.to_json())
+            document["citations"] = [
+                value
+                for value in document["citations"]
+                if value["citation_id"] not in removed
+            ]
+            if remove_candidate_reference:
+                next(
+                    value
+                    for value in document["proposals"]
+                    if value["destination"] == "publishedDate"
+                )["candidates"][0]["evidence_references"] = []
+            serialized = canonical_json(document)
+            for source in (None, report):
+                with (
+                    self.subTest(
+                        tamper=name,
+                        source="absent" if source is None else "present",
+                    ),
+                    self.assertRaises(ShadowReviewValueError),
+                ):
+                    ShadowReviewPacket.from_json(serialized, source)
+        document = json.loads(packet.to_json())
+        injected_reference = "local_" + ("0" * 64)
+        document["citations"].append(
+            {
+                "citation_id": injected_reference,
+                "fact": {
+                    "canonical": "invented",
+                    "reference": injected_reference,
+                },
+            }
+        )
+        document["citations"].sort(key=lambda value: value["citation_id"])
+        for source in (None, report):
+            with (
+                self.subTest(
+                    tamper="injected_local",
+                    source="absent" if source is None else "present",
+                ),
+                self.assertRaises(ShadowReviewValueError),
+            ):
+                ShadowReviewPacket.from_json(canonical_json(document), source)
         citation = next(
             value
             for value in packet.citations

@@ -82,6 +82,13 @@ rebuilds the complete provider citation from the actual candidate, and
 requires exact equality before dispatch or inspection. Missing report context
 and invented or omitted identifier/format siblings fail closed. The report
 itself never enters the reviewer request.
+Every projected candidate evidence reference must name an included citation.
+Whether replay needs the source report is derived from the projected proposal
+contract, including publication destinations and provider evidence references,
+not from whichever citations remain in the serialized packet. Deleting a
+provider citation, its linked local citation, or both therefore cannot turn a
+source-bound packet into a source-free packet or leave dangling proposal
+evidence.
 Every non-null local claim reference used as an operand by a retained provider
 date link is also included as a source-bound citation. Removing or changing
 that local citation makes packet replay fail; an intentionally unbound

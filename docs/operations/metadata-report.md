@@ -212,10 +212,10 @@ instant. A timestamp and matching day agree exactly at day precision; matching
 month or year prefixes are month- or year-compatible respectively. A
 nonmatching stated prefix remains a finer-precision conflict at the shared
 precision.
-Only timestamps carrying an explicit UTC designator or signed offset can be
-promoted into typed publication claims. A naive timestamp remains replayable
-as unresolved publication text, but it cannot vote or be compared as an
-instant.
+Only timestamps carrying `Z` or an exact signed `HH:MM` offset can be promoted
+into typed publication claims. Naive timestamps and parser-admitted
+offset-second forms remain replayable as unresolved publication text, but they
+cannot vote or participate in publication-date comparison.
 
 Work-scoped title and creator links retain the original source values and record
 one truthful closed comparison method per link: exact bytes; NFC, case folding
