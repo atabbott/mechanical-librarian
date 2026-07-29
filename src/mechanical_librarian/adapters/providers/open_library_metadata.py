@@ -243,7 +243,7 @@ class OpenLibraryMetadataProvider:
         self._called = True
         if type(plan) is MetadataLookup:
             ledger = _DiscoveryRequestLedger("open_library", "search-v1")
-            projection = ("key,editions,editions.key,editions.isbn" if plan.kind is ProviderQueryKind.ISBN else "key,author_name,editions,editions.key")
+            projection = ("key,editions,editions.key,editions.isbn" if plan.kind is ProviderQueryKind.ISBN else "key,author_name,author_key,editions,editions.key")
             ledger.register(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=projection)
             self._ledger = ledger
             try:
@@ -261,7 +261,7 @@ class OpenLibraryMetadataProvider:
         results: list[ProviderLaneResult] = []
         ledger = _DiscoveryRequestLedger("open_library", "search-v1")
         for lane in plan.lanes:
-            ledger.register(kind=lane.kind.value, matched_family=lane.matched_family, title=lane.title, authors=lane.authors, projection=("key,editions,editions.key,editions.isbn" if lane.kind is ProviderQueryKind.ISBN else "key,author_name,editions,editions.key"))
+            ledger.register(kind=lane.kind.value, matched_family=lane.matched_family, title=lane.title, authors=lane.authors, projection=("key,editions,editions.key,editions.isbn" if lane.kind is ProviderQueryKind.ISBN else "key,author_name,author_key,editions,editions.key"))
         self._ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         try:
@@ -282,7 +282,7 @@ class OpenLibraryMetadataProvider:
                     projection=(
                         "key,editions,editions.key,editions.isbn"
                         if lookup.kind is ProviderQueryKind.ISBN
-                        else "key,author_name,editions,editions.key"
+                        else "key,author_name,author_key,editions,editions.key"
                     ),
                     execute=lambda: self._observe_lookup(lookup, deadline=deadline),
                 )
@@ -418,7 +418,7 @@ class OpenLibraryMetadataProvider:
                         params={
                             "title": lookup.title or "",
                             "author": " ".join(lookup.authors),
-                            "fields": "key,author_name,editions,editions.key",
+                            "fields": "key,author_name,author_key,editions,editions.key",
                             "limit": str(_MAX_SEARCH_ROWS),
                         },
                         deadline=deadline,
@@ -825,15 +825,17 @@ def _admitted_candidates(
 
 def _admitted_work_candidates(
     source: dict[str, Any],
-) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+) -> tuple[tuple[str, str, tuple[tuple[str, str | None], ...]], ...]:
     docs = source.get("docs")
     if type(docs) is not list or len(docs) > _MAX_SEARCH_ROWS:
         raise ValueError("search result is malformed")
-    admitted: dict[tuple[str, str], tuple[str, ...]] = {}
+    admitted: dict[tuple[str, str], tuple[tuple[str, str | None], ...]] = {}
     for raw_work in docs:
         work = _mapping(raw_work)
         work_key = _key(work.get("key"), _WORK_KEY)
-        authors = _author_list(work.get("author_name", []), _MAX_VALUES)
+        authors = _search_authors(
+            work.get("author_name", []), work.get("author_key", [])
+        )
         editions = _mapping(work.get("editions"))
         edition_docs = editions.get("docs")
         if type(edition_docs) is not list:
@@ -860,7 +862,7 @@ def _candidate(
     work: dict[str, Any],
     local_claims: tuple[LocalClaim, ...],
     requested_family: str | None,
-    work_authors: tuple[str, ...] = (),
+    work_authors: tuple[tuple[str, str | None], ...] = (),
 ) -> tuple[ProviderCandidate, _CoverId, _CoverId]:
     if _key(edition.get("key"), _EDITION_KEY) != edition_key:
         raise ValueError("edition identity is malformed")
@@ -931,7 +933,7 @@ def _candidate(
         edition.get("publish_date"),
         ClaimScope.EDITION,
     )
-    for publisher in _string_list(edition.get("publishers", []), _MAX_VALUES):
+    for publisher in _optional_string_list(edition.get("publishers", []), _MAX_VALUES):
         add(ClaimKind.PUBLISHER, publisher, ClaimScope.EDITION)
     if not edition.get("publishers"):
         add(ClaimKind.PUBLISHER, None, ClaimScope.EDITION)
@@ -941,11 +943,13 @@ def _candidate(
         ClaimScope.EDITION,
         state=FieldState.UNSUPPORTED,
     )
-    for language in _object_list(edition.get("languages", []), _MAX_VALUES):
-        match = _LANGUAGE_KEY.fullmatch(_key(language.get("key"), _LANGUAGE_KEY))
-        if match is None:
-            raise ValueError("edition language is malformed")
-        add(ClaimKind.LANGUAGE, match.group(1), ClaimScope.EDITION)
+    for language in _optional_object_list(edition.get("languages", []), _MAX_VALUES):
+        try:
+            match = _LANGUAGE_KEY.fullmatch(_key(language.get("key"), _LANGUAGE_KEY))
+            if match is not None:
+                add(ClaimKind.LANGUAGE, match.group(1), ClaimScope.EDITION)
+        except ValueError:
+            pass
     if not edition.get("languages"):
         add(ClaimKind.LANGUAGE, None, ClaimScope.EDITION)
     add(
@@ -964,7 +968,7 @@ def _candidate(
     add(ClaimKind.TITLE, work.get("title"), ClaimScope.WORK)
     add(ClaimKind.DESCRIPTION, _description(work.get("description")), ClaimScope.WORK)
     if work_authors:
-        for author in work_authors:
+        for author, _ in work_authors:
             add(
                 ClaimKind.CREATOR,
                 author,
@@ -1001,27 +1005,27 @@ def _candidate(
     ]
     _provenance(evidence, edition, ClaimScope.EDITION)
     _provenance(evidence, work, ClaimScope.WORK)
-    for author in _object_list(edition.get("authors", []), _MAX_VALUES):
-        evidence.append(
-            ProviderEvidence(
-                ProviderEvidenceKind.AUTHOR_IDENTITY,
-                _author_identity(_key(author.get("key"), _AUTHOR_KEY)),
-                ClaimScope.EDITION,
+    for author in _optional_object_list(edition.get("authors", []), _MAX_VALUES):
+        try:
+            evidence.append(
+                ProviderEvidence(
+                    ProviderEvidenceKind.AUTHOR_IDENTITY,
+                    _author_identity(_key(author.get("key"), _AUTHOR_KEY)),
+                    ClaimScope.WORK,
+                )
             )
-        )
-    for contributor in _object_list(work.get("authors", []), _MAX_VALUES):
-        author = _mapping(contributor.get("author"))
-        role = _mapping(contributor.get("type")).get("key")
-        if role != "/type/author_role":
-            raise ValueError("work contributor role is malformed")
-        evidence.append(
-            ProviderEvidence(
-                ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
-                _author_identity(_key(author.get("key"), _AUTHOR_KEY)),
-                ClaimScope.WORK,
-                "author",
+        except ValueError:
+            pass
+    for _, author_key in work_authors:
+        if author_key is not None:
+            evidence.append(
+                ProviderEvidence(
+                    ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+                    _author_identity(author_key),
+                    ClaimScope.WORK,
+                    "author",
+                )
             )
-        )
     for field, kind in (
         ("oclc_numbers", ProviderEvidenceKind.OCLC),
         ("lccn", ProviderEvidenceKind.LCCN),
@@ -1029,44 +1033,37 @@ def _candidate(
         ("lc_classifications", ProviderEvidenceKind.LC_CLASSIFICATION),
         ("publish_places", ProviderEvidenceKind.PUBLICATION_PLACE),
     ):
-        _string_evidence(evidence, edition, field, kind, ClaimScope.EDITION)
+        _optional_string_evidence(evidence, edition, field, kind, ClaimScope.EDITION)
     for field, kind in (
         ("subjects", ProviderEvidenceKind.SUBJECT),
         ("subject_people", ProviderEvidenceKind.PERSON),
         ("subject_places", ProviderEvidenceKind.PLACE),
         ("subject_times", ProviderEvidenceKind.TIME),
     ):
-        _string_evidence(evidence, work, field, kind, ClaimScope.WORK)
-    _identifier_evidence(evidence, edition, ClaimScope.EDITION)
-    _identifier_evidence(evidence, work, ClaimScope.WORK)
+        _optional_string_evidence(evidence, work, field, kind, ClaimScope.WORK)
+    _optional_identifier_evidence(evidence, edition, ClaimScope.EDITION)
+    _optional_identifier_evidence(evidence, work, ClaimScope.WORK)
     for field, kind in (
         ("physical_format", ProviderEvidenceKind.PHYSICAL_FORMAT),
         ("pagination", ProviderEvidenceKind.PAGINATION),
         ("copyright_date", ProviderEvidenceKind.COPYRIGHT_DATE),
     ):
         if field in edition and edition[field] is not None:
-            evidence.append(
-                ProviderEvidence(kind, _text(edition[field]), ClaimScope.EDITION)
-            )
+            try:
+                evidence.append(ProviderEvidence(kind, _text(edition[field]), ClaimScope.EDITION))
+            except (ValueError, EvidenceValueError):
+                pass
     if "number_of_pages" in edition and edition["number_of_pages"] is not None:
         pages = edition["number_of_pages"]
         if type(pages) is not int or isinstance(pages, bool) or not 1 <= pages <= 100_000:
-            raise ValueError("edition page count is malformed")
-        evidence.append(
-            ProviderEvidence(
-                ProviderEvidenceKind.PAGE_COUNT,
-                str(pages),
-                ClaimScope.EDITION,
-            )
-        )
+            pages = None
+        if pages is not None:
+            evidence.append(ProviderEvidence(ProviderEvidenceKind.PAGE_COUNT, str(pages), ClaimScope.EDITION))
     if "first_publish_date" in work and work["first_publish_date"] is not None:
-        evidence.append(
-            ProviderEvidence(
-                ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
-                _text(work["first_publish_date"]),
-                ClaimScope.WORK,
-            )
-        )
+        try:
+            evidence.append(ProviderEvidence(ProviderEvidenceKind.FIRST_PUBLICATION_DATE, _text(work["first_publish_date"]), ClaimScope.WORK))
+        except (ValueError, EvidenceValueError):
+            pass
     edition_cover = _cover_id(edition)
     work_cover = _cover_id(work)
     if edition_cover.value is not None:
@@ -1326,27 +1323,30 @@ def _provenance(
         )
 
 
-def _string_evidence(
+def _optional_string_evidence(
     evidence: list[ProviderEvidence],
     source: dict[str, Any],
     field: str,
     kind: ProviderEvidenceKind,
     scope: ClaimScope,
 ) -> None:
-    for value in _string_list(source.get(field, []), _MAX_VALUES):
+    for value in _optional_string_list(source.get(field, []), _MAX_VALUES):
         evidence.append(ProviderEvidence(kind, value, scope))
 
 
-def _identifier_evidence(
+def _optional_identifier_evidence(
     evidence: list[ProviderEvidence],
     source: dict[str, Any],
     scope: ClaimScope,
 ) -> None:
     if "identifiers" not in source or source["identifiers"] is None:
         return
-    identifiers = _mapping(source["identifiers"])
+    try:
+        identifiers = _mapping(source["identifiers"])
+    except ValueError:
+        return
     if "wikidata" in identifiers:
-        for value in _string_list(identifiers["wikidata"], _MAX_VALUES):
+        for value in _optional_string_list(identifiers["wikidata"], _MAX_VALUES):
             evidence.append(
                 ProviderEvidence(ProviderEvidenceKind.WIKIDATA, value, scope)
             )
@@ -1612,20 +1612,63 @@ def _object_list(value: object, maximum: int) -> list[dict[str, Any]]:
 
 
 def _string_list(value: object, maximum: int) -> tuple[str, ...]:
-    if type(value) is not list:
+    if type(value) is not list or len(value) > maximum:
         raise ValueError("provider string list is malformed")
     values = tuple(_text(item) for item in value)
-    return tuple(sorted(set(values)))[:maximum]
-
-
-def _author_list(value: object, maximum: int) -> tuple[str, ...]:
-    if type(value) is not list or len(value) > maximum:
-        raise ValueError("provider author list is malformed")
-    values = tuple(_text(item) for item in value)
-    normalized = tuple(normalize_title(item).casefold() for item in values)
-    if len(set(normalized)) != len(normalized):
-        raise ValueError("provider author list is malformed")
     return values
+
+
+def _optional_string_list(value: object, maximum: int) -> tuple[str, ...]:
+    """Validate the collection bound before retaining valid source members."""
+    if type(value) is not list or len(value) > maximum:
+        return ()
+    values: list[str] = []
+    for item in value:
+        try:
+            values.append(_text(item))
+        except (ValueError, EvidenceValueError):
+            continue
+    return tuple(values)
+
+
+def _optional_object_list(value: object, maximum: int) -> list[dict[str, Any]]:
+    if type(value) is not list or len(value) > maximum:
+        return []
+    return [item for raw in value if type(raw) is dict for item in [raw]]
+
+
+def _search_authors(
+    names: object, keys: object
+) -> tuple[tuple[str, str | None], ...]:
+    """Retain safe search names, binding identities only by source index.
+
+    Search result author fields are optional evidence.  A malformed sibling
+    must not make the admitted edition/work identity unsafe, but an ID can
+    never be associated with a name after sorting, filtering, or truncation.
+    """
+    if type(names) is not list or type(keys) is not list:
+        return ()
+    if len(names) > _MAX_VALUES or len(keys) > _MAX_VALUES:
+        return ()
+    result: list[tuple[str, str | None]] = []
+    seen: set[str] = set()
+    for index, raw_name in enumerate(names):
+        try:
+            name = _text(raw_name)
+            normalized = normalize_title(name).casefold()
+        except (ValueError, EvidenceValueError):
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        author_key: str | None = None
+        if index < len(keys):
+            try:
+                author_key = _key(keys[index], _AUTHOR_KEY)
+            except ValueError:
+                pass
+        result.append((name, author_key))
+    return tuple(result)
 
 
 def _search_isbn_families(value: object) -> set[str]:

@@ -192,6 +192,25 @@ def _work(key: str = "/works/OL5W", *, cover: int | None = None) -> dict[str, ob
 
 
 class OpenLibraryMetadataTests(unittest.TestCase):
+    def test_search_author_pairs_keep_safe_names_without_misbinding_keys(self) -> None:
+        self.assertEqual(
+            (
+                ("Ada Example", "/authors/OL7A"),
+                ("Zed Example", None),
+            ),
+            open_library_metadata._search_authors(
+                ["Ada Example", "Zed Example"],
+                ["/authors/OL7A", "not-an-author-key"],
+            ),
+        )
+        self.assertEqual(
+            (),
+            open_library_metadata._search_authors(
+                [f"Author {index}" for index in range(9)],
+                [f"/authors/OL{index + 1}A" for index in range(9)],
+            ),
+        )
+
     def test_detail_freeze_replay_preserves_empty_containers_and_decimal(self) -> None:
         value = {"empty_mapping": {}, "empty_sequence": [], "nested": [{}, []], "decimal": Decimal("1.25")}
         frozen = open_library_metadata._freeze_detail(value)
@@ -347,13 +366,13 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             (
                 "duplicate",
                 ["Zed Author", "Ada Author", "Ada Author"],
-                ProviderStatus.MALFORMED,
+                ProviderStatus.CANDIDATES,
             ),
-            ("invalid", ["Zed Author", 7], ProviderStatus.MALFORMED),
+            ("invalid", ["Zed Author", 7], ProviderStatus.NO_MATCH),
             (
                 "overflow",
                 [f"Author {index}" for index in range(9)],
-                ProviderStatus.MALFORMED,
+                ProviderStatus.NO_MATCH,
             ),
         ):
             requests: list[str] = []
@@ -393,11 +412,11 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             ).observe(plan)
             with self.subTest(label=label):
                 self.assertEqual(expected, observation.status)
-                self.assertEqual((), observation.candidates)
                 self.assertEqual(
-                    3 if expected is ProviderStatus.NO_MATCH else 1,
-                    len(requests),
+                    1 if expected is ProviderStatus.CANDIDATES else 0,
+                    len(observation.candidates),
                 )
+                self.assertEqual(3, len(requests))
 
     def test_work_lookup_uses_complete_title_and_authors_then_retains_only_neutral_work_evidence(self) -> None:
         requests: list[httpx.Request] = []
@@ -407,6 +426,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                     {
                         "key": "/works/OL5W",
                         "author_name": ["Ada Example"],
+                        "author_key": ["/authors/OL7A"],
                         "editions": {"docs": [{"key": "/books/OL1M"}]},
                     }
                 ]
@@ -435,7 +455,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         self.assertEqual("Local work title", requests[0].url.params["title"])
         self.assertEqual("Ada Example", requests[0].url.params["author"])
         self.assertEqual(
-            "key,author_name,editions,editions.key",
+            "key,author_name,author_key,editions,editions.key",
             requests[0].url.params["fields"],
         )
         qualified = qualify_provider_observation(observation, lookup)
@@ -455,6 +475,10 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         )
         self.assertIn(
             ProviderEvidenceKind.SUBJECT,
+            {value.kind for value in observation.candidates[0].evidence},
+        )
+        self.assertIn(
+            ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
             {value.kind for value in observation.candidates[0].evidence},
         )
         self.assertNotIn(
@@ -541,8 +565,6 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         kinds = {value.kind for value in candidate.evidence}
         self.assertTrue(
             {
-                ProviderEvidenceKind.AUTHOR_IDENTITY,
-                ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
                 ProviderEvidenceKind.REVISION,
                 ProviderEvidenceKind.LAST_MODIFIED,
                 ProviderEvidenceKind.OCLC,
