@@ -701,7 +701,7 @@ def _candidate(
         )
     add(ClaimKind.TITLE, info.get("title"), ClaimScope.WORK)
     add(ClaimKind.SUBTITLE, info.get("subtitle"), ClaimScope.WORK)
-    authors = _string_list(info.get("authors", []), _MAX_VALUES)
+    authors = _optional_string_list(info.get("authors", []), _MAX_VALUES)
     for author in authors:
         add(
             ClaimKind.CREATOR,
@@ -719,20 +719,20 @@ def _candidate(
     )
     add(ClaimKind.LANGUAGE, info.get("language"), ClaimScope.EDITION)
 
-    evidence = {
+    evidence = [
         ProviderEvidence(
             ProviderEvidenceKind.EDITION_WORK_RELATION,
             "unresolved",
             ClaimScope.EDITION,
         )
-    }
+    ]
     for field, kind in (
         ("printType", ProviderEvidenceKind.PHYSICAL_FORMAT),
         ("contentVersion", ProviderEvidenceKind.REVISION),
         ("publishedDate", ProviderEvidenceKind.PUBLICATION_DATE_TEXT),
     ):
         if info.get(field) is not None:
-            evidence.add(
+            evidence.append(
                 ProviderEvidence(kind, _text(info[field]), ClaimScope.EDITION)
             )
     pages = info.get("pageCount")
@@ -743,24 +743,27 @@ def _candidate(
             or not 1 <= pages <= 100_000
         ):
             raise ValueError("provider page count is malformed")
-        evidence.add(
+        evidence.append(
             ProviderEvidence(
                 ProviderEvidenceKind.PAGE_COUNT,
                 str(pages),
                 ClaimScope.EDITION,
             )
         )
-    for category in _string_list(info.get("categories", []), _MAX_VALUES):
-        evidence.add(
+    for category in _optional_string_list(info.get("categories", []), _MAX_VALUES):
+        evidence.append(
             ProviderEvidence(
                 ProviderEvidenceKind.SUBJECT,
                 category,
                 ClaimScope.WORK,
             )
         )
+    # Keep each returned occurrence.  Source ordinals are allocated before
+    # canonical ordering so repeated provider values remain independently
+    # attributable to this candidate.
     canonical_evidence = tuple(
         sorted(
-            evidence,
+            (replace(value, source_ordinal=index) for index, value in enumerate(evidence)),
             key=lambda value: (
                 value.scope.value,
                 value.kind.value,
@@ -787,6 +790,24 @@ def _string_list(value: object, maximum: int) -> tuple[str, ...]:
     if len(set(normalized)) != len(normalized):
         raise ValueError("provider string list is duplicated")
     return values
+
+
+def _optional_string_list(value: object, maximum: int) -> tuple[str, ...]:
+    """Keep valid optional members in source order without weakening IDs."""
+    if type(value) is not list or len(value) > maximum:
+        return ()
+    values: list[str] = []
+    normalized: set[str] = set()
+    for item in value:
+        try:
+            text = _text(item)
+            key = normalize_title(text).casefold()
+        except (ValueError, EvidenceValueError):
+            continue
+        if key not in normalized:
+            normalized.add(key)
+            values.append(text)
+    return tuple(values)
 
 
 def _field(

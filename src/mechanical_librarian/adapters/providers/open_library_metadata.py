@@ -992,17 +992,17 @@ def _candidate(
     ):
         add(kind, None, ClaimScope.WORK, state=FieldState.UNSUPPORTED)
 
-    evidence: set[ProviderEvidence] = {
+    evidence: list[ProviderEvidence] = [
         ProviderEvidence(
             ProviderEvidenceKind.EDITION_WORK_RELATION,
             work_identity,
             ClaimScope.EDITION,
         )
-    }
+    ]
     _provenance(evidence, edition, ClaimScope.EDITION)
     _provenance(evidence, work, ClaimScope.WORK)
     for author in _object_list(edition.get("authors", []), _MAX_VALUES):
-        evidence.add(
+        evidence.append(
             ProviderEvidence(
                 ProviderEvidenceKind.AUTHOR_IDENTITY,
                 _author_identity(_key(author.get("key"), _AUTHOR_KEY)),
@@ -1014,7 +1014,7 @@ def _candidate(
         role = _mapping(contributor.get("type")).get("key")
         if role != "/type/author_role":
             raise ValueError("work contributor role is malformed")
-        evidence.add(
+        evidence.append(
             ProviderEvidence(
                 ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
                 _author_identity(_key(author.get("key"), _AUTHOR_KEY)),
@@ -1045,14 +1045,14 @@ def _candidate(
         ("copyright_date", ProviderEvidenceKind.COPYRIGHT_DATE),
     ):
         if field in edition and edition[field] is not None:
-            evidence.add(
+            evidence.append(
                 ProviderEvidence(kind, _text(edition[field]), ClaimScope.EDITION)
             )
     if "number_of_pages" in edition and edition["number_of_pages"] is not None:
         pages = edition["number_of_pages"]
         if type(pages) is not int or isinstance(pages, bool) or not 1 <= pages <= 100_000:
             raise ValueError("edition page count is malformed")
-        evidence.add(
+        evidence.append(
             ProviderEvidence(
                 ProviderEvidenceKind.PAGE_COUNT,
                 str(pages),
@@ -1060,7 +1060,7 @@ def _candidate(
             )
         )
     if "first_publish_date" in work and work["first_publish_date"] is not None:
-        evidence.add(
+        evidence.append(
             ProviderEvidence(
                 ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
                 _text(work["first_publish_date"]),
@@ -1070,7 +1070,7 @@ def _candidate(
     edition_cover = _cover_id(edition)
     work_cover = _cover_id(work)
     if edition_cover.value is not None:
-        evidence.add(
+        evidence.append(
             ProviderEvidence(
                 ProviderEvidenceKind.EDITION_COVER_ID,
                 str(edition_cover.value),
@@ -1078,7 +1078,7 @@ def _candidate(
             )
         )
     if work_cover.value is not None:
-        evidence.add(
+        evidence.append(
             ProviderEvidence(
                 ProviderEvidenceKind.WORK_COVER_ID,
                 str(work_cover.value),
@@ -1087,7 +1087,7 @@ def _candidate(
         )
     canonical_evidence = tuple(
         sorted(
-            evidence,
+            (replace(value, source_ordinal=index) for index, value in enumerate(evidence)),
             key=lambda value: (
                 value.scope.value,
                 value.kind.value,
@@ -1295,7 +1295,7 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
 
 
 def _provenance(
-    evidence: set[ProviderEvidence],
+    evidence: list[ProviderEvidence],
     source: dict[str, Any],
     scope: ClaimScope,
 ) -> None:
@@ -1307,7 +1307,7 @@ def _provenance(
             or not 1 <= revision <= 2_147_483_647
         ):
             raise ValueError("provider revision is malformed")
-        evidence.add(
+        evidence.append(
             ProviderEvidence(
                 ProviderEvidenceKind.REVISION, str(revision), scope
             )
@@ -1317,7 +1317,7 @@ def _provenance(
         item = _mapping(modified)
         if item.get("type") != "/type/datetime":
             raise ValueError("provider last-modified value is malformed")
-        evidence.add(
+        evidence.append(
             ProviderEvidence(
                 ProviderEvidenceKind.LAST_MODIFIED,
                 _text(item.get("value")),
@@ -1327,18 +1327,18 @@ def _provenance(
 
 
 def _string_evidence(
-    evidence: set[ProviderEvidence],
+    evidence: list[ProviderEvidence],
     source: dict[str, Any],
     field: str,
     kind: ProviderEvidenceKind,
     scope: ClaimScope,
 ) -> None:
     for value in _string_list(source.get(field, []), _MAX_VALUES):
-        evidence.add(ProviderEvidence(kind, value, scope))
+        evidence.append(ProviderEvidence(kind, value, scope))
 
 
 def _identifier_evidence(
-    evidence: set[ProviderEvidence],
+    evidence: list[ProviderEvidence],
     source: dict[str, Any],
     scope: ClaimScope,
 ) -> None:
@@ -1347,7 +1347,7 @@ def _identifier_evidence(
     identifiers = _mapping(source["identifiers"])
     if "wikidata" in identifiers:
         for value in _string_list(identifiers["wikidata"], _MAX_VALUES):
-            evidence.add(
+            evidence.append(
                 ProviderEvidence(ProviderEvidenceKind.WIKIDATA, value, scope)
             )
 

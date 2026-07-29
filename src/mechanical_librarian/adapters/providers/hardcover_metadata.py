@@ -1223,7 +1223,7 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
 
 
 def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
-    evidence: set[ProviderEvidence] = set()
+    evidence: list[ProviderEvidence] = []
     release_date = book["release_date"]
     if release_date is not None:
         try:
@@ -1235,7 +1235,7 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
             # invalidate an independently anchored edition/work candidate.
             pass
         else:
-            evidence.add(
+            evidence.append(
                 ProviderEvidence(
                     ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
                     value,
@@ -1250,7 +1250,7 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
     if overflow:
         return tuple(
             sorted(
-                evidence,
+                (replace(value, source_ordinal=index) for index, value in enumerate(evidence)),
                 key=lambda value: (
                     value.scope.value,
                     value.kind.value,
@@ -1277,7 +1277,7 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
         except ValueError:
             continue
         if role == "author":
-            evidence.add(
+            evidence.append(
                 ProviderEvidence(
                     ProviderEvidenceKind.AUTHOR_IDENTITY,
                     f"hardcover-author-{author_id:010d}",
@@ -1285,7 +1285,7 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
                 )
             )
         else:
-            evidence.add(
+            evidence.append(
                 ProviderEvidence(
                     ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
                     f"hardcover-author-{author_id:010d}",
@@ -1295,7 +1295,7 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
             )
     return tuple(
         sorted(
-            evidence,
+            (replace(value, source_ordinal=index) for index, value in enumerate(evidence)),
             key=lambda value: (
                 value.scope.value,
                 value.kind.value,
