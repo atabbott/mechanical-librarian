@@ -1418,7 +1418,7 @@ class ProviderAdapterTests(unittest.TestCase):
             ),
             65_536,
         ).observe(_isbn_lookup((self._claim(),)), deadline=0)
-        self.assertEqual(ProviderStatus.UNAVAILABLE, expired.status)
+        self.assertEqual(ProviderStatus.INCOMPLETE, expired.status)
         self.assertEqual([], requests)
 
     def test_hardcover_retries_declared_transients_with_exact_authority(

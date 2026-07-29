@@ -404,7 +404,7 @@ class GoogleBooksMetadataProvider:
         self, query: str, *, deadline: float | None, is_retry: bool
     ) -> dict[str, Any]:
         if self._remaining_response_bytes <= 0:
-            raise _ProviderFailure(ProviderStatus.OVERSIZED)
+            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
         remaining = self._timeout_seconds
         if deadline is not None:
             remaining = min(remaining, deadline - self._clock())

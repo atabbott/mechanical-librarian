@@ -478,15 +478,15 @@ class HardcoverMetadataProvider:
         if self._pacer is not None and not self._pacer.wait(
             deadline=deadline
         ):
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
         remaining = self._timeout_seconds
         if deadline is not None:
             remaining = min(remaining, deadline - self._clock())
         if remaining <= 0:
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise _ProviderFailure(ProviderStatus.INCOMPLETE)
         try:
             if deadline is not None and self._clock() >= deadline:
-                raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+                raise _ProviderFailure(ProviderStatus.INCOMPLETE)
             if self._accessed_at is None:
                 self._accessed_at = provider_access_time(self._wall_clock())
             self._ledger.dispatch(retry=is_retry)

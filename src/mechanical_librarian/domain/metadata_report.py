@@ -370,6 +370,8 @@ class ProviderRequestAccounting:
             self.initial_dispatches + self.replays + self.undispatched_incomplete
         ):
             raise ReportValueError("provider logical request accounting is inconsistent")
+        if self.retry_dispatches and not self.initial_dispatches:
+            raise ReportValueError("provider retry request accounting is inconsistent")
 
     def to_data(self) -> dict[str, int]:
         return {

@@ -84,7 +84,7 @@ or excerpts, and exact replay rejects a relationship that does not recompute
 from the report's claims and candidates.
 
 Provider lane observations are `disabled`, `insufficient_input`, `candidates`,
-`no_match`, `authentication`, `authorization`, `rate_limited`, `unavailable`,
+`no_match`, `authentication`, `authorization`, `rate_limited`, `incomplete` (registered work could not be dispatched within the bounded envelope), `unavailable`,
 `malformed`, `oversized`, `candidate_limit_exceeded`, or
 `query_limit_exceeded`. One provider aggregate owns the configured authority,
 canonical candidate set, same-provider convergence across its child lanes, and
