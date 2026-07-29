@@ -936,7 +936,9 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                 continue
             if (
                 precision is claim.date_precision
-                and publication_date_is_voting(parsed, precision)
+                and publication_date_is_voting(
+                    claim.observed, precision
+                )
             ):
                 values.append(
                     _Observed(
@@ -958,8 +960,9 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                     and claim.value is not None
                     and claim.date_event is DateEvent.MANIFESTATION_PUBLICATION
                     and type(claim.date_precision) is DatePrecision
+                    and type(claim.date_lexical) is str
                     and publication_date_is_voting(
-                        claim.value, claim.date_precision
+                        claim.date_lexical, claim.date_precision
                     )
                 ):
                     values.append(

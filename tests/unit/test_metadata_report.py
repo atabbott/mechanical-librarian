@@ -102,12 +102,14 @@ from mechanical_librarian.domain.metadata_report import (
     derive_field_results,
     finalize_candidate_comparisons,
     manifestation_publication_compatible,
+    normalize_date_value,
     normalize_title,
     publication_date_is_voting,
     publication_date_relation,
     provider_access_time,
     stable_reference,
 )
+from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.interfaces.cli import main
 
 
@@ -1378,7 +1380,7 @@ class MetadataReportTests(unittest.TestCase):
                 )
             )
 
-    def test_generate_report_retains_non_voting_package_timestamps_without_comparison(
+    def test_generate_report_uses_source_lexical_timestamp_voting_matrix(
         self,
     ) -> None:
         isbn = LocalClaim.create(
@@ -1398,16 +1400,20 @@ class MetadataReportTests(unittest.TestCase):
         class Provider:
             cover_descriptors = ()
 
+            def __init__(self, name: str, lexical: str) -> None:
+                self.name = name
+                self.lexical = lexical
+
             def observe(self, plan, *, deadline=None):
                 results = []
                 for lane in plan.lanes:
                     candidate = ProviderCandidate(
-                        "edition-1",
+                        f"{self.name}-edition",
                         "work-1",
                         (
                             ProviderClaim.create(
-                                provider="catalogue",
-                                candidate="edition-1",
+                                provider=self.name,
+                                candidate=f"{self.name}-edition",
                                 kind=ClaimKind.ISBN,
                                 value="9780306406157",
                                 state=FieldState.VALID,
@@ -1415,10 +1421,10 @@ class MetadataReportTests(unittest.TestCase):
                                 applicability="ebook",
                             ),
                             ProviderClaim.create(
-                                provider="catalogue",
-                                candidate="edition-1",
+                                provider=self.name,
+                                candidate=f"{self.name}-edition",
                                 kind=ClaimKind.PUBLICATION_DATE,
-                                value="2001-02-03T04:05:06+00:00",
+                                value=self.lexical,
                                 state=FieldState.VALID,
                                 scope=ClaimScope.EDITION,
                                 applicability="not_applicable",
@@ -1427,13 +1433,13 @@ class MetadataReportTests(unittest.TestCase):
                         ),
                     )
                     physical = ProviderObservation(
-                        "catalogue",
+                        self.name,
                         ProviderStatus.CANDIDATES,
                         candidates=(
                             finalize_candidate_comparisons(
                                 candidate,
                                 plan.local_claims,
-                                "catalogue",
+                                self.name,
                             ),
                         ),
                         query_kind=lane.kind,
@@ -1453,77 +1459,163 @@ class MetadataReportTests(unittest.TestCase):
                             qualified.candidates,
                         )
                     )
-                return provider_observation("catalogue", tuple(results))
+                return provider_observation(self.name, tuple(results))
 
-        for lexical, voting in (
-            ("2001-02-03T04:05:06", False),
-            ("2001-02-03T04:05:06+00:00:30", False),
+        lexical_cases = (
             ("2001-02-03T04:05:06Z", True),
-        ):
-            with self.subTest(lexical=lexical):
-                package_date = LocalClaim.create(
-                    kind=ClaimKind.PUBLICATION_DATE,
-                    observed=lexical,
-                    canonical=lexical,
-                    excerpt=lexical,
-                    applicability="not_applicable",
-                    basis="package_metadata",
-                    checksum="not_applicable",
-                    applicability_basis="not_applicable",
-                    scope=ClaimScope.EDITION,
-                    date_event=DateEvent.MANIFESTATION_PUBLICATION,
-                    date_precision=DatePrecision.TIMESTAMP,
+            ("2001-02-03T04:05:06+01:00", True),
+            ("2001-02-03T04:05:06+01:00:00", False),
+            ("2001-02-03T04:05:06+01:00:01", False),
+            ("2001-02-03T04:05:06+01:00:00.5", False),
+        )
+        self.assertEqual(
+            normalize_date_value(lexical_cases[1][0]),
+            normalize_date_value(lexical_cases[2][0]),
+        )
+        for lexical, voting in lexical_cases:
+            self.assertEqual(
+                voting,
+                publication_date_is_voting(
+                    lexical, DatePrecision.TIMESTAMP
+                ),
+            )
+            for provider_count in (1, 2):
+                for local_present in (False, True):
+                    with self.subTest(
+                        lexical=lexical,
+                        providers=provider_count,
+                        local_present=local_present,
+                    ):
+                        self._assert_timestamp_voting_report(
+                            lexical=lexical,
+                            voting=voting,
+                            provider_count=provider_count,
+                            local_present=local_present,
+                            isbn=isbn,
+                            snapshot=snapshot,
+                            provider_type=Provider,
+                        )
+
+    def _assert_timestamp_voting_report(
+        self,
+        *,
+        lexical: str,
+        voting: bool,
+        provider_count: int,
+        local_present: bool,
+        isbn: LocalClaim,
+        snapshot: TargetSnapshot,
+        provider_type,
+    ) -> None:
+        package_date = LocalClaim.create(
+            kind=ClaimKind.PUBLICATION_DATE,
+            observed=lexical,
+            canonical=lexical,
+            excerpt=lexical,
+            applicability="not_applicable",
+            basis="package_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.EDITION,
+            date_event=DateEvent.MANIFESTATION_PUBLICATION,
+            date_precision=DatePrecision.TIMESTAMP,
+        )
+        names = tuple(
+            f"catalogue_{index}" for index in range(1, provider_count + 1)
+        )
+        repository = _Repository()
+        service = GenerateMetadataReport(
+            target=_Target([snapshot, snapshot]),
+            inspector=_Inspector(
+                InspectionResult(
+                    "b" * 64,
+                    (isbn, package_date) if local_present else (isbn,),
                 )
-                repository = _Repository()
-                service = GenerateMetadataReport(
-                    target=_Target([snapshot, snapshot]),
-                    inspector=_Inspector(
-                        InspectionResult("b" * 64, (isbn, package_date))
-                    ),
-                    repository_factory=lambda: repository,
-                    providers=(
-                        ProviderBinding("catalogue", True, Provider),
-                    ),
-                    connection=TargetConnectionConfiguration(
-                        "primary",
-                        "https://example.invalid",
-                        "/private/target",
-                    ),
-                    library=LibraryConfiguration(
-                        "ebooks",
-                        "primary",
-                        "library-id",
-                        "ebook",
-                        "books",
-                        ("catalogue",),
-                    ),
-                    mount=MediaMountConfiguration(
-                        "books", "/media", "/library", True
-                    ),
-                    limits=ReportLimits(),
+            ),
+            repository_factory=lambda: repository,
+            providers=tuple(
+                ProviderBinding(
+                    name,
+                    True,
+                    lambda name=name: provider_type(name, lexical),
                 )
-                report = MetadataReport.from_json(service.run("item-1", 0))
-                retained = next(
-                    value
-                    for value in report.local_claims
-                    if value.kind is ClaimKind.PUBLICATION_DATE
-                )
-                provider_date = next(
-                    value
-                    for value in report.providers[0].candidates[0].claims
-                    if value.kind is ClaimKind.PUBLICATION_DATE
-                )
-                self.assertEqual(package_date, retained)
-                self.assertEqual(
-                    voting,
-                    publication_date_is_voting(
-                        retained.canonical, retained.date_precision
-                    ),
-                )
-                self.assertEqual(
-                    (retained.reference,) if voting else (),
-                    tuple(value.local_reference for value in provider_date.links),
-                )
+                for name in names
+            ),
+            connection=TargetConnectionConfiguration(
+                "primary",
+                "https://example.invalid",
+                "/private/target",
+            ),
+            library=LibraryConfiguration(
+                "ebooks",
+                "primary",
+                "library-id",
+                "ebook",
+                "books",
+                names,
+            ),
+            mount=MediaMountConfiguration(
+                "books", "/media", "/library", True
+            ),
+            limits=ReportLimits(),
+        )
+        serialized = service.run("item-1", 0)
+        report = MetadataReport.from_json(serialized)
+        self.assertEqual(serialized, report.to_json())
+        retained_local = tuple(
+            value
+            for value in report.local_claims
+            if value.kind is ClaimKind.PUBLICATION_DATE
+        )
+        self.assertEqual((package_date,) if local_present else (), retained_local)
+        if local_present:
+            self.assertEqual(
+                voting,
+                publication_date_is_voting(
+                    retained_local[0].observed,
+                    retained_local[0].date_precision,
+                ),
+            )
+        provider_dates = tuple(
+            claim
+            for provider in report.providers
+            for candidate in provider.candidates
+            for claim in candidate.claims
+            if claim.kind is ClaimKind.PUBLICATION_DATE
+        )
+        provider_text = tuple(
+            evidence
+            for provider in report.providers
+            for candidate in provider.candidates
+            for evidence in candidate.evidence
+            if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual(provider_count if voting else 0, len(provider_dates))
+        self.assertEqual(0 if voting else provider_count, len(provider_text))
+        proposal = evaluate_report(report)
+        publication_references = {
+            reference
+            for value in proposal.results
+            if value.destination
+            in {
+                TargetDestination.PUBLISHED_DATE,
+                TargetDestination.PUBLISHED_YEAR,
+            }
+            for candidate in value.alternatives
+            for reference in candidate.evidence_references
+        }
+        source_references = {
+            *(value.reference for value in provider_dates),
+            *(
+                (retained_local[0].reference,)
+                if local_present
+                else ()
+            ),
+        }
+        if voting:
+            self.assertTrue(source_references <= publication_references)
+        else:
+            self.assertTrue(source_references.isdisjoint(publication_references))
 
     def test_work_lookup_fails_closed_for_competing_work_or_variant_markers(self) -> None:
         lookup = MetadataLookup(

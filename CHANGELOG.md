@@ -15,8 +15,10 @@
   publication text from edition authority so report finalization can retain
   its manifestation-incompatible explanation. Naive timestamps remain visible
   non-voting evidence and only timestamps with `Z` or an exact signed
-  `HH:MM` offset can be promoted; offset-second forms remain visible but
-  non-voting and are skipped before provider-date comparison. Reviewer packets
+  `HH:MM` offset in the source lexical can be promoted; offset-second and
+  fractional-offset-second forms remain visible but non-voting, even when
+  normalization removes zero offset seconds, and are skipped before
+  provider-date comparison. Reviewer packets
   cite every non-null local operand named by a retained date link, require
   complete proposal evidence-reference coverage, and require every ordinary
   replay to reproduce the exact proposal, case, citation, and packet projection
