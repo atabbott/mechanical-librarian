@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Preserve high-confidence work-scoped title and complete ordered creator
+  agreement when original values differ only by one closed, explainable
+  comparison form: exact bytes; NFC/case/whitespace normalization; mapped
+  non-breaking spaces, paired curly quotes, and en/em dashes; or conservative
+  single-author `Family, Given` inversion. Structurally parsed provider
+  name-to-identity bindings may support aliases without replacing any source
+  claim or creating another provider. Partial, reordered, duplicated,
+  role/scope-incompatible, diacritic-stripped, fuzzy, subtitle-composed, or
+  marked variant/translation/abridgement values remain disagreement or
+  non-comparable. Persist the strongest method in `metadata-report-v19` under
+  comparison policy `closed-title-creator-v2`; v18 and earlier databases are
+  rejected without mutation or migration. (#399)
+
 - Preserve every independently valid, bounded Google Books, Hardcover, and
   Open Library claim or closed rich-evidence value from a safely anchored
   provider record when an optional sibling is absent, unsupported, malformed,

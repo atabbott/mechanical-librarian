@@ -63,7 +63,7 @@ provider call.
 
 - The database path is absent for the first invocation or already contains the
   exact current schema required by the installed increment.
-- `metadata-report-v1` through `metadata-report-v17`, and all earlier development
+- `metadata-report-v1` through `metadata-report-v18`, and all earlier development
   schemas are rejected before mutation. There is no migration, import,
   preservation, or compatibility parser. Keep an old database offline if
   required, initialize a clean database, and rerun the supported report command.
@@ -176,9 +176,23 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v18`. Every earlier report discriminator,
-including `metadata-report-v17`, remains offline and requires a clean current
+discriminator is `metadata-report-v19`. Every earlier report discriminator,
+including `metadata-report-v18`, remains offline and requires a clean current
 database under ADR-0013.
+
+Work-scoped title and creator links retain the original source values and record
+one strongest closed comparison method: exact bytes; NFC, case folding and
+ASCII-whitespace normalization; the additional mapping of non-breaking spaces,
+paired curly quotation marks and en/em dashes; or conservative single-author
+`Family, Given` inversion. NFC never strips or transliterates diacritics.
+Creator agreement requires the complete ordered same-role set. Structurally
+parsed name-to-identity bindings may treat multiple names for one provider
+identity as aliases, but unbound, conflicting, partial, reordered, duplicated,
+multi-author-inverted or role/scope-incompatible sets cannot agree. Alternative
+work titles remain distinct original claims bound to the same admitted work;
+titles are never assembled from subtitles. Fuzzy matching, token subsets,
+variant/translation/abridgement markers, provider rank and repeated queries do
+not create agreement or independent corroboration.
 
 The credential-bearing parent combines those facts with the target projection.
 Every distinct checksum-valid ISBN family across bounded package, front, and

@@ -32,6 +32,7 @@ context and consequences rather than reproducing code.
 | [0015](0015-isolated-shadow-reviewer.md) | superseded by 0016 | Isolate one exact qualification-only Codex shadow reviewer |
 | [0016](0016-freeze-explainable-shadow-reviewer.md) | accepted | Freeze explainable publication-date shadow review |
 | [0017](0017-bounded-failure-diagnostics.md) | accepted | Bound provider and reviewer failure diagnostics |
+| [0018](0018-closed-title-creator-comparison.md) | accepted | Close title and complete-creator comparison |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

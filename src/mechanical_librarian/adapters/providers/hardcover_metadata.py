@@ -46,9 +46,11 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind, ClaimScope, FieldState, LocalClaim, MAX_CANDIDATES,
     MAX_CONTRIBUTIONS, MAX_DESCRIPTION_CHARACTERS, MAX_SCALAR_CHARACTERS,
     MAX_SERIES, MAX_TAGS, ProviderCandidate, ProviderClaim,
-    ProviderEvidence, ProviderEvidenceKind, ProviderObservation,
+    ProviderEvidence, ProviderEvidenceKind, ProviderIdentityBinding,
+    ProviderObservation,
     ProviderQueryKind, ProviderStatus, canonical_json, comparison_links,
-    isbn_family, normalize_date_value, provider_access_time,
+    finalize_candidate_comparisons, isbn_family, normalize_date_value,
+    provider_access_time,
 )
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text, validate_role_projection
 from mechanical_librarian.domain.failure_diagnostics import (
@@ -975,6 +977,7 @@ def _parse_candidates(
             row,
             local_claims, rejected,
         )
+        identity_bindings: list[ProviderIdentityBinding] = []
         work_rejections = rejected if book_id not in diagnosed_works else None
         claims.extend(
             _work_claims(
@@ -984,15 +987,31 @@ def _parse_candidates(
                 local_claims,
                 len(claims),
                 work_rejections,
+                identity_bindings,
             )
         )
         diagnosed_works.add(book_id)
         candidates.append(
-            ProviderCandidate(
-                identity,
-                work_identity,
-                tuple(claims),
-                _work_evidence(indexed[book_id]),
+            finalize_candidate_comparisons(
+                ProviderCandidate(
+                    identity,
+                    work_identity,
+                    tuple(claims),
+                    _work_evidence(indexed[book_id]),
+                    tuple(
+                        sorted(
+                            identity_bindings,
+                            key=lambda value: (
+                                value.scope.value,
+                                value.role,
+                                value.source_ordinal,
+                                value.identity,
+                                value.claim_reference,
+                            ),
+                        )
+                    ),
+                ),
+                local_claims,
             )
         )
     if used != set(indexed) or len({candidate.identity for candidate in candidates}) != len(candidates):
@@ -1217,9 +1236,28 @@ def _edition_claims(
     return claims
 
 
-def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tuple[LocalClaim, ...], offset: int, rejected: _OptionalRejections | None = None) -> list[ProviderClaim]:
+def _work_claims(
+    provider: str,
+    identity: str,
+    book: dict[str, Any],
+    local: tuple[LocalClaim, ...],
+    offset: int,
+    rejected: _OptionalRejections | None = None,
+    identity_bindings: list[ProviderIdentityBinding] | None = None,
+) -> list[ProviderClaim]:
     claims = [_claim(provider, identity, ClaimKind.TITLE, book["title"], ClaimScope.WORK, "not_applicable", None, local, offset, rejected), _claim(provider, identity, ClaimKind.DESCRIPTION, book["description"], ClaimScope.WORK, "not_applicable", None, local, offset + 1, rejected)]
-    claims.extend(_contributions(provider, identity, book["contributions"], ClaimScope.WORK, local, len(claims) + offset, rejected))
+    claims.extend(
+        _contributions(
+            provider,
+            identity,
+            book["contributions"],
+            ClaimScope.WORK,
+            local,
+            len(claims) + offset,
+            rejected,
+            identity_bindings,
+        )
+    )
     series, series_overflow, series_invalid = _optional_bounded_list(book["book_series"], MAX_SERIES, {"id", "position", "series"}, rejected)
     if series_overflow:
         claims.extend((_state_claim(provider, identity, ClaimKind.SERIES, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset), _state_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset + 1)))
@@ -1461,7 +1499,16 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
     )
 
 
-def _contributions(provider: str, identity: str, value: object, scope: ClaimScope, local: tuple[LocalClaim, ...], offset: int, rejected: _OptionalRejections | None = None) -> list[ProviderClaim]:
+def _contributions(
+    provider: str,
+    identity: str,
+    value: object,
+    scope: ClaimScope,
+    local: tuple[LocalClaim, ...],
+    offset: int,
+    rejected: _OptionalRejections | None = None,
+    identity_bindings: list[ProviderIdentityBinding] | None = None,
+) -> list[ProviderClaim]:
     claims: list[ProviderClaim] = []
     contributions, overflow, invalid = _optional_bounded_list(value, MAX_CONTRIBUTIONS, {"id", "contribution", "author"}, rejected)
     if overflow:
@@ -1484,24 +1531,40 @@ def _contributions(provider: str, identity: str, value: object, scope: ClaimScop
             claims.append(_state_claim(provider, identity, kind, FieldState.MALFORMED, scope, local, offset + len(claims)))
             continue
         try:
-            _identifier(author["id"])
+            author_id = _identifier(author["id"])
         except ValueError:
+            author_id = None
             if rejected:
                 rejected.reject()
-        claims.append(
-            _claim(
-                provider,
-                identity,
-                kind,
-                author["name"],
-                scope,
-                "not_applicable",
-                "author" if kind is ClaimKind.CREATOR else role,
-                local,
-                offset + len(claims),
-                rejected,
-            )
+        claim = _claim(
+            provider,
+            identity,
+            kind,
+            author["name"],
+            scope,
+            "not_applicable",
+            "author" if kind is ClaimKind.CREATOR else role,
+            local,
+            offset + len(claims),
+            rejected,
         )
+        claims.append(claim)
+        if (
+            identity_bindings is not None
+            and author_id is not None
+            and kind is ClaimKind.CREATOR
+            and scope is ClaimScope.WORK
+            and claim.state is FieldState.VALID
+        ):
+            identity_bindings.append(
+                ProviderIdentityBinding(
+                    claim.reference,
+                    f"hardcover-author-{author_id:010d}",
+                    ClaimScope.WORK,
+                    "author",
+                    len(identity_bindings),
+                )
+            )
     if invalid:
         claims.append(_state_claim(provider, identity, ClaimKind.CONTRIBUTOR, FieldState.MALFORMED, scope, local, offset + len(claims)))
     return claims

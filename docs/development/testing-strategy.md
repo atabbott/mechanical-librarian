@@ -92,12 +92,12 @@ The suite covers:
   54/27/49 Google Books/Hardcover/Open Library metadata-attempt maxima, one
   shared pacer per paced adapter across foreground entries, and no persisted
   attempt diagnostics;
-- deterministic `metadata-report-v18` serialization and database reopen preserve
+- deterministic `metadata-report-v19` serialization and database reopen preserve
   claim raw order, rich-evidence canonical order, duplicate source occurrences,
   source ordinals, scopes, roles, field states and diagnostics byte-for-byte.
   Application tests merge parser, attempt and incomplete-outcome diagnostics
   once before persistence and prove reopen does not inflate them. Persistence
-  rejects `metadata-report-v17` before mutation and a direct regression proves
+  rejects `metadata-report-v18` before mutation and a direct regression proves
   the prior database bytes remain unchanged;
 - cover-gallery provider/aggregate bounds, safe provenance, timeout/rejection
   states, visible truncation, and digest deduplication with all provenance;
@@ -160,10 +160,18 @@ cover nested single-emission, multiple exact sibling labels, mixed complete and
 split labels in one ancestor, repeated equal complete/split siblings, multiple
 assembled labels, scanning/production/workflow label values, promotion cues
 inside labels, the exact 16-fact rear cap, front/rear NFC and whitespace
-normalization, `metadata-report-v18`
+normalization, `metadata-report-v19`
 canonical replay, clean database creation, and byte-unchanged rejection of v13
 state. Only aggregate expected, found, and false-positive counts are asserted
 or exported; fixture rows and source text remain private.
+
+Comparison regressions cover every closed method and its near misses, NFC
+without accent stripping, typographic mapping, variant markers, complete
+multi-author count/order/role/scope, conservative single-author comma
+inversion, structurally bound aliases, ambiguous or malformed bindings,
+canonical replay and tamper rejection. Provider/application tests also prove
+the finalizer adds no request, preserves emitted values and source order, and
+does not change proposal or reviewer admission authority.
 
 Provider-date regressions use synthetic year, month, day, and signed-offset
 timestamp values. They prove lexical/normalized replay, closed event and
