@@ -1364,22 +1364,12 @@ def _contributions(provider: str, identity: str, value: object, scope: ClaimScop
     claims: list[ProviderClaim] = []
     contributions, overflow, invalid = _optional_bounded_list(value, MAX_CONTRIBUTIONS, {"id", "contribution", "author"})
     if overflow:
-        for item in contributions:
-            _field_local_author(item["author"])
-        # The admitted max+1 probe preserves every role family present without
-        # retaining an unbounded contribution list.
-        kinds: set[ClaimKind] = set()
-        for probe in contributions:
-            role = probe["contribution"]
-            if role is None:
-                kinds.add(ClaimKind.CONTRIBUTOR)
-                continue
-            try:
-                role = validate_role_projection(role).casefold()
-            except EvidenceValueError:
-                kinds.add(ClaimKind.CONTRIBUTOR)
-            kinds.add(ClaimKind.CREATOR if role == "author" else ClaimKind.CONTRIBUTOR)
-        return [_state_claim(provider, identity, kind, FieldState.OVERSIZED, scope, local, offset + index) for index, kind in enumerate(sorted(kinds, key=lambda value: value.value))]
+        # No prefix can determine which roles occur in an unadmitted source
+        # collection, so expose the two supported contribution fields only.
+        return [
+            _state_claim(provider, identity, kind, FieldState.OVERSIZED, scope, local, offset + index)
+            for index, kind in enumerate((ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR))
+        ]
     for item in contributions:
         try:
             role = validate_role_projection(item["contribution"]).casefold()
@@ -1456,16 +1446,8 @@ def _optional_bounded_list(
     if type(value) is not list:
         return [], False, True
     if len(value) > maximum:
-        # A capped projection retains no member as evidence, but its bounded
-        # max+1 probe is enough to emit the relevant field diagnostic.
-        values: list[dict[str, Any]] = []
-        invalid = False
-        for item in value[: maximum + 1]:
-            try:
-                values.append(_closed(item, keys))
-            except ValueError:
-                invalid = True
-        return values, True, invalid
+        # Cardinality is authoritative: do not inspect or retain a prefix.
+        return [], True, False
     values: list[dict[str, Any]] = []
     invalid = False
     for item in value:
@@ -1563,7 +1545,10 @@ def _optional_projection_rejections(payload: bytes) -> int:
                     else:
                         maximum = optional_lists[key]
                         if len(item) > maximum:
-                            count += len(item) - maximum
+                            # Cardinality rejection is one field-level event;
+                            # avoid traversing an unadmitted collection.
+                            count += 1
+                            continue
                         # Optional collections may be partially usable, but a
                         # non-object occurrence is still a single rejected
                         # provider member (never a recursive multiplier).

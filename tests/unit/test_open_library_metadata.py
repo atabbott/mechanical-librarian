@@ -526,7 +526,6 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             "/search.json": _search(
                 "/books/OL20M",
                 "/books/OL10M",
-                "/books/OL10M",
             ),
             "/books/OL10M.json": _edition("/books/OL10M", cover=100),
             "/books/OL20M.json": _edition("/books/OL20M", cover=200),
@@ -2230,6 +2229,69 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         ).observe(_isbn_lookup((_isbn(),)))
         self.assertEqual(ProviderStatus.MALFORMED, observation.status)
         self.assertEqual((), observation.candidates)
+
+
+class OpenLibraryDiagnosticBoundaryTests(unittest.TestCase):
+    def test_edition_scalar_and_search_list_publish_dates_are_contextual(self) -> None:
+        edition = _edition("/books/OL1M")
+        self.assertEqual(
+            0, open_library_metadata._optional_projection_rejections(edition)
+        )
+        self.assertEqual(
+            0,
+            open_library_metadata._optional_projection_rejections(
+                {"key": "/works/OL1W", "publish_date": ["2026"]},
+                search_projection=True,
+            ),
+        )
+
+    def test_optional_rejections_and_duplicate_search_identities_fail_closed(self) -> None:
+        for invalid in (7, {"value": "2026"}):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(
+                    1,
+                    open_library_metadata._optional_projection_rejections(
+                        {"key": "/works/OL1W", "publish_date": [invalid]},
+                        search_projection=True,
+                    ),
+                )
+        source = _search("/books/OL1M", "/books/OL1M")
+        with self.assertRaises(ValueError):
+            open_library_metadata._admitted_candidates(source, "9780306406157")
+        with self.assertRaises(ValueError):
+            open_library_metadata._admitted_work_candidates(source)
+
+    def test_optional_projection_diagnostics_are_field_bounded(self) -> None:
+        self.assertEqual(
+            0,
+            open_library_metadata._optional_projection_rejections(
+                {"key": "/works/OL1W", "contributions": ["Ada"]}
+            ),
+        )
+        scalar_fields = (
+            "publish_date", "physical_format", "pagination", "by_statement", "imprint"
+        )
+        document = {"key": "/works/OL1W", **{field: 7 for field in scalar_fields}}
+        self.assertEqual(5, open_library_metadata._optional_projection_rejections(document))
+        hostile = [object() for _ in range(open_library_metadata._MAX_VALUES + 1)]
+        self.assertEqual(
+            1,
+            open_library_metadata._optional_projection_rejections(
+                {"key": "/works/OL1W", "subjects": hostile}
+            ),
+        )
+
+    def test_duplicate_work_rows_with_different_editions_fail_closed(self) -> None:
+        source = {
+            "docs": [
+                _search("/books/OL1M")["docs"][0],
+                _search("/books/OL2M")["docs"][0],
+            ]
+        }
+        with self.assertRaises(ValueError):
+            open_library_metadata._admitted_candidates(source, "9780306406157")
+        with self.assertRaises(ValueError):
+            open_library_metadata._admitted_work_candidates(source)
 
 
 if __name__ == "__main__":

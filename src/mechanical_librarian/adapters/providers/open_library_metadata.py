@@ -499,10 +499,18 @@ class OpenLibraryMetadataProvider:
                         _search_work_document(search, work_key),
                     )
                     search_work = _search_work_document(search, work_key)
-                    for document in (edition, work_documents[work_key], search_work):
+                    for document, search_projection in (
+                        (edition, False),
+                        (work_documents[work_key], False),
+                        (search_work, True),
+                    ):
                         if document is not None and id(document) not in diagnosed_documents:
                             diagnosed_documents.add(id(document))
-                            self._reject_schema_members(_optional_projection_rejections(document))
+                            self._reject_schema_members(
+                                _optional_projection_rejections(
+                                    document, search_projection=search_projection
+                                )
+                            )
                     candidates.append(candidate)
                     cover_candidates.append(
                         (
@@ -838,9 +846,14 @@ def _admitted_candidates(
     if type(docs) is not list or len(docs) > _MAX_SEARCH_ROWS:
         raise ValueError("search result is malformed")
     admitted: dict[str, str] = {}
+    seen_work_keys: set[str] = set()
+    seen_identities: set[tuple[str, str]] = set()
     for raw_work in docs:
         work = _mapping(raw_work)
         work_key = _key(work.get("key"), _WORK_KEY)
+        if work_key in seen_work_keys:
+            raise ValueError("search work identity is duplicated")
+        seen_work_keys.add(work_key)
         editions = _mapping(work.get("editions"))
         edition_docs = editions.get("docs")
         if type(edition_docs) is not list:
@@ -851,6 +864,9 @@ def _admitted_candidates(
             families = _search_isbn_families(edition.get("isbn"))
             if family not in families:
                 continue
+            if (edition_key, work_key) in seen_identities:
+                raise ValueError("search provider identity is duplicated")
+            seen_identities.add((edition_key, work_key))
             previous = admitted.setdefault(edition_key, work_key)
             if previous != work_key:
                 raise ValueError("search edition work is ambiguous")
@@ -866,9 +882,14 @@ def _admitted_work_candidates(
     if type(docs) is not list or len(docs) > _MAX_SEARCH_ROWS:
         raise ValueError("search result is malformed")
     admitted: dict[tuple[str, str], tuple[tuple[str, str | None], ...]] = {}
+    seen_work_keys: set[str] = set()
+    seen_identities: set[tuple[str, str]] = set()
     for raw_work in docs:
         work = _mapping(raw_work)
         work_key = _key(work.get("key"), _WORK_KEY)
+        if work_key in seen_work_keys:
+            raise ValueError("search work identity is duplicated")
+        seen_work_keys.add(work_key)
         authors = _search_authors(
             work.get("author_name", []), work.get("author_key", [])
         )
@@ -879,6 +900,9 @@ def _admitted_work_candidates(
         for raw_edition in edition_docs:
             edition = _mapping(raw_edition)
             edition_key = _key(edition.get("key"), _EDITION_KEY)
+            if (edition_key, work_key) in seen_identities:
+                raise ValueError("search provider identity is duplicated")
+            seen_identities.add((edition_key, work_key))
             previous = admitted.setdefault((edition_key, work_key), authors)
             if previous != authors:
                 raise ValueError("search work authors are ambiguous")
@@ -1716,7 +1740,9 @@ def _optional_object_list(value: object, maximum: int) -> list[dict[str, Any]]:
     return [item for raw in value if type(raw) is dict for item in [raw]]
 
 
-def _optional_projection_rejections(*documents: dict[str, Any]) -> int:
+def _optional_projection_rejections(
+    *documents: dict[str, Any], search_projection: bool = False
+) -> int:
     """Count only discarded optional projection members; never retain values."""
     known = {
         "key", "works", "isbn_10", "isbn_13", "isbn", "title", "subtitle",
@@ -1738,9 +1764,17 @@ def _optional_projection_rejections(*documents: dict[str, Any]) -> int:
         "subject_people", "subject_places", "subject_times", "covers",
         "alternate_titles", "alternative_titles", "imprints", "distributors",
         "contributions", "series", "series_number",
-        "publisher", "publish_date", "language", "edition_key",
+        "publisher", "language", "edition_key",
         "author_name", "author_key",
     }
+    if search_projection:
+        list_fields.add("publish_date")
+    object_list_fields = {"works", "languages", "authors"}
+    scalar_fields = {
+        "publish_date", "physical_format", "pagination", "by_statement", "imprint",
+    }
+    if search_projection:
+        scalar_fields.remove("publish_date")
     count = 0
     for document in documents:
         count += len(set(document) - known)
@@ -1749,9 +1783,13 @@ def _optional_projection_rejections(*documents: dict[str, Any]) -> int:
             if type(value) is not list:
                 count += 1
             elif len(value) > _MAX_VALUES:
-                count += len(value) - _MAX_VALUES
+                count += 1
             else:
-                count += sum(1 for item in value if not isinstance(item, (str, dict, int)))
+                expected = dict if field in object_list_fields else str
+                count += sum(1 for item in value if type(item) is not expected)
+        for field in scalar_fields & set(document):
+            if type(document[field]) is not str:
+                count += 1
         identifiers = document.get("identifiers")
         if identifiers is not None and type(identifiers) is not dict:
             count += 1

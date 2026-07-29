@@ -866,7 +866,9 @@ def _optional_string_list(
         return ()
     if len(value) > maximum:
         if schema_rejections is not None:
-            schema_rejections(len(value) - maximum)
+            # A rejected collection is one field-level diagnostic.  Its
+            # members are deliberately not inspected or retained.
+            schema_rejections(1)
         return ()
     values: list[str] = []
     for item in value:

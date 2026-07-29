@@ -1102,5 +1102,18 @@ class GoogleBooksMetadataTests(unittest.TestCase):
         self.assertNotIn("private-api-key", serialized)
 
 
+class GoogleBooksDiagnosticBoundaryTests(unittest.TestCase):
+    def test_over_cap_optional_collection_rejects_once_without_member_traversal(self) -> None:
+        counts: list[int] = []
+        self.assertEqual(
+            (),
+            __import__(
+                "mechanical_librarian.adapters.providers.google_books_metadata",
+                fromlist=["_optional_string_list"],
+            )._optional_string_list([object()] * 9, 8, counts.append),
+        )
+        self.assertEqual([1], counts)
+
+
 if __name__ == "__main__":
     unittest.main()

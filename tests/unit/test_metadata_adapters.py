@@ -244,6 +244,13 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ),
             ),
             (
+                "previous v17",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v17",
+                ),
+            ),
+            (
                 "F09k report schema",
                 lambda connection: (
                     connection.execute(
@@ -2370,6 +2377,8 @@ class ProviderAdapterTests(unittest.TestCase):
         ]
         self.assertEqual(
             {
+                (ClaimKind.CREATOR, ClaimScope.EDITION, FieldState.OVERSIZED),
+                (ClaimKind.CREATOR, ClaimScope.WORK, FieldState.OVERSIZED),
                 (ClaimKind.CONTRIBUTOR, ClaimScope.EDITION, FieldState.OVERSIZED),
                 (ClaimKind.CONTRIBUTOR, ClaimScope.WORK, FieldState.OVERSIZED),
             },
@@ -2450,6 +2459,12 @@ class ProviderAdapterTests(unittest.TestCase):
             {ProviderEvidenceKind.FIRST_PUBLICATION_DATE, ProviderEvidenceKind.CONTRIBUTOR_IDENTITY},
             {value.kind for value in candidate.evidence},
         )
+
+    def test_hardcover_optional_cap_is_cardinality_first(self) -> None:
+        values, overflow, invalid = hardcover_metadata._optional_bounded_list(
+            [object()] * 17, 16, {"id"}
+        )
+        self.assertEqual(([], True, False), (values, overflow, invalid))
 
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:
         calls: list[int] = []
