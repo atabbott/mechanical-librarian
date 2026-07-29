@@ -2323,12 +2323,14 @@ def _creator_comparison_links(
                     local_index, method = bound_match
                     agreements[group[local_index].reference] = method
             else:
-                method = _creator_sequence_method(
+                methods = _creator_sequence_methods(
                     provider_values, local_values
                 )
-                if method is not ComparisonMethod.NONE:
+                if methods:
                     provider_index = compatible_provider.index(provider)
-                    agreements[group[provider_index].reference] = method
+                    agreements[group[provider_index].reference] = methods[
+                        provider_index
+                    ]
 
     links: list[ComparisonLink] = []
     for claim in local:
@@ -2469,17 +2471,17 @@ def complete_creator_identity_bindings(
     return bindings
 
 
-def _creator_sequence_method(
+def _creator_sequence_methods(
     provider_values: tuple[str, ...],
     local_values: tuple[str, ...],
-) -> ComparisonMethod:
+) -> tuple[ComparisonMethod, ...]:
     if (
         len(provider_values) != len(local_values)
         or not provider_values
         or _has_creator_duplicates(provider_values)
         or _has_creator_duplicates(local_values)
     ):
-        return ComparisonMethod.NONE
+        return ()
     methods = tuple(
         _comparison_method(
             ClaimKind.CREATOR,
@@ -2492,8 +2494,8 @@ def _creator_sequence_method(
         )
     )
     if ComparisonMethod.NONE in methods:
-        return ComparisonMethod.NONE
-    return max(methods, key=_METHOD_STRENGTH.__getitem__)
+        return ()
+    return methods
 
 
 def _comparison_method(

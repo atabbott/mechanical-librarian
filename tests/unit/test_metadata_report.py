@@ -1971,7 +1971,7 @@ class MetadataReportTests(unittest.TestCase):
             ),
             (
                 ComparisonMethod.UNICODE_CASE_WHITESPACE,
-                ComparisonMethod.UNICODE_CASE_WHITESPACE,
+                ComparisonMethod.EXACT,
             ),
         )
         for values in (
