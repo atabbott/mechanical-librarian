@@ -143,7 +143,7 @@ cover nested single-emission, multiple exact sibling labels, mixed complete and
 split labels in one ancestor, repeated equal complete/split siblings, multiple
 assembled labels, scanning/production/workflow label values, promotion cues
 inside labels, the exact 16-fact rear cap, front/rear NFC and whitespace
-normalization, `metadata-report-v17`
+normalization, `metadata-report-v18`
 canonical replay, clean database creation, and byte-unchanged rejection of v13
 state. Only aggregate expected, found, and false-positive counts are asserted
 or exported; fixture rows and source text remain private.

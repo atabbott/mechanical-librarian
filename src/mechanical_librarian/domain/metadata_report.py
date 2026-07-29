@@ -32,7 +32,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 
 
-REPORT_SCHEMA = "metadata-report-v17"
+REPORT_SCHEMA = "metadata-report-v18"
 COMPARISON_VERSION = "same-kind-v1"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -1068,10 +1068,16 @@ class ProviderEvidence:
     date_precision: DatePrecision | None = None
     date_normalized: str | None = None
     date_confidence: DateLinkConfidence | None = None
+    source_ordinal: int = 0
 
     def __post_init__(self) -> None:
         if type(self.kind) is not ProviderEvidenceKind or type(self.scope) is not ClaimScope:
             raise ReportValueError("provider rich evidence is invalid")
+        if (
+            type(self.source_ordinal) is not int
+            or not 0 <= self.source_ordinal <= 2_147_483_647
+        ):
+            raise ReportValueError("provider rich evidence source ordinal is invalid")
         _projection_text(self.value, "provider rich evidence value", MAX_SCALAR_CHARACTERS)
         if self.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY:
             if self.role is None:
@@ -1157,6 +1163,7 @@ class ProviderEvidence:
             "date_confidence": (
                 None if self.date_confidence is None else self.date_confidence.value
             ),
+            "source_ordinal": self.source_ordinal,
         }
 
 
@@ -1207,6 +1214,7 @@ class ProviderCandidate:
                             if value.date_confidence is None
                             else value.date_confidence.value
                         ),
+                        value.source_ordinal,
                     ),
                 )
             )
@@ -2354,7 +2362,7 @@ def _provider_claim_from_data(value: object) -> ProviderClaim:
 
 
 def _provider_evidence_from_data(value: object) -> ProviderEvidence:
-    item = _object(value, {"date_confidence", "date_event", "date_normalized", "date_precision", "kind", "role", "scope", "value"})
+    item = _object(value, {"date_confidence", "date_event", "date_normalized", "date_precision", "kind", "role", "scope", "source_ordinal", "value"})
     return ProviderEvidence(
         ProviderEvidenceKind(item["kind"]),
         item["value"],
@@ -2368,6 +2376,7 @@ def _provider_evidence_from_data(value: object) -> ProviderEvidence:
             if item["date_confidence"] is None
             else DateLinkConfidence(item["date_confidence"])
         ),
+        item["source_ordinal"],
     )
 
 

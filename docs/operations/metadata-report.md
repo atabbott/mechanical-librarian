@@ -176,7 +176,7 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v17`; `metadata-report-v16` is legacy and,
+discriminator is `metadata-report-v18`; `metadata-report-v16` is legacy and,
 like all earlier development reports and databases, remains offline and requires
 a clean current database under ADR-0013.
 

@@ -328,6 +328,9 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(DatePrecision.MONTH, unresolved.date_precision)
         self.assertEqual(DateEvent.UNKNOWN, unresolved.date_event)
         self.assertEqual(DateLinkConfidence.UNRESOLVED, unresolved.date_confidence)
+        self.assertEqual(0, unresolved.source_ordinal)
+        with self.assertRaises(ReportValueError):
+            replace(unresolved, source_ordinal=-1)
         with self.assertRaises(ReportValueError):
             ProviderClaim.create(
                 provider="catalogue",
@@ -874,7 +877,7 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v17", report.schema_version)
+        self.assertEqual("metadata-report-v18", report.schema_version)
         previous = report.to_data()
         previous["schema_version"] = "metadata-report-v13"
         with self.assertRaises(ReportValueError):
@@ -1116,6 +1119,7 @@ class MetadataReportTests(unittest.TestCase):
                         value.kind.value,
                         value.value,
                         value.role or "",
+                        value.source_ordinal,
                     ),
                 )
             ),
