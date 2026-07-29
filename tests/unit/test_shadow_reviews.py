@@ -56,6 +56,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
+    PublicationDateRelation,
     TargetFacts,
     default_target_fields,
 )
@@ -722,6 +723,96 @@ class ShadowReviewTests(unittest.TestCase):
         rich_date(document)["evidence"]["kind"] = "copyright_date"
         with self.assertRaises(ShadowReviewValueError):
             ShadowReviewPacket.from_json(canonical_json(document), report)
+
+    def test_manifestation_incompatibility_replays_from_title_lookup_without_isbn(
+        self,
+    ) -> None:
+        local_title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Local title",
+            canonical="Local title",
+            excerpt="Local title",
+            applicability="not_applicable",
+            basis="package_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        )
+        provider_title = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.TITLE,
+            value="Provider title",
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+        )
+        publication_text = ProviderEvidence(
+            ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+            "2001-02-03",
+            ClaimScope.EDITION,
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(local_title,),
+            local_reasons=("package_metadata_title",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    candidates=(
+                        ProviderCandidate(
+                            "edition-1",
+                            "work-1",
+                            (provider_title,),
+                            (publication_text,),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        proposal = evaluate_report(report)
+        self.assertEqual(
+            "ineligible",
+            next(
+                result.outcome.value
+                for result in proposal.results
+                if result.destination.value == "publishedDate"
+            ),
+        )
+        case = ReviewCase.create(proposal, report)
+        packet = ShadowReviewPacket.create(case, proposal, report)
+
+        def retained_date(document: dict[str, object]) -> dict[str, object]:
+            return next(
+                citation["fact"]["evidence"]
+                for citation in document["citations"]
+                if "evidence" in citation["fact"]
+                and citation["fact"]["evidence"]["kind"]
+                == "publication_date_text"
+            )
+
+        replayed = ShadowReviewPacket.from_json(packet.to_json(), report)
+        evidence = retained_date(replayed.to_data())
+        self.assertEqual(
+            PublicationDateRelation.MANIFESTATION_INCOMPATIBLE.value,
+            evidence["links"][0]["publication_date_relation"],
+        )
+        self.assertEqual(
+            local_title.reference,
+            evidence["links"][0]["local_reference"],
+        )
+
+        tampered = json.loads(packet.to_json())
+        retained_date(tampered)["links"] = []
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(tampered), report)
 
     def test_contradictory_work_relation_date_is_visible_but_not_a_candidate(
         self,

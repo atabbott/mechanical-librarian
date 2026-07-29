@@ -2909,6 +2909,66 @@ class MetadataReportTests(unittest.TestCase):
             retained.links[0].publication_date_relation,
         )
 
+        local_title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Local title",
+            canonical="Local title",
+            excerpt="Local title",
+            applicability="not_applicable",
+            basis="package_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        )
+        title_only = finalize_candidate_comparisons(
+            candidate,
+            (local_title,),
+            "catalogue",
+        )
+        retained = next(
+            evidence
+            for evidence in title_only.evidence
+            if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual(
+            (
+                local_title.reference,
+                PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+            ),
+            (
+                retained.links[0].local_reference,
+                retained.links[0].publication_date_relation,
+            ),
+        )
+        title_report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(local_title,),
+            local_reasons=("package_metadata_title",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    candidates=(candidate,),
+                ),
+            ),
+        )
+        self.assertEqual(
+            title_report,
+            MetadataReport.from_json(title_report.to_json()),
+        )
+        tampered_title_report = title_report.to_data()
+        tampered_title_report["providers"][0]["candidates"][0]["evidence"][0][
+            "links"
+        ] = []
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(tampered_title_report))
+
         work_first = finalize_candidate_comparisons(
             replace(
                 candidate,

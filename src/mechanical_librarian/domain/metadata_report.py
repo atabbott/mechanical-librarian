@@ -2494,13 +2494,25 @@ def _publication_date_links(
             if event is not DateEvent.MANIFESTATION_PUBLICATION
             else PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
         )
-        links.extend(
-            _date_comparison_link(claim.reference, relation, None)
+        anchors = tuple(
+            claim
             for claim in local
             if claim.kind is ClaimKind.ISBN
             and claim.state is FieldState.VALID
             and claim.canonical is not None
             and claim.applicability in {"ebook", "unknown"}
+        )
+        if not anchors:
+            anchors = tuple(
+                claim
+                for claim in local
+                if claim.kind in {ClaimKind.TITLE, ClaimKind.CREATOR}
+                and claim.state is FieldState.VALID
+                and claim.canonical is not None
+            )
+        links.extend(
+            _date_comparison_link(claim.reference, relation, None)
+            for claim in anchors
         )
     return tuple(sorted(links, key=lambda link: link.local_reference))
 

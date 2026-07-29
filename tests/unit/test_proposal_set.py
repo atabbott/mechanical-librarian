@@ -27,6 +27,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderIdentityBinding,
     ProviderObservation,
     ProviderStatus,
+    PublicationDateRelation,
     TargetDestination,
     TargetFacts,
     TargetField,
@@ -2230,27 +2231,44 @@ class ProposalSetTests(unittest.TestCase):
                 ClaimScope.EDITION,
             ),
         )
-        proposal = evaluate_report(
-            _report(
-                title=None,
-                fields=_fields(
-                    None,
-                    published_year=TargetField(
-                        TargetDestination.PUBLISHED_YEAR,
-                        TargetFieldState.MISSING,
-                    ),
-                    published_date=TargetField(
-                        TargetDestination.PUBLISHED_DATE,
-                        TargetFieldState.MISSING,
-                    ),
-                ),
-                providers=(_provider("catalogue", "edition-1", (), evidence),),
-            )
+        local_title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Local title",
+            canonical="Local title",
+            excerpt="Local title",
+            applicability="not_applicable",
+            basis="package_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
         )
+        report = _report(
+            title=None,
+            fields=_fields(
+                None,
+                published_year=TargetField(
+                    TargetDestination.PUBLISHED_YEAR,
+                    TargetFieldState.MISSING,
+                ),
+                published_date=TargetField(
+                    TargetDestination.PUBLISHED_DATE,
+                    TargetFieldState.MISSING,
+                ),
+            ),
+            local_claims=(local_title,),
+            providers=(_provider("catalogue", "edition-1", (), evidence),),
+        )
+        proposal = evaluate_report(report)
         self.assertEqual(
             ProposalOutcome.INELIGIBLE,
             _result(proposal, TargetDestination.PUBLISHED_YEAR).outcome,
         )
+        retained = report.providers[0].candidates[0].evidence[0]
+        self.assertEqual(
+            PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+            retained.links[0].publication_date_relation,
+        )
+        self.assertEqual(local_title.reference, retained.links[0].local_reference)
         self.assertEqual(
             DateEvent.UNKNOWN,
             evidence[0].date_event,
