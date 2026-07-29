@@ -422,6 +422,7 @@ class GoogleBooksMetadataProvider:
                 raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
             if self._accessed_at is None:
                 self._accessed_at = provider_access_time(self._wall_clock())
+            self._ledger.dispatch(retry=False)
             self._attempt_count += 1
             with self._client.stream(
                 "GET",

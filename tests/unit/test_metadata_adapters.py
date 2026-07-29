@@ -151,7 +151,7 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v16'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v17'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -165,7 +165,7 @@ def _create_prior_schema(
 ) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v16'", f"= '{version}'"
+            "= 'metadata-report-v17'", f"= '{version}'"
         ),
         metadata_persistence._CURRENT_SQL,
         metadata_persistence._CURRENT_LINEAGE_SQL,
@@ -2625,7 +2625,7 @@ class ProviderAdapterTests(unittest.TestCase):
                 self.assertEqual(1 if oversized else 2, len(requests))
                 self.assertEqual(
                     (
-                        {ProviderStatus.OVERSIZED}
+                        {ProviderStatus.OVERSIZED, ProviderStatus.INCOMPLETE}
                         if oversized
                         else {ProviderStatus.NO_MATCH}
                     ),

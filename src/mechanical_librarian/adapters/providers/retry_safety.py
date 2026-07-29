@@ -49,6 +49,11 @@ class _DiscoveryRequestLedger:
         self.initial = 0
         self.replays = 0
         self.undispatched_incomplete = 0
+        self.retry_dispatches = 0
+
+    def dispatch(self, *, retry: bool) -> None:
+        if retry:
+            self.retry_dispatches += 1
 
     def _key(
         self,
@@ -109,12 +114,12 @@ class _DiscoveryRequestLedger:
         self._completed[key] = result
         return result, False
 
-    def accounting(self, retries: int) -> tuple[int, int, int, int, int]:
+    def accounting(self, retries: int = 0) -> tuple[int, int, int, int, int]:
         """Return closed aggregate-safe request accounting, never request data."""
         return (
             self.logical,
             self.initial,
-            retries,
+            self.retry_dispatches,
             self.replays,
             self.undispatched_incomplete,
         )
