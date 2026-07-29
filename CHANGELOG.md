@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Preserve safely anchored Hardcover edition and work claims when optional
+  taxonomy rows, links, categories, or bounded tag collections are malformed.
+  Valid taxonomy members remain in source order; malformed members produce
+  field-local closed-state claims and oversized collections are rejected as a
+  field without retaining a prefix. Required candidate identity and
+  edition-to-work joins remain fail-closed. (#400)
+
 - Coalesce semantically identical provider discovery lookups within one
   report-only observation. Each discovery lane retains its own provenance while
   replaying the immutable completed provider result, so coalescing does not

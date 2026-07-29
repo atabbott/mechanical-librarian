@@ -2115,10 +2115,22 @@ class ProviderAdapterTests(unittest.TestCase):
                     },
                 ],
             },
-            {**base, "release_date": "not-a-date"},
         ):
             with self.subTest(value=value):
-                self.assertEqual(ProviderStatus.MALFORMED, observe(value).status)
+                observation = observe(value)
+                self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+                self.assertTrue(
+                    any(
+                        claim.kind is ClaimKind.TITLE
+                        and claim.value == "Current title"
+                        and claim.state is FieldState.VALID
+                        for claim in observation.candidates[0].claims
+                    )
+                )
+        self.assertEqual(
+            ProviderStatus.MALFORMED,
+            observe({**base, "release_date": "not-a-date"}).status,
+        )
 
         overflow = {
             **base,
@@ -2374,7 +2386,13 @@ class ProviderAdapterTests(unittest.TestCase):
             with self.subTest(edition=bool(edition)):
                 payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", **edition}], [{"id": 1, "title": None, **work}])
                 provider = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request, value=payload: httpx.Response(200, headers={"content-type": "application/json"}, json=value))), 65_536)
-                self.assertEqual(provider.observe(_isbn_lookup((self._claim(),))).status, ProviderStatus.MALFORMED)
+                observation = provider.observe(_isbn_lookup((self._claim(),)))
+                expected = (
+                    ProviderStatus.CANDIDATES
+                    if "taggings" in work
+                    else ProviderStatus.MALFORMED
+                )
+                self.assertEqual(observation.status, expected)
 
     def test_series_positions_and_code3_are_retained_at_projection_bounds(self) -> None:
         for position, expected in (("10", "10"), ("20.0", "20"), ("100", "100"), (10, "10")):
@@ -2481,8 +2499,8 @@ class ProviderAdapterTests(unittest.TestCase):
                     ),
                     65_536,
                 ).observe(_isbn_lookup((self._claim(),)))
-                self.assertEqual(ProviderStatus.MALFORMED, observation.status)
-                self.assertEqual((), observation.candidates)
+                self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+                self.assertEqual(1, len(observation.candidates))
 
     def test_multiple_inputs_are_selected_deterministically_and_statuses_do_not_retry(self) -> None:
         second = LocalClaim.create(

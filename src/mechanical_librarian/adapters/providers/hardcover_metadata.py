@@ -799,13 +799,7 @@ def _parse_candidates(
     root = _closed(source, {"data"})
     data = _closed(root["data"], {"editions", "books", "tags"})
     rows, books, tags = data["editions"], data["books"], data["tags"]
-    if (
-        type(rows) is not list
-        or type(books) is not list
-        or type(tags) is not list
-        or len(rows) > MAX_CANDIDATES
-        or len(tags) > _MAX_TAG_ROWS
-    ):
+    if type(rows) is not list or type(books) is not list or len(rows) > MAX_CANDIDATES:
         raise _CandidateLimit if type(rows) is list and len(rows) > MAX_CANDIDATES else ValueError("provider rows invalid")
     work_keys = {
         "id",
@@ -817,39 +811,60 @@ def _parse_candidates(
         "book_series",
         "taggings",
     }
-    indexed_tags = {
-        _identifier(_closed(tag, {"id", "tag", "tag_category"})["id"]): _closed(
-            tag, {"id", "tag", "tag_category"}
-        )
-        for tag in tags
-    }
-    if len(indexed_tags) != len(tags):
-        raise ValueError("provider taxonomy invalid")
-    used_tags: set[int] = set()
+    # Tags are optional enrichment.  A broken taxonomy row or link must not
+    # invalidate the edition/work identity and independently valid fields.
+    taxonomy_issue = False
+    taxonomy_oversized = False
+    indexed_tags: dict[int, dict[str, Any]] = {}
+    if type(tags) is not list:
+        taxonomy_issue = True
+    elif len(tags) > _MAX_TAG_ROWS:
+        taxonomy_oversized = True
+    else:
+        for raw_tag in tags:
+            try:
+                tag = _closed(raw_tag, {"id", "tag", "tag_category"})
+                tag_id = _identifier(tag["id"])
+                if tag_id in indexed_tags:
+                    raise ValueError("duplicate tag")
+            except (TypeError, ValueError):
+                taxonomy_issue = True
+                continue
+            indexed_tags[tag_id] = tag
     indexed: dict[int, dict[str, Any]] = {}
     for raw_book in books:
         book = _closed(raw_book, work_keys)
         raw_taggings = book["taggings"]
-        if type(raw_taggings) is not list:
-            raise ValueError("provider taxonomy invalid")
         taggings: list[dict[str, Any]] = []
-        for raw_tagging in raw_taggings:
-            tagging = _closed(raw_tagging, {"id", "tag_id"})
-            _identifier(tagging["id"])
-            tag_id = _identifier(tagging["tag_id"])
-            if tag_id not in indexed_tags:
-                raise ValueError("provider taxonomy invalid")
-            used_tags.add(tag_id)
-            taggings.append({"id": tagging["id"], "tag": indexed_tags[tag_id]})
-        book = {**book, "taggings": taggings}
+        book_taxonomy_issue = taxonomy_issue
+        book_taxonomy_oversized = taxonomy_oversized
+        if type(raw_taggings) is not list:
+            book_taxonomy_issue = True
+        elif len(raw_taggings) > MAX_TAGS:
+            book_taxonomy_oversized = True
+        else:
+            for raw_tagging in raw_taggings:
+                try:
+                    tagging = _closed(raw_tagging, {"id", "tag_id"})
+                    _identifier(tagging["id"])
+                    tag_id = _identifier(tagging["tag_id"])
+                    tag = indexed_tags[tag_id]
+                except (KeyError, TypeError, ValueError):
+                    book_taxonomy_issue = True
+                    continue
+                taggings.append({"id": tagging["id"], "tag": tag})
+        book = {
+            **book,
+            "taggings": taggings,
+            "_taxonomy_issue": book_taxonomy_issue,
+            "_taxonomy_oversized": book_taxonomy_oversized,
+        }
         book_id = _identifier(book["id"])
         if book_id in indexed:
             raise ValueError("provider work invalid")
         indexed[book_id] = book
     if len(indexed) != len(books):
         raise ValueError("provider work invalid")
-    if used_tags != set(indexed_tags):
-        raise ValueError("provider taxonomy invalid")
     candidates: list[ProviderCandidate] = []
     used: set[int] = set()
     for row_value in rows:
@@ -1078,36 +1093,74 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
         series = _closed_or_none(item["series"], {"id", "name"})
         claims.append(_claim(provider, identity, ClaimKind.SERIES, None if series is None else series["name"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
         claims.append(_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, item["position"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
-    taggings, taggings_overflow = _bounded_list(
-        book["taggings"], MAX_TAGS, {"id", "tag"}
-    )
+    if book.get("_taxonomy_oversized"):
+        claims.extend(
+            _state_claim(
+                provider,
+                identity,
+                kind,
+                FieldState.OVERSIZED,
+                ClaimScope.WORK,
+                local,
+                len(claims) + offset + index,
+            )
+            for index, kind in enumerate((ClaimKind.GENRE, ClaimKind.TAG))
+        )
+        return claims
+    if book.get("_taxonomy_issue"):
+        claims.extend(
+            _state_claim(
+                provider,
+                identity,
+                kind,
+                FieldState.MALFORMED,
+                ClaimScope.WORK,
+                local,
+                len(claims) + offset + index,
+            )
+            for index, kind in enumerate((ClaimKind.GENRE, ClaimKind.TAG))
+        )
+    taggings, taggings_overflow = _bounded_list(book["taggings"], MAX_TAGS, {"id", "tag"})
     categorized: list[tuple[ClaimKind, str]] = []
     seen: dict[str, ClaimKind] = {}
+    malformed_taxonomy = False
     for item in taggings:
         tag = _closed_or_none(item["tag"], {"id", "tag", "tag_category"})
         if tag is None:
-            raise ValueError("provider taxonomy is malformed")
-        _identifier(tag["id"])
+            malformed_taxonomy = True
+            continue
+        try:
+            _identifier(tag["id"])
+        except ValueError:
+            malformed_taxonomy = True
+            continue
         category = _closed_or_none(
             tag["tag_category"], {"id", "category"}
         )
         if category is None:
-            raise ValueError("provider taxonomy is malformed")
-        _identifier(category["id"])
-        name = _text(tag["tag"], MAX_SCALAR_CHARACTERS)
-        category_name = _text(category["category"], MAX_SCALAR_CHARACTERS)
+            malformed_taxonomy = True
+            continue
+        try:
+            _identifier(category["id"])
+            name = _text(tag["tag"], MAX_SCALAR_CHARACTERS)
+            category_name = _text(category["category"], MAX_SCALAR_CHARACTERS)
+        except ValueError:
+            malformed_taxonomy = True
+            continue
         if category_name == "Genre":
             kind = ClaimKind.GENRE
         elif category_name in {"Mood", "ContentWarning"}:
             kind = ClaimKind.TAG
         else:
-            raise ValueError("provider taxonomy category is unsupported")
+            malformed_taxonomy = True
+            continue
         taxonomy_identity = " ".join(
             unicodedata.normalize("NFC", name).split()
         ).casefold()
         previous = seen.get(taxonomy_identity)
         if previous is not None and previous is not kind:
-            raise ValueError("provider taxonomy conflicts")
+            malformed_taxonomy = True
+            continue
         if previous is None:
             seen[taxonomy_identity] = kind
             categorized.append((kind, name))
@@ -1138,6 +1191,19 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
                 local,
                 len(claims) + offset,
             )
+        )
+    if malformed_taxonomy:
+        claims.extend(
+            _state_claim(
+                provider,
+                identity,
+                kind,
+                FieldState.MALFORMED,
+                ClaimScope.WORK,
+                local,
+                len(claims) + offset + index,
+            )
+            for index, kind in enumerate((ClaimKind.GENRE, ClaimKind.TAG))
         )
     present = {kind for kind, _ in categorized}
     for kind in (ClaimKind.GENRE, ClaimKind.TAG):
