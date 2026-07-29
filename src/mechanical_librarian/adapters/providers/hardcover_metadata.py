@@ -242,9 +242,7 @@ class HardcoverMetadataProvider:
         return provider_observation(
             self._name,
             tuple(results),
-            request_accounting=ledger.accounting(
-                max(0, self._attempt_count - ledger.initial)
-            ),
+            request_accounting=ledger.accounting(),
         )
 
     def _observe_lookup(

@@ -78,6 +78,12 @@ _WORK_KEY = re.compile(r"^/works/OL[1-9][0-9]*W$")
 _AUTHOR_KEY = re.compile(r"^/authors/OL[1-9][0-9]*A$")
 _LANGUAGE_KEY = re.compile(r"^/languages/([a-z]{2,3})$")
 _MAX_SEARCH_ROWS = 3
+
+
+@dataclass(frozen=True, slots=True)
+class _DetailResult:
+    payload: str | None
+    status: ProviderStatus | None
 _MAX_VALUES = 8
 _MAX_AGGREGATE_RESPONSE_BYTES = 2_097_152
 _MAX_ATTEMPTS_PER_REQUEST = 2
@@ -268,9 +274,7 @@ class OpenLibraryMetadataProvider:
         return provider_observation(
             self._name,
             _canonical_discovery_results(self._name, tuple(results)),
-            request_accounting=ledger.accounting(
-                max(0, self._attempt_count - ledger.initial)
-            ),
+            request_accounting=ledger.accounting(),
         )
 
     def _observe_lookup(
@@ -384,9 +388,35 @@ class OpenLibraryMetadataProvider:
                 # The complete, bounded detail set is known from the search
                 # response. Reserve it before a detail retry can consume the
                 # observation's remaining dispatch authority.
-                for edition_key, work_key, _ in admitted:
-                    self._ledger.register_detail(edition_key)
-                    self._ledger.register_detail(work_key)
+                detail_keys = {
+                    identity
+                    for edition_key, work_key, _ in admitted
+                    for identity in (edition_key, work_key)
+                }
+                for identity in sorted(detail_keys):
+                    self._ledger.register_detail(identity)
+
+                def detail(identity: str) -> dict[str, Any]:
+                    def execute() -> _DetailResult:
+                        try:
+                            value = self._request(
+                                OPEN_LIBRARY_ORIGIN + identity + ".json",
+                                deadline=deadline,
+                            )
+                        except _ProviderFailure as error:
+                            return _DetailResult(None, error.status)
+                        return _DetailResult(
+                            json.dumps(value, sort_keys=True, separators=(",", ":")),
+                            None,
+                        )
+
+                    replay, _ = self._ledger.resolve_detail(
+                        identity, execute=execute
+                    )
+                    if replay.status is not None:
+                        raise _ProviderFailure(replay.status)
+                    return json.loads(replay.payload or "{}")
+
                 work_documents: dict[str, dict[str, Any]] = {}
                 candidates: list[ProviderCandidate] = []
                 cover_candidates: list[
@@ -400,17 +430,9 @@ class OpenLibraryMetadataProvider:
                     ]
                 ] = []
                 for edition_key, work_key, work_authors in admitted:
-                    self._ledger.begin_detail(edition_key)
-                    edition = self._request(
-                        OPEN_LIBRARY_ORIGIN + edition_key + ".json",
-                        deadline=deadline,
-                    )
+                    edition = detail(edition_key)
                     if work_key not in work_documents:
-                        self._ledger.begin_detail(work_key)
-                        work_documents[work_key] = self._request(
-                            OPEN_LIBRARY_ORIGIN + work_key + ".json",
-                            deadline=deadline,
-                        )
+                        work_documents[work_key] = detail(work_key)
                     candidate, edition_cover, work_cover = _candidate(
                         self._name,
                         edition_key,

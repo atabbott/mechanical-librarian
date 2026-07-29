@@ -40,7 +40,7 @@ map to `unknown`; exception text is never used to classify them.
 Provider adapters retain `ProviderAttemptRecord` only in process memory. The
 application maps its category and outcome to bounded deterministic aggregates
 and drops provider identity, attempt ordinal, delay, elapsed time, and every
-raw response detail before adding diagnostics to `metadata-report-v16`.
+raw response detail before adding diagnostics to `metadata-report-v17`.
 Missing or malformed optional attempt-record collections and entries map to a
 bounded `unknown` aggregate rather than aborting report generation. Report
 construction and replay accept only sorted, unique provider aggregates with a

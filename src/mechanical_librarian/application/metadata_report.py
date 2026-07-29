@@ -27,6 +27,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderLaneCandidate,
     ProviderLaneObservation,
     ProviderObservation,
+    ProviderRequestAccounting,
     ProviderQueryKind,
     ProviderStatus,
     TargetDestination,
@@ -356,7 +357,7 @@ def provider_observation(
     results: tuple[ProviderLaneResult, ...],
     *,
     authority: str | None = None,
-    request_accounting: tuple[int, int, int, int, int] = (0, 0, 0, 0, 0),
+    request_accounting: ProviderRequestAccounting = ProviderRequestAccounting(),
 ) -> ProviderObservation:
     access_times = {
         result.accessed_at for result in results if result.accessed_at is not None

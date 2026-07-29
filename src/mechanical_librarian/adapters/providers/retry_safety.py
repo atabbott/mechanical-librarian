@@ -14,6 +14,8 @@ from typing import Callable, TypeVar
 import httpcore
 import httpx
 
+from mechanical_librarian.domain.metadata_report import ProviderRequestAccounting
+
 
 _SAFE_OS_ERRNOS = frozenset(
     {
@@ -45,6 +47,7 @@ class _DiscoveryRequestLedger:
         self._revision = revision
         self._completed: dict[tuple[object, ...], object] = {}
         self._pending: set[tuple[object, ...]] = set()
+        self._registered: dict[tuple[object, ...], int] = {}
         self.logical = 0
         self.initial = 0
         self.replays = 0
@@ -54,6 +57,8 @@ class _DiscoveryRequestLedger:
     def dispatch(self, *, retry: bool) -> None:
         if retry:
             self.retry_dispatches += 1
+        else:
+            self.initial += 1
 
     def _key(
         self,
@@ -78,15 +83,22 @@ class _DiscoveryRequestLedger:
         )
 
     def register(self, **arguments: object) -> None:
-        self._pending.add(self._key(**arguments))  # type: ignore[arg-type]
+        self._register(self._key(**arguments))  # type: ignore[arg-type]
+
+    def _register(self, key: tuple[object, ...]) -> None:
+        self.logical += 1
+        self._registered[key] = self._registered.get(key, 0) + 1
+        if key not in self._completed:
+            self._pending.add(key)
 
     def allows_retry(self, attempts: int, ceiling: int) -> bool:
         return attempts + len(self._pending) < ceiling
 
     def register_detail(self, identity: str) -> None:
-        self._pending.add((self._authority, self._revision, "detail", identity))
+        self._register((self._authority, self._revision, "detail", identity))
 
     def begin_detail(self, identity: str) -> None:
+        """Reserve compatibility for the detail dispatch boundary."""
         self._pending.discard((self._authority, self._revision, "detail", identity))
 
     def resolve(
@@ -99,29 +111,50 @@ class _DiscoveryRequestLedger:
         projection: str,
         execute: Callable[[], _Result],
     ) -> tuple[_Result, bool]:
-        self.logical += 1
         key = self._key(
             kind=kind, matched_family=matched_family, title=title,
             authors=authors, projection=projection,
         )
+        if key not in self._registered:
+            self._register(key)
         completed = self._completed.get(key)
         if completed is not None:
             self.replays += 1
             return completed, True  # type: ignore[return-value]
         self._pending.discard(key)
-        self.initial += 1
+        initial_before = self.initial
         result = execute()
         self._completed[key] = result
+        if self.initial == initial_before:
+            self.undispatched_incomplete += 1
         return result, False
 
-    def accounting(self, retries: int = 0) -> tuple[int, int, int, int, int]:
+    def resolve_detail(
+        self, identity: str, *, execute: Callable[[], _Result]
+    ) -> tuple[_Result, bool]:
+        key = (self._authority, self._revision, "detail", identity)
+        if key not in self._registered:
+            self._register(key)
+        completed = self._completed.get(key)
+        if completed is not None:
+            self.replays += 1
+            return completed, True  # type: ignore[return-value]
+        self._pending.discard(key)
+        initial_before = self.initial
+        result = execute()
+        self._completed[key] = result
+        if self.initial == initial_before:
+            self.undispatched_incomplete += 1
+        return result, False
+
+    def accounting(self) -> ProviderRequestAccounting:
         """Return closed aggregate-safe request accounting, never request data."""
-        return (
-            self.logical,
-            self.initial,
-            self.retry_dispatches,
-            self.replays,
-            self.undispatched_incomplete,
+        return ProviderRequestAccounting(
+            logical_requests=self.logical,
+            initial_dispatches=self.initial,
+            retry_dispatches=self.retry_dispatches,
+            replays=self.replays,
+            undispatched_incomplete=self.undispatched_incomplete,
         )
 
 

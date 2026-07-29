@@ -34,7 +34,7 @@
   persistence/persistence/persistence producer.
   Malformed output and every other nonzero exit remain separate. Advance clean
   exact-current contracts to
-  `metadata-report-v16`, `shadow-review-inspect-v2`, and
+  `metadata-report-v17`, `shadow-review-inspect-v2`, and
   `shadow-review-failure-v2`; proposal, packet, request, and result bytes remain
   unchanged. Earlier development report databases are rejected without
   migration under ADR-0013. ADR-0017 freezes the privacy and replay boundary.

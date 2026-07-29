@@ -194,9 +194,7 @@ class GoogleBooksMetadataProvider:
             self._name,
             tuple(results),
             authority="google_books",
-            request_accounting=ledger.accounting(
-                max(0, self._attempt_count - ledger.initial)
-            ),
+            request_accounting=ledger.accounting(),
         )
 
     def _observe_lookup(

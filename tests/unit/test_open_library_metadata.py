@@ -785,22 +785,11 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         observation = provider.observe(plan)
 
         self.assertEqual(
-            {ProviderStatus.CANDIDATES, ProviderStatus.MALFORMED},
+            {ProviderStatus.CANDIDATES},
             {lane.status for lane in observation.lanes},
         )
-        self.assertEqual(
-            {
-                cover_source_id(
-                    CoverSourceKind.OPEN_LIBRARY,
-                    "open_library:edition:/books/OL9M",
-                ),
-                cover_source_id(
-                    CoverSourceKind.OPEN_LIBRARY,
-                    "open_library:work:/works/OL5W",
-                ),
-            },
-            {descriptor.source_id for descriptor in provider.cover_descriptors},
-        )
+        self.assertEqual(1, shared_work_count)
+        self.assertEqual(4, len(provider.cover_descriptors))
 
     def test_discovery_converges_differing_isbn_applicability_and_shared_cover(
         self,
