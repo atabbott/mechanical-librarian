@@ -1521,7 +1521,7 @@ def _optional_projection_rejections(payload: bytes) -> int:
         "editions", "books", "tags", "id", "book_id", "isbn_10", "isbn_13",
         "asin", "title", "subtitle", "release_date", "image", "publisher",
         "language", "contributions", "description", "book_series", "taggings",
-        "tag", "tag_category", "position", "series", "contribution", "author",
+        "tag", "tag_id", "tag_category", "position", "series", "contribution", "author",
         "name", "parent_id", "code2", "code3", "category", "url",
     }
     optional_lists = {
@@ -1538,6 +1538,7 @@ def _optional_projection_rejections(payload: bytes) -> int:
         value = stack.pop()
         if type(value) is dict:
             count += len(set(value) - known)
+            children: list[object] = []
             for key, item in value.items():
                 if key in optional_lists:
                     if type(item) is not list:
@@ -1553,7 +1554,19 @@ def _optional_projection_rejections(payload: bytes) -> int:
                         # non-object occurrence is still a single rejected
                         # provider member (never a recursive multiplier).
                         count += sum(1 for member in item if type(member) is not dict)
-            stack.extend(value.values())
+                children.append(item)
+            release_date = value.get("release_date")
+            if release_date is not None:
+                try:
+                    normalize_date_value(release_date) if type(release_date) is str else (_ for _ in ()).throw(ValueError())
+                except (ValueError, EvidenceValueError):
+                    count += 1
+            if "tag_id" in value and (type(value["tag_id"]) is not int or value["tag_id"] <= 0):
+                count += 1
+            category = value.get("category")
+            if category is not None and category not in {"Mood", "Genre", "ContentWarning"}:
+                count += 1
+            stack.extend(children)
         elif type(value) is list:
             stack.extend(value)
     return min(count, MAX_DIAGNOSTIC_COUNT)

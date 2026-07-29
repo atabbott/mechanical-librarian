@@ -2268,6 +2268,17 @@ class OpenLibraryDiagnosticBoundaryTests(unittest.TestCase):
                 {"key": "/works/OL1W", "contributions": ["Ada"]}
             ),
         )
+
+    def test_optional_projection_shapes_are_exact_and_local(self) -> None:
+        diagnostic = open_library_metadata._optional_projection_rejections
+        self.assertEqual(0, diagnostic({"key": "/works/OL1W", "covers": [1, 2]}))
+        self.assertEqual(1, diagnostic({"key": "/works/OL1W", "covers": ["1"]}))
+        scalars = ("edition_name", "edition_statement", "translation_of", "description", "copyright_date", "number_of_pages")
+        malformed = {key: 1 for key in scalars if key != "number_of_pages"}
+        malformed["number_of_pages"] = "1"
+        self.assertEqual(len(scalars), diagnostic({"key": "/works/OL1W", **malformed}))
+        self.assertEqual(2, diagnostic({"key": "/works/OL1W", "authors": [{"key": "/authors/bad"}], "languages": [{"key": "/languages/toolong"}]}))
+        self.assertEqual(1, diagnostic({"key": "/works/OL1W", "author_key": ["/authors/bad"]}))
         scalar_fields = (
             "publish_date", "physical_format", "pagination", "by_statement", "imprint"
         )

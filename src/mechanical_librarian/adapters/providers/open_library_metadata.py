@@ -1772,6 +1772,8 @@ def _optional_projection_rejections(
     object_list_fields = {"works", "languages", "authors"}
     scalar_fields = {
         "publish_date", "physical_format", "pagination", "by_statement", "imprint",
+        "edition_name", "edition_statement", "translation_of", "description",
+        "copyright_date", "number_of_pages",
     }
     if search_projection:
         scalar_fields.remove("publish_date")
@@ -1785,11 +1787,21 @@ def _optional_projection_rejections(
             elif len(value) > _MAX_VALUES:
                 count += 1
             else:
-                expected = dict if field in object_list_fields else str
+                expected = int if field == "covers" else (dict if field in object_list_fields else str)
                 count += sum(1 for item in value if type(item) is not expected)
         for field in scalar_fields & set(document):
-            if type(document[field]) is not str:
+            expected = int if field == "number_of_pages" else str
+            if type(document[field]) is not expected:
                 count += 1
+        for field, pattern in (("authors", _AUTHOR_KEY), ("languages", _LANGUAGE_KEY)):
+            value = document.get(field)
+            if type(value) is list and len(value) <= _MAX_VALUES:
+                for member in value:
+                    if type(member) is dict and not pattern.fullmatch(member.get("key", "")):
+                        count += 1
+        keys = document.get("author_key")
+        if type(keys) is list and len(keys) <= _MAX_VALUES:
+            count += sum(1 for key in keys if type(key) is not str or not _AUTHOR_KEY.fullmatch(key))
         identifiers = document.get("identifiers")
         if identifiers is not None and type(identifiers) is not dict:
             count += 1
