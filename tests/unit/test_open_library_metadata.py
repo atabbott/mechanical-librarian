@@ -211,6 +211,57 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             ),
         )
 
+    def test_work_detail_author_identity_survives_unusable_search_and_edition_links(self) -> None:
+        work = _work()
+        work["authors"] = [
+            {
+                "author": {"key": "/authors/OL7A"},
+                "type": {"key": "/type/author_role"},
+            },
+            {"author": {"key": "bad"}, "type": {"key": "/type/author_role"}},
+        ]
+        edition = _edition("/books/OL1M")
+        edition["authors"] = [{"key": "bad"}]
+        values = {
+            "/search.json": {
+                "docs": [
+                    {
+                        "key": "/works/OL5W",
+                        "author_name": ["Ada Example"],
+                        "author_key": ["bad"],
+                        "editions": {"docs": [{"key": "/books/OL1M"}]},
+                    }
+                ]
+            },
+            "/books/OL1M.json": edition,
+            "/works/OL5W.json": work,
+        }
+        observation = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=values[request.url.path],
+                    )
+                )
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        ).observe(_work_lookup())
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        self.assertEqual(3, observation.diagnostics[0].count)
+        identity = next(
+            value
+            for value in observation.candidates[0].evidence
+            if value.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY
+        )
+        self.assertEqual("open-library-author-OL7A", identity.value)
+        self.assertEqual(ClaimScope.WORK, identity.scope)
+        self.assertEqual("author", identity.role)
+
     def test_detail_freeze_replay_preserves_empty_containers_and_decimal(self) -> None:
         value = {"empty_mapping": {}, "empty_sequence": [], "nested": [{}, []], "decimal": Decimal("1.25")}
         frozen = open_library_metadata._freeze_detail(value)

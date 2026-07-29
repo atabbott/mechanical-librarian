@@ -507,8 +507,10 @@ class OpenLibraryMetadataProvider:
                         if document is not None and id(document) not in diagnosed_documents:
                             diagnosed_documents.add(id(document))
                             self._reject_schema_members(
-                                _optional_projection_rejections(
-                                    document, search_projection=search_projection
+                                _unknown_projection_rejections(document)
+                                + _parser_optional_rejections(
+                                    document,
+                                    search_projection=search_projection,
                                 )
                             )
                     candidates.append(candidate)
@@ -1102,6 +1104,10 @@ def _candidate(
             except (ValueError, EvidenceValueError):
                 pass
     _search_work_evidence(evidence, search_work)
+    # Detail authors are independent work-scoped identity evidence.  They do
+    # not manufacture a creator claim (the detail link has no display name),
+    # and a malformed optional link is local to that member.
+    detail_author_keys = _work_author_keys(work)
     for author in _optional_object_list(edition.get("authors", []), _MAX_VALUES):
         try:
             evidence.append(
@@ -1113,7 +1119,9 @@ def _candidate(
             )
         except ValueError:
             pass
-    for _, author_key in work_authors:
+    for author_key in dict.fromkeys(
+        (*detail_author_keys, *(key for _, key in work_authors if key is not None))
+    ):
         if author_key is not None:
             evidence.append(
                 ProviderEvidence(
@@ -1740,10 +1748,8 @@ def _optional_object_list(value: object, maximum: int) -> list[dict[str, Any]]:
     return [item for raw in value if type(raw) is dict for item in [raw]]
 
 
-def _optional_projection_rejections(
-    *documents: dict[str, Any], search_projection: bool = False
-) -> int:
-    """Count only discarded optional projection members; never retain values."""
+def _unknown_projection_rejections(*documents: dict[str, Any]) -> int:
+    """Count unknown additive members once per observed response document."""
     known = {
         "key", "works", "isbn_10", "isbn_13", "isbn", "title", "subtitle",
         "publish_date", "publishers", "languages", "authors", "description",
@@ -1758,81 +1764,111 @@ def _optional_projection_rejections(
         "physical_format", "pagination", "copyright_date", "number_of_pages",
         "first_publish_date", "covers",
     }
+    return min(
+        sum(len(set(document) - known) for document in documents),
+        MAX_DIAGNOSTIC_COUNT,
+    )
+
+
+def _parser_optional_rejections(
+    document: dict[str, Any], *, search_projection: bool = False
+) -> int:
+    """Account at the optional parsing boundary without retaining bad values."""
     list_fields = {
         "publishers", "languages", "authors", "oclc_numbers", "lccn",
         "dewey_decimal_class", "lc_classifications", "publish_places", "subjects",
         "subject_people", "subject_places", "subject_times", "covers",
         "alternate_titles", "alternative_titles", "imprints", "distributors",
-        "contributions", "series", "series_number",
-        "publisher", "language", "edition_key",
-        "author_name", "author_key",
+        "contributions", "series", "series_number", "publisher", "language",
+        "edition_key", "author_name", "author_key",
     }
     if search_projection:
         list_fields.add("publish_date")
-    object_list_fields = {"works", "languages", "authors"}
+    object_lists = {"works", "languages", "authors"}
     scalar_fields = {
         "publish_date", "physical_format", "pagination", "by_statement", "imprint",
         "edition_name", "edition_statement", "translation_of", "description",
-        "copyright_date", "number_of_pages",
+        "copyright_date", "number_of_pages", "first_publish_date",
     }
     if search_projection:
         scalar_fields.remove("publish_date")
     count = 0
-    for document in documents:
-        count += len(set(document) - known)
-        for field in list_fields & set(document):
-            value = document[field]
-            if type(value) is not list:
+    for field in list_fields & set(document):
+        value = document[field]
+        if type(value) is not list or len(value) > _MAX_VALUES:
+            count += 1
+            continue
+        expected = int if field == "covers" else (dict if field in object_lists else str)
+        for item in value:
+            if type(item) is not expected:
                 count += 1
-            elif len(value) > _MAX_VALUES:
+            elif field == "covers" and item <= 0:
                 count += 1
-            else:
-                expected = int if field == "covers" else (dict if field in object_list_fields else str)
-                count += sum(1 for item in value if type(item) is not expected)
-                if field == "covers":
-                    count += sum(1 for item in value if type(item) is int and item <= 0)
-        for field in scalar_fields & set(document):
-            expected = int if field == "number_of_pages" else str
-            if field == "description":
-                description = document[field]
-                valid = type(description) is str or (type(description) is dict and set(description) == {"type", "value"} and type(description["type"]) is str and type(description["value"]) is str)
-            else:
-                valid = type(document[field]) is expected
-                if valid and expected is str:
-                    try:
-                        validate_projection_text(document[field], "optional projection", MAX_SCALAR_CHARACTERS)
-                    except EvidenceValueError:
-                        valid = False
-            if not valid:
-                count += 1
-            elif field == "number_of_pages" and not 1 <= document[field] <= 1_000_000:
-                count += 1
-        for field, pattern in (("authors", _AUTHOR_KEY), ("languages", _LANGUAGE_KEY)):
-            value = document.get(field)
-            if type(value) is list and len(value) <= _MAX_VALUES:
-                for member in value:
-                    if type(member) is dict:
-                        key = member.get("key")
-                        if type(key) is not str or not pattern.fullmatch(key):
-                            if field == "authors" and type(member.get("author")) is dict and type(member.get("type")) is dict:
-                                author_key = member["author"].get("key")
-                                type_key = member["type"].get("key")
-                                if type(author_key) is not str or not _AUTHOR_KEY.fullmatch(author_key) or type(type_key) is not str or not type_key.startswith("/type/"):
-                                    count += 1
-                            else:
-                                count += 1
-        keys = document.get("author_key")
-        if type(keys) is list and len(keys) <= _MAX_VALUES:
-            count += sum(1 for key in keys if type(key) is not str or not _AUTHOR_KEY.fullmatch(key))
-        identifiers = document.get("identifiers")
-        if identifiers is not None:
-            if type(identifiers) is not dict:
-                count += 1
-            else:
-                for values in identifiers.values():
-                    if type(values) is not list or any(type(value) is not str for value in values):
-                        count += 1
+    for field in scalar_fields & set(document):
+        value = document[field]
+        if field == "description":
+            valid = type(value) is str or (
+                type(value) is dict
+                and set(value) == {"type", "value"}
+                and value.get("type") == "/type/text"
+                and type(value.get("value")) is str
+            )
+        elif field == "number_of_pages":
+            valid = type(value) is int and not isinstance(value, bool) and 1 <= value <= 100_000
+        else:
+            try:
+                _text(value)
+                valid = True
+            except (ValueError, EvidenceValueError):
+                valid = False
+        if not valid:
+            count += 1
+    for field, pattern in (("languages", _LANGUAGE_KEY), ("authors", _AUTHOR_KEY)):
+        value = document.get(field)
+        if type(value) is not list or len(value) > _MAX_VALUES:
+            continue
+        for member in value:
+            if type(member) is not dict:
+                continue
+            key = member.get("key")
+            if type(key) is str and pattern.fullmatch(key):
+                continue
+            if field == "authors" and _work_author_keys({"authors": [member]}):
+                continue
+            count += 1
+    author_keys = document.get("author_key")
+    if type(author_keys) is list and len(author_keys) <= _MAX_VALUES:
+        count += sum(
+            1
+            for key in author_keys
+            if type(key) is not str or _AUTHOR_KEY.fullmatch(key) is None
+        )
+    identifiers = document.get("identifiers")
+    if identifiers is not None:
+        if type(identifiers) is not dict:
+            count += 1
+        else:
+            for namespace, values in identifiers.items():
+                if namespace != "wikidata" or type(values) is not list or len(values) > _MAX_VALUES:
+                    count += 1
+                else:
+                    count += sum(1 for value in values if type(value) is not str)
     return min(count, MAX_DIAGNOSTIC_COUNT)
+
+
+# Compatibility for private parser tests; semantic accounting lives in the
+# parser-owned function above while this boundary remains unknown-key-only.
+def _optional_projection_rejections(
+    *documents: dict[str, Any], search_projection: bool = False
+) -> int:
+    return min(
+        sum(
+            _unknown_projection_rejections(document)
+            + _parser_optional_rejections(document, search_projection=search_projection)
+            for document in documents
+        ),
+        MAX_DIAGNOSTIC_COUNT,
+    )
 
 
 def _search_work_document(source: dict[str, Any], work_key: str) -> dict[str, Any] | None:
@@ -1903,6 +1939,38 @@ def _search_authors(
                 pass
         result.append((name, author_key))
     return tuple(result)
+
+
+def _work_author_keys(source: dict[str, Any]) -> tuple[str, ...]:
+    """Retain only exact nested work-author identities, in source order.
+
+    Open Library's work detail uses role links rather than author names.  A
+    malformed optional link cannot invalidate the already-verified edition /
+    work relation, and an edition-author link must never substitute for it.
+    """
+    value = source.get("authors", [])
+    if type(value) is not list or len(value) > _MAX_VALUES:
+        return ()
+    keys: list[str] = []
+    seen: set[str] = set()
+    for member in value:
+        if type(member) is not dict:
+            continue
+        author = member.get("author")
+        role = member.get("type")
+        if type(author) is not dict or type(role) is not dict:
+            continue
+        try:
+            key = _key(author.get("key"), _AUTHOR_KEY)
+        except ValueError:
+            continue
+        role_key = role.get("key")
+        if type(role_key) is not str or not role_key.startswith("/type/"):
+            continue
+        if key not in seen:
+            seen.add(key)
+            keys.append(key)
+    return tuple(keys)
 
 
 def _search_isbn_families(value: object) -> set[str]:
