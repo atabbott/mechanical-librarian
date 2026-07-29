@@ -2279,6 +2279,12 @@ class OpenLibraryDiagnosticBoundaryTests(unittest.TestCase):
         self.assertEqual(len(scalars), diagnostic({"key": "/works/OL1W", **malformed}))
         self.assertEqual(2, diagnostic({"key": "/works/OL1W", "authors": [{"key": "/authors/bad"}], "languages": [{"key": "/languages/toolong"}]}))
         self.assertEqual(1, diagnostic({"key": "/works/OL1W", "author_key": ["/authors/bad"]}))
+        self.assertEqual(0, diagnostic(_work()))
+        self.assertEqual(1, diagnostic({"key": "/works/OL1W", "authors": [{"key": 7}]}))
+        self.assertEqual(1, diagnostic({"key": "/works/OL1W", "languages": [{"key": 7}]}))
+        self.assertEqual(1, diagnostic({"key": "/works/OL1W", "covers": [0]}))
+        self.assertEqual(1, diagnostic({"key": "/works/OL1W", "number_of_pages": 0}))
+        self.assertEqual(1, diagnostic({"key": "/works/OL1W", "edition_name": "bad\x00name"}))
         scalar_fields = (
             "publish_date", "physical_format", "pagination", "by_statement", "imprint"
         )

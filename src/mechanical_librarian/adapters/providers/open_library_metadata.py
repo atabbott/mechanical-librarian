@@ -1789,22 +1789,49 @@ def _optional_projection_rejections(
             else:
                 expected = int if field == "covers" else (dict if field in object_list_fields else str)
                 count += sum(1 for item in value if type(item) is not expected)
+                if field == "covers":
+                    count += sum(1 for item in value if type(item) is int and item <= 0)
         for field in scalar_fields & set(document):
             expected = int if field == "number_of_pages" else str
-            if type(document[field]) is not expected:
+            if field == "description":
+                description = document[field]
+                valid = type(description) is str or (type(description) is dict and set(description) == {"type", "value"} and type(description["type"]) is str and type(description["value"]) is str)
+            else:
+                valid = type(document[field]) is expected
+                if valid and expected is str:
+                    try:
+                        validate_projection_text(document[field], "optional projection", MAX_SCALAR_CHARACTERS)
+                    except EvidenceValueError:
+                        valid = False
+            if not valid:
+                count += 1
+            elif field == "number_of_pages" and not 1 <= document[field] <= 1_000_000:
                 count += 1
         for field, pattern in (("authors", _AUTHOR_KEY), ("languages", _LANGUAGE_KEY)):
             value = document.get(field)
             if type(value) is list and len(value) <= _MAX_VALUES:
                 for member in value:
-                    if type(member) is dict and not pattern.fullmatch(member.get("key", "")):
-                        count += 1
+                    if type(member) is dict:
+                        key = member.get("key")
+                        if type(key) is not str or not pattern.fullmatch(key):
+                            if field == "authors" and type(member.get("author")) is dict and type(member.get("type")) is dict:
+                                author_key = member["author"].get("key")
+                                type_key = member["type"].get("key")
+                                if type(author_key) is not str or not _AUTHOR_KEY.fullmatch(author_key) or type(type_key) is not str or not type_key.startswith("/type/"):
+                                    count += 1
+                            else:
+                                count += 1
         keys = document.get("author_key")
         if type(keys) is list and len(keys) <= _MAX_VALUES:
             count += sum(1 for key in keys if type(key) is not str or not _AUTHOR_KEY.fullmatch(key))
         identifiers = document.get("identifiers")
-        if identifiers is not None and type(identifiers) is not dict:
-            count += 1
+        if identifiers is not None:
+            if type(identifiers) is not dict:
+                count += 1
+            else:
+                for values in identifiers.values():
+                    if type(values) is not list or any(type(value) is not str for value in values):
+                        count += 1
     return min(count, MAX_DIAGNOSTIC_COUNT)
 
 

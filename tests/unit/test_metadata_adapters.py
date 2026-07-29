@@ -2477,6 +2477,9 @@ class ProviderAdapterTests(unittest.TestCase):
         subject = {**tag, "tag": {"id": 1, "tag": "T", "tag_category": {"id": 1, "category": "Subject"}}}
         self.assertEqual(1, diagnostic(json.dumps(self._envelope([], [{"id": 1, "title": "T", "taggings": [subject]}])).encode()))
         self.assertEqual(1, diagnostic(b'{"data":{"editions":[],"books":[{"id":1,"taggings":[{"id":1,"tag_id":"bad"}]}],"tags":[]}}'))
+        self.assertEqual(1, diagnostic(b'{"data":{"editions":[{"id":1,"book_id":1,"contributions":[{"id":1,"author":{"id":{}}}]}],"books":[],"tags":[]}}'))
+        self.assertEqual(1, diagnostic(b'{"data":{"editions":[],"books":[{"id":1,"book_series":[{"id":1,"series":"bad"}]}],"tags":[]}}'))
+        self.assertEqual(2, diagnostic(b'{"data":{"editions":[{"id":1,"publisher":{"id":1,"parent_id":{}},"image":{"url":7}}],"books":[],"tags":[]}}'))
 
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:
         calls: list[int] = []

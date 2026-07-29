@@ -1561,10 +1561,20 @@ def _optional_projection_rejections(payload: bytes) -> int:
                     normalize_date_value(release_date) if type(release_date) is str else (_ for _ in ()).throw(ValueError())
                 except (ValueError, EvidenceValueError):
                     count += 1
-            if "tag_id" in value and (type(value["tag_id"]) is not int or value["tag_id"] <= 0):
+            if "tag_id" in value and (type(value["tag_id"]) is not int or not 1 <= value["tag_id"] <= 2_147_483_647):
                 count += 1
             category = value.get("category")
             if category is not None and category not in {"Mood", "Genre", "ContentWarning"}:
+                count += 1
+            author = value.get("author")
+            if author is not None and (type(author) is not dict or type(author.get("id")) is not int or not 1 <= author["id"] <= 2_147_483_647):
+                count += 1
+            series = value.get("series")
+            if series is not None and (type(series) is not dict or type(series.get("id")) is not int or not 1 <= series["id"] <= 2_147_483_647 or type(series.get("name")) is not str):
+                count += 1
+            if "parent_id" in value and (value["parent_id"] is not None and (type(value["parent_id"]) is not int or not 1 <= value["parent_id"] <= 2_147_483_647)):
+                count += 1
+            if "image" in value and value["image"] is not None and (type(value["image"]) is not dict or type(value["image"].get("url")) is not str):
                 count += 1
             stack.extend(children)
         elif type(value) is list:
