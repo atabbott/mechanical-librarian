@@ -88,23 +88,32 @@ class _DetailResult:
 
 def _freeze_detail(value: object) -> object:
     if type(value) is dict:
-        return tuple((key, _freeze_detail(item)) for key, item in value.items())
+        return ("mapping", tuple((key, _freeze_detail(item)) for key, item in value.items()))
     if type(value) is list:
-        return tuple(_freeze_detail(item) for item in value)
+        return ("sequence", tuple(_freeze_detail(item) for item in value))
     return value
 
 
 def _thaw_detail(value: object | None) -> dict[str, Any]:
-    if type(value) is not tuple:
+    thawed = _thaw_detail_value(value)
+    if type(thawed) is not dict:
         raise ValueError("detail replay is malformed")
-    return {key: _thaw_detail_value(item) for key, item in value}
+    return thawed
 
 
 def _thaw_detail_value(value: object) -> object:
+    if type(value) is tuple and len(value) == 2 and value[0] == "mapping":
+        items = value[1]
+        if type(items) is not tuple or any(type(item) is not tuple or len(item) != 2 or type(item[0]) is not str for item in items):
+            raise ValueError("detail replay is malformed")
+        return {key: _thaw_detail_value(item) for key, item in items}
+    if type(value) is tuple and len(value) == 2 and value[0] == "sequence":
+        items = value[1]
+        if type(items) is not tuple:
+            raise ValueError("detail replay is malformed")
+        return [_thaw_detail_value(item) for item in items]
     if type(value) is tuple:
-        if value and all(type(item) is tuple and len(item) == 2 and type(item[0]) is str for item in value):
-            return {key: _thaw_detail_value(item) for key, item in value}
-        return [_thaw_detail_value(item) for item in value]
+        raise ValueError("detail replay is malformed")
     return value
 _MAX_VALUES = 8
 _MAX_AGGREGATE_RESPONSE_BYTES = 2_097_152

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import unittest
+from decimal import Decimal
 
 import httpx
 
@@ -191,6 +192,10 @@ def _work(key: str = "/works/OL5W", *, cover: int | None = None) -> dict[str, ob
 
 
 class OpenLibraryMetadataTests(unittest.TestCase):
+    def test_detail_freeze_replay_preserves_empty_containers_and_decimal(self) -> None:
+        value = {"empty_mapping": {}, "empty_sequence": [], "nested": [{}, []], "decimal": Decimal("1.25")}
+        frozen = open_library_metadata._freeze_detail(value)
+        self.assertEqual(value, open_library_metadata._thaw_detail(frozen))
     def test_first_dispatch_captures_injected_access_time(self) -> None:
         requests: list[httpx.Request] = []
 
