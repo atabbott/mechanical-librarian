@@ -356,6 +356,7 @@ def provider_observation(
     results: tuple[ProviderLaneResult, ...],
     *,
     authority: str | None = None,
+    request_accounting: tuple[int, int, int, int, int] = (0, 0, 0, 0, 0),
 ) -> ProviderObservation:
     access_times = {
         result.accessed_at for result in results if result.accessed_at is not None
@@ -498,6 +499,7 @@ def provider_observation(
         authority,
         tuple(sorted(lanes, key=lambda value: value.identity)),
         accessed_at=accessed_at,
+        request_accounting=request_accounting,
     )
 
 
@@ -1034,6 +1036,7 @@ class GenerateMetadataReport:
                     attempt_records,
                     status=observation.status.value,
                 ),
+                observation.request_accounting,
             )
             observations.append(observation)
             candidate_descriptors = getattr(provider, "cover_descriptors", ())

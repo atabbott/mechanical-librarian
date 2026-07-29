@@ -264,6 +264,9 @@ class OpenLibraryMetadataProvider:
         return provider_observation(
             self._name,
             _canonical_discovery_results(self._name, tuple(results)),
+            request_accounting=ledger.accounting(
+                max(0, self._attempt_count - ledger.initial)
+            ),
         )
 
     def _observe_lookup(

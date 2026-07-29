@@ -235,7 +235,13 @@ class HardcoverMetadataProvider:
         finally:
             self._client.close()
         self.cover_descriptors = descriptors
-        return provider_observation(self._name, tuple(results))
+        return provider_observation(
+            self._name,
+            tuple(results),
+            request_accounting=ledger.accounting(
+                max(0, self._attempt_count - ledger.initial)
+            ),
+        )
 
     def _observe_lookup(
         self,

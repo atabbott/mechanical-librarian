@@ -32,7 +32,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 
 
-REPORT_SCHEMA = "metadata-report-v15"
+REPORT_SCHEMA = "metadata-report-v16"
 COMPARISON_VERSION = "same-kind-v1"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -1310,6 +1310,7 @@ class ProviderObservation:
     convergence: tuple[ProviderConvergence, ...] = ()
     accessed_at: str | None = None
     diagnostics: tuple[FailureDiagnostic, ...] = ()
+    request_accounting: tuple[int, int, int, int, int] = (0, 0, 0, 0, 0)
 
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
@@ -1326,6 +1327,15 @@ class ProviderObservation:
             raise ReportValueError("provider status is invalid")
         if self.accessed_at is not None:
             validate_provider_access_time(self.accessed_at)
+        if (
+            type(self.request_accounting) is not tuple
+            or len(self.request_accounting) != 5
+            or any(type(value) is not int or value < 0 for value in self.request_accounting)
+        ):
+            raise ReportValueError("provider request accounting is invalid")
+        logical, initial, retries, replays, incomplete = self.request_accounting
+        if logical != initial + replays + incomplete:
+            raise ReportValueError("provider logical request accounting is inconsistent")
         if not diagnostics_are_canonical(self.diagnostics) or any(
             value.component is not FailureComponent.PROVIDER
             or _PROVIDER_DIAGNOSTIC_STAGES.get(value.category) is not value.stage
@@ -1460,6 +1470,7 @@ class ProviderObservation:
             "accessed_at": self.accessed_at,
             "convergence": [value.to_data() for value in self.convergence],
             "diagnostics": [value.to_data() for value in self.diagnostics],
+            "request_accounting": list(self.request_accounting),
             "lanes": [value.to_data() for value in self.lanes],
         }
 
@@ -2202,6 +2213,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
             "lanes",
             "provider",
             "query_kind",
+            "request_accounting",
             "status",
         },
     )
@@ -2223,7 +2235,15 @@ def _provider_from_data(value: object) -> ProviderObservation:
             FailureDiagnostic.from_json(canonical_json(value))
             for value in _list(item["diagnostics"])
         ),
+        tuple(_request_accounting(item["request_accounting"])),
     )
+
+
+def _request_accounting(value: object) -> tuple[int, ...]:
+    values = _list(value)
+    if len(values) != 5 or any(type(item) is not int or item < 0 for item in values):
+        raise ReportValueError("provider request accounting is invalid")
+    return tuple(values)
 
 
 def _provider_lane_from_data(value: object) -> ProviderLaneObservation:

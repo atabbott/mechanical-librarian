@@ -44,6 +44,10 @@ class _DiscoveryRequestLedger:
         self._authority = authority
         self._revision = revision
         self._completed: dict[tuple[object, ...], object] = {}
+        self.logical = 0
+        self.initial = 0
+        self.replays = 0
+        self.undispatched_incomplete = 0
 
     def resolve(
         self,
@@ -55,6 +59,7 @@ class _DiscoveryRequestLedger:
         projection: str,
         execute: Callable[[], _Result],
     ) -> tuple[_Result, bool]:
+        self.logical += 1
         # ISBN and work requests have different canonical arguments.  Sorting
         # author names matches the providers' set-like discovery contract while
         # retaining the explicit operation discriminator.
@@ -69,10 +74,22 @@ class _DiscoveryRequestLedger:
         )
         completed = self._completed.get(key)
         if completed is not None:
+            self.replays += 1
             return completed, True  # type: ignore[return-value]
+        self.initial += 1
         result = execute()
         self._completed[key] = result
         return result, False
+
+    def accounting(self, retries: int) -> tuple[int, int, int, int, int]:
+        """Return closed aggregate-safe request accounting, never request data."""
+        return (
+            self.logical,
+            self.initial,
+            retries,
+            self.replays,
+            self.undispatched_incomplete,
+        )
 
 
 @dataclass(frozen=True, slots=True)
