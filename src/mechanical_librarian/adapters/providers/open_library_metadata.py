@@ -381,6 +381,12 @@ class OpenLibraryMetadataProvider:
                     return result(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
                 if not admitted:
                     return result(ProviderStatus.NO_MATCH)
+                # The complete, bounded detail set is known from the search
+                # response. Reserve it before a detail retry can consume the
+                # observation's remaining dispatch authority.
+                for edition_key, work_key, _ in admitted:
+                    self._ledger.register_detail(edition_key)
+                    self._ledger.register_detail(work_key)
                 work_documents: dict[str, dict[str, Any]] = {}
                 candidates: list[ProviderCandidate] = []
                 cover_candidates: list[
@@ -394,11 +400,13 @@ class OpenLibraryMetadataProvider:
                     ]
                 ] = []
                 for edition_key, work_key, work_authors in admitted:
+                    self._ledger.begin_detail(edition_key)
                     edition = self._request(
                         OPEN_LIBRARY_ORIGIN + edition_key + ".json",
                         deadline=deadline,
                     )
                     if work_key not in work_documents:
+                        self._ledger.begin_detail(work_key)
                         work_documents[work_key] = self._request(
                             OPEN_LIBRARY_ORIGIN + work_key + ".json",
                             deadline=deadline,

@@ -65,6 +65,17 @@ class ProviderRetrySafetyTests(unittest.TestCase):
         self.assertIsNot(first, third)
         self.assertEqual(["sent", "sent"], calls)
 
+    def test_discovery_ledger_reserves_registered_initials_before_retry(self) -> None:
+        ledger = _DiscoveryRequestLedger("provider", "revision")
+        ledger.register(
+            kind="isbn", matched_family="9780000000000", title=None,
+            authors=(), projection="fixed",
+        )
+        ledger.register_detail("/books/OL1M")
+        self.assertFalse(ledger.allows_retry(47, 49))
+        ledger.begin_detail("/books/OL1M")
+        self.assertTrue(ledger.allows_retry(47, 49))
+
     def test_attempt_elapsed_is_finite_and_bounded(self) -> None:
         self.assertEqual(0.0, bounded_attempt_elapsed(2.0, 1.0))
         self.assertEqual(0.0, bounded_attempt_elapsed(0.0, float("inf")))

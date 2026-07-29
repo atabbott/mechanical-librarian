@@ -78,6 +78,12 @@ class _DiscoveryRequestLedger:
     def allows_retry(self, attempts: int, ceiling: int) -> bool:
         return attempts + len(self._pending) < ceiling
 
+    def register_detail(self, identity: str) -> None:
+        self._pending.add((self._authority, self._revision, "detail", identity))
+
+    def begin_detail(self, identity: str) -> None:
+        self._pending.discard((self._authority, self._revision, "detail", identity))
+
     def resolve(
         self,
         *,
