@@ -85,6 +85,7 @@ OPEN_LIBRARY_COVERS_ORIGIN = "https://covers.openlibrary.org"
 _EDITION_KEY = re.compile(r"^/books/OL[1-9][0-9]*M$")
 _WORK_KEY = re.compile(r"^/works/OL[1-9][0-9]*W$")
 _AUTHOR_KEY = re.compile(r"^/authors/OL[1-9][0-9]*A$")
+_SEARCH_AUTHOR_KEY = re.compile(r"^OL[1-9][0-9]*A$")
 _LANGUAGE_KEY = re.compile(r"^/languages/([a-z]{2,3})$")
 _MAX_SEARCH_ROWS = 3
 _ISBN_SEARCH_PROJECTION = "key,editions,editions.key,editions.isbn"
@@ -95,6 +96,7 @@ _WORK_SEARCH_PROJECTION = "key,author_name,author_key,publisher,publish_date,lan
 class _DetailResult:
     payload: object | None
     status: ProviderStatus | None
+    optional_rejections: int = 0
 
 
 def _freeze_detail(value: object) -> object:
@@ -215,6 +217,7 @@ class OpenLibraryMetadataProvider:
         self._accessed_at: str | None = None
         self._called = False
         self._schema_rejections = 0
+        self._diagnosed_detail_identities: set[str] = set()
         self._ledger = _DiscoveryRequestLedger("open_library", "search-v1")
         self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         self.cover_pacer = self._pacer
@@ -461,17 +464,25 @@ class OpenLibraryMetadataProvider:
                             )
                         except _ProviderFailure as error:
                             return _DetailResult(None, error.status)
-                        return _DetailResult(_freeze_detail(value), None)
+                        return _DetailResult(
+                            _freeze_detail(value),
+                            None,
+                            _unknown_projection_rejections(value)
+                            + _parser_optional_rejections(value),
+                        )
 
                     replay, _ = self._ledger.resolve_detail(
                         identity, execute=execute
                     )
                     if replay.status is not None:
                         raise _ProviderFailure(replay.status)
+                    if identity not in self._diagnosed_detail_identities:
+                        self._diagnosed_detail_identities.add(identity)
+                        self._reject_schema_members(replay.optional_rejections)
                     return _thaw_detail(replay.payload)
 
                 work_documents: dict[str, dict[str, Any]] = {}
-                diagnosed_documents: set[int] = set()
+                diagnosed_search_documents: set[int] = set()
                 candidates: list[ProviderCandidate] = []
                 cover_candidates: list[
                     tuple[
@@ -499,20 +510,18 @@ class OpenLibraryMetadataProvider:
                         _search_work_document(search, work_key),
                     )
                     search_work = _search_work_document(search, work_key)
-                    for document, search_projection in (
-                        (edition, False),
-                        (work_documents[work_key], False),
-                        (search_work, True),
+                    if (
+                        search_work is not None
+                        and id(search_work) not in diagnosed_search_documents
                     ):
-                        if document is not None and id(document) not in diagnosed_documents:
-                            diagnosed_documents.add(id(document))
-                            self._reject_schema_members(
-                                _unknown_projection_rejections(document)
-                                + _parser_optional_rejections(
-                                    document,
-                                    search_projection=search_projection,
-                                )
+                        diagnosed_search_documents.add(id(search_work))
+                        self._reject_schema_members(
+                            _unknown_projection_rejections(search_work)
+                            + _parser_optional_rejections(
+                                search_work,
+                                search_projection=True,
                             )
+                        )
                     candidates.append(candidate)
                     cover_candidates.append(
                         (
@@ -999,7 +1008,13 @@ def _candidate(
         state, text = _field(ClaimKind.PUBLICATION_DATE, publication_date)
         if state is FieldState.VALID:
             add(ClaimKind.PUBLICATION_DATE, publication_date, ClaimScope.EDITION)
-        elif text is None:
+        else:
+            add(
+                ClaimKind.PUBLICATION_DATE,
+                None,
+                ClaimScope.EDITION,
+                state=state,
+            )
             try:
                 publication_date_text = _text(publication_date)
             except (ValueError, EvidenceValueError):
@@ -1260,7 +1275,8 @@ def _canonical_discovery_results(
             not editions
             or editions[0].work_identity != work.work_identity
             or any(
-                candidate != editions[0]
+                _candidate_semantic_key(candidate)
+                != _candidate_semantic_key(editions[0])
                 or candidate.work_identity != work.work_identity
                 for candidate in editions[1:]
             )
@@ -1312,7 +1328,11 @@ def _canonical_discovery_results(
         }
         if (
             not work_claim_content.issubset(edition_claim_content)
-            or not set(work.evidence).issubset(edition.evidence)
+            or not {
+                _evidence_semantic_key(value) for value in work.evidence
+            }.issubset(
+                _evidence_semantic_key(value) for value in edition.evidence
+            )
         ):
             continue
         claims = [
@@ -1358,6 +1378,30 @@ def _canonical_discovery_results(
             result.accessed_at,
         )
         for result in results
+    )
+
+
+def _evidence_semantic_key(value: ProviderEvidence) -> tuple[object, ...]:
+    """Compare evidence meaning without treating lane-local order as content."""
+    return (
+        value.kind,
+        value.value,
+        value.scope,
+        value.role,
+        value.date_event,
+        value.date_precision,
+        value.date_normalized,
+        value.date_confidence,
+    )
+
+
+def _candidate_semantic_key(candidate: ProviderCandidate) -> tuple[object, ...]:
+    """Retain claim ordering while ignoring only evidence source ordinals."""
+    return (
+        candidate.identity,
+        candidate.work_identity,
+        candidate.claims,
+        tuple(_evidence_semantic_key(value) for value in candidate.evidence),
     )
 
 
@@ -1842,21 +1886,31 @@ def _parser_optional_rejections(
         if type(value) is not list or len(value) > _MAX_VALUES:
             count += 1
             continue
+        if field == "author_key":
+            continue
         expected = int if field == "covers" else (dict if field in object_lists else str)
         for item in value:
             if type(item) is not expected:
                 count += 1
             elif field == "covers" and not 0 < item <= 2_147_483_647:
                 count += 1
+            elif expected is str:
+                try:
+                    _text(item)
+                except (ValueError, EvidenceValueError):
+                    count += 1
     for field in scalar_fields & set(document):
         value = document[field]
+        if value is None:
+            continue
         if field == "description":
-            valid = type(value) is str or (
-                type(value) is dict
-                and set(value) == {"type", "value"}
-                and value.get("type") == "/type/text"
-                and type(value.get("value")) is str
-            )
+            try:
+                description = _description(value)
+                if description is not None:
+                    _text(description, MAX_DESCRIPTION_CHARACTERS)
+                valid = True
+            except (ValueError, EvidenceValueError):
+                valid = False
         elif field == "number_of_pages":
             valid = type(value) is int and not isinstance(value, bool) and 1 <= value <= 100_000
         else:
@@ -1885,7 +1939,7 @@ def _parser_optional_rejections(
         count += sum(
             1
             for key in author_keys
-            if type(key) is not str or _AUTHOR_KEY.fullmatch(key) is None
+            if not _valid_author_key(key, search_projection=search_projection)
         )
     identifiers = document.get("identifiers")
     if identifiers is not None:
@@ -1896,7 +1950,11 @@ def _parser_optional_rejections(
                 if namespace != "wikidata" or type(values) is not list or len(values) > _MAX_VALUES:
                     count += 1
                 else:
-                    count += sum(1 for value in values if type(value) is not str)
+                    for value in values:
+                        try:
+                            _text(value)
+                        except (ValueError, EvidenceValueError):
+                            count += 1
     _, revision_rejections = _revision_projection(document)
     count += revision_rejections
     try:
@@ -1984,11 +2042,29 @@ def _search_authors(
         author_key: str | None = None
         if index < len(keys):
             try:
-                author_key = _key(keys[index], _AUTHOR_KEY)
-            except ValueError:
+                author_key = _canonical_search_author_key(keys[index])
+            except (ValueError, EvidenceValueError):
                 pass
         result.append((name, author_key))
     return tuple(result)
+
+
+def _canonical_search_author_key(value: object) -> str:
+    key = _text(value)
+    if _SEARCH_AUTHOR_KEY.fullmatch(key) is None:
+        raise ValueError("search author identity is malformed")
+    return "/authors/" + key
+
+
+def _valid_author_key(value: object, *, search_projection: bool) -> bool:
+    try:
+        if search_projection:
+            _canonical_search_author_key(value)
+        else:
+            _key(value, _AUTHOR_KEY)
+    except (ValueError, EvidenceValueError):
+        return False
+    return True
 
 
 def _work_author_keys(source: dict[str, Any]) -> tuple[str, ...]:

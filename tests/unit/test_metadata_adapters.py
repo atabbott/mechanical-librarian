@@ -3075,6 +3075,145 @@ class ProviderAdapterTests(unittest.TestCase):
                 self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
                 self.assertEqual(1, len(observation.candidates))
 
+    def test_duplicate_taxonomy_ids_are_permanently_poisoned(self) -> None:
+        base = self._envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": "9780306406157",
+                }
+            ],
+            [
+                {
+                    "id": 1,
+                    "title": "Current title",
+                    "taggings": [
+                        {
+                            "id": 1,
+                            "tag": {
+                                "id": 2,
+                                "tag": "Ambiguous",
+                                "tag_category": {
+                                    "id": 3,
+                                    "category": "Genre",
+                                },
+                            },
+                        },
+                        {
+                            "id": 2,
+                            "tag": {
+                                "id": 9,
+                                "tag": "Hopeful",
+                                "tag_category": {
+                                    "id": 4,
+                                    "category": "Mood",
+                                },
+                            },
+                        },
+                    ],
+                }
+            ],
+        )
+        tags = cast(
+            list[dict[str, object]],
+            cast(dict[str, object], base["data"])["tags"],
+        )
+        ambiguous = tags[0]
+        for duplicates in (
+            [
+                ambiguous,
+                {
+                    **ambiguous,
+                    "tag": "Collision",
+                    "tag_category": {"id": 4, "category": "Mood"},
+                },
+            ],
+            [
+                {
+                    **ambiguous,
+                    "tag": "Collision",
+                    "tag_category": {"id": 4, "category": "Mood"},
+                },
+                ambiguous,
+                {
+                    **ambiguous,
+                    "tag": "Third",
+                    "tag_category": {"id": 3, "category": "Genre"},
+                },
+            ],
+        ):
+            payload = json.loads(json.dumps(base))
+            payload["data"]["tags"] = [*duplicates, tags[1]]
+            observation = HardcoverMetadataProvider(
+                "catalogue",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda request, value=payload: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            json=value,
+                        )
+                    )
+                ),
+                65_536,
+            ).observe(_isbn_lookup((self._claim(),)))
+            taxonomy = tuple(
+                claim
+                for claim in observation.candidates[0].claims
+                if claim.kind in {ClaimKind.GENRE, ClaimKind.TAG}
+                and claim.state is FieldState.VALID
+            )
+            with self.subTest(duplicates=len(duplicates)):
+                self.assertEqual({"Hopeful"}, {claim.value for claim in taxonomy})
+                self.assertEqual(
+                    len(duplicates),
+                    observation.diagnostics[0].count,
+                )
+                self.assertNotIn(
+                    FieldState.ABSENT,
+                    {
+                        claim.state
+                        for claim in observation.candidates[0].claims
+                        if claim.kind in {ClaimKind.GENRE, ClaimKind.TAG}
+                    },
+                )
+
+    def test_taxonomy_absence_is_synthesized_only_without_terminal_claims(
+        self,
+    ) -> None:
+        empty = self._envelope(
+            [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}],
+            [{"id": 1, "title": "Current title", "taggings": []}],
+        )
+        malformed = json.loads(json.dumps(empty))
+        malformed["data"]["books"][0]["taggings"] = [{"id": 1, "tag_id": 99}]
+        for label, payload, expected in (
+            ("empty", empty, {FieldState.ABSENT}),
+            ("malformed", malformed, {FieldState.MALFORMED}),
+        ):
+            observation = HardcoverMetadataProvider(
+                "catalogue",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda request, value=payload: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            json=value,
+                        )
+                    )
+                ),
+                65_536,
+            ).observe(_isbn_lookup((self._claim(),)))
+            states = {
+                claim.state
+                for claim in observation.candidates[0].claims
+                if claim.kind in {ClaimKind.GENRE, ClaimKind.TAG}
+            }
+            with self.subTest(label=label):
+                self.assertEqual(expected, states)
+
     def test_multiple_inputs_are_selected_deterministically_and_statuses_do_not_retry(self) -> None:
         second = LocalClaim.create(
             kind=ClaimKind.ISBN,

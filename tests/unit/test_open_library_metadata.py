@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import tempfile
 import unittest
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -195,6 +196,33 @@ def _work(key: str = "/works/OL5W", *, cover: int | None = None) -> dict[str, ob
 
 
 class OpenLibraryMetadataTests(unittest.TestCase):
+    def test_candidate_semantics_exclude_only_evidence_source_ordinals(self) -> None:
+        candidate, _, _ = open_library_metadata._candidate(
+            "open_library",
+            "/books/OL1M",
+            "/works/OL5W",
+            _edition("/books/OL1M"),
+            _work(),
+            (_isbn(),),
+            "9780306406157",
+        )
+        reordered = replace(
+            candidate,
+            evidence=tuple(
+                replace(value, source_ordinal=index + 100)
+                for index, value in enumerate(candidate.evidence)
+            ),
+        )
+        self.assertNotEqual(candidate, reordered)
+        self.assertEqual(
+            open_library_metadata._candidate_semantic_key(candidate),
+            open_library_metadata._candidate_semantic_key(reordered),
+        )
+        self.assertEqual(
+            tuple(range(len(candidate.evidence))),
+            tuple(sorted(value.source_ordinal for value in candidate.evidence)),
+        )
+
     def test_search_author_pairs_keep_safe_names_without_misbinding_keys(self) -> None:
         self.assertEqual(
             (
@@ -203,16 +231,69 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             ),
             open_library_metadata._search_authors(
                 ["Ada Example", "Zed Example"],
-                ["/authors/OL7A", "not-an-author-key"],
+                ["OL7A", "not-an-author-key"],
             ),
         )
         self.assertEqual(
             (),
             open_library_metadata._search_authors(
                 [f"Author {index}" for index in range(9)],
-                [f"/authors/OL{index + 1}A" for index in range(9)],
+                [f"OL{index + 1}A" for index in range(9)],
             ),
         )
+
+    def test_publication_date_presence_emits_one_typed_claim_and_safe_context(
+        self,
+    ) -> None:
+        for label, present, value, expected_state, expected_context in (
+            ("absent", False, None, FieldState.ABSENT, ()),
+            ("null", True, None, FieldState.ABSENT, ()),
+            ("valid", True, "2026-01-02", FieldState.VALID, ()),
+            (
+                "malformed",
+                True,
+                "not a date",
+                FieldState.MALFORMED,
+                ("not a date",),
+            ),
+            (
+                "oversized",
+                True,
+                "x" * (open_library_metadata.MAX_SCALAR_CHARACTERS + 1),
+                FieldState.OVERSIZED,
+                (),
+            ),
+        ):
+            edition = _edition("/books/OL1M")
+            if present:
+                edition["publish_date"] = value
+            else:
+                edition.pop("publish_date")
+            candidate, _, _ = open_library_metadata._candidate(
+                "open_library",
+                "/books/OL1M",
+                "/works/OL5W",
+                edition,
+                _work(),
+                (_isbn(),),
+                "9780306406157",
+            )
+            claims = tuple(
+                claim
+                for claim in candidate.claims
+                if claim.kind is ClaimKind.PUBLICATION_DATE
+                and claim.scope is ClaimScope.EDITION
+            )
+            context = tuple(
+                evidence.value
+                for evidence in candidate.evidence
+                if evidence.kind
+                is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+            )
+            with self.subTest(label=label):
+                self.assertEqual(1, len(claims))
+                self.assertEqual((5, expected_state), (claims[0].raw_order, claims[0].state))
+                self.assertEqual(expected_context, context)
 
     def test_work_detail_author_identity_survives_unusable_search_and_edition_links(self) -> None:
         work = _work()
@@ -1062,7 +1143,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                     {
                         "key": "/works/OL5W",
                         "author_name": ["Ada Example"],
-                        "author_key": ["/authors/OL7A"],
+                        "author_key": ["OL7A"],
                         "publisher": ["Search Press"],
                         "publish_date": ["not a typed publication date"],
                         "language": ["eng"],
@@ -1529,7 +1610,9 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         )
         edition = _edition("/books/OL1M", work="/works/OL5W", cover=100)
         edition["isbn_13"] = ["9780306406157", "9780140328721"]
+        edition["edition_name"] = "bad\x00edition"
         work = _work("/works/OL5W", cover=200)
+        work["subjects"] = ["Speculative fiction", "bad\x00subject"]
 
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/search.json":
@@ -1539,6 +1622,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                     search["docs"][0]["editions"]["docs"][0]["isbn"] = [  # type: ignore[index]
                         family_query.removeprefix("isbn:")
                     ]
+                    search["docs"][0]["publisher"] = ["bad\x00publisher"]  # type: ignore[index]
                     value = search
                 else:
                     value = {
@@ -1546,6 +1630,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                             {
                                 "key": "/works/OL5W",
                                 "author_name": ["Zed Author", "Ada Author"],
+                                "publisher": ["bad\x00publisher"],
                                 "editions": {
                                     "docs": [{"key": "/books/OL1M"}]
                                 },
@@ -1572,6 +1657,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         observation = provider.observe(plan)
 
         self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        self.assertEqual(5, observation.diagnostics[0].count)
         self.assertEqual(1, len(observation.candidates))
         self.assertEqual(
             {ProviderStatus.CANDIDATES},
@@ -2931,6 +3017,100 @@ class OpenLibraryDiagnosticBoundaryTests(unittest.TestCase):
             1,
             open_library_metadata._optional_projection_rejections(
                 {"key": "/works/OL1W", "subjects": hostile}
+            ),
+        )
+
+    def test_optional_string_members_use_retention_bounds_without_double_counts(
+        self,
+    ) -> None:
+        diagnostic = open_library_metadata._optional_projection_rejections
+        unsafe = "bad\x00value"
+        oversized = "x" * (open_library_metadata.MAX_SCALAR_CHARACTERS + 1)
+        document = {
+            "key": "/works/OL1W",
+            "subjects": ["valid", unsafe, oversized, 7],
+            "author_name": ["Ada", unsafe],
+            "author_key": ["OL7A", "bad"],
+            "languages": [
+                {"key": "/languages/eng"},
+                {"key": "/languages/toolong"},
+            ],
+            "authors": [
+                {"key": "/authors/OL7A"},
+                {"key": "/authors/bad"},
+            ],
+        }
+        self.assertEqual(
+            7,
+            diagnostic(document, search_projection=True),
+        )
+        self.assertEqual(
+            ("valid",),
+            open_library_metadata._optional_string_list(
+                document["subjects"], open_library_metadata._MAX_VALUES
+            ),
+        )
+
+    def test_explicit_null_optional_scalars_are_absent_not_rejected(self) -> None:
+        fields = (
+            "publish_date",
+            "physical_format",
+            "pagination",
+            "by_statement",
+            "imprint",
+            "edition_name",
+            "edition_statement",
+            "translation_of",
+            "description",
+            "copyright_date",
+            "number_of_pages",
+            "first_publish_date",
+        )
+        self.assertEqual(
+            0,
+            open_library_metadata._optional_projection_rejections(
+                {"key": "/works/OL1W", **dict.fromkeys(fields)}
+            ),
+        )
+        for field in fields:
+            value: object = "bad\x00value"
+            if field == "number_of_pages":
+                value = "one"
+            with self.subTest(field=field):
+                self.assertEqual(
+                    1,
+                    open_library_metadata._optional_projection_rejections(
+                        {"key": "/works/OL1W", field: value}
+                    ),
+                )
+
+    def test_search_author_keys_are_bare_canonical_and_index_local(self) -> None:
+        self.assertEqual(
+            (
+                ("Ada", "/authors/OL7A"),
+                ("Broken", None),
+                ("Zed", "/authors/OL9A"),
+                ("Unsafe", None),
+            ),
+            open_library_metadata._search_authors(
+                ["Ada", "Broken", "Zed", "Unsafe"],
+                ["OL7A", "/authors/OL8A", "OL9A", "bad\x00key"],
+            ),
+        )
+        self.assertEqual(
+            1,
+            open_library_metadata._optional_projection_rejections(
+                {
+                    "key": "/works/OL1W",
+                    "author_key": ["OL7A", "/authors/OL8A"],
+                },
+                search_projection=True,
+            ),
+        )
+        self.assertEqual(
+            (("Ada", "/authors/OL7A"),),
+            open_library_metadata._search_authors(
+                ["Ada", "Ada"], ["OL7A", "OL9A"]
             ),
         )
 

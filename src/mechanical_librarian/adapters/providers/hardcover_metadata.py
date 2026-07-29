@@ -863,6 +863,7 @@ def _parse_candidates(
     taxonomy_issue = False
     taxonomy_oversized = False
     indexed_tags: dict[int, dict[str, Any]] = {}
+    ambiguous_tag_ids: set[int] = set()
     if type(tags) is not list:
         taxonomy_issue = True
         rejected.reject()
@@ -874,7 +875,9 @@ def _parse_candidates(
             try:
                 tag = _closed(raw_tag, {"id", "tag", "tag_category"})
                 tag_id = _identifier(tag["id"])
-                if tag_id in indexed_tags:
+                if tag_id in indexed_tags or tag_id in ambiguous_tag_ids:
+                    indexed_tags.pop(tag_id, None)
+                    ambiguous_tag_ids.add(tag_id)
                     raise ValueError("duplicate tag")
             except (TypeError, ValueError):
                 taxonomy_issue = True; rejected.reject()
@@ -1336,9 +1339,15 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
             )
             for index, kind in enumerate((ClaimKind.GENRE, ClaimKind.TAG))
         )
-    present = {kind for kind, _ in categorized}
+    terminal = {
+        claim.kind
+        for claim in claims
+        if claim.kind in {ClaimKind.GENRE, ClaimKind.TAG}
+        and claim.state
+        in {FieldState.VALID, FieldState.MALFORMED, FieldState.OVERSIZED}
+    }
     for kind in (ClaimKind.GENRE, ClaimKind.TAG):
-        if kind not in present:
+        if kind not in terminal:
             claims.append(
                 _state_claim(
                     provider,
