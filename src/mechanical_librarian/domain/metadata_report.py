@@ -1271,6 +1271,13 @@ class ProviderCandidate:
                 {value.claim_reference for value in self.identity_bindings}
             )
             != len(self.identity_bindings)
+            or len(
+                {
+                    (value.scope, value.role, value.source_ordinal)
+                    for value in self.identity_bindings
+                }
+            )
+            != len(self.identity_bindings)
             or self.identity_bindings
             != tuple(
                 sorted(
@@ -2213,10 +2220,6 @@ def comparison_links(provider: ProviderClaim, local: tuple[LocalClaim, ...]) -> 
 _TYPOGRAPHIC_TRANSLATION = str.maketrans(
     {
         "\u00a0": " ",
-        "\u2018": "'",
-        "\u2019": "'",
-        "\u201c": '"',
-        "\u201d": '"',
         "\u2013": "-",
         "\u2014": "-",
     }
@@ -2227,12 +2230,13 @@ _TITLE_VARIANT_MARKER = re.compile(
     re.IGNORECASE,
 )
 _NAME_SUFFIX = re.compile(
-    r"^(?:jr\.?|sr\.?|i{2,3}|iv|v|ph\.?d\.?|m\.?d\.?)$",
+    r"^(?:jr|sr|i{2,3}|iv|v|esq|mbe|obe|cbe|kbe|qc|kc|ph\.?d|m\.?d|dphil|dsc)$",
     re.IGNORECASE,
 )
 _ORGANIZATION_MARKER = re.compile(
     r"\b(?:association|committee|company|corporation|foundation|group|inc\.?|"
-    r"institute|ltd\.?|llc|orchestra|press|society|team|university)\b",
+    r"house|institute|ltd\.?|llc|media|orchestra|press|productions?|publishing|"
+    r"records|society|studios?|team|university)\b",
     re.IGNORECASE,
 )
 _AMBIGUOUS_NAME_JOIN = re.compile(r"(?:\s(?:and|&)\s|[;/])", re.IGNORECASE)
@@ -2375,19 +2379,26 @@ def _bound_creator_sequence_match(
         aliases[binding.identity].append(claim.value)
     if len(ordered_identities) != len(local_values):
         return ComparisonMethod.NONE, {}
+    if _has_creator_duplicates(local_values):
+        return ComparisonMethod.NONE, {}
     if any(
         len(values)
         != len(
             {
-                _comparison_text(
-                    value.translate(_TYPOGRAPHIC_TRANSLATION)
-                )
+                creator_comparison_key(value)
                 for value in values
             }
         )
         for values in aliases.values()
     ):
         return ComparisonMethod.NONE, {}
+    identities_by_value: dict[str, str] = {}
+    for identity, values in aliases.items():
+        for value in values:
+            key = creator_comparison_key(value)
+            owner = identities_by_value.setdefault(key, identity)
+            if owner != identity:
+                return ComparisonMethod.NONE, {}
     methods: list[ComparisonMethod] = []
     for identity, local_value in zip(ordered_identities, local_values, strict=True):
         admitted = tuple(
@@ -2424,7 +2435,12 @@ def _creator_sequence_method(
     provider_values: tuple[str, ...],
     local_values: tuple[str, ...],
 ) -> ComparisonMethod:
-    if len(provider_values) != len(local_values) or not provider_values:
+    if (
+        len(provider_values) != len(local_values)
+        or not provider_values
+        or _has_creator_duplicates(provider_values)
+        or _has_creator_duplicates(local_values)
+    ):
         return ComparisonMethod.NONE
     methods = tuple(
         _comparison_method(
@@ -2467,17 +2483,19 @@ def _comparison_method(
     local_normalized = _comparison_text(local_value)
     if provider_normalized == local_normalized:
         return ComparisonMethod.UNICODE_CASE_WHITESPACE
-    provider_typographic = _comparison_text(
-        provider_value.translate(_TYPOGRAPHIC_TRANSLATION)
-    )
-    local_typographic = _comparison_text(
-        local_value.translate(_TYPOGRAPHIC_TRANSLATION)
-    )
-    if provider_typographic == local_typographic:
+    provider_typographic = _typographic_text(provider_value)
+    local_typographic = _typographic_text(local_value)
+    if (
+        provider_typographic is not None
+        and local_typographic is not None
+        and provider_typographic == local_typographic
+    ):
         return ComparisonMethod.TYPOGRAPHIC_PUNCTUATION
     if (
         allow_comma_inversion
         and kind is ClaimKind.CREATOR
+        and provider_typographic is not None
+        and local_typographic is not None
         and (
             _comma_inverted(provider_value) == local_typographic
             or _comma_inverted(local_value) == provider_typographic
@@ -2496,12 +2514,50 @@ def _comparison_text(value: str) -> str:
     )
 
 
+def _typographic_text(value: str) -> str | None:
+    paired = {
+        "\u2018": ("'", True),
+        "\u2019": ("'", False),
+        "\u201c": ('"', True),
+        "\u201d": ('"', False),
+    }
+    stack: list[str] = []
+    translated: list[str] = []
+    for character in value:
+        quote = paired.get(character)
+        if quote is None:
+            translated.append(character.translate(_TYPOGRAPHIC_TRANSLATION))
+            continue
+        mark, opening = quote
+        if opening:
+            stack.append(mark)
+        elif not stack or stack.pop() != mark:
+            return None
+        translated.append(mark)
+    if stack:
+        return None
+    return _comparison_text("".join(translated))
+
+
+def creator_comparison_key(value: str) -> str:
+    """Return the closed comparison key used to reject creator duplicates."""
+    return _typographic_text(value) or _comparison_text(value)
+
+
+def _has_creator_duplicates(values: tuple[str, ...]) -> bool:
+    return len({creator_comparison_key(value) for value in values}) != len(
+        values
+    )
+
+
 def _comma_inverted(value: str) -> str | None:
     if value.count(",") != 1:
         return None
+    typographic = _typographic_text(value)
+    if typographic is None or typographic.count(",") != 1:
+        return None
     family, given = (
-        _comparison_text(part.translate(_TYPOGRAPHIC_TRANSLATION))
-        for part in value.split(",", 1)
+        _comparison_text(part) for part in typographic.split(",", 1)
     )
     if (
         not family
@@ -2510,6 +2566,8 @@ def _comma_inverted(value: str) -> str | None:
         or len(given) > 128
         or _ORGANIZATION_MARKER.search(value)
         or _AMBIGUOUS_NAME_JOIN.search(value)
+        or not _personal_name_side(family)
+        or not _personal_name_side(given)
         or any(
             _NAME_SUFFIX.fullmatch(token.rstrip("."))
             for token in (*family.split(), *given.split())
@@ -2517,6 +2575,19 @@ def _comma_inverted(value: str) -> str | None:
     ):
         return None
     return f"{given} {family}"
+
+
+def _personal_name_side(value: str) -> bool:
+    tokens = value.split()
+    return (
+        1 <= len(tokens) <= 8
+        and any(unicodedata.category(character).startswith("L") for character in value)
+        and all(
+            unicodedata.category(character)[0] in {"L", "M"}
+            or character in {" ", ".", "'", "-"}
+            for character in value
+        )
+    )
 
 
 def _comparison_value(kind: ClaimKind, value: str) -> str:
@@ -2985,6 +3056,7 @@ __all__ = [
     "REPORT_SCHEMA", "ReportValueError",
     "TargetDestination", "TargetFacts", "TargetField", "TargetFieldState",
     "TargetSeries", "canonical_json", "claim_scope", "comparison_links",
+    "creator_comparison_key",
     "finalize_candidate_comparisons",
     "default_target_fields",
     "derive_identifier_evidence", "isbn_family", "normalize_date_value", "normalize_title",

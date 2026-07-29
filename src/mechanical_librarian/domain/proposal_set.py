@@ -35,6 +35,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     TargetSeries,
     canonical_json,
+    creator_comparison_key,
     normalize_date_value,
     normalize_title,
 )
@@ -709,6 +710,17 @@ def _list_observations(
             for claim in members
             if claim.state is FieldState.VALID and claim.canonical is not None
         )
+        if (
+            destination is TargetDestination.AUTHORS
+            and len(
+                {
+                    creator_comparison_key(claim.canonical)
+                    for claim in claims
+                }
+            )
+            != len(claims)
+        ):
+            continue
         if claims:
             values.append(
                 _Observed(
@@ -750,6 +762,17 @@ def _list_observations(
                 for claim in members
                 if claim.state is FieldState.VALID and claim.value is not None
             )
+            if (
+                destination is TargetDestination.AUTHORS
+                and len(
+                    {
+                        creator_comparison_key(claim.value)
+                        for claim in claims
+                    }
+                )
+                != len(claims)
+            ):
+                continue
             if claims:
                 values.append(
                     _Observed(

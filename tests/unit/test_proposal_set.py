@@ -33,6 +33,7 @@ from mechanical_librarian.domain.metadata_report import (
     canonical_json,
     comparison_links,
     default_target_fields,
+    finalize_candidate_comparisons,
 )
 from mechanical_librarian.domain.proposal_set import (
     POLICY_VERSION,
@@ -641,6 +642,64 @@ class ProposalSetTests(unittest.TestCase):
         self.assertIn(
             "insufficient_independent_corroboration", result.reasons
         )
+
+    def test_duplicate_creator_sets_do_not_become_an_authors_proposal(self) -> None:
+        local_claims = (
+            _local_creator("Ada Author", occurrence=0),
+            _local_creator("ADA  AUTHOR", occurrence=1),
+        )
+        provider_claims = (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CREATOR,
+                "Ada Author",
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CREATOR,
+                "ADA  AUTHOR",
+                scope=ClaimScope.WORK,
+                role="author",
+                order=1,
+            ),
+        )
+        candidate = finalize_candidate_comparisons(
+            ProviderCandidate(
+                "edition-1",
+                "catalogue-work",
+                provider_claims,
+            ),
+            local_claims,
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    title=None,
+                    fields=_fields(
+                        None,
+                        authors=TargetField(
+                            TargetDestination.AUTHORS,
+                            TargetFieldState.MISSING,
+                        ),
+                    ),
+                    local_claims=local_claims,
+                    providers=(
+                        ProviderObservation(
+                            "catalogue",
+                            ProviderStatus.CANDIDATES,
+                            candidates=(candidate,),
+                        ),
+                    ),
+                )
+            ),
+            TargetDestination.AUTHORS,
+        )
+        self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
+        self.assertEqual((), result.alternatives)
 
     def test_provider_typed_non_author_credits_preserve_complete_authors(self) -> None:
         claims = (

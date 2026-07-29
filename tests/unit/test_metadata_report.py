@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 import io
 import json
 import tempfile
@@ -1805,6 +1806,12 @@ class MetadataReportTests(unittest.TestCase):
             ("The Road: Home", "The Road"),
             ("The Road (Translated)", "the road (translated)"),
             ("The Rod", "The Road"),
+            ("The ‘Road", "the 'road"),
+            ("The Road’", "the road'"),
+            ("The ’Road‘", "the 'road'"),
+            ("The “Road’", "the \"road'"),
+            ("The ‘“Road’”", "the '\"road'\""),
+            ('The "Road"', "the 'road'"),
         ):
             claim = local(local_value)
             provider = ProviderClaim.create(
@@ -1821,6 +1828,67 @@ class MetadataReportTests(unittest.TestCase):
                     comparison_links(provider, (claim,))[0].outcome,
                     Comparison.DISAGREEMENT,
                 )
+
+        for provider_value, local_value in (
+            ("The ‘Road’", "the 'road'"),
+            ("The “Road”", 'the "road"'),
+            ("The “Long ‘Road’”", 'the "long \'road\'"'),
+        ):
+            claim = local(local_value)
+            provider = ProviderClaim.create(
+                provider="catalogue",
+                candidate="candidate",
+                kind=ClaimKind.TITLE,
+                value=provider_value,
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+            )
+            link = comparison_links(provider, (claim,))[0]
+            with self.subTest(paired=provider_value):
+                self.assertIs(link.outcome, Comparison.AGREEMENT)
+                self.assertIs(
+                    link.method, ComparisonMethod.TYPOGRAPHIC_PUNCTUATION
+                )
+
+        replay_local = local('The "Road"')
+        replay_provider = ProviderClaim.create(
+            provider="catalogue",
+            candidate="candidate",
+            kind=ClaimKind.TITLE,
+            value="The “Road”",
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+        )
+        replay_candidate = finalize_candidate_comparisons(
+            ProviderCandidate("candidate", "work", (replay_provider,)),
+            (replay_local,),
+        )
+        replay_report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields("Current title"),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(replay_local,),
+            local_reasons=("opening_title",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    candidates=(replay_candidate,),
+                ),
+            ),
+        )
+        reopened = MetadataReport.from_json(replay_report.to_json())
+        self.assertEqual(reopened, replay_report)
+        self.assertIs(
+            reopened.providers[0].candidates[0].claims[0].links[0].method,
+            ComparisonMethod.TYPOGRAPHIC_PUNCTUATION,
+        )
 
     def test_complete_creator_order_and_comma_inversion_are_conservative(self) -> None:
         def local(value: str, occurrence: int = 0) -> LocalClaim:
@@ -1900,6 +1968,13 @@ class MetadataReportTests(unittest.TestCase):
             ("Example, Ada, Jr.", ComparisonMethod.NONE),
             ("Example University, Ada", ComparisonMethod.NONE),
             ("Example, Ada and Bob", ComparisonMethod.NONE),
+            ("Penguin, Random House", ComparisonMethod.NONE),
+            ("Studios, Universal", ComparisonMethod.NONE),
+            ("Smith, John Esq.", ComparisonMethod.NONE),
+            ("Smith, John MBE", ComparisonMethod.NONE),
+            ("Smith, John OBE", ComparisonMethod.NONE),
+            ("Smith, John Ph.D.", ComparisonMethod.NONE),
+            ("Smith, John M.D.", ComparisonMethod.NONE),
             ("Example,", ComparisonMethod.NONE),
         ):
             candidate = finalize_candidate_comparisons(
@@ -1959,7 +2034,7 @@ class MetadataReportTests(unittest.TestCase):
                         identity,
                         ClaimScope.WORK,
                         "author",
-                        index,
+                        (0, 2, 7)[index],
                     )
                     for index, (claim, identity) in enumerate(
                         zip(
@@ -2019,12 +2094,55 @@ class MetadataReportTests(unittest.TestCase):
             ),
         )
         self.assertEqual(replay, MetadataReport.from_json(replay.to_json()))
+        duplicate_ordinal = replace(bindings[1], source_ordinal=0)
+        with self.assertRaises(ReportValueError):
+            ProviderCandidate(
+                "candidate",
+                "work",
+                claims,
+                (),
+                tuple(
+                    sorted(
+                        (bindings[0], duplicate_ordinal, bindings[2]),
+                        key=lambda value: (
+                            value.scope.value,
+                            value.role,
+                            value.source_ordinal,
+                            value.identity,
+                            value.claim_reference,
+                        ),
+                    )
+                ),
+            )
         tampered = replay.to_data()
         tampered["providers"][0]["candidates"][0]["identity_bindings"][0][
             "claim_reference"
         ] = claims[2].reference
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(tampered))
+        ordinal_tampered = replay.to_data()
+        ordinal_tampered["providers"][0]["candidates"][0][
+            "identity_bindings"
+        ][1]["source_ordinal"] = 0
+        serialized_tamper = canonical_json(ordinal_tampered)
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(serialized_tamper)
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            repository.publish(replay, lambda: True)
+            repository._connection.execute(
+                "DROP TRIGGER metadata_reports_no_update"
+            )
+            repository._connection.execute(
+                "UPDATE metadata_reports SET document=?,document_digest=?",
+                (
+                    serialized_tamper,
+                    hashlib.sha256(serialized_tamper.encode()).hexdigest(),
+                ),
+            )
+            with self.assertRaises(MetadataReportError):
+                repository.get(replay.report_id)
+            repository.close()
 
         duplicated_claims = tuple(
             ProviderClaim.create(
@@ -2075,6 +2193,57 @@ class MetadataReportTests(unittest.TestCase):
                 for link in claim.links
             )
         )
+
+        duplicate_local = tuple(
+            LocalClaim.create(
+                kind=ClaimKind.CREATOR,
+                observed="Ada Example",
+                canonical="Ada Example",
+                excerpt="Ada Example",
+                applicability="not_applicable",
+                basis="package_metadata",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.WORK,
+                role="author",
+                occurrence=index,
+            )
+            for index in range(2)
+        )
+        duplicate_provider = tuple(
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate="duplicates",
+                kind=ClaimKind.CREATOR,
+                value="Ada Example",
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+                role="author",
+                raw_order=index,
+            )
+            for index in range(2)
+        )
+        for provider_values, local_values in (
+            (duplicate_provider, local_claims),
+            (claims[1:], duplicate_local),
+            (duplicate_provider, duplicate_local),
+        ):
+            duplicate_set = finalize_candidate_comparisons(
+                ProviderCandidate("duplicates", "work", provider_values),
+                local_values,
+            )
+            with self.subTest(
+                provider_count=len(provider_values),
+                local_count=len(local_values),
+            ):
+                self.assertFalse(
+                    any(
+                        link.outcome is Comparison.AGREEMENT
+                        for claim in duplicate_set.claims
+                        for link in claim.links
+                    )
+                )
 
     def test_date_comparison_normalizes_both_lexicals_without_losing_precision(
         self,
