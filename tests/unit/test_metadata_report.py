@@ -2527,7 +2527,7 @@ class MetadataReportTests(unittest.TestCase):
             {
                 zulu.reference: Comparison.AGREEMENT,
                 different.reference: Comparison.AGREEMENT,
-                day.reference: Comparison.DISAGREEMENT,
+                day.reference: Comparison.AGREEMENT,
             },
             {
                 link.local_reference: link.outcome
@@ -2570,18 +2570,61 @@ class MetadataReportTests(unittest.TestCase):
         stated_day_cases = (
             (
                 "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
                 "2024-03-05T01:30:00+00:00",
+                DatePrecision.TIMESTAMP,
                 PublicationDateRelation.EXACT,
                 DatePrecision.DAY,
             ),
             (
                 "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
                 "2024-03-06T01:30:00+00:00",
+                DatePrecision.TIMESTAMP,
                 PublicationDateRelation.FINER_CONFLICT,
                 DatePrecision.MONTH,
             ),
+            (
+                "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
+                "2024-03-05",
+                DatePrecision.DAY,
+                PublicationDateRelation.EXACT,
+                DatePrecision.DAY,
+            ),
+            (
+                "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
+                "2024-03-06",
+                DatePrecision.DAY,
+                PublicationDateRelation.FINER_CONFLICT,
+                DatePrecision.MONTH,
+            ),
+            (
+                "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
+                "2024-03",
+                DatePrecision.MONTH,
+                PublicationDateRelation.FINER_CONFLICT,
+                DatePrecision.MONTH,
+            ),
+            (
+                "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
+                "2024",
+                DatePrecision.YEAR,
+                PublicationDateRelation.FINER_CONFLICT,
+                DatePrecision.YEAR,
+            ),
         )
-        for left, right, relation, shared in stated_day_cases:
+        for (
+            left,
+            left_precision,
+            right,
+            right_precision,
+            relation,
+            shared,
+        ) in stated_day_cases:
             with self.subTest(left=left, right=right):
                 expected = (relation, shared)
                 self.assertEqual(
@@ -2589,10 +2632,10 @@ class MetadataReportTests(unittest.TestCase):
                     publication_date_relation(
                         left_value=left,
                         left_event=DateEvent.MANIFESTATION_PUBLICATION,
-                        left_precision=DatePrecision.TIMESTAMP,
+                        left_precision=left_precision,
                         right_value=right,
                         right_event=DateEvent.MANIFESTATION_PUBLICATION,
-                        right_precision=DatePrecision.TIMESTAMP,
+                        right_precision=right_precision,
                     ),
                 )
                 self.assertEqual(
@@ -2600,10 +2643,10 @@ class MetadataReportTests(unittest.TestCase):
                     publication_date_relation(
                         left_value=right,
                         left_event=DateEvent.MANIFESTATION_PUBLICATION,
-                        left_precision=DatePrecision.TIMESTAMP,
+                        left_precision=right_precision,
                         right_value=left,
                         right_event=DateEvent.MANIFESTATION_PUBLICATION,
-                        right_precision=DatePrecision.TIMESTAMP,
+                        right_precision=left_precision,
                     ),
                 )
         for malformed in (naive, invalid):
@@ -2868,6 +2911,13 @@ class MetadataReportTests(unittest.TestCase):
         contradictory = finalize_candidate_comparisons(
             contradictory_candidate, local, "catalogue"
         )
+        self.assertTrue(
+            any(
+                evidence.kind
+                is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+                for evidence in contradictory.evidence
+            )
+        )
         retained = next(
             evidence
             for evidence in contradictory.evidence
@@ -2905,6 +2955,98 @@ class MetadataReportTests(unittest.TestCase):
                     ),
                 ),
             )
+        work_title = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.TITLE,
+            value="Unrelated work title",
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+            raw_order=1,
+        )
+        with self.assertRaises(ReportValueError):
+            replace(
+                contradictory_candidate,
+                claims=(provider_isbn, work_title),
+            )
+        for work_evidence in (
+            ProviderEvidence(
+                ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                "1900",
+                ClaimScope.WORK,
+                source_ordinal=3,
+            ),
+            ProviderEvidence(
+                ProviderEvidenceKind.WORK_COVER_ID,
+                "cover-1",
+                ClaimScope.WORK,
+                source_ordinal=3,
+            ),
+        ):
+            with (
+                self.subTest(kind=work_evidence.kind),
+                self.assertRaises(ReportValueError),
+            ):
+                replace(
+                    contradictory_candidate,
+                    evidence=(*contradictory_candidate.evidence, work_evidence),
+                )
+        work_creator = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.CREATOR,
+            value="Ada Example",
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+            role="author",
+            raw_order=1,
+        )
+        with self.assertRaises(ReportValueError):
+            replace(
+                contradictory_candidate,
+                claims=(provider_isbn, work_creator),
+                identity_bindings=(
+                    ProviderIdentityBinding(
+                        work_creator.reference,
+                        "author-1",
+                        ClaimScope.WORK,
+                        "author",
+                        0,
+                    ),
+                ),
+            )
+
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=local,
+            local_reasons=("no_opening_claims",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    candidates=(contradictory_candidate,),
+                ),
+            ),
+        )
+        tampered = report.to_data()
+        tampered["providers"][0]["candidates"][0]["evidence"].append(
+            ProviderEvidence(
+                ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                "1900",
+                ClaimScope.WORK,
+                source_ordinal=3,
+            ).to_data()
+        )
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(tampered))
 
     def test_identifier_evidence_classifies_provider_local_work_relations(self) -> None:
         def local(

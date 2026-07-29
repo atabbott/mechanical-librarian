@@ -139,11 +139,13 @@ and the optional
 complete-title/author lane remain separate; provider-local work convergence is
 recorded without becoming independent corroboration. The relational
 envelope remains only its scope, identity, digest, and schema-version index.
-Candidate-aware domain finalization adds only deterministic comparison links:
-original provider claims and evidence remain unchanged, while exact structural
-name-to-identity bindings can support aliases and complete ordered creator-set
-validation. Adapters parse and bind source relationships; they do not own
-comparison policy.
+Candidate-aware domain finalization deterministically reclassifies publication
+facts between claims and evidence, promotes safely linked manifestation dates,
+demotes incompatible publication claims, and assigns canonical comparison
+links and source ordinals. Other provider facts retain their emitted values,
+while exact structural name-to-identity bindings can support aliases and
+complete ordered creator-set validation. Adapters parse and bind source
+relationships; they do not own comparison policy.
 Within the exact current schema, a current-scope
 lookup follows the separate pointer offline, while an exact-ID lookup never
 changes a predecessor.

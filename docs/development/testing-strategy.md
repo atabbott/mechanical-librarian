@@ -170,8 +170,9 @@ without accent stripping, typographic mapping, variant markers, complete
 multi-author count/order/role/scope, conservative single-author comma
 inversion, structurally bound aliases, ambiguous or malformed bindings,
 canonical replay and tamper rejection. Provider/application tests also prove
-the finalizer adds no request, preserves emitted values and source order, and
-does not change proposal or reviewer admission authority.
+the finalizer adds no request, performs only the defined publication-fact
+promotion/demotion and canonical ordering, and does not change proposal or
+reviewer admission authority.
 
 Provider-date regressions use synthetic year, month, day, and signed-offset
 timestamp values. They prove lexical/normalized replay, closed event and
@@ -184,7 +185,7 @@ fact/reference disagreement, forged kind/value/applicability/scope/raw-order
 or provider/candidate membership, invalid ISBN/ASIN syntax, private or
 credential-shaped context, missing rich-date-evidence linkage, malformed
 identifier and format shapes, duplicate/reordered facts, and context beyond
-either 16-fact bound. Request-v3 replay exercises the same packet validator.
+either 16-fact bound. Request-v4 replay exercises the same packet-v3 validator.
 Access-
 time regressions inject fixed clocks at every metadata-provider boundary,
 exercise successful and terminal post-dispatch statuses, prove absent time for

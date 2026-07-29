@@ -1482,6 +1482,23 @@ class ProviderCandidate:
             len(work_relations) > 1
             or len(work_relation_contradictions) > 1
             or (work_relation_contradictions and len(work_relations) != 1)
+            or (
+                work_relation_contradictions
+                and (
+                    any(
+                        value.scope is ClaimScope.WORK
+                        for value in self.claims
+                    )
+                    or any(
+                        value.scope is ClaimScope.WORK
+                        for value in self.evidence
+                    )
+                    or any(
+                        value.scope is ClaimScope.WORK
+                        for value in self.identity_bindings
+                    )
+                )
+            )
             or any(
                 (
                     value.kind in edition_only
@@ -2388,9 +2405,11 @@ def publication_date_relation(
         or right_precision is DatePrecision.TIMESTAMP
     ):
         if (
-            left_precision is DatePrecision.TIMESTAMP
-            and right_precision is DatePrecision.TIMESTAMP
-            and shared is DatePrecision.DAY
+            shared is DatePrecision.DAY
+            and left_precision
+            in {DatePrecision.TIMESTAMP, DatePrecision.DAY}
+            and right_precision
+            in {DatePrecision.TIMESTAMP, DatePrecision.DAY}
         ):
             return PublicationDateRelation.EXACT, DatePrecision.DAY
         return PublicationDateRelation.FINER_CONFLICT, shared
