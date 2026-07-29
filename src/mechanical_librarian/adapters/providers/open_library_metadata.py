@@ -1046,7 +1046,17 @@ def _candidate(
     add(ClaimKind.SUBTITLE, work.get("subtitle"), ClaimScope.WORK)
     for value in _optional_string_list(work.get("alternate_titles", []), _MAX_VALUES):
         add(ClaimKind.TITLE, value, ClaimScope.WORK)
-    add(ClaimKind.DESCRIPTION, _description(work.get("description")), ClaimScope.WORK)
+    try:
+        work_description = _description(work.get("description"))
+    except (ValueError, EvidenceValueError):
+        add(
+            ClaimKind.DESCRIPTION,
+            None,
+            ClaimScope.WORK,
+            state=FieldState.MALFORMED,
+        )
+    else:
+        add(ClaimKind.DESCRIPTION, work_description, ClaimScope.WORK)
     if work_authors:
         for author, _ in work_authors:
             add(
@@ -1094,7 +1104,18 @@ def _candidate(
     for value in _optional_string_list(edition.get("by_statement", []), _MAX_VALUES):
         evidence.append(ProviderEvidence(ProviderEvidenceKind.RESPONSIBILITY_STATEMENT, value, ClaimScope.EDITION))
     if isinstance(edition.get("by_statement"), str):
-        evidence.append(ProviderEvidence(ProviderEvidenceKind.RESPONSIBILITY_STATEMENT, _text(edition["by_statement"]), ClaimScope.EDITION))
+        try:
+            by_statement = _text(edition["by_statement"])
+        except (ValueError, EvidenceValueError):
+            pass
+        else:
+            evidence.append(
+                ProviderEvidence(
+                    ProviderEvidenceKind.RESPONSIBILITY_STATEMENT,
+                    by_statement,
+                    ClaimScope.EDITION,
+                )
+            )
     for value in _optional_string_list(edition.get("distributors", []), _MAX_VALUES):
         evidence.append(ProviderEvidence(ProviderEvidenceKind.DISTRIBUTOR, value, ClaimScope.EDITION))
     for field, kind in (("edition_name", ProviderEvidenceKind.EDITION_STATEMENT), ("edition_statement", ProviderEvidenceKind.EDITION_STATEMENT), ("translation_of", ProviderEvidenceKind.TRANSLATION_STATEMENT)):
@@ -1802,7 +1823,7 @@ def _parser_optional_rejections(
         for item in value:
             if type(item) is not expected:
                 count += 1
-            elif field == "covers" and item <= 0:
+            elif field == "covers" and not 0 < item <= 2_147_483_647:
                 count += 1
     for field in scalar_fields & set(document):
         value = document[field]
@@ -1965,7 +1986,7 @@ def _work_author_keys(source: dict[str, Any]) -> tuple[str, ...]:
         except ValueError:
             continue
         role_key = role.get("key")
-        if type(role_key) is not str or not role_key.startswith("/type/"):
+        if role_key != "/type/author_role":
             continue
         if key not in seen:
             seen.add(key)

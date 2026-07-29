@@ -2763,6 +2763,124 @@ class MetadataReportTests(unittest.TestCase):
         self.assertNotIn("credential", report.to_json())
         self.assertNotIn("/private/library", report.to_json())
 
+    def test_provider_parser_attempt_and_incomplete_diagnostics_merge_once_on_reopen(
+        self,
+    ) -> None:
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        snapshot = TargetSnapshot("ebook", "Current title", (selected,))
+        target = _Target([snapshot, snapshot])
+        claim = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="ISBN 9780306406157",
+            applicability="ebook",
+            basis="opening_matter",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+            scope=ClaimScope.EDITION,
+        )
+        inspector = _Inspector(InspectionResult("c" * 64, (claim,)))
+
+        class Provider:
+            cover_descriptors = ()
+            attempt_records = (
+                type(
+                    "Attempt",
+                    (),
+                    {"category": "http_503", "outcome": "retry"},
+                )(),
+            )
+            incomplete_causes = (
+                type("Cause", (), {"cause": "aggregate_bytes"})(),
+            )
+
+            def observe(self, _plan, *, deadline):
+                return ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.INCOMPLETE,
+                    diagnostics=(
+                        FailureDiagnostic(
+                            FailureCategory.SCHEMA_CONSTRUCTION,
+                            FailureComponent.PROVIDER,
+                            FailureStage.SCHEMA,
+                            count=1,
+                        ),
+                    ),
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reports.sqlite"
+            service = GenerateMetadataReport(
+                target=target,
+                inspector=inspector,
+                repository_factory=lambda: open_repository(database),
+                providers=(
+                    ProviderBinding("catalogue", True, Provider),
+                ),
+                connection=TargetConnectionConfiguration(
+                    "primary",
+                    "https://example.invalid",
+                    "/private/target",
+                ),
+                library=LibraryConfiguration(
+                    "ebooks",
+                    "primary",
+                    "library-id",
+                    "ebook",
+                    "books",
+                    ("catalogue",),
+                ),
+                mount=MediaMountConfiguration(
+                    "books",
+                    "/media",
+                    "/library",
+                    True,
+                ),
+                limits=ReportLimits(),
+            )
+            generated = MetadataReport.from_json(service.run("item-1", 0))
+            repository = open_repository(database, create=False)
+            try:
+                persisted = repository.get(generated.report_id)
+            finally:
+                repository.close()
+            reopened = MetadataReport.from_json(persisted)
+
+        expected = (
+            (
+                FailureCategory.HTTP_NON_SUCCESS,
+                FailureStage.RESPONSE,
+                True,
+                1,
+            ),
+            (
+                FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+                FailureStage.RESPONSE,
+                False,
+                1,
+            ),
+            (
+                FailureCategory.SCHEMA_CONSTRUCTION,
+                FailureStage.SCHEMA,
+                None,
+                1,
+            ),
+        )
+        self.assertEqual(
+            expected,
+            tuple(
+                (
+                    value.category,
+                    value.stage,
+                    value.retryable,
+                    value.count,
+                )
+                for value in reopened.providers[0].diagnostics
+            ),
+        )
+        self.assertEqual(generated.to_json(), reopened.to_json())
+
     def test_application_preserves_inspector_occurrence_order_after_target_title(self) -> None:
         claims = tuple(
             LocalClaim.create(kind=ClaimKind.CREATOR, observed=value, canonical=value, excerpt=value,

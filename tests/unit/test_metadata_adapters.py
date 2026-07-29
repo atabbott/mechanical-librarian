@@ -2482,6 +2482,336 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(0, diagnostic(b'{"data":{"editions":[{"id":1,"publisher":{"id":1,"parent_id":{}},"image":{"url":7}}],"books":[],"tags":[]} }'))
         self.assertEqual(1, diagnostic(b'{"data":{"editions":[],"books":[{"id":1,"new_optional_value":true}],"tags":[]} }'))
 
+    def test_hardcover_actual_parser_diagnostics_count_source_rejections_once(self) -> None:
+        valid_contribution = {
+            "id": 1,
+            "contribution": "Author",
+            "author": {"id": 1, "name": "Ada"},
+        }
+        valid_series = {
+            "id": 1,
+            "position": "1",
+            "series": {"id": 1, "name": "Series"},
+        }
+        valid_tagging = {
+            "id": 1,
+            "tag": {
+                "id": 1,
+                "tag": "Atmospheric",
+                "tag_category": {"id": 1, "category": "Mood"},
+            },
+        }
+        base_rows = [
+            {
+                "id": 1,
+                "book_id": 1,
+                "isbn_10": None,
+                "isbn_13": "9780306406157",
+                "title": "Edition",
+                "release_date": "2024-01-02",
+                "image": {"url": "https://example.invalid/edition.jpg"},
+                "publisher": {
+                    "id": 1,
+                    "name": "Example Press",
+                    "parent_id": None,
+                },
+                "language": {
+                    "id": 1,
+                    "code2": "en",
+                    "code3": "eng",
+                    "language": "English",
+                },
+                "contributions": [valid_contribution],
+            },
+            {
+                "id": 2,
+                "book_id": 1,
+                "isbn_10": None,
+                "isbn_13": "9780306406157",
+                "title": "Second edition",
+            },
+        ]
+        base_books = [
+            {
+                "id": 1,
+                "title": "Work",
+                "description": "Description",
+                "release_date": "2020",
+                "image": {"url": "https://example.invalid/work.jpg"},
+                "contributions": [valid_contribution],
+                "book_series": [valid_series],
+                "taggings": [valid_tagging],
+            }
+        ]
+
+        def observe(
+            rows: list[dict[str, object]],
+            books: list[dict[str, object]],
+            *,
+            additive_work_key: bool = False,
+        ) -> ProviderObservation:
+            payload = self._envelope(rows, books)
+            if additive_work_key:
+                payload["data"]["books"][0]["new_optional_value"] = True  # type: ignore[index]
+            provider = HardcoverMetadataProvider(
+                "catalogue",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda request: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            json=payload,
+                        )
+                    )
+                ),
+                65_536,
+            )
+            return provider.observe(_isbn_lookup((self._claim(),)))
+
+        clean = observe(base_rows, base_books)
+        self.assertEqual(ProviderStatus.CANDIDATES, clean.status)
+        self.assertEqual((), clean.diagnostics)
+
+        cases: tuple[
+            tuple[str, list[dict[str, object]], list[dict[str, object]], bool],
+            ...,
+        ] = (
+            (
+                "edition contributions over cap",
+                [{**base_rows[0], "contributions": [valid_contribution] * 17}],
+                base_books,
+                False,
+            ),
+            (
+                "work contributions over cap",
+                base_rows,
+                [{**base_books[0], "contributions": [valid_contribution] * 17}],
+                False,
+            ),
+            (
+                "series over cap",
+                base_rows,
+                [{**base_books[0], "book_series": [valid_series] * 17}],
+                False,
+            ),
+            (
+                "taggings over cap",
+                base_rows,
+                [
+                    {
+                        **base_books[0],
+                        "taggings": [
+                            {
+                                "id": index,
+                                "tag": {
+                                    "id": 1,
+                                    "tag": "Atmospheric",
+                                    "tag_category": {
+                                        "id": 1,
+                                        "category": "Mood",
+                                    },
+                                },
+                            }
+                            for index in range(33)
+                        ],
+                    }
+                ],
+                False,
+            ),
+            (
+                "shared work release date",
+                base_rows,
+                [{**base_books[0], "release_date": "not-a-date"}],
+                False,
+            ),
+            (
+                "edition author identity",
+                [
+                    {
+                        **base_rows[0],
+                        "contributions": [
+                            {
+                                **valid_contribution,
+                                "author": {"id": {}, "name": "Ada"},
+                            }
+                        ],
+                    }
+                ],
+                base_books,
+                False,
+            ),
+            (
+                "shared work author identity",
+                base_rows,
+                [
+                    {
+                        **base_books[0],
+                        "contributions": [
+                            {
+                                **valid_contribution,
+                                "author": {"id": {}, "name": "Ada"},
+                            }
+                        ],
+                    }
+                ],
+                False,
+            ),
+            (
+                "series object",
+                base_rows,
+                [{**base_books[0], "book_series": [{**valid_series, "series": "bad"}]}],
+                False,
+            ),
+            (
+                "series position",
+                base_rows,
+                [{**base_books[0], "book_series": [{**valid_series, "position": "1e-999"}]}],
+                False,
+            ),
+            (
+                "taxonomy enum",
+                base_rows,
+                [
+                    {
+                        **base_books[0],
+                        "taggings": [
+                            {
+                                **valid_tagging,
+                                "tag": {
+                                    **valid_tagging["tag"],  # type: ignore[arg-type]
+                                    "tag_category": {
+                                        "id": 1,
+                                        "category": "Subject",
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                ],
+                False,
+            ),
+            (
+                "edition image URL",
+                [{**base_rows[0], "image": {"url": 7}}],
+                base_books,
+                False,
+            ),
+            (
+                "work image URL",
+                base_rows,
+                [{**base_books[0], "image": {"url": 7}}],
+                False,
+            ),
+            (
+                "publisher name",
+                [{**base_rows[0], "publisher": {"name": {}, "parent_id": None}}],
+                base_books,
+                False,
+            ),
+            (
+                "publisher parent",
+                [
+                    {
+                        **base_rows[0],
+                        "publisher": {
+                            "name": "Example Press",
+                            "parent_id": {},
+                        },
+                    }
+                ],
+                base_books,
+                False,
+            ),
+            (
+                "language code",
+                [
+                    {
+                        **base_rows[0],
+                        "language": {"code2": {}, "code3": "eng"},
+                    }
+                ],
+                base_books,
+                False,
+            ),
+            ("unknown additive work key", base_rows, base_books, True),
+        )
+        for name, rows, books, additive in cases:
+            with self.subTest(name=name):
+                observation = observe(
+                    rows,
+                    books,
+                    additive_work_key=additive,
+                )
+                self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+                self.assertEqual(
+                    (1,),
+                    tuple(value.count for value in observation.diagnostics),
+                )
+
+    def test_hardcover_over_cap_fields_retain_no_prefix(self) -> None:
+        contribution = {
+            "id": 1,
+            "contribution": "Author",
+            "author": {"id": 1, "name": "Ada"},
+        }
+        series = {
+            "id": 1,
+            "position": "1",
+            "series": {"id": 1, "name": "Series"},
+        }
+        payload = self._envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_13": "9780306406157",
+                    "contributions": [contribution] * 17,
+                }
+            ],
+            [
+                {
+                    "id": 1,
+                    "title": "Work",
+                    "contributions": [contribution] * 17,
+                    "book_series": [series] * 17,
+                    "taggings": [],
+                }
+            ],
+        )
+        payload["data"]["editions"][0]["contributions"] = [  # type: ignore[index]
+            {**contribution, "untraversed": True}
+        ] * 17
+        payload["data"]["books"][0]["book_series"] = [  # type: ignore[index]
+            {**series, "untraversed": True}
+        ] * 17
+        self.assertEqual(
+            0,
+            hardcover_metadata._optional_projection_rejections(
+                json.dumps(payload).encode()
+            ),
+        )
+        candidate = hardcover_metadata._parse_candidates(
+            json.dumps(payload).encode(),
+            "catalogue",
+            (),
+        )[0]
+        self.assertFalse(any(claim.value == "Ada" for claim in candidate.claims))
+        self.assertFalse(any(claim.value == "Series" for claim in candidate.claims))
+        self.assertEqual((), candidate.evidence)
+        self.assertTrue(
+            all(
+                claim.state is FieldState.OVERSIZED
+                for claim in candidate.claims
+                if claim.kind
+                in {
+                    ClaimKind.CREATOR,
+                    ClaimKind.CONTRIBUTOR,
+                    ClaimKind.SERIES,
+                    ClaimKind.SERIES_SEQUENCE,
+                }
+            )
+        )
+
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:
         calls: list[int] = []
         client = httpx.Client(transport=httpx.MockTransport(lambda request: calls.append(1) or httpx.Response(200)))

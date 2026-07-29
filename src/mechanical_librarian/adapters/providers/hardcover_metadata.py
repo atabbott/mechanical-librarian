@@ -400,7 +400,6 @@ class HardcoverMetadataProvider:
                 payload,
                 self._name,
                 lookup.kind,
-                self._optional_rejections,
             )
         except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
             self.cover_descriptors = ()
@@ -915,11 +914,17 @@ def _parse_candidates(
         book_id = _identifier(book["id"])
         if book_id in indexed:
             raise ValueError("provider work invalid")
+        # These optional values are otherwise consumed only by neutral
+        # evidence and cover projections. Diagnose them here, once for the
+        # source work, rather than once for every joined edition/projection.
+        _field(ClaimKind.PUBLICATION_DATE, book["release_date"], rejected)
+        _cover_url(book["image"], rejected)
         indexed[book_id] = book
     if len(indexed) != len(books):
         raise ValueError("provider work invalid")
     candidates: list[ProviderCandidate] = []
     used: set[int] = set()
+    diagnosed_works: set[int] = set()
     for row_value in rows:
         if type(row_value) is dict and "image" not in row_value:
             row_value = {**row_value, "image": None}
@@ -936,6 +941,13 @@ def _parse_candidates(
         if book_id not in indexed:
             raise ValueError("provider unreferenced work")
         used.add(book_id)
+        _cover_url(row["image"], rejected)
+        publisher = _optional_mapping(row["publisher"])
+        if publisher is not None and publisher.get("parent_id") is not None:
+            try:
+                _identifier(publisher["parent_id"])
+            except ValueError:
+                rejected.reject()
         identity = f"hardcover-edition-{edition_id:010d}"
         work_identity = f"hardcover-work-{book_id:010d}"
         claims = _edition_claims(
@@ -944,7 +956,18 @@ def _parse_candidates(
             row,
             local_claims, rejected,
         )
-        claims.extend(_work_claims(provider, identity, indexed[book_id], local_claims, len(claims), rejected))
+        work_rejections = rejected if book_id not in diagnosed_works else None
+        claims.extend(
+            _work_claims(
+                provider,
+                identity,
+                indexed[book_id],
+                local_claims,
+                len(claims),
+                work_rejections,
+            )
+        )
+        diagnosed_works.add(book_id)
         candidates.append(
             ProviderCandidate(
                 identity,
@@ -1559,10 +1582,12 @@ def _optional_member(value: object, key: str, rejected: _OptionalRejections | No
 
 
 def _optional_projection_rejections(payload: bytes) -> int:
-    """Count only unknown additive keys not owned by a field parser.
+    """Count unknown additive keys only at safely traversable parser seams.
 
     Strict anchor and join keys are deliberately exempt: their validation is
-    fatal in the candidate parser, rather than an optional diagnostic.
+    fatal in the candidate parser, rather than an optional diagnostic. Nested
+    bounded collections are owned by their field parsers and are not traversed
+    here, so an over-cap field remains one rejection with no prefix inspection.
     """
     try:
         source = json.loads(payload.decode("utf-8", "strict"))
@@ -1571,22 +1596,35 @@ def _optional_projection_rejections(payload: bytes) -> int:
         return 0
     if type(data) is not dict:
         return 0
-    known = {
-        "editions", "books", "tags", "id", "book_id", "isbn_10", "isbn_13",
-        "asin", "title", "subtitle", "release_date", "image", "publisher",
-        "language", "contributions", "description", "book_series", "taggings",
-        "tag", "tag_id", "tag_category", "position", "series", "contribution", "author",
-        "name", "parent_id", "code2", "code3", "category", "url",
-    }
     count = 0
-    stack: list[object] = [data]
-    while stack:
-        value = stack.pop()
-        if type(value) is dict:
-            count += len(set(value) - known)
-            stack.extend(value.values())
-        elif type(value) is list:
-            stack.extend(value)
+    editions = data.get("editions")
+    if type(editions) is list and len(editions) <= MAX_CANDIDATES:
+        edition_keys = {
+            "id", "book_id", "isbn_10", "isbn_13", "asin", "title",
+            "subtitle", "release_date", "image", "publisher", "language",
+            "contributions",
+        }
+        for row in editions:
+            if type(row) is not dict:
+                continue
+            count += len(set(row) - edition_keys)
+            publisher = row.get("publisher")
+            if type(publisher) is dict:
+                count += len(set(publisher) - {"id", "name", "parent_id"})
+            language = row.get("language")
+            if type(language) is dict:
+                count += len(
+                    set(language) - {"id", "code2", "code3", "language"}
+                )
+    books = data.get("books")
+    if type(books) is list and len(books) <= MAX_CANDIDATES:
+        work_keys = {
+            "id", "title", "description", "release_date", "image",
+            "contributions", "book_series", "taggings",
+        }
+        for book in books:
+            if type(book) is dict:
+                count += len(set(book) - work_keys)
     return min(count, MAX_DIAGNOSTIC_COUNT)
 
 

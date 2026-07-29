@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import gzip
+import tempfile
 import unittest
 from decimal import Decimal
+from pathlib import Path
 
 import httpx
 
 import mechanical_librarian.adapters.providers.open_library_metadata as open_library_metadata
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers.open_library_metadata import (
     OPEN_LIBRARY_COVERS_ORIGIN,
     OPEN_LIBRARY_SEARCH_URL,
@@ -261,6 +264,224 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         self.assertEqual("open-library-author-OL7A", identity.value)
         self.assertEqual(ClaimScope.WORK, identity.scope)
         self.assertEqual("author", identity.role)
+
+    def test_optional_detail_failures_are_local_and_diagnosed_once(self) -> None:
+        cases = (
+            ("work description scalar", "work", "description", 7),
+            (
+                "work description typed object",
+                "work",
+                "description",
+                {"type": "/type/object", "value": "Description"},
+            ),
+            ("edition by statement", "edition", "by_statement", "bad\x00byline"),
+            (
+                "unknown work author role",
+                "work",
+                "authors",
+                [
+                    {
+                        "author": {"key": "/authors/OL7A"},
+                        "type": {"key": "/type/editor_role"},
+                    }
+                ],
+            ),
+            ("edition cover range", "edition", "covers", [2_147_483_648]),
+            ("work cover range", "work", "covers", [2_147_483_648]),
+        )
+        for name, document, field, invalid in cases:
+            with self.subTest(name=name):
+                edition = _edition("/books/OL1M")
+                work = _work()
+                target = edition if document == "edition" else work
+                target[field] = invalid
+                values = {
+                    "/search.json": _search("/books/OL1M"),
+                    "/books/OL1M.json": edition,
+                    "/works/OL5W.json": work,
+                }
+                observation = OpenLibraryMetadataProvider(
+                    "open_library",
+                    httpx.Client(
+                        transport=httpx.MockTransport(
+                            lambda request: httpx.Response(
+                                200,
+                                headers={"content-type": "application/json"},
+                                json=values[request.url.path],
+                            )
+                        )
+                    ),
+                    65_536,
+                    pacer=OpenLibraryPacer(sleep=lambda _: None),
+                ).observe(_isbn_lookup((_isbn(),)))
+
+                self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+                self.assertEqual(
+                    (1,),
+                    tuple(value.count for value in observation.diagnostics),
+                )
+                if field == "description":
+                    description = next(
+                        claim
+                        for claim in observation.candidates[0].claims
+                        if claim.kind is ClaimKind.DESCRIPTION
+                    )
+                    self.assertIs(FieldState.MALFORMED, description.state)
+                    self.assertIsNone(description.value)
+                if field == "by_statement":
+                    self.assertNotIn(
+                        ProviderEvidenceKind.RESPONSIBILITY_STATEMENT,
+                        {
+                            value.kind
+                            for value in observation.candidates[0].evidence
+                        },
+                    )
+                if field == "authors":
+                    self.assertNotIn(
+                        "open-library-author-OL7A",
+                        {
+                            value.value
+                            for value in observation.candidates[0].evidence
+                            if value.kind
+                            is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY
+                        },
+                    )
+
+    def test_nested_work_author_evidence_persists_with_exact_source_semantics(self) -> None:
+        values = {
+            "/search.json": _search("/books/OL1M"),
+            "/books/OL1M.json": _edition("/books/OL1M"),
+            "/works/OL5W.json": _work(),
+        }
+        observation = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=values[request.url.path],
+                    )
+                )
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        ).observe(_isbn_lookup((_isbn(),)))
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields("Current title"),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(_isbn(),),
+            local_reasons=("not_applicable",),
+            providers=(observation,),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            repository = open_repository(path)
+            try:
+                repository.publish(report, lambda: True)
+                persisted = repository.get(report.report_id)
+            finally:
+                repository.close()
+            reopened_repository = open_repository(path, create=False)
+            try:
+                reopened = MetadataReport.from_json(
+                    reopened_repository.get(report.report_id)
+                )
+            finally:
+                reopened_repository.close()
+
+        self.assertEqual(report.to_json(), persisted)
+        expected_matrix = (
+            (ProviderEvidenceKind.COPYRIGHT_DATE, ClaimScope.EDITION, None, 20),
+            (
+                ProviderEvidenceKind.DEWEY_CLASSIFICATION,
+                ClaimScope.EDITION,
+                None,
+                9,
+            ),
+            (
+                ProviderEvidenceKind.EDITION_WORK_RELATION,
+                ClaimScope.EDITION,
+                None,
+                0,
+            ),
+            (ProviderEvidenceKind.LAST_MODIFIED, ClaimScope.EDITION, None, 2),
+            (
+                ProviderEvidenceKind.LC_CLASSIFICATION,
+                ClaimScope.EDITION,
+                None,
+                10,
+            ),
+            (ProviderEvidenceKind.LCCN, ClaimScope.EDITION, None, 8),
+            (ProviderEvidenceKind.OCLC, ClaimScope.EDITION, None, 7),
+            (ProviderEvidenceKind.PAGE_COUNT, ClaimScope.EDITION, None, 21),
+            (ProviderEvidenceKind.PAGINATION, ClaimScope.EDITION, None, 19),
+            (
+                ProviderEvidenceKind.PHYSICAL_FORMAT,
+                ClaimScope.EDITION,
+                None,
+                18,
+            ),
+            (
+                ProviderEvidenceKind.PUBLICATION_PLACE,
+                ClaimScope.EDITION,
+                None,
+                11,
+            ),
+            (ProviderEvidenceKind.REVISION, ClaimScope.EDITION, None, 1),
+            (ProviderEvidenceKind.WIKIDATA, ClaimScope.EDITION, None, 16),
+            (ProviderEvidenceKind.AUTHOR_IDENTITY, ClaimScope.WORK, None, 5),
+            (
+                ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+                ClaimScope.WORK,
+                "author",
+                6,
+            ),
+            (
+                ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                ClaimScope.WORK,
+                None,
+                22,
+            ),
+            (ProviderEvidenceKind.LAST_MODIFIED, ClaimScope.WORK, None, 4),
+            (ProviderEvidenceKind.PERSON, ClaimScope.WORK, None, 13),
+            (ProviderEvidenceKind.PLACE, ClaimScope.WORK, None, 14),
+            (ProviderEvidenceKind.REVISION, ClaimScope.WORK, None, 3),
+            (ProviderEvidenceKind.SUBJECT, ClaimScope.WORK, None, 12),
+            (ProviderEvidenceKind.TIME, ClaimScope.WORK, None, 15),
+            (ProviderEvidenceKind.WIKIDATA, ClaimScope.WORK, None, 17),
+        )
+        self.assertEqual(
+            expected_matrix,
+            tuple(
+                (value.kind, value.scope, value.role, value.source_ordinal)
+                for value in reopened.providers[0].candidates[0].evidence
+            ),
+        )
+        identity = next(
+            value
+            for value in reopened.providers[0].candidates[0].evidence
+            if value.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY
+            and value.value == "open-library-author-OL7A"
+        )
+        self.assertEqual(ClaimScope.WORK, identity.scope)
+        self.assertEqual("author", identity.role)
+        self.assertGreaterEqual(identity.source_ordinal, 0)
+        self.assertEqual(
+            [
+                value.source_ordinal
+                for value in report.providers[0].candidates[0].evidence
+            ],
+            [
+                value.source_ordinal
+                for value in reopened.providers[0].candidates[0].evidence
+            ],
+        )
 
     def test_detail_freeze_replay_preserves_empty_containers_and_decimal(self) -> None:
         value = {"empty_mapping": {}, "empty_sequence": [], "nested": [{}, []], "decimal": Decimal("1.25")}
