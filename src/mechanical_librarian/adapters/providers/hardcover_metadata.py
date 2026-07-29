@@ -10,6 +10,7 @@ import unicodedata
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -1087,6 +1088,25 @@ def _cover_url(value: object, rejected: _OptionalRejections | None = None) -> tu
     if len(url) > 2048:
         if rejected: rejected.reject()
         return None, CoverSourceState.OVERSIZED
+    try:
+        parts = urlsplit(url)
+        _ = parts.hostname, parts.port
+    except ValueError:
+        parts = None
+    if (
+        parts is None
+        or any(ord(character) < 0x21 or ord(character) > 0x7E for character in url)
+        or "\\" in url
+        or parts.scheme != "https"
+        or not parts.hostname
+        or parts.port not in (None, 443)
+        or parts.username is not None
+        or parts.password is not None
+        or bool(parts.fragment)
+    ):
+        if rejected:
+            rejected.reject()
+        return None, CoverSourceState.UNSAFE_REMOTE
     return url, None
 
 
@@ -1444,7 +1464,20 @@ def _contributions(provider: str, identity: str, value: object, scope: ClaimScop
         except ValueError:
             if rejected:
                 rejected.reject()
-        claims.append(_claim(provider, identity, kind, author["name"], scope, "not_applicable", "author" if kind is ClaimKind.CREATOR else role, local, offset + len(claims)))
+        claims.append(
+            _claim(
+                provider,
+                identity,
+                kind,
+                author["name"],
+                scope,
+                "not_applicable",
+                "author" if kind is ClaimKind.CREATOR else role,
+                local,
+                offset + len(claims),
+                rejected,
+            )
+        )
     if invalid:
         claims.append(_state_claim(provider, identity, ClaimKind.CONTRIBUTOR, FieldState.MALFORMED, scope, local, offset + len(claims)))
     return claims

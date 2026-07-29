@@ -2812,6 +2812,176 @@ class ProviderAdapterTests(unittest.TestCase):
             )
         )
 
+    def test_hardcover_invalid_cover_links_and_author_names_are_field_local(self) -> None:
+        valid_author = {"id": 7, "name": "Ada Author"}
+        base_rows = [
+            {
+                "id": 1,
+                "book_id": 1,
+                "isbn_13": "9780306406157",
+                "title": "Edition title",
+                "publisher": {"name": "Example Press", "parent_id": None},
+                "image": {"url": "https://example.invalid/edition.jpg"},
+                "contributions": [
+                    {
+                        "id": 1,
+                        "contribution": "Author",
+                        "author": valid_author,
+                    }
+                ],
+            },
+            {
+                "id": 2,
+                "book_id": 1,
+                "isbn_13": "9780306406157",
+                "title": "Second edition",
+            },
+        ]
+        base_books = [
+            {
+                "id": 1,
+                "title": "Work title",
+                "description": "Description",
+                "image": {"url": "https://example.invalid/work.jpg"},
+                "contributions": [
+                    {
+                        "id": 2,
+                        "contribution": "Author",
+                        "author": valid_author,
+                    }
+                ],
+                "book_series": [],
+                "taggings": [],
+            }
+        ]
+
+        def observe(
+            rows: list[dict[str, object]],
+            books: list[dict[str, object]],
+        ) -> tuple[ProviderObservation, HardcoverMetadataProvider]:
+            payload = self._envelope(rows, books)
+            provider = HardcoverMetadataProvider(
+                "catalogue",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda request: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            json=payload,
+                        )
+                    )
+                ),
+                65_536,
+            )
+            return provider.observe(_isbn_lookup((self._claim(),))), provider
+
+        for name, rows, books, designation in (
+            (
+                "edition cover",
+                [{**base_rows[0], "image": {"url": "not a URL"}}],
+                base_books,
+                "exact_edition",
+            ),
+            (
+                "shared work cover",
+                base_rows,
+                [{**base_books[0], "image": {"url": "not a URL"}}],
+                "default",
+            ),
+        ):
+            with self.subTest(name=name):
+                observation, provider = observe(rows, books)
+                self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+                self.assertEqual(
+                    (1,),
+                    tuple(value.count for value in observation.diagnostics),
+                )
+                self.assertTrue(
+                    any(
+                        claim.kind is ClaimKind.TITLE
+                        and claim.value in {"Edition title", "Work title"}
+                        for candidate in observation.candidates
+                        for claim in candidate.claims
+                    )
+                )
+                descriptor = next(
+                    value
+                    for value in provider.cover_descriptors
+                    if value.provenance is not None
+                    and value.provenance.designation.value == designation
+                )
+                self.assertIsNone(descriptor.url)
+                self.assertIs(
+                    CoverSourceState.UNSAFE_REMOTE,
+                    descriptor.terminal_state,
+                )
+
+        for name, rows, books, scope in (
+            (
+                "edition author name",
+                [
+                    {
+                        **base_rows[0],
+                        "contributions": [
+                            {
+                                "id": 1,
+                                "contribution": "Author",
+                                "author": {"id": 7, "name": {}},
+                            }
+                        ],
+                    }
+                ],
+                base_books,
+                ClaimScope.EDITION,
+            ),
+            (
+                "shared work author name",
+                base_rows,
+                [
+                    {
+                        **base_books[0],
+                        "contributions": [
+                            {
+                                "id": 2,
+                                "contribution": "Author",
+                                "author": {"id": 7, "name": {}},
+                            }
+                        ],
+                    }
+                ],
+                ClaimScope.WORK,
+            ),
+        ):
+            with self.subTest(name=name):
+                observation, _ = observe(rows, books)
+                self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+                self.assertEqual(
+                    (1,),
+                    tuple(value.count for value in observation.diagnostics),
+                )
+                affected = [
+                    claim
+                    for candidate in observation.candidates
+                    for claim in candidate.claims
+                    if claim.kind is ClaimKind.CREATOR and claim.scope is scope
+                ]
+                self.assertTrue(affected)
+                self.assertTrue(
+                    all(
+                        claim.state is FieldState.MALFORMED
+                        and claim.value is None
+                        for claim in affected
+                    )
+                )
+                self.assertTrue(
+                    any(
+                        claim.kind is ClaimKind.TITLE
+                        and claim.state is FieldState.VALID
+                        for candidate in observation.candidates
+                        for claim in candidate.claims
+                    )
+                )
+
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:
         calls: list[int] = []
         client = httpx.Client(transport=httpx.MockTransport(lambda request: calls.append(1) or httpx.Response(200)))

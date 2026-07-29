@@ -348,10 +348,46 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                     )
 
     def test_nested_work_author_evidence_persists_with_exact_source_semantics(self) -> None:
+        search = _search("/books/OL1M")
+        search["docs"][0].update(  # type: ignore[index]
+            {
+                "publisher": ["Search Press"],
+                "publish_date": ["2026"],
+                "language": ["eng"],
+                "edition_key": ["OL1M"],
+            }
+        )
+        edition = _edition("/books/OL1M", cover=101)
+        edition.update(
+            {
+                "alternate_titles": ["Alternate edition"],
+                "alternative_titles": ["Other edition"],
+                "imprints": ["Example Imprint"],
+                "imprint": "Scalar Imprint",
+                "distributors": ["Example Distributor"],
+                "by_statement": "By Ada Author",
+                "edition_name": "First edition",
+                "edition_statement": "First edition statement",
+                "translation_of": "Original title",
+                "description": {
+                    "type": "/type/text",
+                    "value": "Edition description",
+                },
+            }
+        )
+        work = _work(cover=202)
+        work.update(
+            {
+                "subtitle": "Work subtitle",
+                "alternate_titles": ["Alternate work"],
+                "series": ["Cycle"],
+                "series_number": ["2"],
+            }
+        )
         values = {
-            "/search.json": _search("/books/OL1M"),
-            "/books/OL1M.json": _edition("/books/OL1M"),
-            "/works/OL5W.json": _work(),
+            "/search.json": search,
+            "/books/OL1M.json": edition,
+            "/works/OL5W.json": work,
         }
         observation = OpenLibraryMetadataProvider(
             "open_library",
@@ -396,76 +432,104 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 reopened_repository.close()
 
         self.assertEqual(report.to_json(), persisted)
+        self.assertEqual(ProviderStatus.CANDIDATES, reopened.providers[0].status)
+        self.assertEqual((), reopened.providers[0].diagnostics)
+        candidate = reopened.providers[0].candidates[0]
+        expected_claims = (
+            (0, ClaimKind.ISBN, ClaimScope.EDITION, None, FieldState.VALID, "0306406152"),
+            (1, ClaimKind.ISBN, ClaimScope.EDITION, None, FieldState.VALID, "9780306406157"),
+            (2, ClaimKind.ASIN, ClaimScope.EDITION, None, FieldState.UNSUPPORTED, None),
+            (3, ClaimKind.TITLE, ClaimScope.EDITION, None, FieldState.VALID, "Edition title"),
+            (4, ClaimKind.SUBTITLE, ClaimScope.EDITION, None, FieldState.VALID, "Edition subtitle"),
+            (5, ClaimKind.PUBLICATION_DATE, ClaimScope.EDITION, None, FieldState.VALID, "2026-01-02"),
+            (6, ClaimKind.TITLE, ClaimScope.EDITION, None, FieldState.VALID, "Alternate edition"),
+            (7, ClaimKind.TITLE, ClaimScope.EDITION, None, FieldState.VALID, "Other edition"),
+            (8, ClaimKind.PUBLISHER, ClaimScope.EDITION, None, FieldState.VALID, "Example Press"),
+            (9, ClaimKind.IMPRINT, ClaimScope.EDITION, None, FieldState.VALID, "Example Imprint"),
+            (10, ClaimKind.IMPRINT, ClaimScope.EDITION, None, FieldState.VALID, "Scalar Imprint"),
+            (11, ClaimKind.LANGUAGE, ClaimScope.EDITION, None, FieldState.VALID, "eng"),
+            (12, ClaimKind.CREATOR, ClaimScope.EDITION, None, FieldState.UNSUPPORTED, None),
+            (13, ClaimKind.CONTRIBUTOR, ClaimScope.EDITION, None, FieldState.UNSUPPORTED, None),
+            (14, ClaimKind.TITLE, ClaimScope.WORK, None, FieldState.VALID, "Local work title"),
+            (15, ClaimKind.SUBTITLE, ClaimScope.WORK, None, FieldState.VALID, "Work subtitle"),
+            (16, ClaimKind.TITLE, ClaimScope.WORK, None, FieldState.VALID, "Alternate work"),
+            (17, ClaimKind.DESCRIPTION, ClaimScope.WORK, None, FieldState.VALID, "Description"),
+            (18, ClaimKind.CREATOR, ClaimScope.WORK, None, FieldState.UNSUPPORTED, None),
+            (19, ClaimKind.CONTRIBUTOR, ClaimScope.WORK, None, FieldState.UNSUPPORTED, None),
+            (20, ClaimKind.SERIES, ClaimScope.WORK, None, FieldState.UNSUPPORTED, None),
+            (21, ClaimKind.SERIES_SEQUENCE, ClaimScope.WORK, None, FieldState.UNSUPPORTED, None),
+            (22, ClaimKind.TAG, ClaimScope.WORK, None, FieldState.UNSUPPORTED, None),
+            (23, ClaimKind.GENRE, ClaimScope.WORK, None, FieldState.UNSUPPORTED, None),
+            (24, ClaimKind.SERIES, ClaimScope.WORK, None, FieldState.VALID, "Cycle"),
+            (25, ClaimKind.SERIES_SEQUENCE, ClaimScope.WORK, None, FieldState.VALID, "2"),
+        )
+        self.assertEqual(
+            expected_claims,
+            tuple(
+                (
+                    value.raw_order,
+                    value.kind,
+                    value.scope,
+                    value.role,
+                    value.state,
+                    value.value,
+                )
+                for value in candidate.claims
+            ),
+        )
         expected_matrix = (
-            (ProviderEvidenceKind.COPYRIGHT_DATE, ClaimScope.EDITION, None, 20),
-            (
-                ProviderEvidenceKind.DEWEY_CLASSIFICATION,
-                ClaimScope.EDITION,
-                None,
-                9,
-            ),
-            (
-                ProviderEvidenceKind.EDITION_WORK_RELATION,
-                ClaimScope.EDITION,
-                None,
-                0,
-            ),
-            (ProviderEvidenceKind.LAST_MODIFIED, ClaimScope.EDITION, None, 2),
-            (
-                ProviderEvidenceKind.LC_CLASSIFICATION,
-                ClaimScope.EDITION,
-                None,
-                10,
-            ),
-            (ProviderEvidenceKind.LCCN, ClaimScope.EDITION, None, 8),
-            (ProviderEvidenceKind.OCLC, ClaimScope.EDITION, None, 7),
-            (ProviderEvidenceKind.PAGE_COUNT, ClaimScope.EDITION, None, 21),
-            (ProviderEvidenceKind.PAGINATION, ClaimScope.EDITION, None, 19),
-            (
-                ProviderEvidenceKind.PHYSICAL_FORMAT,
-                ClaimScope.EDITION,
-                None,
-                18,
-            ),
-            (
-                ProviderEvidenceKind.PUBLICATION_PLACE,
-                ClaimScope.EDITION,
-                None,
-                11,
-            ),
-            (ProviderEvidenceKind.REVISION, ClaimScope.EDITION, None, 1),
-            (ProviderEvidenceKind.WIKIDATA, ClaimScope.EDITION, None, 16),
-            (ProviderEvidenceKind.AUTHOR_IDENTITY, ClaimScope.WORK, None, 5),
-            (
-                ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
-                ClaimScope.WORK,
-                "author",
-                6,
-            ),
-            (
-                ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
-                ClaimScope.WORK,
-                None,
-                22,
-            ),
-            (ProviderEvidenceKind.LAST_MODIFIED, ClaimScope.WORK, None, 4),
-            (ProviderEvidenceKind.PERSON, ClaimScope.WORK, None, 13),
-            (ProviderEvidenceKind.PLACE, ClaimScope.WORK, None, 14),
-            (ProviderEvidenceKind.REVISION, ClaimScope.WORK, None, 3),
-            (ProviderEvidenceKind.SUBJECT, ClaimScope.WORK, None, 12),
-            (ProviderEvidenceKind.TIME, ClaimScope.WORK, None, 15),
-            (ProviderEvidenceKind.WIKIDATA, ClaimScope.WORK, None, 17),
+            (30, ProviderEvidenceKind.COPYRIGHT_DATE, ClaimScope.EDITION, None, "2026"),
+            (18, ProviderEvidenceKind.DEWEY_CLASSIFICATION, ClaimScope.EDITION, None, "813.6"),
+            (6, ProviderEvidenceKind.DISTRIBUTOR, ClaimScope.EDITION, None, "Example Distributor"),
+            (33, ProviderEvidenceKind.EDITION_COVER_ID, ClaimScope.EDITION, None, "101"),
+            (27, ProviderEvidenceKind.EDITION_DESCRIPTION, ClaimScope.EDITION, None, "Edition description"),
+            (7, ProviderEvidenceKind.EDITION_STATEMENT, ClaimScope.EDITION, None, "First edition"),
+            (8, ProviderEvidenceKind.EDITION_STATEMENT, ClaimScope.EDITION, None, "First edition statement"),
+            (0, ProviderEvidenceKind.EDITION_WORK_RELATION, ClaimScope.EDITION, None, "open-library-work-OL5W"),
+            (2, ProviderEvidenceKind.LAST_MODIFIED, ClaimScope.EDITION, None, "2026-01-02T03:04:05.000000"),
+            (19, ProviderEvidenceKind.LC_CLASSIFICATION, ClaimScope.EDITION, None, "PS3605.X36"),
+            (17, ProviderEvidenceKind.LCCN, ClaimScope.EDITION, None, "2026123456"),
+            (16, ProviderEvidenceKind.OCLC, ClaimScope.EDITION, None, "12345"),
+            (31, ProviderEvidenceKind.PAGE_COUNT, ClaimScope.EDITION, None, "321"),
+            (29, ProviderEvidenceKind.PAGINATION, ClaimScope.EDITION, None, "321 pages"),
+            (28, ProviderEvidenceKind.PHYSICAL_FORMAT, ClaimScope.EDITION, None, "eBook"),
+            (20, ProviderEvidenceKind.PUBLICATION_PLACE, ClaimScope.EDITION, None, "London"),
+            (5, ProviderEvidenceKind.RESPONSIBILITY_STATEMENT, ClaimScope.EDITION, None, "By Ada Author"),
+            (1, ProviderEvidenceKind.REVISION, ClaimScope.EDITION, None, "3"),
+            (9, ProviderEvidenceKind.TRANSLATION_STATEMENT, ClaimScope.EDITION, None, "Original title"),
+            (25, ProviderEvidenceKind.WIKIDATA, ClaimScope.EDITION, None, "Q123"),
+            (14, ProviderEvidenceKind.AUTHOR_IDENTITY, ClaimScope.WORK, None, "open-library-author-OL7A"),
+            (15, ProviderEvidenceKind.CONTRIBUTOR_IDENTITY, ClaimScope.WORK, "author", "open-library-author-OL7A"),
+            (32, ProviderEvidenceKind.FIRST_PUBLICATION_DATE, ClaimScope.WORK, None, "2025-12-31"),
+            (4, ProviderEvidenceKind.LAST_MODIFIED, ClaimScope.WORK, None, "2026-01-03T03:04:05.000000"),
+            (22, ProviderEvidenceKind.PERSON, ClaimScope.WORK, None, "Example Person"),
+            (23, ProviderEvidenceKind.PLACE, ClaimScope.WORK, None, "Example Place"),
+            (3, ProviderEvidenceKind.REVISION, ClaimScope.WORK, None, "4"),
+            (13, ProviderEvidenceKind.SEARCH_EDITION, ClaimScope.WORK, None, "OL1M"),
+            (12, ProviderEvidenceKind.SEARCH_LANGUAGE, ClaimScope.WORK, None, "eng"),
+            (11, ProviderEvidenceKind.SEARCH_PUBLICATION_DATE, ClaimScope.WORK, None, "2026"),
+            (10, ProviderEvidenceKind.SEARCH_PUBLISHER, ClaimScope.WORK, None, "Search Press"),
+            (21, ProviderEvidenceKind.SUBJECT, ClaimScope.WORK, None, "Speculative fiction"),
+            (24, ProviderEvidenceKind.TIME, ClaimScope.WORK, None, "Near future"),
+            (26, ProviderEvidenceKind.WIKIDATA, ClaimScope.WORK, None, "Q456"),
+            (34, ProviderEvidenceKind.WORK_COVER_ID, ClaimScope.WORK, None, "202"),
         )
         self.assertEqual(
             expected_matrix,
             tuple(
-                (value.kind, value.scope, value.role, value.source_ordinal)
-                for value in reopened.providers[0].candidates[0].evidence
+                (
+                    value.source_ordinal,
+                    value.kind,
+                    value.scope,
+                    value.role,
+                    value.value,
+                )
+                for value in candidate.evidence
             ),
         )
         identity = next(
             value
-            for value in reopened.providers[0].candidates[0].evidence
+            for value in candidate.evidence
             if value.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY
             and value.value == "open-library-author-OL7A"
         )
@@ -479,7 +543,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             ],
             [
                 value.source_ordinal
-                for value in reopened.providers[0].candidates[0].evidence
+                for value in candidate.evidence
             ],
         )
 
