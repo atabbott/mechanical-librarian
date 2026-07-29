@@ -653,6 +653,36 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             {request.url.params["q"] for request in requests},
         )
 
+    def test_terminal_detail_failure_finalizes_reserved_details(self) -> None:
+        requests: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request.url.path)
+            if request.url.path == "/search.json":
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=_search("/books/OL1M", "/books/OL2M"),
+                )
+            self.assertEqual("/books/OL1M.json", request.url.path)
+            return httpx.Response(404)
+
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", None, ()), (_isbn(),)
+        )
+        observation = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        ).observe(plan)
+
+        self.assertEqual(["/search.json", "/books/OL1M.json"], requests)
+        self.assertEqual(ProviderStatus.UNAVAILABLE, observation.status)
+        self.assertEqual(4, observation.request_accounting.logical_requests)
+        self.assertEqual(2, observation.request_accounting.initial_dispatches)
+        self.assertEqual(2, observation.request_accounting.undispatched_incomplete)
+
     def test_discovery_oversized_lane_stops_remaining_requests_at_exact_bound(
         self,
     ) -> None:

@@ -462,6 +462,7 @@ class OpenLibraryMetadataProvider:
                     self.cover_user_agent,
                 )
         except _ProviderFailure as error:
+            self._ledger.finalize_pending_details()
             return result(error.status)
         except (
             EvidenceValueError,

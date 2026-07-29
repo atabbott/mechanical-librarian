@@ -147,6 +147,14 @@ class _DiscoveryRequestLedger:
             self.undispatched_incomplete += 1
         return result, False
 
+    def finalize_pending_details(self) -> None:
+        """Close reserved detail work that a terminal sibling prevents sending."""
+        details = tuple(
+            sorted(key for key in self._pending if key[2] == "detail")
+        )
+        self._pending.difference_update(details)
+        self.undispatched_incomplete += len(details)
+
     def accounting(self) -> ProviderRequestAccounting:
         """Return closed aggregate-safe request accounting, never request data."""
         return ProviderRequestAccounting(
