@@ -63,7 +63,7 @@ provider call.
 
 - The database path is absent for the first invocation or already contains the
   exact current schema required by the installed increment.
-- `metadata-report-v1` through `metadata-report-v13`, and all earlier development
+- `metadata-report-v1` through `metadata-report-v17`, and all earlier development
   schemas are rejected before mutation. There is no migration, import,
   preservation, or compatibility parser. Keep an old database offline if
   required, initialize a clean database, and rerun the supported report command.
@@ -176,9 +176,9 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v17`; `metadata-report-v16` is legacy and,
-like all earlier development reports and databases, remains offline and requires
-a clean current database under ADR-0013.
+discriminator is `metadata-report-v18`. Every earlier report discriminator,
+including `metadata-report-v17`, remains offline and requires a clean current
+database under ADR-0013.
 
 The credential-bearing parent combines those facts with the target projection.
 Every distinct checksum-valid ISBN family across bounded package, front, and
@@ -228,12 +228,16 @@ candidate or cover evidence. Its aggregate diagnostic is
 `provider_declared_error`, never success. A malformed, empty, or over-bound
 error envelope is `malformed`; its content is never retained.
 
-Report v15 adds only bounded failure diagnostics to provider observations.
-They contain category, closed component/stage, optional retryability/currentness
-and aggregate count. Provider names, attempt ordinals, delays, timings,
-headers, bodies, exception text, and credentials are not diagnostic fields.
-Exact reopen uses the stored aggregate and performs no provider construction
-or egress. Provider status retains its existing neutral meaning.
+Provider observations contain only bounded failure diagnostics: category,
+closed component/stage, optional retryability/currentness and aggregate count.
+Adapters classify each rejected optional source member or additive schema key
+at the parser boundary as `schema_construction/provider/schema`; the application
+canonically merges that aggregate once with attempt and incomplete-outcome
+diagnostics. Reopen uses the stored aggregate without recounting it, provider
+construction, or egress. Provider names, record values, attempt ordinals,
+delays, timings, headers, bodies, exception text, credentials, and rejected raw
+members are not diagnostic fields. Counts saturate at the fixed diagnostic
+bound, and provider status retains its existing neutral meaning.
 
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
 bounded set is `candidates`; all candidates survive in provider-identity order
@@ -243,21 +247,41 @@ description, typed taxonomy, same-work first publication, and same-work cover
 evidence. It strips ISBN/ASIN, publisher/imprint, edition language,
 explicit/subtitle, and every other edition claim. Hardcover preserves its
 upstream category exactly: `Genre` maps to genre and `Mood` or
-`ContentWarning` maps to tag; unknown, conflicting, malformed, or overflowing
-taxonomy fails closed. Open Library subjects remain neutral evidence rather
-than genres or tags.
+`ContentWarning` maps to tag. A malformed optional taxonomy row, tag link,
+category, series entry, contribution, language, publisher parent, cover link,
+or date is field- or member-local: valid siblings remain, an invalid value is
+not retained, and a rejected neutral value contributes only to the bounded
+schema diagnostic. An over-cap optional collection contributes no prefix.
+Open Library subjects remain neutral evidence rather than genres or tags.
 
 Open Library additionally preserves a closed, bounded rich-evidence allowlist
-from only those required edition and work records: provider identities and
-revision provenance, selected identifiers and classifications, subjects,
-edition characteristics, contributor identity/role, edition-work relation,
-first-publication date, and cover IDs. It retains no raw payloads, arbitrary
-links or unknown identifiers and performs no author traversal, edition
-enumeration, fuzzy fallback, ranking, voting, or provider fusion.
-Each fixed request asks for one row beyond the retained cap so overflow remains
-observable. Malformed or oversized provider fields remain explicit field-local
-claims; structural or join failures make the observation `malformed`. No
-winner, score, merge, fuzzy search, generic retry framework, or cache exists.
+from only the admitted Search row and required edition/work detail records:
+author and contributor identities, revision and last-modified provenance,
+OCLC/LCCN/Wikidata identifiers, subjects/people/places/times, Dewey and LC
+classifications, physical format, page count and pagination, publication place,
+copyright and first-publication dates, unresolved publication text,
+responsibility/distributor/edition/translation statements, edition
+descriptions, exact edition/work cover IDs, the edition-work relation, and
+work-scoped Search publisher/date/language/edition context. Edition-detail
+facts stay edition-scoped; work detail, structurally paired Search authors and
+Search context stay work-scoped. A broken optional author, parent, alias,
+description, classification, identifier, cover, or other allowlisted member is
+local to that field/member and cannot manufacture creator identity. It retains
+no raw payloads, arbitrary links or unknown identifiers and performs no author
+traversal, edition enumeration, fuzzy fallback, ranking, voting, or provider
+fusion.
+Each fixed candidate request asks for one row beyond the retained cap so
+candidate overflow remains observable. Across all three providers, an admitted
+bounded optional collection retains each valid member in source order and
+diagnoses each rejected member once. An over-cap collection is instead rejected
+as one field with one diagnostic occurrence and no partial-prefix acceptance. A
+non-valid typed claim carries no value; rejected neutral evidence exists only
+as the aggregate-safe diagnostic. Invalid UTF-8 or JSON,
+response/root/candidate-list shape or cardinality, missing/invalid/duplicate
+candidate identity, ambiguous collision, and missing or contradictory required
+edition-to-work linkage remain record-level failures and emit no orphaned
+candidate evidence. No winner, score, merge, fuzzy search, generic retry
+framework, or cache exists.
 
 Google Books retains its bounded volume ID as the edition candidate identity
 and records the edition-to-work relationship explicitly as `unresolved`;
@@ -281,10 +305,27 @@ and deadline or budget outcomes reached before any dispatch retain
 reads a clock or contacts a provider. No numerical provider-truth score is
 manufactured.
 Malformed or oversized scalar claim fields remain explicit field-local states,
-so valid sibling claims and evidence survive. Every identifier entry must be
-one exact bounded `type`/`identifier` object; structurally malformed entries
-make the lane `malformed`, while well-formed unsupported identifier types are
-ignored.
+so valid sibling claims and evidence survive. Google Books optional authors,
+categories, revision, publication text, format, and page count follow the same
+field-local rule. Its recognized `industryIdentifiers` candidate shape remains
+strict: the collection must be bounded and every entry must be one exact
+`type`/`identifier` object, so a malformed entry rejects the candidate rather
+than being recovered member-locally. A well-formed unsupported identifier type
+is silently ignored. Exact volume identity, candidate limits and record shape
+remain strict.
+
+Each provider candidate serializes claims in `raw_order` and rich evidence in
+canonical order. Before canonical sorting, every admitted evidence occurrence
+receives a non-negative `source_ordinal`; equal values remain separate
+occurrences rather than being deduplicated. Each rich-evidence item also keeps
+its closed kind, exact bounded value, `work` or `edition` scope, and a
+controlled role only for contributor identity. Date evidence additionally
+keeps its closed event, maximum lexical precision, normalized value when safe,
+and explicit or unresolved linkage confidence. Canonical report reopen
+preserves these fields and all field states byte-for-byte. Reviewer evidence
+IDs are recomputed from provider, candidate and the complete rich-evidence
+object, including `source_ordinal`, then checked against the authoritative
+report; another occurrence or an invented sibling cannot satisfy that binding.
 
 Each child lane records its opaque identity, kind, matched ISBN family when
 applicable, exact triggering local references, typed status, and

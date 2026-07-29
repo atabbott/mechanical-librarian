@@ -43,6 +43,8 @@ from mechanical_librarian.domain.metadata_report import (
     validate_provider_access_time,
 )
 from mechanical_librarian.application.failure_diagnostics import (
+    FailureDiagnostic,
+    merge_provider_diagnostics,
     provider_attempt_diagnostics,
 )
 from mechanical_librarian.domain.cover_evidence import (
@@ -357,6 +359,7 @@ def provider_observation(
     results: tuple[ProviderLaneResult, ...],
     *,
     authority: str | None = None,
+    diagnostics: tuple[FailureDiagnostic, ...] = (),
     request_accounting: ProviderRequestAccounting = ProviderRequestAccounting(),
 ) -> ProviderObservation:
     access_times = {
@@ -501,6 +504,7 @@ def provider_observation(
         authority,
         tuple(sorted(lanes, key=lambda value: value.identity)),
         accessed_at=accessed_at,
+        diagnostics=diagnostics,
         request_accounting=request_accounting,
     )
 
@@ -715,6 +719,7 @@ def qualify_provider_observation(
             lookup.kind,
             observation.authority,
             accessed_at=observation.accessed_at,
+            diagnostics=observation.diagnostics,
         )
     if observation.status is not ProviderStatus.CANDIDATES:
         return ProviderObservation(
@@ -725,6 +730,7 @@ def qualify_provider_observation(
             ProviderQueryKind.WORK,
             observation.authority,
             accessed_at=observation.accessed_at,
+            diagnostics=observation.diagnostics,
         )
     expected_title = normalize_title(lookup.title or "").casefold()
     expected_authors = tuple(
@@ -829,6 +835,7 @@ def qualify_provider_observation(
         ProviderQueryKind.WORK,
         observation.authority,
         accessed_at=observation.accessed_at,
+        diagnostics=observation.diagnostics,
     )
 
 
@@ -1038,10 +1045,13 @@ class GenerateMetadataReport:
                 observation.lanes,
                 observation.convergence,
                 observation.accessed_at,
-                provider_attempt_diagnostics(
-                    attempt_records,
-                    status=observation.status.value,
-                    incomplete_causes=incomplete_causes,
+                merge_provider_diagnostics(
+                    observation.diagnostics,
+                    provider_attempt_diagnostics(
+                        attempt_records,
+                        status=observation.status.value,
+                        incomplete_causes=incomplete_causes,
+                    ),
                 ),
                 observation.request_accounting,
             )

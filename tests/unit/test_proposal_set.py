@@ -1712,6 +1712,35 @@ class ProposalSetTests(unittest.TestCase):
         )
         self.assertEqual(ProposalOutcome.KEEP, result.outcome)
 
+    def test_series_without_sequence_remains_eligible(self) -> None:
+        claims = (
+            _claim(
+                "open_library",
+                "edition-1",
+                ClaimKind.SERIES,
+                "Reading Order",
+                scope=ClaimScope.WORK,
+            ),
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(
+                        series=TargetField(
+                            TargetDestination.SERIES,
+                            TargetFieldState.VALUE,
+                            (TargetSeries("reading order", None),),
+                        ),
+                    ),
+                    providers=(
+                        _provider("open_library", "edition-1", claims),
+                    ),
+                )
+            ),
+            TargetDestination.SERIES,
+        )
+        self.assertEqual(ProposalOutcome.KEEP, result.outcome)
+
     def test_work_publication_fill_preserves_year_date_consistency(self) -> None:
         evidence = (
             ProviderEvidence(

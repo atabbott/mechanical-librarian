@@ -5,7 +5,7 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v5` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v17` plus `proposal-set-v2`, or the separate `catalogue-v1`
+  `metadata-report-v18` plus `proposal-set-v2`, or the separate `catalogue-v1`
   schema;
 - `review-case-v1`, `shadow-review-request-v3`, `shadow-review-inspect-v2`,
   `shadow-review-failure-v2`, and the exact-current append-only
@@ -21,7 +21,10 @@ The current installed contract is intentionally narrow:
   referenced enabled providers: at most eight exact ISBN-family lanes plus one exact
   title-plus-complete-author work lane, with no partial egress on overflow;
   Hardcover selections use at most three relationship levels and reject
-  provider-declared GraphQL errors before considering partial data;
+  provider-declared GraphQL errors before considering partial data; safely
+  anchored records retain independently valid bounded optional fields and
+  members while strict response shape, candidate identity, cardinality and
+  required edition/work joins fail closed;
 - report-only bounded cover evidence from ABS, an EPUB-declared cover, and
   configured cover-enabled providers: at most eight provider sources overall
   and four per provider, with explicit provider/gallery truncation;

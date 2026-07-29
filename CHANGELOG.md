@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Preserve every independently valid, bounded Google Books, Hardcover, and
+  Open Library claim or closed rich-evidence value from a safely anchored
+  provider record when an optional sibling is absent, unsupported, malformed,
+  oversized, or untyped. Valid collection members and repeated occurrences
+  retain source order; an over-cap collection is rejected as one field without
+  retaining a prefix. Required response shape, candidate identity and
+  edition-to-work joins remain fail-closed. Provider-owned parser/schema
+  rejections become one bounded, aggregate-safe diagnostic per rejected source
+  occurrence and merge once with attempt diagnostics across persistence and
+  reopen. Extend the closed rich-evidence vocabulary, work/edition scopes and
+  controlled contributor roles, and bind reviewer evidence identities to the
+  occurrence's pre-canonical `source_ordinal`. Advance the clean exact-current
+  report contract to `metadata-report-v18`; deterministic replay preserves
+  claims, rich evidence, duplicate occurrences, provenance, scopes, roles,
+  states, raw/source order, source ordinals, and diagnostics. Earlier report
+  databases are rejected without mutation or migration under ADR-0013. (#400)
+
 - Coalesce semantically identical provider discovery lookups within one
   report-only observation. Each discovery lane retains its own provenance while
   replaying the immutable completed provider result, so coalescing does not
@@ -34,7 +51,7 @@
   persistence/persistence/persistence producer.
   Malformed output and every other nonzero exit remain separate. Advance clean
   exact-current contracts to
-  `metadata-report-v17`, `shadow-review-inspect-v2`, and
+  `metadata-report-v18`, `shadow-review-inspect-v2`, and
   `shadow-review-failure-v2`; proposal, packet, request, and result bytes remain
   unchanged. Earlier development report databases are rejected without
   migration under ADR-0013. ADR-0017 freezes the privacy and replay boundary.

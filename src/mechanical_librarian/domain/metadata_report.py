@@ -32,7 +32,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 
 
-REPORT_SCHEMA = "metadata-report-v17"
+REPORT_SCHEMA = "metadata-report-v18"
 COMPARISON_VERSION = "same-kind-v1"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -139,6 +139,15 @@ class ProviderEvidenceKind(StrEnum):
     FIRST_PUBLICATION_DATE = "first_publication_date"
     EDITION_COVER_ID = "edition_cover_id"
     WORK_COVER_ID = "work_cover_id"
+    RESPONSIBILITY_STATEMENT = "responsibility_statement"
+    DISTRIBUTOR = "distributor"
+    EDITION_STATEMENT = "edition_statement"
+    TRANSLATION_STATEMENT = "translation_statement"
+    EDITION_DESCRIPTION = "edition_description"
+    SEARCH_PUBLISHER = "search_publisher"
+    SEARCH_PUBLICATION_DATE = "search_publication_date"
+    SEARCH_LANGUAGE = "search_language"
+    SEARCH_EDITION = "search_edition"
 
 
 class DateLinkConfidence(StrEnum):
@@ -1068,10 +1077,16 @@ class ProviderEvidence:
     date_precision: DatePrecision | None = None
     date_normalized: str | None = None
     date_confidence: DateLinkConfidence | None = None
+    source_ordinal: int = 0
 
     def __post_init__(self) -> None:
         if type(self.kind) is not ProviderEvidenceKind or type(self.scope) is not ClaimScope:
             raise ReportValueError("provider rich evidence is invalid")
+        if (
+            type(self.source_ordinal) is not int
+            or not 0 <= self.source_ordinal <= 2_147_483_647
+        ):
+            raise ReportValueError("provider rich evidence source ordinal is invalid")
         _projection_text(self.value, "provider rich evidence value", MAX_SCALAR_CHARACTERS)
         if self.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY:
             if self.role is None:
@@ -1157,6 +1172,7 @@ class ProviderEvidence:
             "date_confidence": (
                 None if self.date_confidence is None else self.date_confidence.value
             ),
+            "source_ordinal": self.source_ordinal,
         }
 
 
@@ -1177,6 +1193,43 @@ class ProviderCandidate:
             raise ReportValueError("provider candidate claim references are duplicated")
         if tuple(value.raw_order for value in self.claims) != tuple(sorted(value.raw_order for value in self.claims)):
             raise ReportValueError("provider candidate claims are not in raw source order")
+        # Evidence is only meaningful when it remains bound to this exact
+        # edition/work pair.  Keep these invariants here so replay and every
+        # downstream consumer reject a forged cross-candidate attachment.
+        edition_only = {
+            ProviderEvidenceKind.EDITION_WORK_RELATION,
+            ProviderEvidenceKind.EDITION_COVER_ID,
+            ProviderEvidenceKind.PAGE_COUNT,
+            ProviderEvidenceKind.PAGINATION,
+            ProviderEvidenceKind.PHYSICAL_FORMAT,
+            ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+            ProviderEvidenceKind.COPYRIGHT_DATE,
+            ProviderEvidenceKind.RESPONSIBILITY_STATEMENT,
+            ProviderEvidenceKind.DISTRIBUTOR,
+            ProviderEvidenceKind.EDITION_STATEMENT,
+            ProviderEvidenceKind.TRANSLATION_STATEMENT,
+            ProviderEvidenceKind.EDITION_DESCRIPTION,
+        }
+        work_only = {
+            ProviderEvidenceKind.WORK_COVER_ID,
+            ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+            ProviderEvidenceKind.AUTHOR_IDENTITY,
+            ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+            ProviderEvidenceKind.SEARCH_PUBLISHER,
+            ProviderEvidenceKind.SEARCH_PUBLICATION_DATE,
+            ProviderEvidenceKind.SEARCH_LANGUAGE,
+            ProviderEvidenceKind.SEARCH_EDITION,
+        }
+        if any(
+            (value.kind in edition_only and value.scope is not ClaimScope.EDITION)
+            or (value.kind in work_only and value.scope is not ClaimScope.WORK)
+            or (
+                value.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
+                and value.value != self.work_identity
+            )
+            for value in self.evidence
+        ):
+            raise ReportValueError("provider rich evidence is misbound")
         if (
             type(self.evidence) is not tuple
             or len(self.evidence) > MAX_PROVIDER_EVIDENCE
@@ -1207,6 +1260,7 @@ class ProviderCandidate:
                             if value.date_confidence is None
                             else value.date_confidence.value
                         ),
+                        value.source_ordinal,
                     ),
                 )
             )
@@ -1327,6 +1381,7 @@ _PROVIDER_DIAGNOSTIC_STAGES = {
     FailureCategory.MALFORMED_OVER_BOUND_RESPONSE: FailureStage.RESPONSE,
     FailureCategory.PROVIDER_DECLARED_ERROR: FailureStage.RESPONSE,
     FailureCategory.QUOTA_RATE_LIMIT: FailureStage.RESPONSE,
+    FailureCategory.SCHEMA_CONSTRUCTION: FailureStage.SCHEMA,
     FailureCategory.TIMEOUT: FailureStage.REQUEST,
     FailureCategory.TRANSPORT: FailureStage.REQUEST,
     FailureCategory.UNKNOWN: FailureStage.RESPONSE,
@@ -2354,7 +2409,7 @@ def _provider_claim_from_data(value: object) -> ProviderClaim:
 
 
 def _provider_evidence_from_data(value: object) -> ProviderEvidence:
-    item = _object(value, {"date_confidence", "date_event", "date_normalized", "date_precision", "kind", "role", "scope", "value"})
+    item = _object(value, {"date_confidence", "date_event", "date_normalized", "date_precision", "kind", "role", "scope", "source_ordinal", "value"})
     return ProviderEvidence(
         ProviderEvidenceKind(item["kind"]),
         item["value"],
@@ -2368,6 +2423,7 @@ def _provider_evidence_from_data(value: object) -> ProviderEvidence:
             if item["date_confidence"] is None
             else DateLinkConfidence(item["date_confidence"])
         ),
+        item["source_ordinal"],
     )
 
 

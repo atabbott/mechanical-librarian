@@ -34,6 +34,13 @@ from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
 )
+from mechanical_librarian.domain.failure_diagnostics import (
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
+    MAX_DIAGNOSTIC_COUNT,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -119,6 +126,7 @@ class GoogleBooksMetadataProvider:
         self._incomplete_causes: list[ProviderIncompleteCauseRecord] = []
         self._accessed_at: str | None = None
         self._called = False
+        self._schema_rejections = 0
         self._ledger = _DiscoveryRequestLedger("google_books", "volumes-v1")
 
     @property
@@ -139,6 +147,7 @@ class GoogleBooksMetadataProvider:
         *,
         deadline: float | None = None,
     ) -> ProviderObservation:
+        self._schema_rejections = 0
         if self._called:
             return ProviderObservation(
                 self._name,
@@ -206,6 +215,7 @@ class GoogleBooksMetadataProvider:
             self._name,
             tuple(results),
             authority="google_books",
+            diagnostics=self._schema_diagnostics(),
             request_accounting=ledger.accounting(),
         )
 
@@ -264,6 +274,7 @@ class GoogleBooksMetadataProvider:
                 payload,
                 local_claims,
                 requested_family=family,
+                schema_rejections=lambda count: self._reject_schema_members(count),
             )
         except _ProviderFailure as error:
             return self._result(lookup, error.status, references=references)
@@ -295,6 +306,26 @@ class GoogleBooksMetadataProvider:
             references=references,
         )
 
+    def _reject_schema_members(self, count: int = 1) -> None:
+        if count <= 0:
+            return
+        self._schema_rejections = min(
+            MAX_DIAGNOSTIC_COUNT,
+            self._schema_rejections + count,
+        )
+
+    def _schema_diagnostics(self) -> tuple[FailureDiagnostic, ...]:
+        if not self._schema_rejections:
+            return ()
+        return (
+            FailureDiagnostic(
+                FailureCategory.SCHEMA_CONSTRUCTION,
+                FailureComponent.PROVIDER,
+                FailureStage.SCHEMA,
+                count=self._schema_rejections,
+            ),
+        )
+
     def _result(
         self,
         lookup: MetadataLookup,
@@ -311,6 +342,7 @@ class GoogleBooksMetadataProvider:
             lookup.kind,
             "google_books",
             accessed_at=self._accessed_at,
+            diagnostics=self._schema_diagnostics(),
         )
 
     def _request(
@@ -566,6 +598,7 @@ def _candidates(
     local_claims: tuple[LocalClaim, ...],
     *,
     requested_family: str | None,
+    schema_rejections: Callable[[int], None],
 ) -> tuple[ProviderCandidate, ...]:
     if set(payload) - {"items", "totalItems"}:
         raise ValueError("provider response is malformed")
@@ -593,6 +626,7 @@ def _candidates(
             info,
             local_claims,
             requested_family=requested_family,
+            schema_rejections=schema_rejections,
         )
         if candidate is not None:
             admitted.append(candidate)
@@ -609,6 +643,7 @@ def _candidate(
     local_claims: tuple[LocalClaim, ...],
     *,
     requested_family: str | None,
+    schema_rejections: Callable[[int], None],
 ) -> ProviderCandidate | None:
     allowed = {
         "authors",
@@ -624,8 +659,11 @@ def _candidate(
         "subtitle",
         "title",
     }
-    if set(info) - allowed:
-        raise ValueError("provider volume contains an unknown field")
+    # Google may add optional volumeInfo fields.  They carry no identity or
+    # required join material, so ignore them rather than discarding the safely
+    # ISBN-anchored record.  Identity and ISBN binding below remain strict.
+    # Deliberately do not retain or project unknown optional values.
+    schema_rejections(len(set(info) - allowed))
     identity = "google-books-volume-" + volume_id
     identifiers = info.get("industryIdentifiers", [])
     if type(identifiers) is not list or len(identifiers) > _MAX_VALUES:
@@ -701,7 +739,9 @@ def _candidate(
         )
     add(ClaimKind.TITLE, info.get("title"), ClaimScope.WORK)
     add(ClaimKind.SUBTITLE, info.get("subtitle"), ClaimScope.WORK)
-    authors = _string_list(info.get("authors", []), _MAX_VALUES)
+    authors = _optional_string_list(
+        info.get("authors", []), _MAX_VALUES, schema_rejections
+    )
     for author in authors:
         add(
             ClaimKind.CREATOR,
@@ -719,22 +759,42 @@ def _candidate(
     )
     add(ClaimKind.LANGUAGE, info.get("language"), ClaimScope.EDITION)
 
-    evidence = {
+    evidence = [
         ProviderEvidence(
             ProviderEvidenceKind.EDITION_WORK_RELATION,
             "unresolved",
             ClaimScope.EDITION,
         )
-    }
+    ]
     for field, kind in (
-        ("printType", ProviderEvidenceKind.PHYSICAL_FORMAT),
         ("contentVersion", ProviderEvidenceKind.REVISION),
         ("publishedDate", ProviderEvidenceKind.PUBLICATION_DATE_TEXT),
     ):
         if info.get(field) is not None:
-            evidence.add(
-                ProviderEvidence(kind, _text(info[field]), ClaimScope.EDITION)
-            )
+            try:
+                evidence.append(
+                    ProviderEvidence(kind, _text(info[field]), ClaimScope.EDITION)
+                )
+            except (ValueError, EvidenceValueError):
+                schema_rejections(1)
+    print_type = info.get("printType")
+    if print_type is not None:
+        try:
+            # Google documents BOOK, MAGAZINE and ALL; only BOOK is usable as
+            # physical-format evidence for this edition-level observation.
+            normalized_print_type = _text(print_type)
+            if normalized_print_type == "BOOK":
+                evidence.append(
+                    ProviderEvidence(
+                        ProviderEvidenceKind.PHYSICAL_FORMAT,
+                        normalized_print_type,
+                        ClaimScope.EDITION,
+                    )
+                )
+            elif normalized_print_type not in {"MAGAZINE", "ALL"}:
+                schema_rejections(1)
+        except (ValueError, EvidenceValueError):
+            schema_rejections(1)
     pages = info.get("pageCount")
     if pages is not None:
         if (
@@ -742,25 +802,32 @@ def _candidate(
             or isinstance(pages, bool)
             or not 1 <= pages <= 100_000
         ):
-            raise ValueError("provider page count is malformed")
-        evidence.add(
-            ProviderEvidence(
-                ProviderEvidenceKind.PAGE_COUNT,
-                str(pages),
-                ClaimScope.EDITION,
+            schema_rejections(1)
+            pages = None
+        if pages is not None:
+            evidence.append(
+                ProviderEvidence(
+                    ProviderEvidenceKind.PAGE_COUNT,
+                    str(pages),
+                    ClaimScope.EDITION,
+                )
             )
-        )
-    for category in _string_list(info.get("categories", []), _MAX_VALUES):
-        evidence.add(
+    for category in _optional_string_list(
+        info.get("categories", []), _MAX_VALUES, schema_rejections
+    ):
+        evidence.append(
             ProviderEvidence(
                 ProviderEvidenceKind.SUBJECT,
                 category,
                 ClaimScope.WORK,
             )
         )
+    # Keep each returned occurrence.  Source ordinals are allocated before
+    # canonical ordering so repeated provider values remain independently
+    # attributable to this candidate.
     canonical_evidence = tuple(
         sorted(
-            evidence,
+            (replace(value, source_ordinal=index) for index, value in enumerate(evidence)),
             key=lambda value: (
                 value.scope.value,
                 value.kind.value,
@@ -787,6 +854,32 @@ def _string_list(value: object, maximum: int) -> tuple[str, ...]:
     if len(set(normalized)) != len(normalized):
         raise ValueError("provider string list is duplicated")
     return values
+
+
+def _optional_string_list(
+    value: object, maximum: int, schema_rejections: Callable[[int], None] | None = None
+) -> tuple[str, ...]:
+    """Keep valid optional members in source order without weakening IDs."""
+    if type(value) is not list:
+        if schema_rejections is not None:
+            schema_rejections(1)
+        return ()
+    if len(value) > maximum:
+        if schema_rejections is not None:
+            # A rejected collection is one field-level diagnostic.  Its
+            # members are deliberately not inspected or retained.
+            schema_rejections(1)
+        return ()
+    values: list[str] = []
+    for item in value:
+        try:
+            text = _text(item)
+        except (ValueError, EvidenceValueError):
+            if schema_rejections is not None:
+                schema_rejections(1)
+            continue
+        values.append(text)
+    return tuple(values)
 
 
 def _field(

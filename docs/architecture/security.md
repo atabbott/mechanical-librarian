@@ -117,8 +117,10 @@ bounded typed-cause allowlist; it never inspects exception text and rejects TLS,
 proxy/configuration, invalid protocol/URL, local stream-state, decoding,
 pool/write-timeout, and unknown failures. Every retry remains inside pacing,
 deadline, byte, and request-count authority. Attempt records are bounded and
-process-local. The application maps only their closed category and outcome to
-report-v15 diagnostic aggregates; provider, ordinal, delay, elapsed time,
+process-local. Provider adapters also count optional parser/schema rejections
+at their actual rejection points. The application canonically merges those
+counts once with the attempt categories and incomplete-outcome mapping for
+`metadata-report-v18`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -128,8 +130,11 @@ only sorted unique provider-component aggregates whose category and stage are
 one supported provider combination.
 
 The fixed Hardcover selections stay within three relationship levels. Typed
-taxonomy is joined from bounded sibling-root tag rows by exact provider IDs;
-missing, duplicate, extra, malformed, or over-bound join material fails closed.
+taxonomy is joined from bounded sibling-root tag rows by exact provider IDs.
+Required edition/book identity and their exact join fail closed; malformed or
+over-bound optional taxonomy members and links are excluded locally, retain no
+partial prefix when the collection is over-cap, and cannot erase independent
+claims.
 HTTP-success GraphQL `errors` are inspected before `data` and produce no
 candidates or cover descriptors. Their bounded structure is validated only to
 type the failure; provider messages, paths, extensions, and partial data are not
@@ -160,7 +165,9 @@ with closed rear resource/spine/tail/marker provenance, controlled
 contributor/production roles, typed date event and precision claims, provider
 candidate edition and provider-local work
 identities, canonical provider access time when egress occurred, comparison
-facts, and derived ISBN relationships containing only
+facts, closed provider evidence kinds with work/edition scope, controlled
+contributor roles and occurrence ordinals, and derived ISBN relationships
+containing only
 claim references and those already-admitted bounded identities. The
 relationship projection does not duplicate observations or excerpts. Report
 generation performs no decision and grants no write authority. The separate
@@ -168,9 +175,11 @@ ProposalSet contains only bounded alternatives, assessments, stable evidence
 references, hashed correlation groups, closed date event/precision context,
 and policy/version bindings; it does
 not duplicate report excerpts or provider/cover payloads. These documents
-contain no credentials, private paths, raw provider bodies, or arbitrary EPUB
-text. Target and provider titles pass the same closed public-safe projection
-before they can enter a report. Failure output is fixed and value-free.
+contain no credentials, private paths, raw or rejected provider values,
+provider bodies, or arbitrary EPUB text. Optional invalid values cross the
+adapter boundary only as value-free bounded schema counts. Target and provider
+titles pass the same closed public-safe projection before they can enter a
+report. Failure output is fixed and value-free.
 Production, conversion, scanning, software, retailer, and workflow credits
 remain a separate contextual claim kind and therefore cannot cross the
 bibliographic contributor or author candidate boundary.

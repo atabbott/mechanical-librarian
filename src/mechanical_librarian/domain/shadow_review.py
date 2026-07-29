@@ -1140,6 +1140,7 @@ def _validate_provider_citation(
         "kind",
         "role",
         "scope",
+        "source_ordinal",
         "value",
     }:
         raise ShadowReviewValueError("shadow-review provider citation is invalid")
@@ -1165,6 +1166,7 @@ def _validate_provider_citation(
                 if evidence_data["date_confidence"] is None
                 else DateLinkConfidence(evidence_data["date_confidence"])
             ),
+            evidence_data["source_ordinal"],
         )
     except (ReportValueError, TypeError, ValueError) as error:
         raise ShadowReviewValueError(
@@ -1328,6 +1330,7 @@ def _validate_provider_linkage(
                 "kind",
                 "role",
                 "scope",
+                "source_ordinal",
                 "value",
             }
             or type(fact["kind"]) is not str
@@ -1335,6 +1338,8 @@ def _validate_provider_linkage(
             or fact["role"] is not None
             or type(fact["scope"]) is not str
             or fact["scope"] not in {"work", "edition"}
+            or type(fact["source_ordinal"]) is not int
+            or fact["source_ordinal"] < 0
             or any(
                 fact[key] is not None
                 for key in (
@@ -1355,6 +1360,7 @@ def _validate_provider_linkage(
                 ProviderEvidenceKind.PHYSICAL_FORMAT,
                 fact["value"],
                 ClaimScope(fact["scope"]),
+                source_ordinal=fact["source_ordinal"],
             )
         except (ReportValueError, TypeError, ValueError) as error:
             raise ShadowReviewValueError(

@@ -136,6 +136,48 @@ class _HostileEncodedStream(httpx.SyncByteStream):
 
 
 class GoogleBooksMetadataTests(unittest.TestCase):
+    def test_optional_occurrences_keep_source_order_duplicates_and_replay(self) -> None:
+        volume = _volume()
+        info = volume["volumeInfo"]
+        assert type(info) is dict
+        info["authors"] = ["Zulu", 7, "Alpha", "Zulu"]
+        observation = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={"totalItems": 1, "items": [volume]},
+                    )
+                )
+            ),
+            65_536,
+        ).observe(_lookup())
+        candidate = observation.candidates[0]
+        authors = [
+            claim.value
+            for claim in candidate.claims
+            if claim.kind is ClaimKind.CREATOR and claim.value is not None
+        ]
+        self.assertEqual(["Zulu", "Alpha", "Zulu"], authors)
+        self.assertEqual(1, observation.diagnostics[0].count)
+        self.assertNotIn("Zulu", observation.diagnostics[0].to_json())
+        self.assertEqual(
+            MetadataReport.from_json(
+                MetadataReport.create(
+                    target=TargetFacts(
+                        "primary", "ebooks", "item-1", default_target_fields("Example Book")
+                    ),
+                    file=FileFacts(0, "a" * 64, "b" * 64),
+                    local_claims=_lookup().local_claims,
+                    local_reasons=("opening_matter_isbn",),
+                    providers=(observation,),
+                ).to_json()
+            ).providers[0],
+            observation,
+        )
+
     def test_access_time_is_captured_only_at_first_actual_dispatch(self) -> None:
         requests: list[httpx.Request] = []
 
@@ -1058,6 +1100,19 @@ class GoogleBooksMetadataTests(unittest.TestCase):
         self.assertIn("Example Press", serialized)
         self.assertNotIn("2026-Spring", serialized)
         self.assertNotIn("private-api-key", serialized)
+
+
+class GoogleBooksDiagnosticBoundaryTests(unittest.TestCase):
+    def test_over_cap_optional_collection_rejects_once_without_member_traversal(self) -> None:
+        counts: list[int] = []
+        self.assertEqual(
+            (),
+            __import__(
+                "mechanical_librarian.adapters.providers.google_books_metadata",
+                fromlist=["_optional_string_list"],
+            )._optional_string_list([object()] * 9, 8, counts.append),
+        )
+        self.assertEqual([1], counts)
 
 
 if __name__ == "__main__":

@@ -50,8 +50,14 @@ The suite covers:
   exact per-lane and aggregate request cardinality, typed no-subset overflow,
   collision-free lane candidate references, sparse candidates, every valid
   ISBN family plus the optional complete-author work lane, fail-closed work
-  qualification, typed taxonomy/publication scope, all-or-nothing malformed
-  handling, and identity order. Hardcover coverage additionally fixes both
+  qualification, typed taxonomy/publication scope, strict record/identity/join
+  failure, field-local optional failure, and identity order. The shared
+  provider matrix covers every closed field state, mixed-validity scalars and
+  collections, valid-member source order and duplicate occurrences, broken
+  optional links, whole-field/no-prefix collection overflow, exact cardinality
+  boundaries, work/edition scopes, controlled roles, evidence source ordinals,
+  and bounded parser/schema diagnostics counted once. Hardcover coverage
+  additionally fixes both
   operations at three relationship levels, proves the bounded sibling taxonomy
   join, inspects valid error-only and partial-data GraphQL errors before data,
   rejects malformed/UTF-8/empty/over-bound error envelopes, and preserves
@@ -62,7 +68,9 @@ The suite covers:
   one-second pacing, cumulative backoff, deadline gates, cancellation, immediate
   partial-body charging, and aggregate-safe diagnostics;
 - Open Library exact per-family Search admission, canonical edition/work
-  request order, shared one-second pacing, finite rich evidence, terminal
+  request order, shared one-second pacing, the complete closed rich-evidence
+  allowlist with Search/work/edition scope separation and paired author
+  identity behavior, terminal
   failure mapping, identified metadata/cover requests, cover-failure isolation,
   provider-order/contact privacy, one retry per request, exactly four retries
   and 49 attempts per observation, terminal 429, 503-only `Retry-After`,
@@ -76,12 +84,21 @@ The suite covers:
   and 54 per observation, quota/4xx/503/no-match typing, canonical
   `Retry-After`, accepted/rejected transport classes, deadline and partial-byte
   bounds,
-  field-local scalar failures, strict identifier-entry shapes,
+  field-local scalar and collection failures, strict volume identity and
+  strict recognized `industryIdentifiers` candidate shape, with silent
+  omission of well-formed unsupported identifier types,
   cancellation/timeout behavior, and credential/raw-response redaction;
 - strict `batch-manifest-v5` replay and clean-current rejection, with exact
   54/27/49 Google Books/Hardcover/Open Library metadata-attempt maxima, one
   shared pacer per paced adapter across foreground entries, and no persisted
   attempt diagnostics;
+- deterministic `metadata-report-v18` serialization and database reopen preserve
+  claim raw order, rich-evidence canonical order, duplicate source occurrences,
+  source ordinals, scopes, roles, field states and diagnostics byte-for-byte.
+  Application tests merge parser, attempt and incomplete-outcome diagnostics
+  once before persistence and prove reopen does not inflate them. Persistence
+  rejects `metadata-report-v17` before mutation and a direct regression proves
+  the prior database bytes remain unchanged;
 - cover-gallery provider/aggregate bounds, safe provenance, timeout/rejection
   states, visible truncation, and digest deduplication with all provenance;
 - exact clean-state DELETE-mode report/ProposalSet/ReviewCase schema, side-effect-free existing-file
@@ -143,7 +160,7 @@ cover nested single-emission, multiple exact sibling labels, mixed complete and
 split labels in one ancestor, repeated equal complete/split siblings, multiple
 assembled labels, scanning/production/workflow label values, promotion cues
 inside labels, the exact 16-fact rear cap, front/rear NFC and whitespace
-normalization, `metadata-report-v17`
+normalization, `metadata-report-v18`
 canonical replay, clean database creation, and byte-unchanged rejection of v13
 state. Only aggregate expected, found, and false-positive counts are asserted
 or exported; fixture rows and source text remain private.

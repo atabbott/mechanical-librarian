@@ -40,7 +40,11 @@ map to `unknown`; exception text is never used to classify them.
 Provider adapters retain `ProviderAttemptRecord` only in process memory. The
 application maps its category and outcome to bounded deterministic aggregates
 and drops provider identity, attempt ordinal, delay, elapsed time, and every
-raw response detail before adding diagnostics to `metadata-report-v17`.
+raw response detail before adding diagnostics to `metadata-report-v18`.
+Adapters also count optional provider-member/schema rejections at their actual
+parser boundary as `schema_construction/provider/schema`. The application
+canonically merges those aggregates once with attempt and incomplete-outcome
+diagnostics; exact replay admits the persisted result without recounting it.
 Missing or malformed optional attempt-record collections and entries map to a
 bounded `unknown` aggregate rather than aborting report generation. Report
 construction and replay accept only sorted, unique provider aggregates with a
@@ -139,5 +143,6 @@ transport, timeout, cancellation, unknown failures, zero-exit invalid reviewer
 output, the exact live schema-rejection signal and its fail-closed variants,
 typed request-identity mismatch, exact currentness and persistence producers,
 the complete production-signal category matrix, clean-schema rejection,
-restart, CLI redaction, and exact offline replay. Architecture tests continue
-to enforce dependency direction.
+restart, CLI redaction, optional parser rejection counting, parser/attempt/
+incomplete merge without replay inflation, and exact offline replay.
+Architecture tests continue to enforce dependency direction.

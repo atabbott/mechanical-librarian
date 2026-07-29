@@ -65,8 +65,13 @@ bootstrap composes all layers
 The application layer owns narrow contracts for current catalogue observation,
 catalogue persistence, frozen manifest selection, serial foreground execution,
 scoped target reading, EPUB inspection/currentness, provider and cover
-observation, artifact publication, and report publication/readback. The
-ProposalSet seam adds exact create/get orchestration but no provider or write
+observation, artifact publication, and report publication/readback. Provider
+adapters own hostile record parsing, strict identity and required-link
+validation, and field-local claim/evidence classification. The domain owns
+closed field states, the evidence vocabulary, scope, role, source ordinal,
+validation, and canonical replay. The application owns orchestration and the
+exactly-once canonical merge of adapter and attempt diagnostics. The ProposalSet
+seam adds exact create/get orchestration but no provider or write
 port. ReviewCase and shadow-review seams add exact-current admission and
 qualification-only execution/persistence. There is no central speculative ports
 module, generic provider registry, queue, worker, or scheduler. Bootstrap
@@ -123,13 +128,14 @@ workflow, job, cache, or deletion surface. Batch work stores no attempt or
 resume state; shadow-review attempts are the explicit qualification-only
 exception. These rules are the current-runtime application of repository-wide
 ADR-0013.
-The `metadata-report-v17` document retains all 16 ordered Audiobookshelf target
+The `metadata-report-v18` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
 source capability
 provenance, and bounded occurrence/rear-spine provenance needed to replay the
-observation, plus source-scoped finite provider evidence and canonical
-provider discovery lanes. Distinct ISBN-10/13 families and the optional
+observation, plus source-scoped finite provider evidence with occurrence
+ordinals and canonical provider discovery lanes. Distinct ISBN-10/13 families
+and the optional
 complete-title/author lane remain separate; provider-local work convergence is
 recorded without becoming independent corroboration. The relational
 envelope remains only its scope, identity, digest, and schema-version index.
@@ -137,8 +143,10 @@ Within the exact current schema, a current-scope
 lookup follows the separate pointer offline, while an exact-ID lookup never
 changes a predecessor.
 
-Provider observations also retain application-classified, aggregate-only
-failure diagnostics. Raw process-local attempt records are not persisted.
+Provider observations also retain aggregate-only failure diagnostics from
+adapter parser/schema classification and application attempt mapping. Their
+canonical merge is persisted once and replayed without inflation. Invalid
+optional values and raw process-local attempt records are not persisted.
 Shadow outcomes store the same canonical bounded diagnostic object, while
 `shadow-review-inspect-v2` projects only case/request identities, aggregate
 attempt count, currentness, status, and canonical diagnostics; it does not

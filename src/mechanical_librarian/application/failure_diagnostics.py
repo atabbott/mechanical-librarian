@@ -263,6 +263,28 @@ def provider_attempt_diagnostics(
     )
 
 
+def merge_provider_diagnostics(
+    *groups: tuple[FailureDiagnostic, ...],
+) -> tuple[FailureDiagnostic, ...]:
+    """Canonically coalesce bounded provider aggregates without replay inflation."""
+
+    counts: Counter[tuple[FailureCategory, FailureStage, bool | None]] = Counter()
+    for group in groups:
+        if not diagnostics_are_canonical(group):
+            raise ValueError("provider diagnostics are invalid")
+        for value in group:
+            if value.component is not FailureComponent.PROVIDER or value.current is not None:
+                raise ValueError("provider diagnostics are invalid")
+            key = (value.category, value.stage, value.retryable)
+            counts[key] = min(counts[key] + value.count, MAX_DIAGNOSTIC_COUNT)
+    return tuple(
+        FailureDiagnostic(category, FailureComponent.PROVIDER, stage, retryable=retryable, count=count)
+        for (category, stage, retryable), count in sorted(
+            counts.items(), key=lambda item: (item[0][0].value, item[0][1].value, -1 if item[0][2] is None else int(item[0][2]))
+        )
+    )
+
+
 def _provider_attempt_category(
     category: str,
 ) -> tuple[FailureCategory, FailureStage] | None:
@@ -299,6 +321,7 @@ __all__ = [
     "FailureStage",
     "MAX_DIAGNOSTIC_COUNT",
     "diagnostics_are_canonical",
+    "merge_provider_diagnostics",
     "provider_attempt_diagnostics",
     "reviewer_diagnostic_is_admissible",
     "reviewer_failure_diagnostic",
