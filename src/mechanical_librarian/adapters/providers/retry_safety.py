@@ -48,6 +48,7 @@ class _DiscoveryRequestLedger:
         self._completed: dict[tuple[object, ...], object] = {}
         self._pending: set[tuple[object, ...]] = set()
         self._registered: dict[tuple[object, ...], int] = {}
+        self._unresolved: dict[tuple[object, ...], int] = {}
         self.logical = 0
         self.initial = 0
         self.replays = 0
@@ -88,11 +89,21 @@ class _DiscoveryRequestLedger:
     def _register(self, key: tuple[object, ...]) -> None:
         self.logical += 1
         self._registered[key] = self._registered.get(key, 0) + 1
+        self._unresolved[key] = self._unresolved.get(key, 0) + 1
         if key not in self._completed:
             self._pending.add(key)
 
     def allows_retry(self, attempts: int, ceiling: int) -> bool:
         return attempts + len(self._pending) < ceiling
+
+    def _resolve_occurrence(self, key: tuple[object, ...]) -> None:
+        pending = self._unresolved.get(key, 0)
+        if pending < 1:
+            raise RuntimeError("request occurrence is not registered")
+        if pending == 1:
+            del self._unresolved[key]
+        else:
+            self._unresolved[key] = pending - 1
 
     def register_detail(self, identity: str) -> None:
         self._register((self._authority, self._revision, "detail", identity))
@@ -115,8 +126,9 @@ class _DiscoveryRequestLedger:
             kind=kind, matched_family=matched_family, title=title,
             authors=authors, projection=projection,
         )
-        if key not in self._registered:
+        if self._unresolved.get(key, 0) == 0:
             self._register(key)
+        self._resolve_occurrence(key)
         completed = self._completed.get(key)
         if completed is not None:
             self.replays += 1
@@ -133,8 +145,9 @@ class _DiscoveryRequestLedger:
         self, identity: str, *, execute: Callable[[], _Result]
     ) -> tuple[_Result, bool]:
         key = (self._authority, self._revision, "detail", identity)
-        if key not in self._registered:
+        if self._unresolved.get(key, 0) == 0:
             self._register(key)
+        self._resolve_occurrence(key)
         completed = self._completed.get(key)
         if completed is not None:
             self.replays += 1
@@ -149,11 +162,9 @@ class _DiscoveryRequestLedger:
 
     def finalize_pending_details(self) -> None:
         """Close reserved detail work that a terminal sibling prevents sending."""
-        details = tuple(
-            sorted(key for key in self._pending if key[2] == "detail")
-        )
+        details = tuple(sorted(key for key in self._unresolved if key[2] == "detail"))
         self._pending.difference_update(details)
-        self.undispatched_incomplete += len(details)
+        self.undispatched_incomplete += sum(self._unresolved.pop(key) for key in details)
 
     def accounting(self) -> ProviderRequestAccounting:
         """Return closed aggregate-safe request accounting, never request data."""
