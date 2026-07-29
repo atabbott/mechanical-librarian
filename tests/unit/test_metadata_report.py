@@ -2502,6 +2502,8 @@ class MetadataReportTests(unittest.TestCase):
             DatePrecision.TIMESTAMP,
         )
         day = local("2024-03-05", DatePrecision.DAY)
+        month = local("2024-03", DatePrecision.MONTH)
+        year = local("2024", DatePrecision.YEAR)
         naive = local(
             "2024-03-05T14:30:00",
             DatePrecision.TIMESTAMP,
@@ -2536,6 +2538,30 @@ class MetadataReportTests(unittest.TestCase):
                     (zulu, different, day),
                 )
             },
+        )
+        coarse_links = {
+            link.local_reference: link
+            for link in comparison_links(negative_offset, (month, year))
+        }
+        self.assertEqual(
+            ComparisonLink(
+                month.reference,
+                Comparison.AGREEMENT,
+                ComparisonMethod.DATE_PRECISION_COMPATIBILITY,
+                PublicationDateRelation.MONTH_COMPATIBLE,
+                DatePrecision.MONTH,
+            ),
+            coarse_links[month.reference],
+        )
+        self.assertEqual(
+            ComparisonLink(
+                year.reference,
+                Comparison.AGREEMENT,
+                ComparisonMethod.DATE_PRECISION_COMPATIBILITY,
+                PublicationDateRelation.YEAR_COMPATIBLE,
+                DatePrecision.YEAR,
+            ),
+            coarse_links[year.reference],
         )
         self.assertEqual(
             (
@@ -2605,7 +2631,7 @@ class MetadataReportTests(unittest.TestCase):
                 DatePrecision.TIMESTAMP,
                 "2024-03",
                 DatePrecision.MONTH,
-                PublicationDateRelation.FINER_CONFLICT,
+                PublicationDateRelation.MONTH_COMPATIBLE,
                 DatePrecision.MONTH,
             ),
             (
@@ -2613,8 +2639,24 @@ class MetadataReportTests(unittest.TestCase):
                 DatePrecision.TIMESTAMP,
                 "2024",
                 DatePrecision.YEAR,
+                PublicationDateRelation.YEAR_COMPATIBLE,
+                DatePrecision.YEAR,
+            ),
+            (
+                "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
+                "2024-04",
+                DatePrecision.MONTH,
                 PublicationDateRelation.FINER_CONFLICT,
                 DatePrecision.YEAR,
+            ),
+            (
+                "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
+                "2025",
+                DatePrecision.YEAR,
+                PublicationDateRelation.FINER_CONFLICT,
+                None,
             ),
         )
         for (

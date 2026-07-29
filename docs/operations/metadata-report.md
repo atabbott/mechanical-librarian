@@ -205,7 +205,10 @@ authority. The date remains explicitly manifestation-incompatible.
 Timestamp comparison uses the calendar date stated in each retained lexical
 value. Different times or offsets on the same stated date agree at day
 precision; different stated dates conflict even when they denote the same UTC
-instant. Timestamp-to-day comparison remains a finer-precision conflict.
+instant. A timestamp and matching day agree exactly at day precision; matching
+month or year prefixes are month- or year-compatible respectively. A
+nonmatching stated prefix remains a finer-precision conflict at the shared
+precision.
 
 Work-scoped title and creator links retain the original source values and record
 one truthful closed comparison method per link: exact bytes; NFC, case folding

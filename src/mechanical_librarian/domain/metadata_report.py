@@ -2400,19 +2400,6 @@ def publication_date_relation(
             shared = DatePrecision.MONTH
             if len(left) >= 3 and len(right) >= 3 and left[2] == right[2]:
                 shared = DatePrecision.DAY
-    if (
-        left_precision is DatePrecision.TIMESTAMP
-        or right_precision is DatePrecision.TIMESTAMP
-    ):
-        if (
-            shared is DatePrecision.DAY
-            and left_precision
-            in {DatePrecision.TIMESTAMP, DatePrecision.DAY}
-            and right_precision
-            in {DatePrecision.TIMESTAMP, DatePrecision.DAY}
-        ):
-            return PublicationDateRelation.EXACT, DatePrecision.DAY
-        return PublicationDateRelation.FINER_CONFLICT, shared
     minimum = min(len(left), len(right))
     compatible = left[:minimum] == right[:minimum]
     if not compatible:
