@@ -767,7 +767,6 @@ def _candidate(
         )
     ]
     for field, kind in (
-        ("printType", ProviderEvidenceKind.PHYSICAL_FORMAT),
         ("contentVersion", ProviderEvidenceKind.REVISION),
         ("publishedDate", ProviderEvidenceKind.PUBLICATION_DATE_TEXT),
     ):
@@ -777,7 +776,25 @@ def _candidate(
                     ProviderEvidence(kind, _text(info[field]), ClaimScope.EDITION)
                 )
             except (ValueError, EvidenceValueError):
-                pass
+                schema_rejections(1)
+    print_type = info.get("printType")
+    if print_type is not None:
+        try:
+            # Google documents BOOK, MAGAZINE and ALL; only BOOK is usable as
+            # physical-format evidence for this edition-level observation.
+            normalized_print_type = _text(print_type)
+            if normalized_print_type == "BOOK":
+                evidence.append(
+                    ProviderEvidence(
+                        ProviderEvidenceKind.PHYSICAL_FORMAT,
+                        normalized_print_type,
+                        ClaimScope.EDITION,
+                    )
+                )
+            elif normalized_print_type not in {"MAGAZINE", "ALL"}:
+                schema_rejections(1)
+        except (ValueError, EvidenceValueError):
+            schema_rejections(1)
     pages = info.get("pageCount")
     if pages is not None:
         if (
@@ -785,6 +802,7 @@ def _candidate(
             or isinstance(pages, bool)
             or not 1 <= pages <= 100_000
         ):
+            schema_rejections(1)
             pages = None
         if pages is not None:
             evidence.append(

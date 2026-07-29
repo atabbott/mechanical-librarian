@@ -865,7 +865,7 @@ def _parse_candidates(
     for raw_book in books:
         # Only the work identity is part of the anchor.  Every other work
         # member is independently projected below.
-        book = _closed_subset(raw_book, {"id"}, work_keys)
+        book = _anchored_projection(raw_book, {"id"}, work_keys)
         book = {key: book.get(key) for key in work_keys}
         raw_taggings = book["taggings"]
         taggings: list[dict[str, Any]] = []
@@ -903,7 +903,7 @@ def _parse_candidates(
     for row_value in rows:
         if type(row_value) is dict and "image" not in row_value:
             row_value = {**row_value, "image": None}
-        row = _closed_subset(
+        row = _anchored_projection(
             row_value,
             {"id", "book_id"},
             {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"},
@@ -961,7 +961,7 @@ def _parse_cover_descriptors(
     for row_value in rows:
         if type(row_value) is dict and "image" not in row_value:
             row_value = {**row_value, "image": None}
-        row = _closed_subset(row_value, {"id", "book_id"}, {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"})
+        row = _anchored_projection(row_value, {"id", "book_id"}, {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"})
         row = {key: row.get(key) for key in {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"}}
         url, terminal_state = _cover_url(row["image"])
         edition_id = _identifier(row["id"])
@@ -1002,7 +1002,7 @@ def _parse_cover_descriptors(
         "taggings",
     }
     for raw_book in books:
-        book = _closed_subset(raw_book, {"id"}, work_keys)
+        book = _anchored_projection(raw_book, {"id"}, work_keys)
         book = {key: book.get(key) for key in work_keys}
         book_id = _identifier(book["id"])
         url, terminal_state = _cover_url(book["image"])
@@ -1496,6 +1496,15 @@ def _closed_subset(
     return value
 
 
+def _anchored_projection(
+    value: object, required: set[str], allowed: set[str]
+) -> dict[str, Any]:
+    """Retain a safely anchored provider row while discarding additive fields."""
+    if type(value) is not dict or not required <= set(value):
+        raise ValueError("provider object invalid")
+    return {key: value[key] for key in allowed & set(value)}
+
+
 def _closed_or_none(value: object, keys: set[str]) -> dict[str, Any] | None:
     return None if value is None else _closed(value, keys)
 
@@ -1533,8 +1542,15 @@ def _optional_projection_rejections(payload: bytes) -> int:
         "tag", "tag_category", "position", "series", "contribution", "author",
         "name", "parent_id", "code2", "code3", "category", "url",
     }
-    optional_lists = {"contributions", "book_series", "taggings"}
+    optional_lists = {
+        "contributions": MAX_CONTRIBUTIONS,
+        "book_series": MAX_SERIES,
+        "taggings": MAX_TAGS,
+    }
     count = 0
+    # Every response node is visited once.  This is deliberately separate from
+    # candidate parsing: additive fields are diagnostic-only and must not turn
+    # a safely anchored edition/work join into a record-level failure.
     stack: list[object] = [data]
     while stack:
         value = stack.pop()
@@ -1544,9 +1560,15 @@ def _optional_projection_rejections(payload: bytes) -> int:
                 if key in optional_lists:
                     if type(item) is not list:
                         count += 1
-                    elif len(item) > MAX_CONTRIBUTIONS:
-                        count += len(item) - MAX_CONTRIBUTIONS
-                stack.extend(value.values())
+                    else:
+                        maximum = optional_lists[key]
+                        if len(item) > maximum:
+                            count += len(item) - maximum
+                        # Optional collections may be partially usable, but a
+                        # non-object occurrence is still a single rejected
+                        # provider member (never a recursive multiplier).
+                        count += sum(1 for member in item if type(member) is not dict)
+            stack.extend(value.values())
         elif type(value) is list:
             stack.extend(value)
     return min(count, MAX_DIAGNOSTIC_COUNT)

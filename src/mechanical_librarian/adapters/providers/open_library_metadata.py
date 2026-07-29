@@ -471,6 +471,7 @@ class OpenLibraryMetadataProvider:
                     return _thaw_detail(replay.payload)
 
                 work_documents: dict[str, dict[str, Any]] = {}
+                diagnosed_documents: set[int] = set()
                 candidates: list[ProviderCandidate] = []
                 cover_candidates: list[
                     tuple[
@@ -497,11 +498,11 @@ class OpenLibraryMetadataProvider:
                         work_authors,
                         _search_work_document(search, work_key),
                     )
-                    self._reject_schema_members(
-                        _optional_projection_rejections(
-                            edition, work_documents[work_key], _search_work_document(search, work_key)
-                        )
-                    )
+                    search_work = _search_work_document(search, work_key)
+                    for document in (edition, work_documents[work_key], search_work):
+                        if document is not None and id(document) not in diagnosed_documents:
+                            diagnosed_documents.add(id(document))
+                            self._reject_schema_members(_optional_projection_rejections(document))
                     candidates.append(candidate)
                     cover_candidates.append(
                         (
@@ -1718,12 +1719,13 @@ def _optional_object_list(value: object, maximum: int) -> list[dict[str, Any]]:
 def _optional_projection_rejections(*documents: dict[str, Any]) -> int:
     """Count only discarded optional projection members; never retain values."""
     known = {
-        "key", "works", "isbn_10", "isbn_13", "title", "subtitle",
+        "key", "works", "isbn_10", "isbn_13", "isbn", "title", "subtitle",
         "publish_date", "publishers", "languages", "authors", "description",
         "alternate_titles", "alternative_titles", "imprints", "imprint", "distributors",
         "by_statement", "edition_name", "edition_statement", "translation_of",
         "contributions", "series", "series_number",
-        "publisher", "language", "edition_key",
+        "publisher", "language", "edition_key", "editions", "docs",
+        "author_name", "author_key",
         "revision", "latest_revision", "last_modified", "oclc_numbers", "lccn",
         "dewey_decimal_class", "lc_classifications", "publish_places", "subjects",
         "subject_people", "subject_places", "subject_times", "identifiers",
@@ -1737,6 +1739,7 @@ def _optional_projection_rejections(*documents: dict[str, Any]) -> int:
         "alternate_titles", "alternative_titles", "imprints", "distributors",
         "contributions", "series", "series_number",
         "publisher", "publish_date", "language", "edition_key",
+        "author_name", "author_key",
     }
     count = 0
     for document in documents:
@@ -1760,15 +1763,19 @@ def _search_work_document(source: dict[str, Any], work_key: str) -> dict[str, An
     docs = source.get("docs")
     if type(docs) is not list or len(docs) > _MAX_SEARCH_ROWS:
         return None
+    matched: dict[str, Any] | None = None
     for raw in docs:
         if type(raw) is not dict:
             continue
         try:
-            if _key(raw.get("key"), _WORK_KEY) == work_key:
-                return raw
+            key = _key(raw.get("key"), _WORK_KEY)
         except ValueError:
             continue
-    return None
+        if key == work_key:
+            if matched is not None:
+                raise ValueError("provider search identity is duplicated")
+            matched = raw
+    return matched
 
 
 def _search_work_evidence(
