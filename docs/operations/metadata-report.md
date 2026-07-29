@@ -339,7 +339,11 @@ use the shared discovery plan. Volume-level format, page-count, revision,
 subject, and publication text remain typed evidence. In particular,
 `publishedDate` strings become selectable publication-date claims only through
 the exact ISBN-family manifestation binding above. Otherwise they remain
-evidence with an explicit manifestation-incompatible relation.
+evidence with an explicit manifestation-incompatible relation. If a
+title-and-authors target metadata lookup has no triggering local claim, that
+relation uses `local_reference: null`; null never denotes a local claim and is
+accepted only for a non-comparable `manifestation_incompatible` link from that
+target-backed work lookup.
 All provider date facts retain the original lexical string, normalized value
 when safe, maximum stated precision, closed event, scope, and explicit or
 unresolved linkage confidence. Candidate edition/work identity, provider

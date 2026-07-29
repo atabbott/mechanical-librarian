@@ -2969,6 +2969,83 @@ class MetadataReportTests(unittest.TestCase):
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(tampered_title_report))
 
+        unbound = finalize_candidate_comparisons(
+            candidate,
+            (),
+            "catalogue",
+            allow_unbound_manifestation_link=True,
+        )
+        retained = next(
+            evidence
+            for evidence in unbound.evidence
+            if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual(
+            (
+                None,
+                Comparison.NOT_COMPARABLE,
+                PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+            ),
+            (
+                retained.links[0].local_reference,
+                retained.links[0].outcome,
+                retained.links[0].publication_date_relation,
+            ),
+        )
+        target_fields = tuple(
+            (
+                TargetField(
+                    TargetDestination.AUTHORS,
+                    TargetFieldState.VALUE,
+                    ("Ada Author",),
+                )
+                if field.destination is TargetDestination.AUTHORS
+                else field
+            )
+            for field in default_target_fields("Target title")
+        )
+        unbound_report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                target_fields,
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    candidates=(candidate,),
+                    query_kind=ProviderQueryKind.WORK,
+                ),
+            ),
+        )
+        self.assertEqual(
+            unbound_report,
+            MetadataReport.from_json(unbound_report.to_json()),
+        )
+        tampered_unbound_report = unbound_report.to_data()
+        tampered_unbound_report["providers"][0]["candidates"][0]["evidence"][0][
+            "links"
+        ] = []
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(tampered_unbound_report))
+        non_work_report = unbound_report.to_data()
+        non_work_report["providers"][0]["query_kind"] = "none"
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(non_work_report))
+        with self.assertRaises(ReportValueError):
+            ComparisonLink(
+                None,
+                Comparison.NOT_COMPARABLE,
+                publication_date_relation=(
+                    PublicationDateRelation.EVENT_INCOMPATIBLE
+                ),
+            )
+
         work_first = finalize_candidate_comparisons(
             replace(
                 candidate,

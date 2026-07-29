@@ -538,7 +538,7 @@ class ClaimScope(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ComparisonLink:
-    local_reference: str
+    local_reference: str | None
     outcome: Comparison
     method: ComparisonMethod = ComparisonMethod.NONE
     publication_date_relation: PublicationDateRelation | None = None
@@ -591,8 +591,18 @@ class ComparisonLink:
                 )
             )
         if (
-            _REFERENCE.fullmatch(self.local_reference) is None
-            or not self.local_reference.startswith("local_")
+            (
+                self.local_reference is not None
+                and (
+                    _REFERENCE.fullmatch(self.local_reference) is None
+                    or not self.local_reference.startswith("local_")
+                )
+            )
+            or (
+                self.local_reference is None
+                and date_relation
+                is not PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+            )
             or type(self.outcome) is not Comparison
             or type(self.method) is not ComparisonMethod
             or not date_valid
@@ -644,6 +654,10 @@ class ComparisonLink:
                 else self.shared_date_precision.value
             ),
         }
+
+
+def _comparison_reference_sort_key(value: str | None) -> tuple[int, str]:
+    return (0, "") if value is None else (1, value)
 
 
 def canonical_json(value: object) -> str:
@@ -1090,7 +1104,10 @@ class ProviderClaim:
             or self.date_confidence is not DateLinkConfidence.EXPLICIT
         ):
             raise ReportValueError("provider publication date linkage is inconsistent")
-        if tuple(link.local_reference for link in self.links) != tuple(sorted(link.local_reference for link in self.links)) or len({link.local_reference for link in self.links}) != len(self.links):
+        references = tuple(link.local_reference for link in self.links)
+        if references != tuple(
+            sorted(set(references), key=_comparison_reference_sort_key)
+        ):
             raise ReportValueError("provider comparison links are invalid")
         if any(
             (link.publication_date_relation is None) == is_date
@@ -1218,7 +1235,12 @@ class ProviderEvidence:
             or type(self.links) is not tuple
             or any(type(value) is not ComparisonLink for value in self.links)
             or tuple(value.local_reference for value in self.links)
-            != tuple(sorted({value.local_reference for value in self.links}))
+            != tuple(
+                sorted(
+                    {value.local_reference for value in self.links},
+                    key=_comparison_reference_sort_key,
+                )
+            )
         ):
             raise ReportValueError("provider rich evidence source ordinal is invalid")
         _projection_text(self.value, "provider rich evidence value", MAX_SCALAR_CHARACTERS)
@@ -1847,6 +1869,51 @@ class ProviderObservation:
         }
 
 
+def _target_backed_work_lookup(
+    target: TargetFacts,
+    provider: ProviderObservation,
+) -> bool:
+    if (
+        provider.query_kind is not ProviderQueryKind.WORK
+        or provider.input_references
+    ):
+        return False
+    fields = {field.destination: field for field in target.fields}
+    title = fields[TargetDestination.TITLE]
+    authors = fields[TargetDestination.AUTHORS]
+    return (
+        title.state is TargetFieldState.VALUE
+        and type(title.value) is str
+        and authors.state is TargetFieldState.VALUE
+        and type(authors.value) is tuple
+        and bool(authors.value)
+        and all(type(value) is str for value in authors.value)
+        and len(
+            {
+                normalize_title(value).casefold()
+                for value in authors.value
+            }
+        )
+        == len(authors.value)
+    )
+
+
+def _unbound_manifestation_link_allowed(
+    target: TargetFacts,
+    provider: ProviderObservation,
+    link: ComparisonLink,
+) -> bool:
+    return (
+        link.local_reference is None
+        and link.outcome is Comparison.NOT_COMPARABLE
+        and link.method is ComparisonMethod.NONE
+        and link.publication_date_relation
+        is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+        and link.shared_date_precision is None
+        and _target_backed_work_lookup(target, provider)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class MetadataReport:
     report_id: str
@@ -1928,16 +1995,27 @@ class MetadataReport:
         ):
             raise ReportValueError("provider candidate claim references are invalid")
         if any(
-            not {link.local_reference for link in evidence.links}.issubset(known)
+            link.local_reference not in known
+            and not _unbound_manifestation_link_allowed(
+                self.target,
+                provider,
+                link,
+            )
             for provider in self.providers
             for candidate in provider.candidates
             for evidence in candidate.evidence
+            for link in evidence.links
         ):
             raise ReportValueError("provider evidence comparison references are invalid")
         for provider in self.providers:
             for candidate in provider.candidates:
                 expected = finalize_candidate_comparisons(
-                    candidate, self.local_claims, provider.provider
+                    candidate,
+                    self.local_claims,
+                    provider.provider,
+                    allow_unbound_manifestation_link=(
+                        _target_backed_work_lookup(self.target, provider)
+                    ),
                 )
                 if candidate != expected:
                     raise ReportValueError(
@@ -1971,6 +2049,9 @@ class MetadataReport:
                         candidate,
                         local_claims,
                         provider.provider,
+                        allow_unbound_manifestation_link=(
+                            _target_backed_work_lookup(target, provider)
+                        ),
                     )
                     for candidate in provider.candidates
                 ),
@@ -2427,7 +2508,7 @@ def _date_components(
 
 
 def _date_comparison_link(
-    local_reference: str,
+    local_reference: str | None,
     relation: PublicationDateRelation,
     shared_precision: DatePrecision | None,
 ) -> ComparisonLink:
@@ -2464,6 +2545,7 @@ def _publication_date_links(
     precision: DatePrecision,
     local: tuple[LocalClaim, ...],
     manifestation_compatible: bool,
+    allow_unbound_manifestation_link: bool = False,
 ) -> tuple[ComparisonLink, ...]:
     links: list[ComparisonLink] = []
     for claim in local:
@@ -2510,11 +2592,25 @@ def _publication_date_links(
                 and claim.state is FieldState.VALID
                 and claim.canonical is not None
             )
-        links.extend(
-            _date_comparison_link(claim.reference, relation, None)
-            for claim in anchors
+        if anchors:
+            links.extend(
+                _date_comparison_link(claim.reference, relation, None)
+                for claim in anchors
+            )
+        elif (
+            allow_unbound_manifestation_link
+            and relation
+            is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+        ):
+            links.append(_date_comparison_link(None, relation, None))
+    return tuple(
+        sorted(
+            links,
+            key=lambda link: _comparison_reference_sort_key(
+                link.local_reference
+            ),
         )
-    return tuple(sorted(links, key=lambda link: link.local_reference))
+    )
 
 
 def comparison_links(provider: ProviderClaim, local: tuple[LocalClaim, ...]) -> tuple[ComparisonLink, ...]:
@@ -2668,6 +2764,8 @@ def finalize_candidate_comparisons(
     candidate: ProviderCandidate,
     local: tuple[LocalClaim, ...],
     provider: str | None = None,
+    *,
+    allow_unbound_manifestation_link: bool = False,
 ) -> ProviderCandidate:
     """Finalize candidate-aware links and safely bind publication observations."""
     compatible = manifestation_publication_compatible(candidate, local)
@@ -2763,6 +2861,11 @@ def finalize_candidate_comparisons(
                         if value.kind
                         is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
                         else True
+                    ),
+                    allow_unbound_manifestation_link=(
+                        allow_unbound_manifestation_link
+                        and value.kind
+                        is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
                     ),
                 ),
             )

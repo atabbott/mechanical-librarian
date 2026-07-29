@@ -52,6 +52,10 @@ are suppressed; edition-scoped evidence remains visible and non-voting.
 Work-first, copyright, modification, unknown-event, and unsafe-manifestation
 dates remain retained evidence. They carry explicit incompatible links into
 the reviewer packet but never vote for `publishedYear` or `publishedDate`.
+When a title-and-authors target metadata lookup has no local input claim, an
+unsafe manifestation link records `local_reference: null` rather than
+inventing a local claim reference. That unbound form is valid only for
+`manifestation_incompatible` and remains non-comparable and non-voting.
 Shared year evidence may support `publishedYear`; a full-day
 `publishedDate` requires two materially independent sources.
 

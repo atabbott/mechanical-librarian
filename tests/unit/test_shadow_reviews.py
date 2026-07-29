@@ -57,7 +57,10 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
     PublicationDateRelation,
+    TargetDestination,
     TargetFacts,
+    TargetField,
+    TargetFieldState,
     default_target_fields,
 )
 from mechanical_librarian.domain.review_case import (
@@ -724,20 +727,9 @@ class ShadowReviewTests(unittest.TestCase):
         with self.assertRaises(ShadowReviewValueError):
             ShadowReviewPacket.from_json(canonical_json(document), report)
 
-    def test_manifestation_incompatibility_replays_from_title_lookup_without_isbn(
+    def test_unbound_manifestation_incompatibility_replays_from_target_lookup(
         self,
     ) -> None:
-        local_title = LocalClaim.create(
-            kind=ClaimKind.TITLE,
-            observed="Local title",
-            canonical="Local title",
-            excerpt="Local title",
-            applicability="not_applicable",
-            basis="package_metadata",
-            checksum="not_applicable",
-            applicability_basis="not_applicable",
-            scope=ClaimScope.WORK,
-        )
         provider_title = ProviderClaim.create(
             provider="catalogue",
             candidate="edition-1",
@@ -752,16 +744,28 @@ class ShadowReviewTests(unittest.TestCase):
             "2001-02-03",
             ClaimScope.EDITION,
         )
+        target_fields = tuple(
+            (
+                TargetField(
+                    TargetDestination.AUTHORS,
+                    TargetFieldState.VALUE,
+                    ("Ada Author",),
+                )
+                if field.destination is TargetDestination.AUTHORS
+                else field
+            )
+            for field in default_target_fields("Target title")
+        )
         report = MetadataReport.create(
             target=TargetFacts(
                 "primary",
                 "ebooks",
                 "item-1",
-                default_target_fields(None),
+                target_fields,
             ),
             file=FileFacts(0, "a" * 64, "b" * 64),
-            local_claims=(local_title,),
-            local_reasons=("package_metadata_title",),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
             providers=(
                 ProviderObservation(
                     "catalogue",
@@ -774,6 +778,7 @@ class ShadowReviewTests(unittest.TestCase):
                             (publication_text,),
                         ),
                     ),
+                    query_kind=ProviderQueryKind.WORK,
                 ),
             ),
         )
@@ -804,10 +809,7 @@ class ShadowReviewTests(unittest.TestCase):
             PublicationDateRelation.MANIFESTATION_INCOMPATIBLE.value,
             evidence["links"][0]["publication_date_relation"],
         )
-        self.assertEqual(
-            local_title.reference,
-            evidence["links"][0]["local_reference"],
-        )
+        self.assertIsNone(evidence["links"][0]["local_reference"])
 
         tampered = json.loads(packet.to_json())
         retained_date(tampered)["links"] = []

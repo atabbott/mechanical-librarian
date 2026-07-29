@@ -26,6 +26,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderIdentityBinding,
     ProviderObservation,
+    ProviderQueryKind,
     ProviderStatus,
     PublicationDateRelation,
     TargetDestination,
@@ -2231,21 +2232,15 @@ class ProposalSetTests(unittest.TestCase):
                 ClaimScope.EDITION,
             ),
         )
-        local_title = LocalClaim.create(
-            kind=ClaimKind.TITLE,
-            observed="Local title",
-            canonical="Local title",
-            excerpt="Local title",
-            applicability="not_applicable",
-            basis="package_metadata",
-            checksum="not_applicable",
-            applicability_basis="not_applicable",
-            scope=ClaimScope.WORK,
-        )
         report = _report(
-            title=None,
+            title="Target title",
             fields=_fields(
-                None,
+                "Target title",
+                authors=TargetField(
+                    TargetDestination.AUTHORS,
+                    TargetFieldState.VALUE,
+                    ("Ada Author",),
+                ),
                 published_year=TargetField(
                     TargetDestination.PUBLISHED_YEAR,
                     TargetFieldState.MISSING,
@@ -2255,8 +2250,13 @@ class ProposalSetTests(unittest.TestCase):
                     TargetFieldState.MISSING,
                 ),
             ),
-            local_claims=(local_title,),
-            providers=(_provider("catalogue", "edition-1", (), evidence),),
+            local_claims=(),
+            providers=(
+                replace(
+                    _provider("catalogue", "edition-1", (), evidence),
+                    query_kind=ProviderQueryKind.WORK,
+                ),
+            ),
         )
         proposal = evaluate_report(report)
         self.assertEqual(
@@ -2268,7 +2268,7 @@ class ProposalSetTests(unittest.TestCase):
             PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
             retained.links[0].publication_date_relation,
         )
-        self.assertEqual(local_title.reference, retained.links[0].local_reference)
+        self.assertIsNone(retained.links[0].local_reference)
         self.assertEqual(
             DateEvent.UNKNOWN,
             evidence[0].date_event,
