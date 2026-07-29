@@ -165,6 +165,7 @@ class OpenLibraryMetadataProvider:
         self._attempt_records: list[ProviderAttemptRecord] = []
         self._accessed_at: str | None = None
         self._called = False
+        self._ledger = _DiscoveryRequestLedger("open_library", "search-v1")
         self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         self.cover_pacer = self._pacer
         self.cover_kind = CoverSourceKind.OPEN_LIBRARY
@@ -210,6 +211,9 @@ class OpenLibraryMetadataProvider:
             )
         results: list[ProviderLaneResult] = []
         ledger = _DiscoveryRequestLedger("open_library", "search-v1")
+        for lane in plan.lanes:
+            ledger.register(kind=lane.kind.value, matched_family=lane.matched_family, title=lane.title, authors=lane.authors, projection=("key,editions,editions.key,editions.isbn" if lane.kind is ProviderQueryKind.ISBN else "key,author_name,editions,editions.key"))
+        self._ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         try:
             for lane in plan.lanes:
@@ -479,6 +483,7 @@ class OpenLibraryMetadataProvider:
                     and self._retry_count < _MAX_RETRIES_PER_OBSERVATION
                     and self._attempt_count
                     < _MAX_ATTEMPTS_PER_OBSERVATION
+                    and self._ledger.allows_retry(self._attempt_count, _MAX_ATTEMPTS_PER_OBSERVATION)
                 )
                 delay = (
                     (

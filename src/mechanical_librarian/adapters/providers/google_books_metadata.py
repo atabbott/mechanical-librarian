@@ -115,6 +115,7 @@ class GoogleBooksMetadataProvider:
         self._attempt_records: list[ProviderAttemptRecord] = []
         self._accessed_at: str | None = None
         self._called = False
+        self._ledger = _DiscoveryRequestLedger("google_books", "volumes-v1")
 
     @property
     def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
@@ -158,6 +159,9 @@ class GoogleBooksMetadataProvider:
             )
         results: list[ProviderLaneResult] = []
         ledger = _DiscoveryRequestLedger("google_books", "volumes-v1")
+        for lane in plan.lanes:
+            ledger.register(kind=lane.kind.value, matched_family=lane.matched_family, title=lane.title, authors=lane.authors, projection=_FIELDS)
+        self._ledger = ledger
         try:
             for lane in plan.lanes:
                 lookup = MetadataLookup(
@@ -324,6 +328,7 @@ class GoogleBooksMetadataProvider:
                     error.retryable
                     and retry_index + 1 < _MAX_ATTEMPTS_PER_QUERY
                     and self._attempt_count < _MAX_ATTEMPTS_PER_OBSERVATION
+                    and self._ledger.allows_retry(self._attempt_count, _MAX_ATTEMPTS_PER_OBSERVATION)
                 )
                 delay = (
                     (

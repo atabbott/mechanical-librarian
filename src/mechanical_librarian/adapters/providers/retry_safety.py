@@ -44,10 +44,39 @@ class _DiscoveryRequestLedger:
         self._authority = authority
         self._revision = revision
         self._completed: dict[tuple[object, ...], object] = {}
+        self._pending: set[tuple[object, ...]] = set()
         self.logical = 0
         self.initial = 0
         self.replays = 0
         self.undispatched_incomplete = 0
+
+    def _key(
+        self,
+        *,
+        kind: str,
+        matched_family: str | None,
+        title: str | None,
+        authors: tuple[str, ...],
+        projection: str,
+    ) -> tuple[object, ...]:
+        # ISBN and work requests have different canonical arguments.  Sorting
+        # author names matches the providers' set-like discovery contract while
+        # retaining the explicit operation discriminator.
+        return (
+            self._authority,
+            self._revision,
+            kind,
+            projection,
+            matched_family if kind == "isbn" else None,
+            title if kind == "work" else None,
+            tuple(sorted(authors)) if kind == "work" else (),
+        )
+
+    def register(self, **arguments: object) -> None:
+        self._pending.add(self._key(**arguments))  # type: ignore[arg-type]
+
+    def allows_retry(self, attempts: int, ceiling: int) -> bool:
+        return attempts + len(self._pending) < ceiling
 
     def resolve(
         self,
@@ -60,22 +89,15 @@ class _DiscoveryRequestLedger:
         execute: Callable[[], _Result],
     ) -> tuple[_Result, bool]:
         self.logical += 1
-        # ISBN and work requests have different canonical arguments.  Sorting
-        # author names matches the providers' set-like discovery contract while
-        # retaining the explicit operation discriminator.
-        key = (
-            self._authority,
-            self._revision,
-            kind,
-            projection,
-            matched_family if kind == "isbn" else None,
-            title if kind == "work" else None,
-            tuple(sorted(authors)) if kind == "work" else (),
+        key = self._key(
+            kind=kind, matched_family=matched_family, title=title,
+            authors=authors, projection=projection,
         )
         completed = self._completed.get(key)
         if completed is not None:
             self.replays += 1
             return completed, True  # type: ignore[return-value]
+        self._pending.discard(key)
         self.initial += 1
         result = execute()
         self._completed[key] = result

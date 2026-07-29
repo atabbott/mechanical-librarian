@@ -143,6 +143,7 @@ class HardcoverMetadataProvider:
         self._attempt_records: list[ProviderAttemptRecord] = []
         self._accessed_at: str | None = None
         self._called = False
+        self._ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
         self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
 
     @property
@@ -184,6 +185,9 @@ class HardcoverMetadataProvider:
             )
         results: list[ProviderLaneResult] = []
         ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
+        for lane in plan.lanes:
+            ledger.register(kind=lane.kind.value, matched_family=lane.matched_family, title=lane.title, authors=lane.authors, projection=(_ISBN_QUERY if lane.kind is ProviderQueryKind.ISBN else _WORK_QUERY))
+        self._ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         try:
             for lane in plan.lanes:
@@ -396,6 +400,7 @@ class HardcoverMetadataProvider:
                     error.retryable
                     and retry_index + 1 < _MAX_ATTEMPTS_PER_QUERY
                     and self._attempt_count < _MAX_ATTEMPTS_PER_OBSERVATION
+                    and self._ledger.allows_retry(self._attempt_count, _MAX_ATTEMPTS_PER_OBSERVATION)
                 )
                 delay = (
                     (
