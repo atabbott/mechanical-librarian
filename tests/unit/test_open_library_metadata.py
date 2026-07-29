@@ -1613,7 +1613,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         self.assertEqual(1, shared_work_count)
         self.assertEqual(4, len(provider.cover_descriptors))
 
-    def test_discovery_converges_lane_local_evidence_authors_and_isbn_applicability(
+    def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicability(
         self,
     ) -> None:
         ebook = _isbn()
@@ -1648,9 +1648,21 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                         family_query.removeprefix("isbn:")
                     ]
                     publishers = (
-                        ["First Press", "Second Press", "bad\x00publisher"]
+                        [
+                            "First Press",
+                            "Second Press",
+                            "Dup Press",
+                            "Dup Press",
+                            "bad\x00publisher",
+                        ]
                         if family_query == "isbn:9780306406157"
-                        else ["Second Press", "First Press", "bad\x00publisher"]
+                        else [
+                            "Second Press",
+                            "First Press",
+                            "Dup Press",
+                            "Dup Press",
+                            "bad\x00publisher",
+                        ]
                     )
                     search["docs"][0]["publisher"] = publishers  # type: ignore[index]
                     value = search
@@ -1664,6 +1676,8 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                                 "publisher": [
                                     "First Press",
                                     "Second Press",
+                                    "Dup Press",
+                                    "Dup Press",
                                     "bad\x00publisher",
                                 ],
                                 "editions": {
@@ -1682,6 +1696,20 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 headers={"content-type": "application/json"},
                 json=value,
             )
+
+        isbn_only = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        ).observe(_isbn_lookup((ebook,)))
+        isbn_duplicate_publishers = tuple(
+            evidence
+            for evidence in isbn_only.candidates[0].evidence
+            if evidence.kind is ProviderEvidenceKind.SEARCH_PUBLISHER
+            and evidence.value == "Dup Press"
+        )
+        self.assertEqual(2, len(isbn_duplicate_publishers))
 
         provider = OpenLibraryMetadataProvider(
             "open_library",
@@ -1765,12 +1793,55 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             if evidence.kind is ProviderEvidenceKind.SEARCH_PUBLISHER
         )
         self.assertEqual(
-            {"First Press", "Second Press"},
+            {"First Press", "Second Press", "Dup Press"},
             {evidence.value for evidence in publishers},
         )
         self.assertEqual(
-            2,
-            len({evidence.source_ordinal for evidence in publishers}),
+            4,
+            len(publishers),
+        )
+        converged_duplicates = tuple(
+            evidence
+            for evidence in publishers
+            if evidence.value == "Dup Press"
+        )
+        self.assertEqual(
+            tuple(
+                evidence.source_ordinal
+                for evidence in isbn_duplicate_publishers
+            ),
+            tuple(
+                evidence.source_ordinal
+                for evidence in converged_duplicates
+            ),
+        )
+        identical = open_library_metadata._canonical_evidence_union(
+            isbn_duplicate_publishers,
+            tuple(
+                replace(value, source_ordinal=index)
+                for index, value in enumerate(isbn_duplicate_publishers)
+            ),
+        )
+        self.assertEqual(isbn_duplicate_publishers, identical)
+        excess = open_library_metadata._canonical_evidence_union(
+            isbn_duplicate_publishers,
+            tuple(
+                replace(
+                    isbn_duplicate_publishers[0],
+                    source_ordinal=index,
+                )
+                for index in range(3)
+            ),
+        )
+        self.assertIsNotNone(excess)
+        self.assertEqual(3, len(excess or ()))
+        self.assertEqual(
+            max(
+                evidence.source_ordinal
+                for evidence in isbn_duplicate_publishers
+            )
+            + 1,
+            (excess or ())[-1].source_ordinal,
         )
         report = MetadataReport.create(
             target=TargetFacts("primary", "ebooks", "item-1", fields),
@@ -1780,10 +1851,20 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             providers=(observation,),
         )
         replay = MetadataReport.from_json(report.to_json())
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            try:
+                repository.publish(report, lambda: True)
+                sqlite_replay = MetadataReport.from_json(
+                    repository.get(report.report_id)
+                )
+            finally:
+                repository.close()
         self.assertEqual(
             observation.candidates[0],
             replay.providers[0].candidates[0],
         )
+        self.assertEqual(report.to_json(), sqlite_replay.to_json())
         self.assertEqual(
             tuple(
                 evidence.source_ordinal

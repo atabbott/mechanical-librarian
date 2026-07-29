@@ -1407,29 +1407,35 @@ def _canonical_evidence_union(
     """Union compatible evidence with stable ISBN-lane ordinal precedence.
 
     Canonical-lane evidence keeps its original source ordinals. Work-lane
-    evidence that adds new semantic content is allocated after that ordinal
-    range in its original source order. The persisted tuple remains sorted by
-    the provider's canonical evidence ordering.
+    evidence occurrences beyond the multiplicity already represented there are
+    allocated after that ordinal range in their original source order. The
+    persisted tuple remains sorted by the provider's canonical evidence
+    ordering.
     """
-    selected: dict[tuple[object, ...], ProviderEvidence] = {}
+    selected = list(canonical)
+    represented: dict[tuple[object, ...], int] = {}
     for value in canonical:
-        selected.setdefault(_evidence_semantic_key(value), value)
+        key = _evidence_semantic_key(value)
+        represented[key] = represented.get(key, 0) + 1
     next_ordinal = max(
-        (value.source_ordinal for value in selected.values()),
+        (value.source_ordinal for value in selected),
         default=-1,
     ) + 1
+    observed_optional: dict[tuple[object, ...], int] = {}
     for value in sorted(
         optional,
         key=lambda item: (item.source_ordinal, _evidence_sort_key(item)),
     ):
         key = _evidence_semantic_key(value)
-        if key in selected:
+        occurrence = observed_optional.get(key, 0) + 1
+        observed_optional[key] = occurrence
+        if occurrence <= represented.get(key, 0):
             continue
-        selected[key] = replace(value, source_ordinal=next_ordinal)
+        selected.append(replace(value, source_ordinal=next_ordinal))
         next_ordinal += 1
         if len(selected) > MAX_PROVIDER_EVIDENCE:
             return None
-    return tuple(sorted(selected.values(), key=_evidence_sort_key))
+    return tuple(sorted(selected, key=_evidence_sort_key))
 
 
 def _candidate_semantic_key(candidate: ProviderCandidate) -> tuple[object, ...]:
