@@ -1226,15 +1226,22 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
     evidence: set[ProviderEvidence] = set()
     release_date = book["release_date"]
     if release_date is not None:
-        value = _text(release_date, MAX_SCALAR_CHARACTERS)
-        normalize_date_value(value)
-        evidence.add(
-            ProviderEvidence(
-                ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
-                value,
-                ClaimScope.WORK,
+        try:
+            value = _text(release_date, MAX_SCALAR_CHARACTERS)
+            normalize_date_value(value)
+        except ValueError:
+            # Work release dates are optional supporting evidence.  Their
+            # malformed lexical form cannot safely enter evidence and cannot
+            # invalidate an independently anchored edition/work candidate.
+            pass
+        else:
+            evidence.add(
+                ProviderEvidence(
+                    ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                    value,
+                    ClaimScope.WORK,
+                )
             )
-        )
     contributions, overflow = _bounded_list(
         book["contributions"],
         MAX_CONTRIBUTIONS,

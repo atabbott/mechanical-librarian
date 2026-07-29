@@ -2127,9 +2127,13 @@ class ProviderAdapterTests(unittest.TestCase):
                         for claim in observation.candidates[0].claims
                     )
                 )
-        self.assertEqual(
-            ProviderStatus.MALFORMED,
-            observe({**base, "release_date": "not-a-date"}).status,
+        release_observation = observe({**base, "release_date": "not-a-date"})
+        self.assertEqual(ProviderStatus.CANDIDATES, release_observation.status)
+        self.assertFalse(
+            any(
+                evidence.kind is ProviderEvidenceKind.FIRST_PUBLICATION_DATE
+                for evidence in release_observation.candidates[0].evidence
+            )
         )
 
         overflow = {
