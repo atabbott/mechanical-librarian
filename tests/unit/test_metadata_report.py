@@ -2195,13 +2195,62 @@ class MetadataReportTests(unittest.TestCase):
             ),
             local_claims,
         )
+        self.assertEqual(
+            (
+                ComparisonMethod.EXACT,
+                ComparisonMethod.EXACT,
+            ),
+            tuple(
+                link.method
+                for claim in partial.claims
+                for link in claim.links
+                if link.outcome is Comparison.AGREEMENT
+            )
+        )
+        partial_alias = finalize_candidate_comparisons(
+            ProviderCandidate(
+                "candidate",
+                "work",
+                claims,
+                (),
+                (replace(bindings[0], source_ordinal=0),),
+            ),
+            local_claims,
+        )
         self.assertFalse(
             any(
                 link.outcome is Comparison.AGREEMENT
-                for claim in partial.claims
+                for claim in partial_alias.claims
                 for link in claim.links
             )
         )
+        partial_replay = MetadataReport.create(
+            target=replay.target,
+            file=replay.file,
+            local_claims=local_claims,
+            local_reasons=("package_metadata_creator",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    candidates=(partial,),
+                ),
+            ),
+        )
+        self.assertEqual(
+            partial_replay,
+            MetadataReport.from_json(partial_replay.to_json()),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            repository.publish(partial_replay, lambda: True)
+            self.assertEqual(
+                partial_replay,
+                MetadataReport.from_json(
+                    repository.get(partial_replay.report_id)
+                ),
+            )
+            repository.close()
         duplicate_ordinal = replace(bindings[1], source_ordinal=0)
         with self.assertRaises(ReportValueError):
             ProviderCandidate(

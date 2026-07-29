@@ -35,6 +35,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     TargetSeries,
     canonical_json,
+    complete_creator_identity_bindings,
     creator_comparison_key,
     normalize_date_value,
     normalize_title,
@@ -764,7 +765,7 @@ def _list_observations(
             )
             if (
                 destination is TargetDestination.AUTHORS
-                and not _provider_author_bindings_are_complete(
+                and not _provider_author_bindings_allow_observation(
                     candidate, claims
                 )
             ):
@@ -792,23 +793,16 @@ def _list_observations(
     return tuple(values)
 
 
-def _provider_author_bindings_are_complete(
+def _provider_author_bindings_allow_observation(
     candidate: ProviderCandidate,
     claims: tuple[ProviderClaim, ...],
 ) -> bool:
-    bindings = tuple(
-        binding
-        for binding in candidate.identity_bindings
-        if binding.scope is ClaimScope.WORK and binding.role == "author"
+    bindings = complete_creator_identity_bindings(
+        candidate, claims
     )
-    if not bindings:
+    if bindings is None:
         return True
-    return (
-        len(bindings) == len(claims)
-        and {binding.claim_reference for binding in bindings}
-        == {claim.reference for claim in claims}
-        and len({binding.identity for binding in bindings}) == len(bindings)
-    )
+    return len({binding.identity for binding in bindings}) == len(bindings)
 
 
 def _controlled_creator_placeholder(claim: LocalClaim) -> bool:

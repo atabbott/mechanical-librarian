@@ -2314,12 +2314,10 @@ def _creator_comparison_links(
             local_values = tuple(
                 claim.observed for claim in group if claim.canonical is not None
             )
-            has_applicable_bindings = any(
-                binding.scope is provider.scope
-                and binding.role == provider.role
-                for binding in candidate.identity_bindings
+            complete_bindings = complete_creator_identity_bindings(
+                candidate, compatible_provider
             )
-            if has_applicable_bindings:
+            if complete_bindings is not None:
                 method, local_index_by_claim = _bound_creator_sequence_match(
                     candidate,
                     compatible_provider,
@@ -2368,28 +2366,10 @@ def _bound_creator_sequence_match(
     claims_by_reference = {
         claim.reference: claim for claim in provider_claims
     }
-    bindings = tuple(
-        sorted(
-            (
-                binding
-                for binding in candidate.identity_bindings
-                if provider_claims
-                and binding.scope is provider_claims[0].scope
-                and binding.role == provider_claims[0].role
-            ),
-            key=lambda binding: (
-                binding.source_ordinal,
-                binding.identity,
-                binding.claim_reference,
-            ),
-        )
+    bindings = complete_creator_identity_bindings(
+        candidate, provider_claims
     )
-    if (
-        not provider_claims
-        or len(bindings) != len(provider_claims)
-        or {binding.claim_reference for binding in bindings}
-        != set(claims_by_reference)
-    ):
+    if bindings is None:
         return ComparisonMethod.NONE, {}
     ordered_identities: list[str] = []
     aliases: dict[str, list[str]] = {}
@@ -2459,6 +2439,37 @@ def _bound_creator_sequence_match(
             for claim in provider_claims
         },
     )
+
+
+def complete_creator_identity_bindings(
+    candidate: ProviderCandidate,
+    claims: tuple[ProviderClaim, ...],
+) -> tuple[ProviderIdentityBinding, ...] | None:
+    """Return authoritative bindings only for one completely covered claim set."""
+    if not claims:
+        return None
+    bindings = tuple(
+        sorted(
+            (
+                binding
+                for binding in candidate.identity_bindings
+                if binding.scope is claims[0].scope
+                and binding.role == claims[0].role
+            ),
+            key=lambda binding: (
+                binding.source_ordinal,
+                binding.identity,
+                binding.claim_reference,
+            ),
+        )
+    )
+    if (
+        len(bindings) != len(claims)
+        or {binding.claim_reference for binding in bindings}
+        != {claim.reference for claim in claims}
+    ):
+        return None
+    return bindings
 
 
 def _creator_sequence_method(
@@ -3096,6 +3107,7 @@ __all__ = [
     "REPORT_SCHEMA", "ReportValueError",
     "TargetDestination", "TargetFacts", "TargetField", "TargetFieldState",
     "TargetSeries", "canonical_json", "claim_scope", "comparison_links",
+    "complete_creator_identity_bindings",
     "creator_comparison_key",
     "finalize_candidate_comparisons",
     "default_target_fields",

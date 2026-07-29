@@ -254,6 +254,77 @@ def _identity_bound_alias_report(
     )
 
 
+def _partially_bound_direct_author_report(
+    *, include_title: bool = False
+) -> MetadataReport:
+    local_claims = tuple(
+        _local_creator(value, occurrence=index)
+        for index, value in enumerate(("Ada Example", "Bob Example"))
+    )
+    creator_claims = tuple(
+        _claim(
+            "catalogue",
+            "edition-1",
+            ClaimKind.CREATOR,
+            value,
+            scope=ClaimScope.WORK,
+            role="author",
+            order=index,
+        )
+        for index, value in enumerate(("Ada Example", "Bob Example"))
+    )
+    title_claims = (
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.TITLE,
+                "Candidate title",
+                scope=ClaimScope.WORK,
+                order=2,
+            ),
+        )
+        if include_title
+        else ()
+    )
+    candidate = finalize_candidate_comparisons(
+        ProviderCandidate(
+            "edition-1",
+            "catalogue-work",
+            creator_claims + title_claims,
+            (),
+            (
+                ProviderIdentityBinding(
+                    creator_claims[0].reference,
+                    "author-1",
+                    ClaimScope.WORK,
+                    "author",
+                    0,
+                ),
+            ),
+        ),
+        local_claims,
+    )
+    return _report(
+        title=None,
+        fields=_fields(
+            None,
+            authors=TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.MISSING,
+            ),
+        ),
+        local_claims=local_claims,
+        providers=(
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.CANDIDATES,
+                candidates=(candidate,),
+            ),
+        ),
+    )
+
+
 def _result(proposal_set: ProposalSet, destination: TargetDestination):
     return next(
         value
@@ -809,6 +880,31 @@ class ProposalSetTests(unittest.TestCase):
                 reference.startswith("local_")
                 for alternative in result.alternatives
                 for reference in alternative.evidence_references
+            )
+        )
+
+    def test_incomplete_identity_bindings_preserve_direct_author_evidence(
+        self,
+    ) -> None:
+        report = _partially_bound_direct_author_report()
+        provider_references = {
+            claim.reference
+            for claim in report.providers[0].candidates[0].claims
+            if claim.kind is ClaimKind.CREATOR
+        }
+        result = _result(evaluate_report(report), TargetDestination.AUTHORS)
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
+        self.assertEqual(
+            (("Ada Example", "Bob Example"),),
+            tuple(alternative.value.value for alternative in result.alternatives),
+        )
+        self.assertTrue(
+            provider_references.issubset(
+                {
+                    reference
+                    for alternative in result.alternatives
+                    for reference in alternative.evidence_references
+                }
             )
         )
 

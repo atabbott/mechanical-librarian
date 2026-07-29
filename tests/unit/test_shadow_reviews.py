@@ -79,7 +79,10 @@ from mechanical_librarian.domain.shadow_review import (
 )
 from mechanical_librarian.interfaces.cli import main
 from tests.unit.test_review_case_persistence import _report
-from tests.unit.test_proposal_set import _identity_bound_alias_report
+from tests.unit.test_proposal_set import (
+    _identity_bound_alias_report,
+    _partially_bound_direct_author_report,
+)
 
 
 def _identity() -> ReviewerProfileIdentity:
@@ -209,6 +212,33 @@ class ShadowReviewTests(unittest.TestCase):
                 reference
                 for candidate in authors["candidates"]
                 for reference in candidate["evidence_references"]
+            )
+        )
+
+    def test_incomplete_identity_bindings_replay_direct_author_evidence(
+        self,
+    ) -> None:
+        report = _partially_bound_direct_author_report(include_title=True)
+        proposal = evaluate_report(report)
+        case = ReviewCase.create(proposal, report)
+        packet = ShadowReviewPacket.create(case, proposal, report)
+        authors = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == "authors"
+        )
+        provider_creator_references = {
+            claim.reference
+            for claim in report.providers[0].candidates[0].claims
+            if claim.kind is ClaimKind.CREATOR
+        }
+        self.assertTrue(
+            provider_creator_references.issubset(
+                {
+                    reference
+                    for candidate in authors["candidates"]
+                    for reference in candidate["evidence_references"]
+                }
             )
         )
 
