@@ -29,7 +29,11 @@ from mechanical_librarian.domain.epub_opening import (
     OpeningResourceResult,
 )
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text
-from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
+from mechanical_librarian.domain.epub_inspection import (
+    DateEvent,
+    DatePrecision,
+    normalize_date_value,
+)
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     EpubPackageDeclarationKind,
     EpubPackageCapability,
@@ -2410,6 +2414,16 @@ def _claim(field: OpeningField, value: str, applicability: EpubObservationApplic
         and not _isbn_valid(raw)
         else _normal(raw, field) if normalized is None else normalized
     )
+    if date_event is not None and state == "valid":
+        try:
+            normalized_value, inferred_precision = normalize_date_value(raw)
+        except ValueError:
+            return None
+        if inferred_precision is not date_precision:
+            return None
+    elif date_event is not None:
+        normalized_value = None
+        date_precision = None
     if normalized_value is not None and len(normalized_value) > excerpt_characters:
         return None
     try:

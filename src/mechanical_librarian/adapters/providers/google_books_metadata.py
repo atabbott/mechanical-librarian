@@ -847,6 +847,7 @@ def _candidate(
             canonical_evidence,
         ),
         local_claims,
+        provider,
     )
 
 

@@ -31,6 +31,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetCover,
     TargetSnapshot,
     metadata_discovery_plan,
+    qualify_provider_observation,
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_CONTRIBUTIONS,
@@ -52,6 +53,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
+    PublicationDateRelation,
     TargetDestination,
     TargetFacts,
     TargetField,
@@ -151,7 +153,7 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v20'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v22'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -165,7 +167,7 @@ def _create_prior_schema(
 ) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v20'", f"= '{version}'"
+            "= 'metadata-report-v22'", f"= '{version}'"
         ),
         metadata_persistence._CURRENT_SQL,
         metadata_persistence._CURRENT_LINEAGE_SQL,
@@ -265,6 +267,20 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ),
             ),
             (
+                "previous v20",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v20",
+                ),
+            ),
+            (
+                "previous v21",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v21",
+                ),
+            ),
+            (
                 "F09k report schema",
                 lambda connection: (
                     connection.execute(
@@ -360,7 +376,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
-            self.assertEqual(schema_version, ("metadata-report-v20",))
+            self.assertEqual(schema_version, ("metadata-report-v22",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)
@@ -1956,6 +1972,7 @@ class ProviderAdapterTests(unittest.TestCase):
                     "book_id": 1,
                     "isbn_10": None,
                     "isbn_13": "9780306406157",
+                    "release_date": "2001-02-03",
                 }
             ],
             [
@@ -2016,7 +2033,10 @@ class ProviderAdapterTests(unittest.TestCase):
             httpx.Client(transport=httpx.MockTransport(handler)),
             65_536,
         )
-        observation = provider.observe(_work_lookup())
+        lookup = _work_lookup()
+        observation = qualify_provider_observation(
+            provider.observe(lookup), lookup
+        )
         self.assertEqual(ProviderQueryKind.WORK, observation.query_kind)
         self.assertEqual("MetadataEvidenceByWork", captured[0]["operationName"])
         self.assertEqual(
@@ -2040,6 +2060,7 @@ class ProviderAdapterTests(unittest.TestCase):
             {
                 ProviderEvidenceKind.AUTHOR_IDENTITY,
                 ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
             },
             {value.kind for value in observation.candidates[0].evidence},
         )
@@ -2049,6 +2070,12 @@ class ProviderAdapterTests(unittest.TestCase):
             if value.kind is ProviderEvidenceKind.FIRST_PUBLICATION_DATE
         )
         self.assertEqual((ClaimScope.WORK, "2001-02-03"), (publication.scope, publication.value))
+        retained = next(
+            value
+            for value in observation.candidates[0].evidence
+            if value.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual((), retained.links)
         default_cover = next(
             value
             for value in provider.cover_descriptors

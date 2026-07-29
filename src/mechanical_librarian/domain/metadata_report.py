@@ -8,7 +8,7 @@ import math
 import re
 import unicodedata
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Mapping, Self
 
@@ -29,11 +29,15 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
     diagnostics_are_canonical,
 )
-from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
+from mechanical_librarian.domain.epub_inspection import (
+    DateEvent,
+    DatePrecision,
+    normalize_date_value as _normalize_date_value,
+)
 
 
-REPORT_SCHEMA = "metadata-report-v20"
-COMPARISON_VERSION = "closed-title-creator-v3"
+REPORT_SCHEMA = "metadata-report-v22"
+COMPARISON_VERSION = "closed-title-creator-publication-v4"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
 MAX_REPORT_BYTES = 2_097_152
@@ -48,6 +52,7 @@ _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
 _REFERENCE = re.compile(r"^(?:local|provider)_[0-9a-f]{64}$")
 _ASIN = re.compile(r"^B[0-9A-Z]{9}$")
+_EXPLICIT_TIMESTAMP_OFFSET = re.compile(r"(?:Z|[+-]\d{2}:\d{2})$")
 _LANE_IDENTITY = re.compile(r"^lane_[0-9a-f]{64}$")
 _LANE_CANDIDATE_REFERENCE = re.compile(r"^lane_candidate_[0-9a-f]{64}$")
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -136,6 +141,9 @@ class ProviderEvidenceKind(StrEnum):
     COPYRIGHT_DATE = "copyright_date"
     PUBLICATION_DATE_TEXT = "publication_date_text"
     EDITION_WORK_RELATION = "edition_work_relation"
+    EDITION_WORK_RELATION_CONTRADICTION = (
+        "edition_work_relation_contradiction"
+    )
     FIRST_PUBLICATION_DATE = "first_publication_date"
     EDITION_COVER_ID = "edition_cover_id"
     WORK_COVER_ID = "work_cover_id"
@@ -416,6 +424,18 @@ class ComparisonMethod(StrEnum):
     TYPOGRAPHIC_PUNCTUATION = "typographic_punctuation"
     CONSERVATIVE_COMMA_INVERSION = "conservative_comma_inversion"
     STRUCTURAL_IDENTITY_BINDING = "structural_identity_binding"
+    DATE_PRECISION_COMPATIBILITY = "date_precision_compatibility"
+
+
+class PublicationDateRelation(StrEnum):
+    """Closed relation between two bounded publication-date observations."""
+
+    EXACT = "exact"
+    MONTH_COMPATIBLE = "month_compatible"
+    YEAR_COMPATIBLE = "year_compatible"
+    FINER_CONFLICT = "finer_conflict"
+    EVENT_INCOMPATIBLE = "event_incompatible"
+    MANIFESTATION_INCOMPATIBLE = "manifestation_incompatible"
 
 
 class IdentifierRelation(StrEnum):
@@ -523,16 +543,74 @@ class ClaimScope(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ComparisonLink:
-    local_reference: str
+    local_reference: str | None
     outcome: Comparison
     method: ComparisonMethod = ComparisonMethod.NONE
+    publication_date_relation: PublicationDateRelation | None = None
+    shared_date_precision: DatePrecision | None = None
 
     def __post_init__(self) -> None:
+        date_relation = self.publication_date_relation
+        date_precision = self.shared_date_precision
+        if date_relation is None:
+            date_valid = date_precision is None
+        else:
+            date_valid = (
+                type(date_relation) is PublicationDateRelation
+                and (
+                    (
+                        date_relation is PublicationDateRelation.EXACT
+                        and date_precision
+                        in {
+                            DatePrecision.YEAR,
+                            DatePrecision.MONTH,
+                            DatePrecision.DAY,
+                        }
+                    )
+                    or (
+                        date_relation is PublicationDateRelation.FINER_CONFLICT
+                        and date_precision
+                        in {
+                            None,
+                            DatePrecision.YEAR,
+                            DatePrecision.MONTH,
+                            DatePrecision.DAY,
+                        }
+                    )
+                    or (
+                        date_relation is PublicationDateRelation.MONTH_COMPATIBLE
+                        and date_precision is DatePrecision.MONTH
+                    )
+                    or (
+                        date_relation is PublicationDateRelation.YEAR_COMPATIBLE
+                        and date_precision is DatePrecision.YEAR
+                    )
+                    or (
+                        date_relation
+                        in {
+                            PublicationDateRelation.EVENT_INCOMPATIBLE,
+                            PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+                        }
+                        and date_precision is None
+                    )
+                )
+            )
         if (
-            _REFERENCE.fullmatch(self.local_reference) is None
-            or not self.local_reference.startswith("local_")
+            (
+                self.local_reference is not None
+                and (
+                    _REFERENCE.fullmatch(self.local_reference) is None
+                    or not self.local_reference.startswith("local_")
+                )
+            )
+            or (
+                self.local_reference is None
+                and date_relation
+                is not PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+            )
             or type(self.outcome) is not Comparison
             or type(self.method) is not ComparisonMethod
+            or not date_valid
             or (
                 self.outcome is Comparison.AGREEMENT
                 and self.method is ComparisonMethod.NONE
@@ -541,15 +619,50 @@ class ComparisonLink:
                 self.outcome is not Comparison.AGREEMENT
                 and self.method is not ComparisonMethod.NONE
             )
+            or (
+                date_relation
+                in {
+                    PublicationDateRelation.EXACT,
+                    PublicationDateRelation.MONTH_COMPATIBLE,
+                    PublicationDateRelation.YEAR_COMPATIBLE,
+                }
+                and self.outcome is not Comparison.AGREEMENT
+            )
+            or (
+                date_relation is PublicationDateRelation.FINER_CONFLICT
+                and self.outcome is not Comparison.DISAGREEMENT
+            )
+            or (
+                date_relation
+                in {
+                    PublicationDateRelation.EVENT_INCOMPATIBLE,
+                    PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+                }
+                and self.outcome is not Comparison.NOT_COMPARABLE
+            )
         ):
             raise ReportValueError("comparison link is invalid")
 
-    def to_data(self) -> dict[str, str]:
+    def to_data(self) -> dict[str, str | None]:
         return {
             "local_reference": self.local_reference,
             "method": self.method.value,
             "outcome": self.outcome.value,
+            "publication_date_relation": (
+                None
+                if self.publication_date_relation is None
+                else self.publication_date_relation.value
+            ),
+            "shared_date_precision": (
+                None
+                if self.shared_date_precision is None
+                else self.shared_date_precision.value
+            ),
         }
+
+
+def _comparison_reference_sort_key(value: str | None) -> tuple[int, str]:
+    return (0, "") if value is None else (1, value)
 
 
 def canonical_json(value: object) -> str:
@@ -597,33 +710,25 @@ def normalize_title(value: str) -> str:
 
 def normalize_date_value(value: str) -> tuple[str, DatePrecision]:
     """Validate one ISO-like lexical date without increasing its precision."""
-    _projection_text(value, "date lexical value", MAX_SCALAR_CHARACTERS)
-    if re.fullmatch(r"\d{4}", value):
-        year = int(value)
-        if not 1 <= year <= 9999:
-            raise ReportValueError("date lexical value is invalid")
-        return value, DatePrecision.YEAR
-    if re.fullmatch(r"\d{4}-\d{2}", value):
-        try:
-            date(int(value[:4]), int(value[5:7]), 1)
-        except ValueError as error:
-            raise ReportValueError("date lexical value is invalid") from error
-        return value, DatePrecision.MONTH
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-        try:
-            return date.fromisoformat(value).isoformat(), DatePrecision.DAY
-        except ValueError as error:
-            raise ReportValueError("date lexical value is invalid") from error
-    if "T" not in value:
-        raise ReportValueError("date lexical value is invalid")
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return _normalize_date_value(value)
     except ValueError as error:
         raise ReportValueError("date lexical value is invalid") from error
-    offset = parsed.utcoffset()
-    if offset is not None and abs(offset) > timedelta(hours=14):
-        raise ReportValueError("date lexical value is invalid")
-    return parsed.isoformat(), DatePrecision.TIMESTAMP
+
+
+def publication_date_is_voting(
+    value: str, precision: DatePrecision
+) -> bool:
+    """Accept only source lexicals whose retained precision can vote."""
+    if type(precision) is not DatePrecision:
+        raise ReportValueError("date precision is inconsistent")
+    _, actual = normalize_date_value(value)
+    if actual is not precision:
+        raise ReportValueError("date precision is inconsistent")
+    return (
+        precision is not DatePrecision.TIMESTAMP
+        or _EXPLICIT_TIMESTAMP_OFFSET.search(value) is not None
+    )
 
 
 def validate_observed_title(value: object) -> str:
@@ -826,9 +931,30 @@ class LocalClaim:
         if (
             is_date
             and self.state is FieldState.VALID
-            and type(self.date_precision) is not DatePrecision
+            and (
+                type(self.date_precision) is not DatePrecision
+                or self.canonical is None
+            )
+        ) or (
+            is_date
+            and self.state is not FieldState.VALID
+            and (
+                self.canonical is not None
+                or self.date_precision is not None
+            )
         ) or (not is_date and self.date_precision is not None):
             raise ReportValueError("local date precision is inconsistent")
+        if is_date and self.state is FieldState.VALID:
+            try:
+                normalized_date = normalize_date_value(self.observed)
+            except ReportValueError as error:
+                raise ReportValueError(
+                    "local date precision is inconsistent"
+                ) from error
+            if normalized_date != (self.canonical, self.date_precision):
+                raise ReportValueError(
+                    "local date precision is inconsistent"
+                )
         if (
             self.kind is ClaimKind.PUBLICATION_DATE
             and self.date_event is not DateEvent.MANIFESTATION_PUBLICATION
@@ -996,8 +1122,16 @@ class ProviderClaim:
             or self.date_confidence is not DateLinkConfidence.EXPLICIT
         ):
             raise ReportValueError("provider publication date linkage is inconsistent")
-        if tuple(link.local_reference for link in self.links) != tuple(sorted(link.local_reference for link in self.links)) or len({link.local_reference for link in self.links}) != len(self.links):
+        references = tuple(link.local_reference for link in self.links)
+        if references != tuple(
+            sorted(set(references), key=_comparison_reference_sort_key)
+        ):
             raise ReportValueError("provider comparison links are invalid")
+        if any(
+            (link.publication_date_relation is None) == is_date
+            for link in self.links
+        ):
+            raise ReportValueError("provider date comparison links are inconsistent")
 
     @classmethod
     def create(
@@ -1108,6 +1242,7 @@ class ProviderEvidence:
     date_normalized: str | None = None
     date_confidence: DateLinkConfidence | None = None
     source_ordinal: int = 0
+    links: tuple[ComparisonLink, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.kind) is not ProviderEvidenceKind or type(self.scope) is not ClaimScope:
@@ -1115,9 +1250,26 @@ class ProviderEvidence:
         if (
             type(self.source_ordinal) is not int
             or not 0 <= self.source_ordinal <= 2_147_483_647
+            or type(self.links) is not tuple
+            or any(type(value) is not ComparisonLink for value in self.links)
+            or tuple(value.local_reference for value in self.links)
+            != tuple(
+                sorted(
+                    {value.local_reference for value in self.links},
+                    key=_comparison_reference_sort_key,
+                )
+            )
         ):
             raise ReportValueError("provider rich evidence source ordinal is invalid")
         _projection_text(self.value, "provider rich evidence value", MAX_SCALAR_CHARACTERS)
+        if (
+            self.kind
+            is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+            and self.value != "contradictory_or_multiple"
+        ):
+            raise ReportValueError(
+                "provider work relation contradiction is invalid"
+            )
         if self.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY:
             if self.role is None:
                 raise ReportValueError("provider rich evidence role is invalid")
@@ -1133,22 +1285,26 @@ class ProviderEvidence:
                 DateEvent.WORK_FIRST_PUBLICATION
             ),
             ProviderEvidenceKind.LAST_MODIFIED: DateEvent.MODIFICATION,
-            ProviderEvidenceKind.PUBLICATION_DATE_TEXT: DateEvent.UNKNOWN,
         }
+        is_publication_text = (
+            self.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
         expected_event = date_events.get(self.kind)
+        if is_publication_text and self.date_event is None:
+            expected_event = DateEvent.UNKNOWN
         if expected_event is not None and self.date_event is None:
             object.__setattr__(self, "date_event", expected_event)
-        if expected_event is not None and self.date_confidence is None:
+        if (expected_event is not None or is_publication_text) and self.date_confidence is None:
             object.__setattr__(
                 self,
                 "date_confidence",
                 (
                     DateLinkConfidence.UNRESOLVED
-                    if self.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                    if is_publication_text
                     else DateLinkConfidence.EXPLICIT
                 ),
             )
-        if expected_event is not None and self.date_normalized is None:
+        if (expected_event is not None or is_publication_text) and self.date_normalized is None:
             try:
                 normalized, precision = normalize_date_value(self.value)
             except ReportValueError:
@@ -1157,16 +1313,28 @@ class ProviderEvidence:
                 object.__setattr__(self, "date_normalized", normalized)
                 if self.date_precision is None:
                     object.__setattr__(self, "date_precision", precision)
-        if (expected_event is None) != (self.date_event is None):
+        is_date = expected_event is not None or is_publication_text
+        if is_date != (type(self.date_event) is DateEvent):
             raise ReportValueError("provider date evidence typing is inconsistent")
-        if expected_event is not None:
+        if is_date:
             expected_confidence = (
                 DateLinkConfidence.UNRESOLVED
-                if self.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                if is_publication_text
                 else DateLinkConfidence.EXPLICIT
             )
             if (
-                self.date_event is not expected_event
+                (
+                    is_publication_text
+                    and self.date_event
+                    not in {
+                        DateEvent.UNKNOWN,
+                        DateEvent.MANIFESTATION_PUBLICATION,
+                    }
+                )
+                or (
+                    not is_publication_text
+                    and self.date_event is not expected_event
+                )
                 or self.date_confidence is not expected_confidence
                 or (self.date_precision is None) != (self.date_normalized is None)
                 or (
@@ -1185,6 +1353,18 @@ class ProviderEvidence:
             )
         ):
             raise ReportValueError("provider date evidence is inconsistent")
+        if any(
+            link.publication_date_relation is None for link in self.links
+        ) or (not is_date and self.links):
+            raise ReportValueError("provider date evidence links are inconsistent")
+        if any(link.local_reference is None for link in self.links) and not (
+            is_publication_text
+            and self.date_normalized is not None
+            and type(self.date_precision) is DatePrecision
+            and self.date_event is DateEvent.MANIFESTATION_PUBLICATION
+            and self.date_confidence is DateLinkConfidence.UNRESOLVED
+        ):
+            raise ReportValueError("provider date evidence links are inconsistent")
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -1203,6 +1383,7 @@ class ProviderEvidence:
                 None if self.date_confidence is None else self.date_confidence.value
             ),
             "source_ordinal": self.source_ordinal,
+            "links": [value.to_data() for value in self.links],
         }
 
 
@@ -1311,6 +1492,7 @@ class ProviderCandidate:
         # downstream consumer reject a forged cross-candidate attachment.
         edition_only = {
             ProviderEvidenceKind.EDITION_WORK_RELATION,
+            ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
             ProviderEvidenceKind.EDITION_COVER_ID,
             ProviderEvidenceKind.PAGE_COUNT,
             ProviderEvidenceKind.PAGINATION,
@@ -1333,14 +1515,53 @@ class ProviderCandidate:
             ProviderEvidenceKind.SEARCH_LANGUAGE,
             ProviderEvidenceKind.SEARCH_EDITION,
         }
-        if any(
-            (value.kind in edition_only and value.scope is not ClaimScope.EDITION)
-            or (value.kind in work_only and value.scope is not ClaimScope.WORK)
-            or (
-                value.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
-                and value.value != self.work_identity
-            )
+        work_relations = tuple(
+            value
             for value in self.evidence
+            if value.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
+        )
+        work_relation_contradictions = tuple(
+            value
+            for value in self.evidence
+            if value.kind
+            is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+        )
+        if (
+            len(work_relations) > 1
+            or len(work_relation_contradictions) > 1
+            or (work_relation_contradictions and len(work_relations) != 1)
+            or (
+                work_relation_contradictions
+                and (
+                    any(
+                        value.scope is ClaimScope.WORK
+                        for value in self.claims
+                    )
+                    or any(
+                        value.scope is ClaimScope.WORK
+                        for value in self.evidence
+                    )
+                    or any(
+                        value.scope is ClaimScope.WORK
+                        for value in self.identity_bindings
+                    )
+                )
+            )
+            or any(
+                (
+                    value.kind in edition_only
+                    and value.scope is not ClaimScope.EDITION
+                )
+                or (
+                    value.kind in work_only
+                    and value.scope is not ClaimScope.WORK
+                )
+                or (
+                    value.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
+                    and value.value != self.work_identity
+                )
+                for value in self.evidence
+            )
         ):
             raise ReportValueError("provider rich evidence is misbound")
         if (
@@ -1674,6 +1895,57 @@ class ProviderObservation:
         }
 
 
+def _target_backed_work_lookup(
+    target: TargetFacts,
+    provider: ProviderObservation,
+) -> bool:
+    if (
+        provider.query_kind is not ProviderQueryKind.WORK
+        or provider.input_references
+    ):
+        return False
+    fields = {field.destination: field for field in target.fields}
+    title = fields[TargetDestination.TITLE]
+    authors = fields[TargetDestination.AUTHORS]
+    return (
+        title.state is TargetFieldState.VALUE
+        and type(title.value) is str
+        and authors.state is TargetFieldState.VALUE
+        and type(authors.value) is tuple
+        and bool(authors.value)
+        and all(type(value) is str for value in authors.value)
+        and len(
+            {
+                normalize_title(value).casefold()
+                for value in authors.value
+            }
+        )
+        == len(authors.value)
+    )
+
+
+def _unbound_manifestation_link_allowed(
+    target: TargetFacts,
+    provider: ProviderObservation,
+    evidence: ProviderEvidence,
+    link: ComparisonLink,
+) -> bool:
+    return (
+        link.local_reference is None
+        and link.outcome is Comparison.NOT_COMPARABLE
+        and link.method is ComparisonMethod.NONE
+        and link.publication_date_relation
+        is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+        and link.shared_date_precision is None
+        and evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        and evidence.date_normalized is not None
+        and type(evidence.date_precision) is DatePrecision
+        and evidence.date_event is DateEvent.MANIFESTATION_PUBLICATION
+        and evidence.date_confidence is DateLinkConfidence.UNRESOLVED
+        and _target_backed_work_lookup(target, provider)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class MetadataReport:
     report_id: str
@@ -1754,10 +2026,29 @@ class MetadataReport:
             not {link.local_reference for link in claim.links}.issubset(known) for claim in provider_claims
         ):
             raise ReportValueError("provider candidate claim references are invalid")
+        if any(
+            link.local_reference not in known
+            and not _unbound_manifestation_link_allowed(
+                self.target,
+                provider,
+                evidence,
+                link,
+            )
+            for provider in self.providers
+            for candidate in provider.candidates
+            for evidence in candidate.evidence
+            for link in evidence.links
+        ):
+            raise ReportValueError("provider evidence comparison references are invalid")
         for provider in self.providers:
             for candidate in provider.candidates:
                 expected = finalize_candidate_comparisons(
-                    candidate, self.local_claims
+                    candidate,
+                    self.local_claims,
+                    provider.provider,
+                    allow_unbound_manifestation_link=(
+                        _target_backed_work_lookup(self.target, provider)
+                    ),
                 )
                 if candidate != expected:
                     raise ReportValueError(
@@ -1783,6 +2074,23 @@ class MetadataReport:
         cover_sources: tuple[CoverSource, ...] = (),
     ) -> Self:
         local_status = "candidate" if any(value.basis == "opening_matter" for value in local_claims) else "no_candidate"
+        providers = tuple(
+            replace(
+                provider,
+                candidates=tuple(
+                    finalize_candidate_comparisons(
+                        candidate,
+                        local_claims,
+                        provider.provider,
+                        allow_unbound_manifestation_link=(
+                            _target_backed_work_lookup(target, provider)
+                        ),
+                    )
+                    for candidate in provider.candidates
+                ),
+            )
+            for provider in providers
+        )
         results = field_results if field_results is not None else derive_field_results(local_claims)
         identifiers = identifier_evidence if identifier_evidence is not None else derive_identifier_evidence(local_claims, providers)
         data = _report_data("", target, file, local_claims, local_status, local_reasons, providers, results, identifiers, cover_sources)
@@ -2175,8 +2483,189 @@ def claim_scope(
     return ClaimScope.EDITION if kind in {ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLICATION_DATE, ClaimKind.DATE_EVENT, ClaimKind.CONTEXTUAL_CREDIT, ClaimKind.PUBLISHER, ClaimKind.IMPRINT, ClaimKind.LANGUAGE} else ClaimScope.WORK
 
 
+def publication_date_relation(
+    *,
+    left_value: str,
+    left_event: DateEvent,
+    left_precision: DatePrecision,
+    right_value: str,
+    right_event: DateEvent,
+    right_precision: DatePrecision,
+    manifestation_compatible: bool = True,
+) -> tuple[PublicationDateRelation, DatePrecision | None]:
+    """Compare two typed dates without manufacturing missing precision."""
+    if (
+        left_event is not DateEvent.MANIFESTATION_PUBLICATION
+        or right_event is not DateEvent.MANIFESTATION_PUBLICATION
+    ):
+        return PublicationDateRelation.EVENT_INCOMPATIBLE, None
+    if not manifestation_compatible:
+        return PublicationDateRelation.MANIFESTATION_INCOMPATIBLE, None
+    left = _date_components(left_value, left_precision)
+    right = _date_components(right_value, right_precision)
+    if left_precision is DatePrecision.TIMESTAMP:
+        _comparison_value(ClaimKind.PUBLICATION_DATE, left_value)
+    if right_precision is DatePrecision.TIMESTAMP:
+        _comparison_value(ClaimKind.PUBLICATION_DATE, right_value)
+    shared: DatePrecision | None = None
+    if left[0] == right[0]:
+        shared = DatePrecision.YEAR
+        if len(left) >= 2 and len(right) >= 2 and left[1] == right[1]:
+            shared = DatePrecision.MONTH
+            if len(left) >= 3 and len(right) >= 3 and left[2] == right[2]:
+                shared = DatePrecision.DAY
+    minimum = min(len(left), len(right))
+    compatible = left[:minimum] == right[:minimum]
+    if not compatible:
+        return PublicationDateRelation.FINER_CONFLICT, shared
+    if len(left) == len(right):
+        return PublicationDateRelation.EXACT, shared
+    if shared is DatePrecision.MONTH:
+        return PublicationDateRelation.MONTH_COMPATIBLE, shared
+    if shared is DatePrecision.YEAR:
+        return PublicationDateRelation.YEAR_COMPATIBLE, shared
+    return PublicationDateRelation.FINER_CONFLICT, shared
+
+
+def _date_components(
+    value: str, precision: DatePrecision
+) -> tuple[str, ...]:
+    normalized, actual = normalize_date_value(value)
+    if actual is not precision:
+        raise ReportValueError("date precision is inconsistent")
+    if precision is DatePrecision.YEAR:
+        return (normalized[:4],)
+    if precision is DatePrecision.MONTH:
+        return (normalized[:4], normalized[5:7])
+    return (normalized[:4], normalized[5:7], normalized[8:10])
+
+
+def _date_comparison_link(
+    local_reference: str | None,
+    relation: PublicationDateRelation,
+    shared_precision: DatePrecision | None,
+) -> ComparisonLink:
+    if relation in {
+        PublicationDateRelation.EXACT,
+        PublicationDateRelation.MONTH_COMPATIBLE,
+        PublicationDateRelation.YEAR_COMPATIBLE,
+    }:
+        outcome = Comparison.AGREEMENT
+        method = (
+            ComparisonMethod.EXACT
+            if relation is PublicationDateRelation.EXACT
+            else ComparisonMethod.DATE_PRECISION_COMPATIBILITY
+        )
+    elif relation is PublicationDateRelation.FINER_CONFLICT:
+        outcome = Comparison.DISAGREEMENT
+        method = ComparisonMethod.NONE
+    else:
+        outcome = Comparison.NOT_COMPARABLE
+        method = ComparisonMethod.NONE
+    return ComparisonLink(
+        local_reference,
+        outcome,
+        method,
+        relation,
+        shared_precision,
+    )
+
+
+def _publication_date_links(
+    *,
+    value: str,
+    event: DateEvent,
+    precision: DatePrecision,
+    local: tuple[LocalClaim, ...],
+    manifestation_compatible: bool,
+    allow_unbound_manifestation_link: bool = False,
+) -> tuple[ComparisonLink, ...]:
+    links: list[ComparisonLink] = []
+    for claim in local:
+        if (
+            claim.kind not in {ClaimKind.PUBLICATION_DATE, ClaimKind.DATE_EVENT}
+            or claim.state is not FieldState.VALID
+            or claim.canonical is None
+            or type(claim.date_event) is not DateEvent
+            or type(claim.date_precision) is not DatePrecision
+            or not publication_date_is_voting(
+                claim.observed, claim.date_precision
+            )
+        ):
+            continue
+        relation, shared = publication_date_relation(
+            left_value=value,
+            left_event=event,
+            left_precision=precision,
+            right_value=claim.canonical,
+            right_event=claim.date_event,
+            right_precision=claim.date_precision,
+            manifestation_compatible=manifestation_compatible,
+        )
+        links.append(_date_comparison_link(claim.reference, relation, shared))
+    if not links and (
+        event is not DateEvent.MANIFESTATION_PUBLICATION
+        or not manifestation_compatible
+    ):
+        relation = (
+            PublicationDateRelation.EVENT_INCOMPATIBLE
+            if event is not DateEvent.MANIFESTATION_PUBLICATION
+            else PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+        )
+        anchors = tuple(
+            claim
+            for claim in local
+            if claim.kind is ClaimKind.ISBN
+            and claim.state is FieldState.VALID
+            and claim.canonical is not None
+            and claim.applicability in {"ebook", "unknown"}
+        )
+        if not anchors:
+            anchors = tuple(
+                claim
+                for claim in local
+                if claim.kind in {ClaimKind.TITLE, ClaimKind.CREATOR}
+                and claim.state is FieldState.VALID
+                and claim.canonical is not None
+            )
+        if anchors:
+            links.extend(
+                _date_comparison_link(claim.reference, relation, None)
+                for claim in anchors
+            )
+        elif (
+            allow_unbound_manifestation_link
+            and relation
+            is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+        ):
+            links.append(_date_comparison_link(None, relation, None))
+    return tuple(
+        sorted(
+            links,
+            key=lambda link: _comparison_reference_sort_key(
+                link.local_reference
+            ),
+        )
+    )
+
+
 def comparison_links(provider: ProviderClaim, local: tuple[LocalClaim, ...]) -> tuple[ComparisonLink, ...]:
     """Compute one immutable comparison outcome for each same-kind local claim."""
+    if provider.kind is ClaimKind.PUBLICATION_DATE:
+        if (
+            provider.state is not FieldState.VALID
+            or provider.value is None
+            or type(provider.date_event) is not DateEvent
+            or type(provider.date_precision) is not DatePrecision
+        ):
+            return ()
+        return _publication_date_links(
+            value=provider.value,
+            event=provider.date_event,
+            precision=provider.date_precision,
+            local=local,
+            manifestation_compatible=True,
+        )
     links: list[ComparisonLink] = []
     for claim in local:
         if claim.kind is not provider.kind:
@@ -2241,26 +2730,252 @@ _METHOD_STRENGTH = {
     ComparisonMethod.TYPOGRAPHIC_PUNCTUATION: 2,
     ComparisonMethod.CONSERVATIVE_COMMA_INVERSION: 3,
     ComparisonMethod.STRUCTURAL_IDENTITY_BINDING: 4,
+    ComparisonMethod.DATE_PRECISION_COMPATIBILITY: 5,
 }
+_PRINT_FORMAT_CONTRADICTIONS = frozenset(
+    {
+        "board book",
+        "hardback",
+        "hardcover",
+        "library binding",
+        "mass market paperback",
+        "paperback",
+        "print",
+        "print book",
+        "softback",
+        "softcover",
+    }
+)
+
+
+def manifestation_publication_compatible(
+    candidate: ProviderCandidate,
+    local: tuple[LocalClaim, ...],
+) -> bool:
+    """Require an exact usable local ISBN family and no closed contradiction."""
+    local_families = {
+        family
+        for claim in local
+        if claim.kind is ClaimKind.ISBN
+        and claim.state is FieldState.VALID
+        and claim.canonical is not None
+        and claim.applicability in {"ebook", "unknown"}
+        and (family := isbn_family(claim.canonical)) is not None
+    }
+    provider_families = {
+        family
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.ISBN
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+        and claim.scope is ClaimScope.EDITION
+        and claim.applicability in {"ebook", "unknown"}
+        and (family := isbn_family(claim.value)) is not None
+    }
+    if not local_families.intersection(provider_families):
+        return False
+    if any(
+        evidence.kind is ProviderEvidenceKind.PHYSICAL_FORMAT
+        and evidence.scope is ClaimScope.EDITION
+        and normalize_title(evidence.value).casefold()
+        in _PRINT_FORMAT_CONTRADICTIONS
+        for evidence in candidate.evidence
+    ):
+        return False
+    if any(
+        evidence.kind
+        is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+        for evidence in candidate.evidence
+    ):
+        return False
+    return not any(
+        evidence.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
+        and evidence.scope is ClaimScope.EDITION
+        and evidence.value != candidate.work_identity
+        for evidence in candidate.evidence
+    )
 
 
 def finalize_candidate_comparisons(
     candidate: ProviderCandidate,
     local: tuple[LocalClaim, ...],
+    provider: str | None = None,
+    *,
+    allow_unbound_manifestation_link: bool = False,
 ) -> ProviderCandidate:
-    """Finalize candidate-aware links without altering source claims or evidence."""
+    """Finalize candidate-aware links and safely bind publication observations."""
+    compatible = manifestation_publication_compatible(candidate, local)
+    retained_claims = [
+        claim
+        for claim in candidate.claims
+        if claim.kind is not ClaimKind.PUBLICATION_DATE
+    ]
+    evidence = list(candidate.evidence)
+    next_source_ordinal = (
+        max((value.source_ordinal for value in evidence), default=-1) + 1
+    )
+    for claim in candidate.claims:
+        if claim.kind is not ClaimKind.PUBLICATION_DATE:
+            continue
+        if claim.state is not FieldState.VALID:
+            retained_claims.append(claim)
+            continue
+        if (
+            compatible
+            and claim.value is not None
+            and type(claim.date_event) is DateEvent
+            and type(claim.date_precision) is DatePrecision
+            and type(claim.date_lexical) is str
+            and publication_date_is_voting(
+                claim.date_lexical, claim.date_precision
+            )
+        ):
+            retained_claims.append(claim)
+            continue
+        if claim.date_lexical is not None:
+            evidence.append(
+                ProviderEvidence(
+                    ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+                    claim.date_lexical,
+                    ClaimScope.EDITION,
+                    date_event=DateEvent.MANIFESTATION_PUBLICATION,
+                    date_confidence=DateLinkConfidence.UNRESOLVED,
+                    source_ordinal=next_source_ordinal,
+                )
+            )
+            next_source_ordinal += 1
+
+    promoted_evidence: list[ProviderEvidence] = []
+    for value in evidence:
+        if (
+            value.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+            and value.date_normalized is not None
+            and type(value.date_precision) is DatePrecision
+            and compatible
+            and provider is not None
+            and publication_date_is_voting(
+                value.value, value.date_precision
+            )
+        ):
+            retained_claims.append(
+                ProviderClaim.create(
+                    provider=provider,
+                    candidate=candidate.identity,
+                    kind=ClaimKind.PUBLICATION_DATE,
+                    value=value.date_normalized,
+                    state=FieldState.VALID,
+                    scope=ClaimScope.EDITION,
+                    applicability="not_applicable",
+                    raw_order=max(
+                        (claim.raw_order for claim in retained_claims),
+                        default=-1,
+                    )
+                    + 1,
+                    date_event=DateEvent.MANIFESTATION_PUBLICATION,
+                    date_precision=value.date_precision,
+                    date_lexical=value.value,
+                    date_confidence=DateLinkConfidence.EXPLICIT,
+                )
+            )
+            continue
+        if (
+            value.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+            and value.date_normalized is not None
+        ):
+            value = replace(
+                value,
+                date_event=DateEvent.MANIFESTATION_PUBLICATION,
+                date_confidence=DateLinkConfidence.UNRESOLVED,
+            )
+        if (
+            value.date_normalized is not None
+            and type(value.date_event) is DateEvent
+            and type(value.date_precision) is DatePrecision
+        ):
+            value = replace(
+                value,
+                links=_publication_date_links(
+                    value=value.date_normalized,
+                    event=value.date_event,
+                    precision=value.date_precision,
+                    local=(
+                        local
+                        if publication_date_is_voting(
+                            value.value, value.date_precision
+                        )
+                        else tuple(
+                            claim
+                            for claim in local
+                            if claim.kind
+                            not in {
+                                ClaimKind.PUBLICATION_DATE,
+                                ClaimKind.DATE_EVENT,
+                            }
+                        )
+                    ),
+                    manifestation_compatible=(
+                        compatible
+                        if value.kind
+                        is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                        else True
+                    ),
+                    allow_unbound_manifestation_link=(
+                        allow_unbound_manifestation_link
+                        and value.kind
+                        is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                    ),
+                ),
+            )
+        elif value.links:
+            value = replace(value, links=())
+        promoted_evidence.append(value)
+
+    provisional = replace(
+        candidate,
+        claims=tuple(
+            sorted(retained_claims, key=lambda value: value.raw_order)
+        ),
+        evidence=tuple(
+            sorted(
+                promoted_evidence,
+                key=lambda value: (
+                    value.scope.value,
+                    value.kind.value,
+                    value.value,
+                    value.role or "",
+                    (
+                        ""
+                        if value.date_event is None
+                        else value.date_event.value
+                    ),
+                    (
+                        ""
+                        if value.date_precision is None
+                        else value.date_precision.value
+                    ),
+                    value.date_normalized or "",
+                    (
+                        ""
+                        if value.date_confidence is None
+                        else value.date_confidence.value
+                    ),
+                    value.source_ordinal,
+                ),
+            )
+        ),
+    )
     claims = tuple(
         replace(
             claim,
             links=(
-                _creator_comparison_links(candidate, claim, local)
+                _creator_comparison_links(provisional, claim, local)
                 if claim.kind is ClaimKind.CREATOR
                 else comparison_links(claim, local)
             ),
         )
-        for claim in candidate.claims
+        for claim in provisional.claims
     )
-    return replace(candidate, claims=claims)
+    return replace(provisional, claims=claims)
 
 
 def _creator_comparison_links(
@@ -2647,7 +3362,7 @@ def _comparison_value(kind: ClaimKind, value: str) -> str:
         normalized, precision = normalize_date_value(value)
         if precision is DatePrecision.TIMESTAMP:
             instant = datetime.fromisoformat(normalized)
-            if instant.utcoffset() is None:
+            if not publication_date_is_voting(value, precision):
                 raise ReportValueError(
                     "comparison timestamp requires an explicit offset"
                 )
@@ -2959,15 +3674,7 @@ def _candidate_from_data(value: object) -> ProviderCandidate:
 
 def _provider_claim_from_data(value: object) -> ProviderClaim:
     item = _object(value, {"applicability", "date_confidence", "date_event", "date_lexical", "date_precision", "kind", "links", "raw_order", "reference", "role", "scope", "state", "value"})
-    links = tuple(
-        ComparisonLink(
-            parsed["local_reference"],
-            Comparison(parsed["outcome"]),
-            ComparisonMethod(parsed["method"]),
-        )
-        for link in _list(item["links"])
-        for parsed in (_object(link, {"local_reference", "method", "outcome"}),)
-    )
+    links = tuple(_comparison_link_from_data(link) for link in _list(item["links"]))
     return ProviderClaim(
         item["reference"],
         ClaimKind(item["kind"]),
@@ -3012,7 +3719,7 @@ def _provider_identity_binding_from_data(
 
 
 def _provider_evidence_from_data(value: object) -> ProviderEvidence:
-    item = _object(value, {"date_confidence", "date_event", "date_normalized", "date_precision", "kind", "role", "scope", "source_ordinal", "value"})
+    item = _object(value, {"date_confidence", "date_event", "date_normalized", "date_precision", "kind", "links", "role", "scope", "source_ordinal", "value"})
     return ProviderEvidence(
         ProviderEvidenceKind(item["kind"]),
         item["value"],
@@ -3027,6 +3734,35 @@ def _provider_evidence_from_data(value: object) -> ProviderEvidence:
             else DateLinkConfidence(item["date_confidence"])
         ),
         item["source_ordinal"],
+        tuple(_comparison_link_from_data(link) for link in _list(item["links"])),
+    )
+
+
+def _comparison_link_from_data(value: object) -> ComparisonLink:
+    item = _object(
+        value,
+        {
+            "local_reference",
+            "method",
+            "outcome",
+            "publication_date_relation",
+            "shared_date_precision",
+        },
+    )
+    return ComparisonLink(
+        item["local_reference"],
+        Comparison(item["outcome"]),
+        ComparisonMethod(item["method"]),
+        (
+            None
+            if item["publication_date_relation"] is None
+            else PublicationDateRelation(item["publication_date_relation"])
+        ),
+        (
+            None
+            if item["shared_date_precision"] is None
+            else DatePrecision(item["shared_date_precision"])
+        ),
     )
 
 
@@ -3100,7 +3836,7 @@ __all__ = [
     "ClaimKind", "ClaimScope", "COMPARISON_VERSION", "Comparison", "ComparisonLink", "ComparisonMethod", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
     "IdentifierEvidence", "IdentifierEvidenceBasis", "IdentifierRelation",
     "MAX_REPORT_BYTES", "MetadataReport", "ProviderCandidate", "ProviderClaim",
-    "ProviderEvidence", "ProviderEvidenceKind", "ProviderIdentityBinding", "DateLinkConfidence",
+    "ProviderEvidence", "ProviderEvidenceKind", "ProviderIdentityBinding", "DateLinkConfidence", "PublicationDateRelation",
     "ProviderConvergence", "ProviderLaneCandidate", "ProviderLaneObservation",
     "ProviderObservation", "ProviderQueryKind", "ProviderStatus",
     "REPORT_SCHEMA", "ReportValueError",
@@ -3109,8 +3845,10 @@ __all__ = [
     "complete_creator_identity_bindings",
     "creator_comparison_key",
     "finalize_candidate_comparisons",
+    "manifestation_publication_compatible",
+    "publication_date_relation",
     "default_target_fields",
-    "derive_identifier_evidence", "isbn_family", "normalize_date_value", "normalize_title",
+    "derive_identifier_evidence", "isbn_family", "normalize_date_value", "normalize_title", "publication_date_is_voting",
     "provider_lane_candidate_reference", "stable_reference",
     "validate_observed_title",
 ]

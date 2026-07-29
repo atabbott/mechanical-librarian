@@ -16,8 +16,8 @@ material are never stored in the application database. The tuple is fixed to:
 - model `gpt-5.6-sol`, reasoning `medium`;
 - prompt `shadow-review-prompt-v2`;
 - profile `codex-shadow-profile-v1`;
-- packet `shadow-review-packet-v2`;
-- request `shadow-review-request-v3`;
+- packet `shadow-review-packet-v3`;
+- request `shadow-review-request-v4`;
 - output `shadow-review-result-v1`;
 - policy `qualification-only-policy-v1`; and
 - sandbox `bubblewrap-v1`.
@@ -78,10 +78,22 @@ the target destination (`manifestation_publication` plus `year` or `day`);
 source event and precision remain in the citation. This exact packet/request
 freeze is governed by ADR-0016. Provider-linked packet/request replay is not a
 standalone operation: persistence reopens the immutable source report,
-rebuilds the complete provider citation from the actual candidate, and
-requires exact equality before dispatch or inspection. Missing report context
-and invented or omitted identifier/format siblings fail closed. The report
-itself never enters the reviewer request.
+reevaluates its proposal set and review case, rebuilds the complete packet, and
+requires exact equality before dispatch or inspection. Every ordinary JSON
+replay requires that authoritative report; validation does not infer
+provenance requirements from mutable packet fields. Missing report context,
+rewritten destinations or date typing, changed proposal content, and invented
+or omitted citations or identifier/format siblings fail closed even when all
+serialized identities are preserved. The report itself never enters the
+reviewer request.
+Every projected candidate evidence reference must name an included citation.
+Deleting a provider citation, its linked local citation, or both therefore
+cannot turn a source-bound packet into a source-free packet or leave dangling
+proposal evidence.
+Every non-null local claim reference used as an operand by a retained provider
+date link is also included as a source-bound citation. Removing or changing
+that local citation makes packet replay fail; an intentionally unbound
+manifestation-incompatible link has no local citation.
 
 ```sh
 mechanical-librarian shadow-review-request --database reports.sqlite \
@@ -176,7 +188,7 @@ parser, semantic validator, and cleanup as an ordinary request, and therefore
 uses the exact ordinary wrapped command from empty `/job`, including
 `--skip-git-repo-check`. It never sends a holdout and blocks the cohort on
 failure. Each request binds the canonical structured-output schema bytes and
-SHA-256 into `shadow-review-request-v3` and its identity; the executor uses
+SHA-256 into `shadow-review-request-v4` and its identity; the executor uses
 those exact bytes. The complete canonical request envelope is bounded at
 3,227,648 bytes, and the exact-current SQLite column has the same byte capacity;
 there is no truncation. The generated schema is restricted to the pinned

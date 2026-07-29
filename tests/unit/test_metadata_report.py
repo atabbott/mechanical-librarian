@@ -87,6 +87,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderIdentityBinding,
     ProviderQueryKind,
     ProviderStatus,
+    PublicationDateRelation,
     RearClaimProvenance,
     ReportValueError,
     TargetDestination,
@@ -100,10 +101,17 @@ from mechanical_librarian.domain.metadata_report import (
     derive_identifier_evidence,
     derive_field_results,
     finalize_candidate_comparisons,
+    manifestation_publication_compatible,
+    normalize_date_value,
     normalize_title,
+    publication_date_is_voting,
+    publication_date_relation,
     provider_access_time,
     stable_reference,
 )
+from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.interfaces.cli import main
 
 
@@ -353,8 +361,19 @@ class MetadataReportTests(unittest.TestCase):
                 default_target_fields(None),
             ),
             file=FileFacts(0, "a" * 64, "b" * 64),
-            local_claims=(),
-            local_reasons=("no_opening_claims",),
+            local_claims=(
+                LocalClaim.create(
+                    kind=ClaimKind.ISBN,
+                    observed="9780306406157",
+                    canonical="9780306406157",
+                    excerpt="9780306406157",
+                    applicability="unknown",
+                    checksum="valid_isbn_13",
+                    applicability_basis="unlabelled",
+                    scope=ClaimScope.EDITION,
+                ),
+            ),
+            local_reasons=("opening_matter_isbn",),
             providers=(
                 ProviderObservation(
                     "catalogue",
@@ -364,7 +383,27 @@ class MetadataReportTests(unittest.TestCase):
                         ProviderCandidate(
                             "edition-1",
                             "work-1",
-                            (claim,),
+                            (
+                                ProviderClaim.create(
+                                    provider="catalogue",
+                                    candidate="edition-1",
+                                    kind=ClaimKind.ISBN,
+                                    value="9780306406157",
+                                    state=FieldState.VALID,
+                                    scope=ClaimScope.EDITION,
+                                    applicability="unknown",
+                                ),
+                                ProviderClaim.create(
+                                    provider="catalogue",
+                                    candidate="edition-1",
+                                    kind=ClaimKind.PUBLICATION_DATE,
+                                    value=lexical,
+                                    state=FieldState.VALID,
+                                    scope=ClaimScope.EDITION,
+                                    applicability="not_applicable",
+                                    raw_order=1,
+                                ),
+                            ),
                             (),
                         ),
                     ),
@@ -372,7 +411,7 @@ class MetadataReportTests(unittest.TestCase):
             ),
         )
         replay_data = report.to_data()
-        replay_data["providers"][0]["candidates"][0]["claims"][0][
+        replay_data["providers"][0]["candidates"][0]["claims"][1][
             "date_precision"
         ] = "day"
         with self.assertRaises(ReportValueError):
@@ -478,6 +517,189 @@ class MetadataReportTests(unittest.TestCase):
         replay_data["local"]["claims"][0]["scope"] = "edition"
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(replay_data))
+
+    def test_valid_local_dates_bind_observed_canonical_and_precision(
+        self,
+    ) -> None:
+        valid_cases = (
+            (
+                ClaimKind.PUBLICATION_DATE,
+                DateEvent.MANIFESTATION_PUBLICATION,
+                "2001-02-03T04:05:06Z",
+            ),
+            (
+                ClaimKind.DATE_EVENT,
+                DateEvent.WORK_FIRST_PUBLICATION,
+                "2001-02-03T04:05:06+01:00:00",
+            ),
+            (
+                ClaimKind.DATE_EVENT,
+                DateEvent.COPYRIGHT,
+                "2001-02-03",
+            ),
+        )
+        for kind, event, observed in valid_cases:
+            canonical, precision = normalize_date_value(observed)
+            claim = LocalClaim.create(
+                kind=kind,
+                observed=observed,
+                canonical=canonical,
+                excerpt=observed,
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=claim_scope(kind, event),
+                date_event=event,
+                date_precision=precision,
+            )
+            report = MetadataReport.create(
+                target=TargetFacts(
+                    "primary",
+                    "ebooks",
+                    "item-1",
+                    default_target_fields(None),
+                ),
+                file=FileFacts(0, "a" * 64, "b" * 64),
+                local_claims=(claim,),
+                local_reasons=("package_metadata_date",),
+                providers=(),
+            )
+            with self.subTest(kind=kind, event=event, observed=observed):
+                self.assertEqual(
+                    report, MetadataReport.from_json(report.to_json())
+                )
+                for forged_observed in ("2002-04-05", "not-a-date"):
+                    document = report.to_data()
+                    document["local"]["claims"][0]["observed"] = forged_observed
+                    document["local"]["claims"][0]["excerpt"] = forged_observed
+                    with self.assertRaisesRegex(
+                        ReportValueError,
+                        "local date precision is inconsistent",
+                    ):
+                        MetadataReport.from_json(canonical_json(document))
+
+        for kind, event, observed, canonical, precision in (
+            (
+                ClaimKind.PUBLICATION_DATE,
+                DateEvent.MANIFESTATION_PUBLICATION,
+                "2001",
+                "2002",
+                DatePrecision.YEAR,
+            ),
+            (
+                ClaimKind.DATE_EVENT,
+                DateEvent.CREATION,
+                "not-a-date",
+                "2001",
+                DatePrecision.YEAR,
+            ),
+            (
+                ClaimKind.DATE_EVENT,
+                DateEvent.COPYRIGHT,
+                "2001-02-03T04:05:06Z",
+                "2001-02-03T04:05:06Z",
+                DatePrecision.TIMESTAMP,
+            ),
+        ):
+            with (
+                self.subTest(
+                    rejection=(kind, event, observed, canonical, precision)
+                ),
+                self.assertRaisesRegex(
+                    ReportValueError,
+                    "local date precision is inconsistent",
+                ),
+            ):
+                LocalClaim.create(
+                    kind=kind,
+                    observed=observed,
+                    canonical=canonical,
+                    excerpt=observed,
+                    applicability="not_applicable",
+                    checksum="not_applicable",
+                    applicability_basis="not_applicable",
+                    scope=claim_scope(kind, event),
+                    date_event=event,
+                    date_precision=precision,
+                )
+
+    def test_nonvalid_local_dates_cannot_retain_canonical_values_or_precision(
+        self,
+    ) -> None:
+        date_cases = (
+            (
+                ClaimKind.PUBLICATION_DATE,
+                DateEvent.MANIFESTATION_PUBLICATION,
+            ),
+            (ClaimKind.DATE_EVENT, DateEvent.COPYRIGHT),
+        )
+        state_observations = (
+            (FieldState.ABSENT, "absent-date"),
+            (FieldState.MALFORMED, "not-a-date"),
+            (
+                FieldState.OVERSIZED,
+                "oversized-source-text-sha256:" + "a" * 64,
+            ),
+            (
+                FieldState.UNSUPPORTED,
+                "unsafe-source-text-sha256:" + "b" * 64,
+            ),
+            (FieldState.UNTYPED, "untyped-date"),
+            (FieldState.INAPPLICABLE, "2001"),
+        )
+        for kind, event in date_cases:
+            for state, observed in state_observations:
+                claim = LocalClaim.create(
+                    kind=kind,
+                    observed=observed,
+                    canonical=None,
+                    excerpt=observed,
+                    applicability="not_applicable",
+                    checksum="not_applicable",
+                    applicability_basis="not_applicable",
+                    scope=claim_scope(kind, event),
+                    state=state,
+                    date_event=event,
+                )
+                report = MetadataReport.create(
+                    target=TargetFacts(
+                        "primary",
+                        "ebooks",
+                        "item-1",
+                        default_target_fields(None),
+                    ),
+                    file=FileFacts(0, "a" * 64, "b" * 64),
+                    local_claims=(claim,),
+                    local_reasons=("package_metadata_date",),
+                    providers=(),
+                )
+                with self.subTest(kind=kind, event=event, state=state):
+                    self.assertEqual(
+                        report,
+                        MetadataReport.from_json(report.to_json()),
+                    )
+                    for field_name, forged in (
+                        ("canonical", "2001"),
+                        ("date_precision", DatePrecision.YEAR),
+                    ):
+                        with self.assertRaisesRegex(
+                            ReportValueError,
+                            "local date precision is inconsistent",
+                        ):
+                            replace(claim, **{field_name: forged})
+                    for key, forged in (
+                        ("canonical", "2001"),
+                        ("date_precision", DatePrecision.YEAR.value),
+                    ):
+                        document = report.to_data()
+                        document["local"]["claims"][0][key] = forged
+                        with self.assertRaisesRegex(
+                            ReportValueError,
+                            "local date precision is inconsistent",
+                        ):
+                            MetadataReport.from_json(
+                                canonical_json(document)
+                            )
 
     def test_local_dates_and_contextual_credits_replay_without_candidate_conflation(
         self,
@@ -881,7 +1103,7 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v20", report.schema_version)
+        self.assertEqual("metadata-report-v22", report.schema_version)
         previous = report.to_data()
         previous["schema_version"] = "metadata-report-v13"
         with self.assertRaises(ReportValueError):
@@ -1082,6 +1304,20 @@ class MetadataReportTests(unittest.TestCase):
             )
 
         identity = "edition-1"
+        linked_publication = ProviderEvidence(
+            ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+            "2001-02-03",
+            ClaimScope.EDITION,
+            links=(
+                ComparisonLink(
+                    "local_" + ("a" * 64),
+                    Comparison.NOT_COMPARABLE,
+                    publication_date_relation=(
+                        PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+                    ),
+                ),
+            ),
+        )
         candidate = ProviderCandidate(
             identity,
             "work-1",
@@ -1117,6 +1353,7 @@ class MetadataReportTests(unittest.TestCase):
                             "2001-02-03",
                             ClaimScope.WORK,
                         ),
+                        linked_publication,
                     ),
                     key=lambda value: (
                         value.scope.value,
@@ -1147,9 +1384,429 @@ class MetadataReportTests(unittest.TestCase):
             {
                 ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
                 ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
             },
             {value.kind for value in qualified.candidates[0].evidence},
         )
+        self.assertEqual(
+            linked_publication,
+            next(
+                value
+                for value in qualified.candidates[0].evidence
+                if value.kind
+                is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+            ),
+        )
+
+    def test_generate_report_preserves_only_work_lane_date_explanations(
+        self,
+    ) -> None:
+        creator = LocalClaim.create(
+            kind=ClaimKind.CREATOR,
+            observed="Ada Author",
+            canonical="Ada Author",
+            excerpt="Ada Author",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+            role="author",
+        )
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        target_fields = tuple(
+            TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.VALUE,
+                ("Ada Author",),
+            )
+            if field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields("The Example")
+        )
+        snapshot = TargetSnapshot(
+            "ebook", "The Example", (selected,), fields=target_fields
+        )
+
+        class Provider:
+            cover_descriptors = ()
+
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def observe(self, plan, *, deadline=None):
+                results = []
+                for lane in plan.lanes:
+                    lookup = MetadataLookup(
+                        lane.kind,
+                        plan.local_claims,
+                        lane.title,
+                        lane.authors,
+                        lane.matched_family,
+                    )
+                    candidate = ProviderCandidate(
+                        f"{self.name}-edition",
+                        f"{self.name}-work",
+                        (
+                            ProviderClaim.create(
+                                provider=self.name,
+                                candidate=f"{self.name}-edition",
+                                kind=ClaimKind.TITLE,
+                                value="The Example",
+                                state=FieldState.VALID,
+                                scope=ClaimScope.WORK,
+                                applicability="not_applicable",
+                            ),
+                            ProviderClaim.create(
+                                provider=self.name,
+                                candidate=f"{self.name}-edition",
+                                kind=ClaimKind.CREATOR,
+                                value="Ada Author",
+                                state=FieldState.VALID,
+                                scope=ClaimScope.WORK,
+                                applicability="not_applicable",
+                                role="author",
+                                raw_order=1,
+                            ),
+                        ),
+                        (
+                            ProviderEvidence(
+                                ProviderEvidenceKind.PHYSICAL_FORMAT,
+                                "Hardcover",
+                                ClaimScope.EDITION,
+                            ),
+                            ProviderEvidence(
+                                ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+                                "2001-02-03",
+                                ClaimScope.EDITION,
+                                source_ordinal=1,
+                            ),
+                        ),
+                    )
+                    physical = ProviderObservation(
+                        self.name,
+                        ProviderStatus.CANDIDATES,
+                        candidates=(
+                            finalize_candidate_comparisons(
+                                candidate,
+                                plan.local_claims,
+                                self.name,
+                            ),
+                        ),
+                        query_kind=lane.kind,
+                    )
+                    qualified = qualify_provider_observation(
+                        physical, lookup
+                    )
+                    results.append(
+                        ProviderLaneResult(
+                            lane,
+                            qualified.status,
+                            qualified.candidates,
+                        )
+                    )
+                return provider_observation(self.name, tuple(results))
+
+        names = ("google_books", "hardcover", "open_library")
+        repository = _Repository()
+        service = GenerateMetadataReport(
+            target=_Target([snapshot, snapshot]),
+            inspector=_Inspector(
+                InspectionResult("b" * 64, (creator,))
+            ),
+            repository_factory=lambda: repository,
+            providers=tuple(
+                ProviderBinding(
+                    name,
+                    True,
+                    lambda name=name: Provider(name),
+                )
+                for name in names
+            ),
+            connection=TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/target"
+            ),
+            library=LibraryConfiguration(
+                "ebooks",
+                "primary",
+                "library-id",
+                "ebook",
+                "books",
+                names,
+            ),
+            mount=MediaMountConfiguration(
+                "books", "/media", "/library", True
+            ),
+            limits=ReportLimits(),
+        )
+        report = MetadataReport.from_json(service.run("item-1", 0))
+        self.assertEqual(set(names), {value.provider for value in report.providers})
+        for provider in report.providers:
+            self.assertEqual(
+                ProviderStatus.CANDIDATES,
+                provider.status,
+                provider.to_data(),
+            )
+            candidate = provider.candidates[0]
+            retained = next(
+                value
+                for value in candidate.evidence
+                if value.kind
+                is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+            )
+            self.assertEqual(
+                PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+                retained.links[0].publication_date_relation,
+            )
+            self.assertTrue(
+                all(
+                    value.scope is ClaimScope.WORK
+                    or value is retained
+                    for value in candidate.evidence
+                )
+            )
+
+    def test_generate_report_uses_source_lexical_timestamp_voting_matrix(
+        self,
+    ) -> None:
+        isbn = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="9780306406157",
+            applicability="ebook",
+            basis="package_metadata",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+            scope=ClaimScope.EDITION,
+        )
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        snapshot = TargetSnapshot("ebook", None, (selected,))
+
+        class Provider:
+            cover_descriptors = ()
+
+            def __init__(self, name: str, lexical: str) -> None:
+                self.name = name
+                self.lexical = lexical
+
+            def observe(self, plan, *, deadline=None):
+                results = []
+                for lane in plan.lanes:
+                    candidate = ProviderCandidate(
+                        f"{self.name}-edition",
+                        "work-1",
+                        (
+                            ProviderClaim.create(
+                                provider=self.name,
+                                candidate=f"{self.name}-edition",
+                                kind=ClaimKind.ISBN,
+                                value="9780306406157",
+                                state=FieldState.VALID,
+                                scope=ClaimScope.EDITION,
+                                applicability="ebook",
+                            ),
+                            ProviderClaim.create(
+                                provider=self.name,
+                                candidate=f"{self.name}-edition",
+                                kind=ClaimKind.PUBLICATION_DATE,
+                                value=self.lexical,
+                                state=FieldState.VALID,
+                                scope=ClaimScope.EDITION,
+                                applicability="not_applicable",
+                                raw_order=1,
+                            ),
+                        ),
+                    )
+                    physical = ProviderObservation(
+                        self.name,
+                        ProviderStatus.CANDIDATES,
+                        candidates=(
+                            finalize_candidate_comparisons(
+                                candidate,
+                                plan.local_claims,
+                                self.name,
+                            ),
+                        ),
+                        query_kind=lane.kind,
+                    )
+                    lookup = MetadataLookup(
+                        lane.kind,
+                        plan.local_claims,
+                        lane.title,
+                        lane.authors,
+                        lane.matched_family,
+                    )
+                    qualified = qualify_provider_observation(physical, lookup)
+                    results.append(
+                        ProviderLaneResult(
+                            lane,
+                            qualified.status,
+                            qualified.candidates,
+                        )
+                    )
+                return provider_observation(self.name, tuple(results))
+
+        lexical_cases = (
+            ("2001-02-03T04:05:06Z", True),
+            ("2001-02-03T04:05:06+01:00", True),
+            ("2001-02-03T04:05:06+01:00:00", False),
+            ("2001-02-03T04:05:06+01:00:01", False),
+            ("2001-02-03T04:05:06+01:00:00.5", False),
+        )
+        self.assertEqual(
+            normalize_date_value(lexical_cases[1][0]),
+            normalize_date_value(lexical_cases[2][0]),
+        )
+        for lexical, voting in lexical_cases:
+            self.assertEqual(
+                voting,
+                publication_date_is_voting(
+                    lexical, DatePrecision.TIMESTAMP
+                ),
+            )
+            for provider_count in (1, 2):
+                for local_present in (False, True):
+                    with self.subTest(
+                        lexical=lexical,
+                        providers=provider_count,
+                        local_present=local_present,
+                    ):
+                        self._assert_timestamp_voting_report(
+                            lexical=lexical,
+                            voting=voting,
+                            provider_count=provider_count,
+                            local_present=local_present,
+                            isbn=isbn,
+                            snapshot=snapshot,
+                            provider_type=Provider,
+                        )
+
+    def _assert_timestamp_voting_report(
+        self,
+        *,
+        lexical: str,
+        voting: bool,
+        provider_count: int,
+        local_present: bool,
+        isbn: LocalClaim,
+        snapshot: TargetSnapshot,
+        provider_type,
+    ) -> None:
+        package_date = LocalClaim.create(
+            kind=ClaimKind.PUBLICATION_DATE,
+            observed=lexical,
+            canonical=normalize_date_value(lexical)[0],
+            excerpt=lexical,
+            applicability="not_applicable",
+            basis="package_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.EDITION,
+            date_event=DateEvent.MANIFESTATION_PUBLICATION,
+            date_precision=DatePrecision.TIMESTAMP,
+        )
+        names = tuple(
+            f"catalogue_{index}" for index in range(1, provider_count + 1)
+        )
+        repository = _Repository()
+        service = GenerateMetadataReport(
+            target=_Target([snapshot, snapshot]),
+            inspector=_Inspector(
+                InspectionResult(
+                    "b" * 64,
+                    (isbn, package_date) if local_present else (isbn,),
+                )
+            ),
+            repository_factory=lambda: repository,
+            providers=tuple(
+                ProviderBinding(
+                    name,
+                    True,
+                    lambda name=name: provider_type(name, lexical),
+                )
+                for name in names
+            ),
+            connection=TargetConnectionConfiguration(
+                "primary",
+                "https://example.invalid",
+                "/private/target",
+            ),
+            library=LibraryConfiguration(
+                "ebooks",
+                "primary",
+                "library-id",
+                "ebook",
+                "books",
+                names,
+            ),
+            mount=MediaMountConfiguration(
+                "books", "/media", "/library", True
+            ),
+            limits=ReportLimits(),
+        )
+        serialized = service.run("item-1", 0)
+        report = MetadataReport.from_json(serialized)
+        self.assertEqual(serialized, report.to_json())
+        retained_local = tuple(
+            value
+            for value in report.local_claims
+            if value.kind is ClaimKind.PUBLICATION_DATE
+        )
+        self.assertEqual((package_date,) if local_present else (), retained_local)
+        if local_present:
+            self.assertEqual(
+                voting,
+                publication_date_is_voting(
+                    retained_local[0].observed,
+                    retained_local[0].date_precision,
+                ),
+            )
+        provider_dates = tuple(
+            claim
+            for provider in report.providers
+            for candidate in provider.candidates
+            for claim in candidate.claims
+            if claim.kind is ClaimKind.PUBLICATION_DATE
+        )
+        provider_text = tuple(
+            evidence
+            for provider in report.providers
+            for candidate in provider.candidates
+            for evidence in candidate.evidence
+            if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual(provider_count if voting else 0, len(provider_dates))
+        self.assertEqual(0 if voting else provider_count, len(provider_text))
+        proposal = evaluate_report(report)
+        case = ReviewCase.create(proposal, report)
+        packet = ShadowReviewPacket.create(case, proposal, report)
+        self.assertEqual(
+            packet,
+            ShadowReviewPacket.from_json(packet.to_json(), report),
+        )
+        publication_references = {
+            reference
+            for value in proposal.results
+            if value.destination
+            in {
+                TargetDestination.PUBLISHED_DATE,
+                TargetDestination.PUBLISHED_YEAR,
+            }
+            for candidate in value.alternatives
+            for reference in candidate.evidence_references
+        }
+        source_references = {
+            *(value.reference for value in provider_dates),
+            *(
+                (retained_local[0].reference,)
+                if local_present
+                else ()
+            ),
+        }
+        if voting:
+            self.assertTrue(source_references <= publication_references)
+        else:
+            self.assertTrue(source_references.isdisjoint(publication_references))
 
     def test_work_lookup_fails_closed_for_competing_work_or_variant_markers(self) -> None:
         lookup = MetadataLookup(
@@ -2443,7 +3100,7 @@ class MetadataReportTests(unittest.TestCase):
             return LocalClaim.create(
                 kind=ClaimKind.PUBLICATION_DATE,
                 observed=value,
-                canonical=value,
+                canonical=normalize_date_value(value)[0],
                 excerpt=value,
                 applicability="not_applicable",
                 basis="package_metadata",
@@ -2468,14 +3125,17 @@ class MetadataReportTests(unittest.TestCase):
             DatePrecision.TIMESTAMP,
         )
         day = local("2024-03-05", DatePrecision.DAY)
+        month = local("2024-03", DatePrecision.MONTH)
+        year = local("2024", DatePrecision.YEAR)
         naive = local(
             "2024-03-05T14:30:00",
             DatePrecision.TIMESTAMP,
         )
-        invalid = local(
-            "2024-02-30T14:30:00Z",
-            DatePrecision.TIMESTAMP,
-        )
+        with self.assertRaises(ReportValueError):
+            local(
+                "2024-02-30T14:30:00Z",
+                DatePrecision.TIMESTAMP,
+            )
 
         def provider(value: str) -> ProviderClaim:
             return ProviderClaim.create(
@@ -2492,8 +3152,8 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(
             {
                 zulu.reference: Comparison.AGREEMENT,
-                different.reference: Comparison.DISAGREEMENT,
-                day.reference: Comparison.DISAGREEMENT,
+                different.reference: Comparison.AGREEMENT,
+                day.reference: Comparison.AGREEMENT,
             },
             {
                 link.local_reference: link.outcome
@@ -2503,12 +3163,38 @@ class MetadataReportTests(unittest.TestCase):
                 )
             },
         )
+        coarse_links = {
+            link.local_reference: link
+            for link in comparison_links(negative_offset, (month, year))
+        }
+        self.assertEqual(
+            ComparisonLink(
+                month.reference,
+                Comparison.AGREEMENT,
+                ComparisonMethod.DATE_PRECISION_COMPATIBILITY,
+                PublicationDateRelation.MONTH_COMPATIBLE,
+                DatePrecision.MONTH,
+            ),
+            coarse_links[month.reference],
+        )
+        self.assertEqual(
+            ComparisonLink(
+                year.reference,
+                Comparison.AGREEMENT,
+                ComparisonMethod.DATE_PRECISION_COMPATIBILITY,
+                PublicationDateRelation.YEAR_COMPATIBLE,
+                DatePrecision.YEAR,
+            ),
+            coarse_links[year.reference],
+        )
         self.assertEqual(
             (
                 ComparisonLink(
                     positive_offset.reference,
                     Comparison.AGREEMENT,
-                    ComparisonMethod.CLOSED_FIELD_NORMALIZATION,
+                    ComparisonMethod.EXACT,
+                    PublicationDateRelation.EXACT,
+                    DatePrecision.DAY,
                 ),
             ),
             comparison_links(
@@ -2520,8 +3206,10 @@ class MetadataReportTests(unittest.TestCase):
             (
                 ComparisonLink(
                     rollover.reference,
-                    Comparison.AGREEMENT,
-                    ComparisonMethod.CLOSED_FIELD_NORMALIZATION,
+                    Comparison.DISAGREEMENT,
+                    ComparisonMethod.NONE,
+                    PublicationDateRelation.FINER_CONFLICT,
+                    DatePrecision.MONTH,
                 ),
             ),
             comparison_links(
@@ -2529,22 +3217,709 @@ class MetadataReportTests(unittest.TestCase):
                 (rollover,),
             ),
         )
-        for malformed in (naive, invalid):
-            with (
-                self.subTest(value=malformed.canonical),
-                self.assertRaises(ReportValueError),
-            ):
-                comparison_links(negative_offset, (malformed,))
+        stated_day_cases = (
+            (
+                "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
+                "2024-03-05T01:30:00+00:00",
+                DatePrecision.TIMESTAMP,
+                PublicationDateRelation.EXACT,
+                DatePrecision.DAY,
+            ),
+            (
+                "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
+                "2024-03-06T01:30:00+00:00",
+                DatePrecision.TIMESTAMP,
+                PublicationDateRelation.FINER_CONFLICT,
+                DatePrecision.MONTH,
+            ),
+            (
+                "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
+                "2024-03-05",
+                DatePrecision.DAY,
+                PublicationDateRelation.EXACT,
+                DatePrecision.DAY,
+            ),
+            (
+                "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
+                "2024-03-06",
+                DatePrecision.DAY,
+                PublicationDateRelation.FINER_CONFLICT,
+                DatePrecision.MONTH,
+            ),
+            (
+                "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
+                "2024-03",
+                DatePrecision.MONTH,
+                PublicationDateRelation.MONTH_COMPATIBLE,
+                DatePrecision.MONTH,
+            ),
+            (
+                "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
+                "2024",
+                DatePrecision.YEAR,
+                PublicationDateRelation.YEAR_COMPATIBLE,
+                DatePrecision.YEAR,
+            ),
+            (
+                "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
+                "2024-04",
+                DatePrecision.MONTH,
+                PublicationDateRelation.FINER_CONFLICT,
+                DatePrecision.YEAR,
+            ),
+            (
+                "2024-03-05T23:30:00-02:00",
+                DatePrecision.TIMESTAMP,
+                "2025",
+                DatePrecision.YEAR,
+                PublicationDateRelation.FINER_CONFLICT,
+                None,
+            ),
+        )
+        for (
+            left,
+            left_precision,
+            right,
+            right_precision,
+            relation,
+            shared,
+        ) in stated_day_cases:
+            with self.subTest(left=left, right=right):
+                expected = (relation, shared)
+                self.assertEqual(
+                    expected,
+                    publication_date_relation(
+                        left_value=left,
+                        left_event=DateEvent.MANIFESTATION_PUBLICATION,
+                        left_precision=left_precision,
+                        right_value=right,
+                        right_event=DateEvent.MANIFESTATION_PUBLICATION,
+                        right_precision=right_precision,
+                    ),
+                )
+                self.assertEqual(
+                    expected,
+                    publication_date_relation(
+                        left_value=right,
+                        left_event=DateEvent.MANIFESTATION_PUBLICATION,
+                        left_precision=right_precision,
+                        right_value=left,
+                        right_event=DateEvent.MANIFESTATION_PUBLICATION,
+                        right_precision=left_precision,
+                    ),
+                )
+        self.assertEqual((), comparison_links(negative_offset, (naive,)))
         with self.assertRaises(ReportValueError):
             comparison_links(
                 provider("2024-03-05T14:30:00"),
                 (zulu,),
             )
-        self.assertEqual("2024-03-05T14:30:00Z", zulu.canonical)
+        self.assertEqual("2024-03-05T14:30:00Z", zulu.observed)
+        self.assertEqual("2024-03-05T14:30:00+00:00", zulu.canonical)
         self.assertEqual(
             "2024-03-05T10:30:00-04:00",
             negative_offset.date_lexical,
         )
+
+    def test_publication_date_relation_preserves_shared_precision_and_conflict(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "2021-09-14",
+                DatePrecision.DAY,
+                "2021",
+                DatePrecision.YEAR,
+                PublicationDateRelation.YEAR_COMPATIBLE,
+                DatePrecision.YEAR,
+            ),
+            (
+                "2021-09-14",
+                DatePrecision.DAY,
+                "2021-09",
+                DatePrecision.MONTH,
+                PublicationDateRelation.MONTH_COMPATIBLE,
+                DatePrecision.MONTH,
+            ),
+            (
+                "2021-09-14",
+                DatePrecision.DAY,
+                "2021-09-20",
+                DatePrecision.DAY,
+                PublicationDateRelation.FINER_CONFLICT,
+                DatePrecision.MONTH,
+            ),
+            (
+                "2021-09",
+                DatePrecision.MONTH,
+                "2021-10",
+                DatePrecision.MONTH,
+                PublicationDateRelation.FINER_CONFLICT,
+                DatePrecision.YEAR,
+            ),
+            (
+                "2021",
+                DatePrecision.YEAR,
+                "2022",
+                DatePrecision.YEAR,
+                PublicationDateRelation.FINER_CONFLICT,
+                None,
+            ),
+        )
+        for (
+            left,
+            left_precision,
+            right,
+            right_precision,
+            expected_relation,
+            expected_shared,
+        ) in cases:
+            with self.subTest(left=left, right=right):
+                self.assertEqual(
+                    (expected_relation, expected_shared),
+                    publication_date_relation(
+                        left_value=left,
+                        left_event=DateEvent.MANIFESTATION_PUBLICATION,
+                        left_precision=left_precision,
+                        right_value=right,
+                        right_event=DateEvent.MANIFESTATION_PUBLICATION,
+                        right_precision=right_precision,
+                    ),
+                )
+        self.assertEqual(
+            (PublicationDateRelation.EVENT_INCOMPATIBLE, None),
+            publication_date_relation(
+                left_value="2021",
+                left_event=DateEvent.WORK_FIRST_PUBLICATION,
+                left_precision=DatePrecision.YEAR,
+                right_value="2021",
+                right_event=DateEvent.MANIFESTATION_PUBLICATION,
+                right_precision=DatePrecision.YEAR,
+            ),
+        )
+        self.assertEqual(
+            (PublicationDateRelation.MANIFESTATION_INCOMPATIBLE, None),
+            publication_date_relation(
+                left_value="2021",
+                left_event=DateEvent.MANIFESTATION_PUBLICATION,
+                left_precision=DatePrecision.YEAR,
+                right_value="2021",
+                right_event=DateEvent.MANIFESTATION_PUBLICATION,
+                right_precision=DatePrecision.YEAR,
+                manifestation_compatible=False,
+            ),
+        )
+
+    def test_candidate_finalization_promotes_only_safe_manifestation_dates(
+        self,
+    ) -> None:
+        local_isbn = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="9780306406157",
+            applicability="unknown",
+            checksum="valid_isbn_13",
+            applicability_basis="unlabelled",
+            scope=ClaimScope.EDITION,
+        )
+        local_date = LocalClaim.create(
+            kind=ClaimKind.PUBLICATION_DATE,
+            observed="2021-09",
+            canonical="2021-09",
+            excerpt="2021-09",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            date_event=DateEvent.MANIFESTATION_PUBLICATION,
+            date_precision=DatePrecision.MONTH,
+        )
+        provider_isbn = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.ISBN,
+            value="9780306406157",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="unknown",
+        )
+        date_text = ProviderEvidence(
+            ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+            "2021-09-14",
+            ClaimScope.EDITION,
+        )
+        candidate = ProviderCandidate(
+            "edition-1",
+            "work-1",
+            (provider_isbn,),
+            (date_text,),
+        )
+        local = (local_isbn, local_date)
+        self.assertTrue(manifestation_publication_compatible(candidate, local))
+        safe = finalize_candidate_comparisons(candidate, local, "catalogue")
+        publication = next(
+            claim
+            for claim in safe.claims
+            if claim.kind is ClaimKind.PUBLICATION_DATE
+        )
+        self.assertEqual("2021-09-14", publication.date_lexical)
+        self.assertEqual(
+            PublicationDateRelation.MONTH_COMPATIBLE,
+            publication.links[0].publication_date_relation,
+        )
+        self.assertEqual(
+            DatePrecision.MONTH,
+            publication.links[0].shared_date_precision,
+        )
+        self.assertFalse(
+            any(
+                evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                for evidence in safe.evidence
+            )
+        )
+
+        print_candidate = replace(
+            candidate,
+            evidence=(
+                ProviderEvidence(
+                    ProviderEvidenceKind.PHYSICAL_FORMAT,
+                    "Hardcover",
+                    ClaimScope.EDITION,
+                    source_ordinal=1,
+                ),
+                date_text,
+            ),
+        )
+        unsafe = finalize_candidate_comparisons(
+            print_candidate, local, "catalogue"
+        )
+        self.assertFalse(
+            any(
+                claim.kind is ClaimKind.PUBLICATION_DATE
+                for claim in unsafe.claims
+            )
+        )
+        retained = next(
+            evidence
+            for evidence in unsafe.evidence
+            if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual(
+            PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+            retained.links[0].publication_date_relation,
+        )
+
+        unsafe_without_local_date = finalize_candidate_comparisons(
+            print_candidate, (local_isbn,), "catalogue"
+        )
+        retained = next(
+            evidence
+            for evidence in unsafe_without_local_date.evidence
+            if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual(
+            PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+            retained.links[0].publication_date_relation,
+        )
+
+        local_title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Local title",
+            canonical="Local title",
+            excerpt="Local title",
+            applicability="not_applicable",
+            basis="package_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        )
+        title_only = finalize_candidate_comparisons(
+            candidate,
+            (local_title,),
+            "catalogue",
+        )
+        retained = next(
+            evidence
+            for evidence in title_only.evidence
+            if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual(
+            (
+                local_title.reference,
+                PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+            ),
+            (
+                retained.links[0].local_reference,
+                retained.links[0].publication_date_relation,
+            ),
+        )
+        title_report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(local_title,),
+            local_reasons=("package_metadata_title",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    candidates=(candidate,),
+                ),
+            ),
+        )
+        self.assertEqual(
+            title_report,
+            MetadataReport.from_json(title_report.to_json()),
+        )
+        tampered_title_report = title_report.to_data()
+        tampered_title_report["providers"][0]["candidates"][0]["evidence"][0][
+            "links"
+        ] = []
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(tampered_title_report))
+
+        unbound = finalize_candidate_comparisons(
+            candidate,
+            (),
+            "catalogue",
+            allow_unbound_manifestation_link=True,
+        )
+        retained = next(
+            evidence
+            for evidence in unbound.evidence
+            if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual(
+            (
+                None,
+                Comparison.NOT_COMPARABLE,
+                PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+            ),
+            (
+                retained.links[0].local_reference,
+                retained.links[0].outcome,
+                retained.links[0].publication_date_relation,
+            ),
+        )
+        target_fields = tuple(
+            (
+                TargetField(
+                    TargetDestination.AUTHORS,
+                    TargetFieldState.VALUE,
+                    ("Ada Author",),
+                )
+                if field.destination is TargetDestination.AUTHORS
+                else field
+            )
+            for field in default_target_fields("Target title")
+        )
+        unbound_report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                target_fields,
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    candidates=(candidate,),
+                    query_kind=ProviderQueryKind.WORK,
+                ),
+            ),
+        )
+        self.assertEqual(
+            unbound_report,
+            MetadataReport.from_json(unbound_report.to_json()),
+        )
+        valid_unbound_evidence = unbound_report.providers[0].candidates[
+            0
+        ].evidence[0]
+        unbound_link = valid_unbound_evidence.links[0]
+
+        def target_report(evidence: ProviderEvidence) -> MetadataReport:
+            return MetadataReport.create(
+                target=unbound_report.target,
+                file=unbound_report.file,
+                local_claims=(),
+                local_reasons=("no_opening_claims",),
+                providers=(
+                    ProviderObservation(
+                        "catalogue",
+                        ProviderStatus.CANDIDATES,
+                        candidates=(
+                            replace(candidate, evidence=(evidence,)),
+                        ),
+                        query_kind=ProviderQueryKind.WORK,
+                    ),
+                ),
+            )
+
+        unlinked_evidence = (
+            ProviderEvidence(
+                ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+                "not-a-date",
+                ClaimScope.EDITION,
+                date_event=DateEvent.MANIFESTATION_PUBLICATION,
+                date_confidence=DateLinkConfidence.UNRESOLVED,
+            ),
+            ProviderEvidence(
+                ProviderEvidenceKind.COPYRIGHT_DATE,
+                "2001",
+                ClaimScope.EDITION,
+            ),
+            ProviderEvidence(
+                ProviderEvidenceKind.LAST_MODIFIED,
+                "2001-02-03",
+                ClaimScope.EDITION,
+            ),
+        )
+        for evidence in unlinked_evidence:
+            with self.subTest(kind=evidence.kind):
+                with self.assertRaises(ReportValueError):
+                    replace(evidence, links=(unbound_link,))
+                sanitized = target_report(evidence)
+                self.assertEqual(
+                    (),
+                    sanitized.providers[0].candidates[0].evidence[0].links,
+                )
+                forged_report = unbound_report.to_data()
+                forged_evidence = evidence.to_data()
+                forged_evidence["links"] = [unbound_link.to_data()]
+                forged_report["providers"][0]["candidates"][0]["evidence"] = [
+                    forged_evidence
+                ]
+                with self.assertRaises(ReportValueError):
+                    MetadataReport.from_json(canonical_json(forged_report))
+
+        with self.assertRaises(ReportValueError):
+            replace(
+                valid_unbound_evidence,
+                date_event=DateEvent.UNKNOWN,
+            )
+        contradictory_report = unbound_report.to_data()
+        contradictory_evidence = valid_unbound_evidence.to_data()
+        contradictory_evidence["date_event"] = DateEvent.UNKNOWN.value
+        contradictory_report["providers"][0]["candidates"][0]["evidence"] = [
+            contradictory_evidence
+        ]
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(contradictory_report))
+
+        tampered_unbound_report = unbound_report.to_data()
+        tampered_unbound_report["providers"][0]["candidates"][0]["evidence"][0][
+            "links"
+        ] = []
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(tampered_unbound_report))
+        non_work_report = unbound_report.to_data()
+        non_work_report["providers"][0]["query_kind"] = "none"
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(non_work_report))
+        with self.assertRaises(ReportValueError):
+            ComparisonLink(
+                None,
+                Comparison.NOT_COMPARABLE,
+                publication_date_relation=(
+                    PublicationDateRelation.EVENT_INCOMPATIBLE
+                ),
+            )
+
+        work_first = finalize_candidate_comparisons(
+            replace(
+                candidate,
+                evidence=(
+                    ProviderEvidence(
+                        ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                        "2021",
+                        ClaimScope.WORK,
+                    ),
+                ),
+            ),
+            (local_isbn,),
+            "catalogue",
+        )
+        self.assertEqual(
+            PublicationDateRelation.EVENT_INCOMPATIBLE,
+            work_first.evidence[0].links[0].publication_date_relation,
+        )
+
+        contradictory_candidate = replace(
+            candidate,
+            evidence=(
+                ProviderEvidence(
+                    ProviderEvidenceKind.EDITION_WORK_RELATION,
+                    "work-1",
+                    ClaimScope.EDITION,
+                ),
+                ProviderEvidence(
+                    ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
+                    "contradictory_or_multiple",
+                    ClaimScope.EDITION,
+                    source_ordinal=1,
+                ),
+                replace(date_text, source_ordinal=2),
+            ),
+        )
+        self.assertFalse(
+            manifestation_publication_compatible(
+                contradictory_candidate, local
+            )
+        )
+        contradictory = finalize_candidate_comparisons(
+            contradictory_candidate, local, "catalogue"
+        )
+        self.assertTrue(
+            any(
+                evidence.kind
+                is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+                for evidence in contradictory.evidence
+            )
+        )
+        retained = next(
+            evidence
+            for evidence in contradictory.evidence
+            if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual(
+            PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+            retained.links[0].publication_date_relation,
+        )
+        with self.assertRaises(ReportValueError):
+            ProviderEvidence(
+                ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
+                "work-2",
+                ClaimScope.EDITION,
+            )
+        with self.assertRaises(ReportValueError):
+            replace(
+                candidate,
+                evidence=(
+                    ProviderEvidence(
+                        ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
+                        "contradictory_or_multiple",
+                        ClaimScope.EDITION,
+                    ),
+                ),
+            )
+        with self.assertRaises(ReportValueError):
+            replace(
+                contradictory_candidate,
+                evidence=(
+                    ProviderEvidence(
+                        ProviderEvidenceKind.EDITION_WORK_RELATION,
+                        "work-2",
+                        ClaimScope.EDITION,
+                    ),
+                ),
+            )
+        work_title = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.TITLE,
+            value="Unrelated work title",
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+            raw_order=1,
+        )
+        with self.assertRaises(ReportValueError):
+            replace(
+                contradictory_candidate,
+                claims=(provider_isbn, work_title),
+            )
+        for work_evidence in (
+            ProviderEvidence(
+                ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                "1900",
+                ClaimScope.WORK,
+                source_ordinal=3,
+            ),
+            ProviderEvidence(
+                ProviderEvidenceKind.WORK_COVER_ID,
+                "cover-1",
+                ClaimScope.WORK,
+                source_ordinal=3,
+            ),
+        ):
+            with (
+                self.subTest(kind=work_evidence.kind),
+                self.assertRaises(ReportValueError),
+            ):
+                replace(
+                    contradictory_candidate,
+                    evidence=(*contradictory_candidate.evidence, work_evidence),
+                )
+        work_creator = ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=ClaimKind.CREATOR,
+            value="Ada Example",
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+            role="author",
+            raw_order=1,
+        )
+        with self.assertRaises(ReportValueError):
+            replace(
+                contradictory_candidate,
+                claims=(provider_isbn, work_creator),
+                identity_bindings=(
+                    ProviderIdentityBinding(
+                        work_creator.reference,
+                        "author-1",
+                        ClaimScope.WORK,
+                        "author",
+                        0,
+                    ),
+                ),
+            )
+
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=local,
+            local_reasons=("no_opening_claims",),
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    candidates=(contradictory_candidate,),
+                ),
+            ),
+        )
+        tampered = report.to_data()
+        tampered["providers"][0]["candidates"][0]["evidence"].append(
+            ProviderEvidence(
+                ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                "1900",
+                ClaimScope.WORK,
+                source_ordinal=3,
+            ).to_data()
+        )
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(tampered))
 
     def test_identifier_evidence_classifies_provider_local_work_relations(self) -> None:
         def local(

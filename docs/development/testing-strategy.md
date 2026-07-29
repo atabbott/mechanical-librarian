@@ -92,7 +92,7 @@ The suite covers:
   54/27/49 Google Books/Hardcover/Open Library metadata-attempt maxima, one
   shared pacer per paced adapter across foreground entries, and no persisted
   attempt diagnostics;
-- deterministic `metadata-report-v20` serialization and database reopen preserve
+- deterministic `metadata-report-v22` serialization and database reopen preserve
   claim raw order, rich-evidence canonical order, duplicate source occurrences,
   source ordinals, scopes, roles, field states and diagnostics byte-for-byte.
   Application tests merge parser, attempt and incomplete-outcome diagnostics
@@ -132,7 +132,7 @@ CLI against a disposable loopback target, synthetic media, private secrets, and
 an absent database. Unit proposal-policy coverage includes whitespace, case, and
 width variants of the controlled package creator placeholder. The installed
 proposal path uses a whitespace/case variant and requires a nonmutating authors
-result under `fixed-conservative-v2`. Persistence tests reject both a
+result under `fixed-conservative-v3`. Persistence tests reject both a
 `fixed-conservative-v1` document and the prior proposal-store table shape
 without mutation, then prove exact deterministic replay under the current
 policy. Every synthetic EPUB member has a fixed timestamp so the probe identity
@@ -160,7 +160,7 @@ cover nested single-emission, multiple exact sibling labels, mixed complete and
 split labels in one ancestor, repeated equal complete/split siblings, multiple
 assembled labels, scanning/production/workflow label values, promotion cues
 inside labels, the exact 16-fact rear cap, front/rear NFC and whitespace
-normalization, `metadata-report-v20`
+normalization, `metadata-report-v22`
 canonical replay, clean database creation, and byte-unchanged rejection of v13
 state. Only aggregate expected, found, and false-positive counts are asserted
 or exported; fixture rows and source text remain private.
@@ -170,8 +170,9 @@ without accent stripping, typographic mapping, variant markers, complete
 multi-author count/order/role/scope, conservative single-author comma
 inversion, structurally bound aliases, ambiguous or malformed bindings,
 canonical replay and tamper rejection. Provider/application tests also prove
-the finalizer adds no request, preserves emitted values and source order, and
-does not change proposal or reviewer admission authority.
+the finalizer adds no request, performs only the defined publication-fact
+promotion/demotion and canonical ordering, and does not change proposal or
+reviewer admission authority.
 
 Provider-date regressions use synthetic year, month, day, and signed-offset
 timestamp values. They prove lexical/normalized replay, closed event and
@@ -184,7 +185,7 @@ fact/reference disagreement, forged kind/value/applicability/scope/raw-order
 or provider/candidate membership, invalid ISBN/ASIN syntax, private or
 credential-shaped context, missing rich-date-evidence linkage, malformed
 identifier and format shapes, duplicate/reordered facts, and context beyond
-either 16-fact bound. Request-v3 replay exercises the same packet validator.
+either 16-fact bound. Request-v4 replay exercises the same packet-v3 validator.
 Access-
 time regressions inject fixed clocks at every metadata-provider boundary,
 exercise successful and terminal post-dispatch statuses, prove absent time for

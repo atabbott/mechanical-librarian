@@ -16,6 +16,9 @@ from mechanical_librarian.domain.evidence_bounds import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
+    Comparison,
+    ComparisonLink,
+    ComparisonMethod,
     DateLinkConfidence,
     FieldState,
     MAX_SCALAR_CHARACTERS,
@@ -23,15 +26,20 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
+    PublicationDateRelation,
     ReportValueError,
     TargetDestination,
 )
-from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
+from mechanical_librarian.domain.proposal_set import (
+    ProposalOutcome,
+    ProposalSet,
+    evaluate_report,
+)
 from mechanical_librarian.domain.review_case import ReviewCase
 
-PACKET_SCHEMA = "shadow-review-packet-v2"
+PACKET_SCHEMA = "shadow-review-packet-v3"
 RESULT_SCHEMA = "shadow-review-result-v1"
-REQUEST_SCHEMA = "shadow-review-request-v3"
+REQUEST_SCHEMA = "shadow-review-request-v4"
 PROFILE_IDENTITY_SCHEMA = "reviewer-profile-identity-v1"
 QUALIFICATION_MODE = "qualification_only"
 MAX_PACKET_BYTES = 1_048_576
@@ -233,6 +241,7 @@ class ShadowReviewPacket:
             raise ShadowReviewValueError("shadow-review packet is invalid")
         proposal_ids: list[str] = []
         citation_ids: list[str] = []
+        proposal_evidence_references: set[str] = set()
         provider_date_references: set[str] = set()
         for proposal in self.proposals:
             if type(proposal) is not dict or set(proposal) != {
@@ -292,6 +301,9 @@ class ShadowReviewPacket:
                 ):
                     raise ShadowReviewValueError("shadow-review packet is invalid")
                 candidate_ids.append(candidate.get("candidate_id"))
+                proposal_evidence_references.update(
+                    candidate["evidence_references"]
+                )
                 if destination in {
                     TargetDestination.PUBLISHED_YEAR.value,
                     TargetDestination.PUBLISHED_DATE.value,
@@ -333,6 +345,10 @@ class ShadowReviewPacket:
             citation_ids.append(citation_id)
         if citation_ids != sorted(set(citation_ids)):
             raise ShadowReviewValueError("shadow-review packet is invalid")
+        if not proposal_evidence_references.issubset(citation_ids):
+            raise ShadowReviewValueError(
+                "shadow-review proposal evidence binding is invalid"
+            )
         correlation_ids: list[str] = []
         for correlation in self.correlations:
             if (
@@ -416,6 +432,12 @@ class ShadowReviewPacket:
                 }
             )
         evidence = _evidence_index(report.to_data())
+        references.update(
+            reference
+            for reference, fact in evidence.items()
+            if _contains_provider_date(fact)
+        )
+        references.update(_date_link_local_references(report))
         if not references.issubset(evidence):
             raise ShadowReviewValueError("shadow-review evidence binding is invalid")
         citations = tuple(
@@ -436,9 +458,7 @@ class ShadowReviewPacket:
             citations,
             correlation_facts,
         )
-        value.validate_source(report)
         return value
-
     def to_data(self) -> dict[str, object]:
         return {
             "citations": [_copy_json(value) for value in self.citations],
@@ -497,25 +517,23 @@ class ShadowReviewPacket:
             raise ShadowReviewValueError("shadow-review packet is invalid") from error
         if value.to_json() != serialized:
             raise ShadowReviewValueError("shadow-review packet is not canonical")
-        if _requires_provider_source(value) and not source_validated:
+        if not source_validated:
             value.validate_source(source_report)
         return value
 
     def validate_source(self, source_report: MetadataReport | None) -> None:
-        """Bind provider citations to exact candidates in an authoritative report."""
+        """Require the exact packet projection of one authoritative report."""
         if type(source_report) is not MetadataReport:
             raise ShadowReviewValueError(
-                "shadow-review provider source is unavailable"
+                "shadow-review authoritative source is unavailable"
             )
-        evidence = _evidence_index(source_report.to_data())
-        for citation in self.citations:
-            citation_id = citation["citation_id"]
-            fact = citation["fact"]
-            if _is_provider_citation(citation_id, fact):
-                if evidence.get(citation_id) != fact:
-                    raise ShadowReviewValueError(
-                        "shadow-review provider source binding is invalid"
-                    )
+        proposal_set = evaluate_report(source_report)
+        case = ReviewCase.create(proposal_set, source_report)
+        expected = type(self).create(case, proposal_set, source_report)
+        if self != expected:
+            raise ShadowReviewValueError(
+                "shadow-review source binding is invalid: authoritative projection"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -886,6 +904,30 @@ class ShadowReviewResult:
         return value
 
 
+def _date_link_local_references(report: MetadataReport) -> set[str]:
+    """Close reviewer citations over every retained local date-link operand."""
+    references: set[str] = set()
+    for provider in report.providers:
+        for candidate in provider.candidates:
+            for value in (*candidate.claims, *candidate.evidence):
+                if (
+                    (
+                        type(value) is ProviderClaim
+                        and value.kind is ClaimKind.PUBLICATION_DATE
+                    )
+                    or (
+                        type(value) is ProviderEvidence
+                        and value.kind in _PROVIDER_DATE_EVIDENCE
+                    )
+                ):
+                    references.update(
+                        link.local_reference
+                        for link in value.links
+                        if link.local_reference is not None
+                    )
+    return references
+
+
 def _evidence_index(value: object) -> dict[str, dict[str, object]]:
     result: dict[str, dict[str, object]] = {}
     if type(value) is dict:
@@ -1116,6 +1158,7 @@ def _validate_provider_citation(
                     if fact["date_confidence"] is None
                     else DateLinkConfidence(fact["date_confidence"])
                 ),
+                links=_comparison_links(fact["links"]),
             )
         except (ReportValueError, TypeError, ValueError) as error:
             raise ShadowReviewValueError(
@@ -1138,6 +1181,7 @@ def _validate_provider_citation(
         "date_normalized",
         "date_precision",
         "kind",
+        "links",
         "role",
         "scope",
         "source_ordinal",
@@ -1167,6 +1211,7 @@ def _validate_provider_citation(
                 else DateLinkConfidence(evidence_data["date_confidence"])
             ),
             evidence_data["source_ordinal"],
+            _comparison_links(evidence_data["links"]),
         )
     except (ReportValueError, TypeError, ValueError) as error:
         raise ShadowReviewValueError(
@@ -1195,6 +1240,50 @@ def _validate_provider_citation(
         raise ShadowReviewValueError("shadow-review provider citation is invalid")
 
 
+def _comparison_links(value: object) -> tuple[ComparisonLink, ...]:
+    if type(value) is not list:
+        raise ShadowReviewValueError(
+            "shadow-review provider date comparison is invalid"
+        )
+    links: list[ComparisonLink] = []
+    for item in value:
+        if type(item) is not dict or set(item) != {
+            "local_reference",
+            "method",
+            "outcome",
+            "publication_date_relation",
+            "shared_date_precision",
+        }:
+            raise ShadowReviewValueError(
+                "shadow-review provider date comparison is invalid"
+            )
+        try:
+            links.append(
+                ComparisonLink(
+                    item["local_reference"],
+                    Comparison(item["outcome"]),
+                    ComparisonMethod(item["method"]),
+                    (
+                        None
+                        if item["publication_date_relation"] is None
+                        else PublicationDateRelation(
+                            item["publication_date_relation"]
+                        )
+                    ),
+                    (
+                        None
+                        if item["shared_date_precision"] is None
+                        else DatePrecision(item["shared_date_precision"])
+                    ),
+                )
+            )
+        except (ReportValueError, TypeError, ValueError) as error:
+            raise ShadowReviewValueError(
+                "shadow-review provider date comparison is invalid"
+            ) from error
+    return tuple(links)
+
+
 def _contains_provider_date(value: dict[str, object]) -> bool:
     claim = value.get("fact")
     evidence = value.get("evidence")
@@ -1219,13 +1308,6 @@ def _is_provider_citation(citation_id: str, fact: dict[str, object]) -> bool:
         or "provider" in fact
         or "linkage" in fact
         or _contains_provider_date(fact)
-    )
-
-
-def _requires_provider_source(packet: ShadowReviewPacket) -> bool:
-    return any(
-        _is_provider_citation(citation["citation_id"], citation["fact"])
-        for citation in packet.citations
     )
 
 
@@ -1328,6 +1410,7 @@ def _validate_provider_linkage(
                 "date_normalized",
                 "date_precision",
                 "kind",
+                "links",
                 "role",
                 "scope",
                 "source_ordinal",
@@ -1340,6 +1423,7 @@ def _validate_provider_linkage(
             or fact["scope"] not in {"work", "edition"}
             or type(fact["source_ordinal"]) is not int
             or fact["source_ordinal"] < 0
+            or fact["links"] != []
             or any(
                 fact[key] is not None
                 for key in (

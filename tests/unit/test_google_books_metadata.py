@@ -31,6 +31,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
+    PublicationDateRelation,
     default_target_fields,
     FileFacts,
     MAX_DESCRIPTION_CHARACTERS,
@@ -676,13 +677,15 @@ class GoogleBooksMetadataTests(unittest.TestCase):
 
     def test_work_query_requires_exact_complete_title_and_author_order(self) -> None:
         requests: list[httpx.Request] = []
+        volume = _volume()
+        volume["volumeInfo"]["publishedDate"] = "2026-04-03"
 
         def handler(request: httpx.Request) -> httpx.Response:
             requests.append(request)
             return httpx.Response(
                 200,
                 headers={"content-type": "application/json"},
-                json={"totalItems": 1, "items": [_volume()]},
+                json={"totalItems": 1, "items": [volume]},
             )
 
         lookup = MetadataLookup(
@@ -706,6 +709,56 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             all(
                 claim.scope is ClaimScope.WORK
                 for claim in observation.candidates[0].claims
+            )
+        )
+        self.assertFalse(
+            any(
+                claim.kind is ClaimKind.PUBLICATION_DATE
+                for claim in observation.candidates[0].claims
+            )
+        )
+        retained = next(
+            value
+            for value in observation.candidates[0].evidence
+            if value.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual((), retained.links)
+        self.assertTrue(
+            all(
+                value.scope is ClaimScope.WORK
+                or value is retained
+                for value in observation.candidates[0].evidence
+            )
+        )
+
+    def test_exact_isbn_lane_promotes_standard_publication_date(self) -> None:
+        volume = _volume()
+        volume["volumeInfo"]["publishedDate"] = "2026-04-03"
+        observation = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={"totalItems": 1, "items": [volume]},
+                    )
+                )
+            ),
+            65_536,
+        ).observe(_lookup())
+        publication = next(
+            claim
+            for claim in observation.candidates[0].claims
+            if claim.kind is ClaimKind.PUBLICATION_DATE
+        )
+        self.assertEqual("2026-04-03", publication.value)
+        self.assertEqual("2026-04-03", publication.date_lexical)
+        self.assertFalse(
+            any(
+                evidence.kind
+                is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                for evidence in observation.candidates[0].evidence
             )
         )
 
@@ -1098,7 +1151,13 @@ class GoogleBooksMetadataTests(unittest.TestCase):
                 repository.close()
         serialized = packet.to_json()
         self.assertIn("Example Press", serialized)
-        self.assertNotIn("2026-Spring", serialized)
+        self.assertIn("2026-Spring", serialized)
+        self.assertFalse(
+            any(
+                value["destination"] in {"publishedYear", "publishedDate"}
+                for value in packet.proposals
+            )
+        )
         self.assertNotIn("private-api-key", serialized)
 
 

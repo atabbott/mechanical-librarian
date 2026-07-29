@@ -63,7 +63,7 @@ provider call.
 
 - The database path is absent for the first invocation or already contains the
   exact current schema required by the installed increment.
-- `metadata-report-v1` through `metadata-report-v19`, and all earlier development
+- `metadata-report-v1` through `metadata-report-v21`, and all earlier development
   schemas are rejected before mutation. There is no migration, import,
   preservation, or compatibility parser. Keep an old database offline if
   required, initialize a clean database, and rerun the supported report command.
@@ -176,9 +176,60 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v20`. Every earlier report discriminator,
-including `metadata-report-v19`, remains offline and requires a clean current
+discriminator is `metadata-report-v22`. Every earlier report discriminator,
+including `metadata-report-v21`, remains offline and requires a clean current
 database under ADR-0013.
+
+Every valid local publication or typed date-event claim retains its exact
+observed lexical and binds it to the canonical value and precision produced by
+parsing that same lexical. A mismatched canonical date, mismatched precision,
+or malformed observed lexical is rejected at the isolated-inspector fact and
+IPC replay boundary as well as during claim construction and report replay,
+before proposal or reviewer-packet evaluation.
+Non-valid local date facts retain the exact observed lexical and typed event,
+but their canonical value and date precision are both absent at the isolated
+inspector IPC boundary and in the immutable report.
+
+Publication dates use the closed `date_precision_compatibility` comparison
+method. Each link records one exact, month-compatible, year-compatible,
+finer-conflict, event-incompatible, or manifestation-incompatible relation.
+The independently recorded shared precision distinguishes, for example, two
+different days in one month from two different months in one year. Original
+`YYYY`, `YYYY-MM`, and `YYYY-MM-DD` values are never filled to an invented
+precision.
+
+A provider manifestation date is eligible only when a checksum-valid local
+ISBN family and provider ISBN family match exactly, both are ebook or unknown
+applicability, and no closed provider format or edition/work fact contradicts
+that manifestation. Title, creator, work identity, provider rank, and query
+order never substitute for this binding. Work-first, copyright, modification,
+and unsafe-manifestation dates remain visible with explicit incompatible links
+but cannot vote for manifestation fields.
+When a provider edition declares a valid but conflicting, duplicate, or
+multiple work relation, the report retains exactly one canonical candidate
+relation plus one closed `edition_work_relation_contradiction` fact. It keeps
+edition-scoped facts, including the lexical publication date and precision,
+but suppresses work-scoped claims, evidence, identity bindings, and work cover
+authority. The date remains explicitly manifestation-incompatible.
+WORK lookup qualification applies the same least-authority rule: it strips
+edition claims and evidence except for bounded unresolved publication text
+that report finalization needs to express manifestation incompatibility.
+
+Timestamp comparison uses the calendar date stated in each retained lexical
+value. Different times or offsets on the same stated date agree at day
+precision; different stated dates conflict even when they denote the same UTC
+instant. A timestamp and matching day agree exactly at day precision; matching
+month or year prefixes are month- or year-compatible respectively. A
+nonmatching stated prefix remains a finer-precision conflict at the shared
+precision.
+Only source lexicals ending in literal `Z` or an exact signed `HH:MM` offset can
+be promoted into typed publication claims. Eligibility is checked before date
+normalization: parser-admitted offset-second and fractional-offset-second forms
+remain replayable as unresolved publication text and cannot vote or participate
+in publication-date comparison, even when a zero-seconds offset normalizes to
+the same value as `HH:MM`. Report generation skips these retained non-voting
+forms before comparing provider dates, so their presence does not abort an
+otherwise valid report.
 
 Work-scoped title and creator links retain the original source values and record
 one truthful closed comparison method per link: exact bytes; NFC, case folding
@@ -307,8 +358,16 @@ unresolved volumes cannot produce lane convergence or ISBN work correlation.
 Exact ISBN-family lanes and exact complete-title/ordered-author qualification
 use the shared discovery plan. Volume-level format, page-count, revision,
 subject, and publication text remain typed evidence. In particular,
-`publishedDate` strings are evidence-only and never become selectable
-publication-date claims without safe event/manifestation linkage.
+`publishedDate` strings become selectable publication-date claims only through
+the exact ISBN-family manifestation binding above. Otherwise they remain
+evidence with an explicit manifestation-incompatible relation. If a
+title-and-authors target metadata lookup has no triggering local claim, that
+relation uses `local_reference: null`; null never denotes a local claim and is
+accepted only for normalized publication text reclassified as manifestation
+publication with a non-comparable `manifestation_incompatible` link from that
+target-backed work lookup. Malformed publication text and copyright,
+modification, work-first, unknown, or other date events cannot retain an
+unbound link.
 All provider date facts retain the original lexical string, normalized value
 when safe, maximum stated precision, closed event, scope, and explicit or
 unresolved linkage confidence. Candidate edition/work identity, provider

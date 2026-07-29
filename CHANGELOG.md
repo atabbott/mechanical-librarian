@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+- Preserve publication-date precision and incompatibility explicitly under
+  `closed-title-creator-publication-v4`. Date links distinguish exact,
+  month-compatible, year-compatible, finer-conflict, event-incompatible, and
+  manifestation-incompatible observations while separately retaining shared
+  year/month/day precision. Provider dates can vote only through an exact
+  checksum-valid local/provider ISBN-family binding with ebook or unknown
+  applicability and no closed format or work contradiction; Google Books
+  `publishedDate` text is promoted only through that same gate. Work-first and
+  unsafe manifestation evidence remains reviewer-visible but non-voting.
+  WORK-lane qualification preserves only bounded unresolved edition
+  publication text from edition authority so report finalization can retain
+  its manifestation-incompatible explanation. Naive timestamps remain visible
+  non-voting evidence and only timestamps with `Z` or an exact signed
+  `HH:MM` offset in the source lexical can be promoted; offset-second and
+  fractional-offset-second forms remain visible but non-voting, even when
+  normalization removes zero offset seconds, and are skipped before
+  provider-date comparison. Valid local publication and typed date-event facts
+  bind the observed lexical to its exact parsed canonical value and precision,
+  rejecting malformed or mismatched isolated-inspector IPC and report replay
+  before proposal evaluation. Non-valid local date facts preserve the observed
+  lexical and typed event but cannot retain a canonical value or precision
+  across IPC or report replay.
+  Reviewer packets
+  cite every non-null local operand named by a retained date link, require
+  complete proposal evidence-reference coverage, and require every ordinary
+  replay to reproduce the exact proposal, case, citation, and packet projection
+  of the immutable source report. Preserved identities cannot hide rewritten
+  destinations, date typing, evidence references, or citations.
+  `publishedYear` uses shared year support, while full-day `publishedDate`
+  always requires two independent sources.
+  Contradictory or multiple provider work relations retain one canonical
+  candidate binding plus one closed contradiction fact, suppress unrelated
+  work-scoped authority, and keep the edition date visible but non-voting.
+  Timestamp comparison uses the stated lexical calendar day rather than UTC
+  instant equality. Advance exact-current contracts to
+  `metadata-report-v22`, `fixed-conservative-v3`,
+  `shadow-review-packet-v3`, and `shadow-review-request-v4`; earlier
+  pre-release schemas are rejected without migration under ADR-0013. (#409)
+
 - Preserve high-confidence work-scoped title and complete ordered creator
   agreement when original values differ only by one closed, explainable
   comparison form: exact bytes; NFC/case/whitespace normalization; mapped

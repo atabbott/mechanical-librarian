@@ -14,7 +14,7 @@ mechanical-librarian proposal-set-create \
 Every option is required. The command reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v2` policy. It does not construct or contact a metadata or
+`fixed-conservative-v3` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline:
@@ -28,11 +28,11 @@ mechanical-librarian proposal-set-get \
 Success is exactly one canonical `proposal-set-v2` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `fixed-conservative-v2` proposal documents and the exact current
+Only `fixed-conservative-v3` proposal documents and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
-`fixed-conservative-v1` table shape is incompatible and is rejected before
-mutation; there is no proposal migration, import, conversion, or compatibility
-parser.
+`fixed-conservative-v1` or `fixed-conservative-v2` table shape is incompatible
+and is rejected before mutation; there is no proposal migration, import,
+conversion, or compatibility parser.
 
 ## Fixed policy
 
@@ -83,16 +83,22 @@ The policy is deliberately conservative:
   unchanged; real creators in the same report keep their source order, while
   `Anonymous`, nonexact names, provider creators, and explicit opening-matter
   creators remain eligible under the ordinary rules;
-- refining a populated year into a full date requires two materially
-  independent correlation groups;
-- work first-publication evidence can fill an empty date/year consistently but
-  cannot replace a valid populated edition value;
+- selecting a full-day `publishedDate` always requires two materially
+  independent correlation groups, whether or not a year is populated;
+- work first-publication, copyright, modification, and unknown-event evidence
+  never vote for manifestation date or year fields;
 - direct year-only edition evidence can fill `publishedYear` but is not
   promoted into a full `publishedDate`;
 - month-only evidence likewise derives only its stated year; day evidence may
-  fill `publishedDate`, while a signed-offset timestamp may reduce to that
-  exact stated day without offset conversion. Its source precision remains in
-  the cited report fact;
+  become a `publishedDate` candidate, while a signed-offset timestamp may
+  reduce to that exact stated day without offset conversion. Its source
+  precision remains in the cited report fact;
+- a timestamp without `Z` or an exact signed `HH:MM` offset remains visible in
+  the report but supplies neither a year nor day vote; this includes naive and
+  parser-admitted offset-second forms;
+- a day plus an agreeing year or month supports the shared year twice but the
+  day only once. Finer same-year conflicts preserve their shared coarse year;
+  they never manufacture month or day agreement;
 - provider publication text whose event or manifestation linkage is unresolved
   remains visible evidence and never becomes a selectable candidate;
 - local work subtitles and exact-edition provider subtitles remain in their

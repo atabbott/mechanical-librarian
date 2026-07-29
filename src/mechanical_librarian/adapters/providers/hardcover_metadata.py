@@ -1012,6 +1012,7 @@ def _parse_candidates(
                     ),
                 ),
                 local_claims,
+                provider,
             )
         )
     if used != set(indexed) or len({candidate.identity for candidate in candidates}) != len(candidates):

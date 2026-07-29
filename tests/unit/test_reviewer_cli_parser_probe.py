@@ -43,7 +43,7 @@ def _profile(root: Path, codex: Path, sandbox: Path) -> QualificationProfile:
         "medium",
         "shadow-review-prompt-v2",
         "codex-shadow-profile-v1",
-        "shadow-review-packet-v2",
+        "shadow-review-packet-v3",
         "shadow-review-result-v1",
         "qualification-only-policy-v1",
         120,
@@ -135,10 +135,12 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
             self.assertEqual(1, len(live_requests))
             self.assertEqual(
                 live_requests[0],
-                ShadowReviewRequest.from_json(live_requests[0].to_json()),
+                ShadowReviewRequest.from_source_validated_json(
+                    live_requests[0].to_json()
+                ),
             )
             self.assertEqual(
-                "shadow-review-request-v3", live_requests[0].schema_version
+                "shadow-review-request-v4", live_requests[0].schema_version
             )
             self.assertTrue(
                 all(str(profile.auth_store_path) not in command for command in commands)

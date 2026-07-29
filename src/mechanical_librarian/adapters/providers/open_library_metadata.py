@@ -952,8 +952,9 @@ def _candidate(
         _key(_mapping(value).get("key"), _WORK_KEY)
         for value in _object_list(edition.get("works"), 8)
     )
-    if relations != (work_key,):
+    if not relations:
         raise ValueError("edition work relation is malformed")
+    relation_contradiction = relations != (work_key,)
     identity = "open-library-edition-" + edition_key.removeprefix("/books/")
     work_identity = "open-library-work-" + work_key.removeprefix("/works/")
     claims: list[ProviderClaim] = []
@@ -1130,6 +1131,14 @@ def _candidate(
             ClaimScope.EDITION,
         )
     ]
+    if relation_contradiction:
+        evidence.append(
+            ProviderEvidence(
+                ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
+                "contradictory_or_multiple",
+                ClaimScope.EDITION,
+            )
+        )
     if publication_date_text is not None:
         evidence.append(ProviderEvidence(ProviderEvidenceKind.PUBLICATION_DATE_TEXT, publication_date_text, ClaimScope.EDITION))
     _provenance(evidence, edition, ClaimScope.EDITION)
@@ -1234,6 +1243,15 @@ def _candidate(
                 ClaimScope.WORK,
             )
         )
+    if relation_contradiction:
+        claims = [
+            claim for claim in claims if claim.scope is ClaimScope.EDITION
+        ]
+        evidence = [
+            value for value in evidence if value.scope is ClaimScope.EDITION
+        ]
+        identity_bindings = []
+        work_cover = _CoverId(None)
     canonical_evidence = tuple(
         sorted(
             (replace(value, source_ordinal=index) for index, value in enumerate(evidence)),
@@ -1268,6 +1286,7 @@ def _candidate(
                 ),
             ),
             local_claims,
+            provider,
         ),
         edition_cover,
         work_cover,

@@ -120,7 +120,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v20`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v22`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -228,7 +228,7 @@ sanitized packet and attempt. Preview reads only profile bytes and application
 state; it constructs no executable, auth, target, provider, reviewer, or other
 network client and is not fresh eligibility proof. Request may invoke only the
 exact declared Codex/model/reasoning/prompt/profile/packet/output/policy tuple.
-ADR-0016 freezes that tuple at packet-v2/request-v3. Provider publication
+ADR-0019 freezes the current tuple at packet-v3/request-v4. Provider publication
 citations expose only bounded allowlisted identifier and physical-format fact
 objects already admitted to the report; exact reference membership, closed
 shape, ordering, and limits are revalidated so opaque-only or malformed

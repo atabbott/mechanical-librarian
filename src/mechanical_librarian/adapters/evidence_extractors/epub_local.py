@@ -18,6 +18,7 @@ from mechanical_librarian.domain.epub_inspection import (
     EpubInspectionField,
     EpubPackageLimits,
     EpubRearProvenance,
+    normalize_date_value,
 )
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text, validate_role_projection
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
@@ -279,6 +280,21 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
         } and date_precision is not None:
             canonical = canonical or observed
             state = forced_state or "valid"
+        if date_event is not None and state == "valid":
+            try:
+                canonical, inferred_precision = normalize_date_value(observed)
+            except ValueError:
+                canonical = None
+                date_precision = None
+                state = "malformed"
+            else:
+                if inferred_precision is not date_precision:
+                    canonical = None
+                    date_precision = None
+                    state = "malformed"
+        if date_event is not None and state != "valid":
+            canonical = None
+            date_precision = None
         if not contextual_only:
             facts.append(EpubInspectionFact(field, source, observed, canonical, observed, "not_applicable", "not_applicable", "not_applicable", "package_metadata", state=state, role=role, date_event=date_event, date_precision=date_precision))
         for contextual_role in contextual_roles:
@@ -554,6 +570,14 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
                     )
                 )
             for lexical, event, precision in dates:
+                try:
+                    canonical, inferred_precision = normalize_date_value(
+                        lexical
+                    )
+                except ValueError:
+                    continue
+                if inferred_precision is not precision:
+                    continue
                 facts.append(
                     EpubInspectionFact(
                         (
@@ -563,7 +587,7 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
                         ),
                         report.source_fingerprint,
                         lexical,
-                        lexical,
+                        canonical,
                         value,
                         "not_applicable",
                         "not_applicable",
