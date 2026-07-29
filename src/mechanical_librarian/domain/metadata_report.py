@@ -950,9 +950,23 @@ class LocalClaim:
         if (
             is_date
             and self.state is FieldState.VALID
-            and type(self.date_precision) is not DatePrecision
+            and (
+                type(self.date_precision) is not DatePrecision
+                or self.canonical is None
+            )
         ) or (not is_date and self.date_precision is not None):
             raise ReportValueError("local date precision is inconsistent")
+        if is_date and self.state is FieldState.VALID:
+            try:
+                normalized_date = normalize_date_value(self.observed)
+            except ReportValueError as error:
+                raise ReportValueError(
+                    "local date precision is inconsistent"
+                ) from error
+            if normalized_date != (self.canonical, self.date_precision):
+                raise ReportValueError(
+                    "local date precision is inconsistent"
+                )
         if (
             self.kind is ClaimKind.PUBLICATION_DATE
             and self.date_event is not DateEvent.MANIFESTATION_PUBLICATION

@@ -455,7 +455,7 @@ class EpubChildRearSpineTests(unittest.TestCase):
             ),
             (
                 "2026-01-13T12:34:56.789+05:30",
-                "2026-01-13T12:34:56.789+05:30",
+                "2026-01-13T12:34:56.789000+05:30",
                 "valid",
                 DateEvent.MANIFESTATION_PUBLICATION,
                 DatePrecision.TIMESTAMP,
@@ -499,7 +499,7 @@ class EpubChildRearSpineTests(unittest.TestCase):
                 ("1750", "1750", "valid", DatePrecision.YEAR),
                 (
                     "2024-03-05T10:30:00.1234567Z",
-                    "2024-03-05T10:30:00.1234567Z",
+                    "2024-03-05T10:30:00.123456+00:00",
                     "valid",
                     DatePrecision.TIMESTAMP,
                 ),

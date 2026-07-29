@@ -110,6 +110,8 @@ from mechanical_librarian.domain.metadata_report import (
     stable_reference,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.interfaces.cli import main
 
 
@@ -515,6 +517,111 @@ class MetadataReportTests(unittest.TestCase):
         replay_data["local"]["claims"][0]["scope"] = "edition"
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(replay_data))
+
+    def test_valid_local_dates_bind_observed_canonical_and_precision(
+        self,
+    ) -> None:
+        valid_cases = (
+            (
+                ClaimKind.PUBLICATION_DATE,
+                DateEvent.MANIFESTATION_PUBLICATION,
+                "2001-02-03T04:05:06Z",
+            ),
+            (
+                ClaimKind.DATE_EVENT,
+                DateEvent.WORK_FIRST_PUBLICATION,
+                "2001-02-03T04:05:06+01:00:00",
+            ),
+            (
+                ClaimKind.DATE_EVENT,
+                DateEvent.COPYRIGHT,
+                "2001-02-03",
+            ),
+        )
+        for kind, event, observed in valid_cases:
+            canonical, precision = normalize_date_value(observed)
+            claim = LocalClaim.create(
+                kind=kind,
+                observed=observed,
+                canonical=canonical,
+                excerpt=observed,
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=claim_scope(kind, event),
+                date_event=event,
+                date_precision=precision,
+            )
+            report = MetadataReport.create(
+                target=TargetFacts(
+                    "primary",
+                    "ebooks",
+                    "item-1",
+                    default_target_fields(None),
+                ),
+                file=FileFacts(0, "a" * 64, "b" * 64),
+                local_claims=(claim,),
+                local_reasons=("package_metadata_date",),
+                providers=(),
+            )
+            with self.subTest(kind=kind, event=event, observed=observed):
+                self.assertEqual(
+                    report, MetadataReport.from_json(report.to_json())
+                )
+                for forged_observed in ("2002-04-05", "not-a-date"):
+                    document = report.to_data()
+                    document["local"]["claims"][0]["observed"] = forged_observed
+                    document["local"]["claims"][0]["excerpt"] = forged_observed
+                    with self.assertRaisesRegex(
+                        ReportValueError,
+                        "local date precision is inconsistent",
+                    ):
+                        MetadataReport.from_json(canonical_json(document))
+
+        for kind, event, observed, canonical, precision in (
+            (
+                ClaimKind.PUBLICATION_DATE,
+                DateEvent.MANIFESTATION_PUBLICATION,
+                "2001",
+                "2002",
+                DatePrecision.YEAR,
+            ),
+            (
+                ClaimKind.DATE_EVENT,
+                DateEvent.CREATION,
+                "not-a-date",
+                "2001",
+                DatePrecision.YEAR,
+            ),
+            (
+                ClaimKind.DATE_EVENT,
+                DateEvent.COPYRIGHT,
+                "2001-02-03T04:05:06Z",
+                "2001-02-03T04:05:06Z",
+                DatePrecision.TIMESTAMP,
+            ),
+        ):
+            with (
+                self.subTest(
+                    rejection=(kind, event, observed, canonical, precision)
+                ),
+                self.assertRaisesRegex(
+                    ReportValueError,
+                    "local date precision is inconsistent",
+                ),
+            ):
+                LocalClaim.create(
+                    kind=kind,
+                    observed=observed,
+                    canonical=canonical,
+                    excerpt=observed,
+                    applicability="not_applicable",
+                    checksum="not_applicable",
+                    applicability_basis="not_applicable",
+                    scope=claim_scope(kind, event),
+                    date_event=event,
+                    date_precision=precision,
+                )
 
     def test_local_dates_and_contextual_credits_replay_without_candidate_conflation(
         self,
@@ -1510,7 +1617,7 @@ class MetadataReportTests(unittest.TestCase):
         package_date = LocalClaim.create(
             kind=ClaimKind.PUBLICATION_DATE,
             observed=lexical,
-            canonical=lexical,
+            canonical=normalize_date_value(lexical)[0],
             excerpt=lexical,
             applicability="not_applicable",
             basis="package_metadata",
@@ -1593,6 +1700,12 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(provider_count if voting else 0, len(provider_dates))
         self.assertEqual(0 if voting else provider_count, len(provider_text))
         proposal = evaluate_report(report)
+        case = ReviewCase.create(proposal, report)
+        packet = ShadowReviewPacket.create(case, proposal, report)
+        self.assertEqual(
+            packet,
+            ShadowReviewPacket.from_json(packet.to_json(), report),
+        )
         publication_references = {
             reference
             for value in proposal.results
@@ -2909,7 +3022,7 @@ class MetadataReportTests(unittest.TestCase):
             return LocalClaim.create(
                 kind=ClaimKind.PUBLICATION_DATE,
                 observed=value,
-                canonical=value,
+                canonical=normalize_date_value(value)[0],
                 excerpt=value,
                 applicability="not_applicable",
                 basis="package_metadata",
@@ -2940,10 +3053,11 @@ class MetadataReportTests(unittest.TestCase):
             "2024-03-05T14:30:00",
             DatePrecision.TIMESTAMP,
         )
-        invalid = local(
-            "2024-02-30T14:30:00Z",
-            DatePrecision.TIMESTAMP,
-        )
+        with self.assertRaises(ReportValueError):
+            local(
+                "2024-02-30T14:30:00Z",
+                DatePrecision.TIMESTAMP,
+            )
 
         def provider(value: str) -> ProviderClaim:
             return ProviderClaim.create(
@@ -3125,13 +3239,12 @@ class MetadataReportTests(unittest.TestCase):
                 )
         self.assertEqual((), comparison_links(negative_offset, (naive,)))
         with self.assertRaises(ReportValueError):
-            comparison_links(negative_offset, (invalid,))
-        with self.assertRaises(ReportValueError):
             comparison_links(
                 provider("2024-03-05T14:30:00"),
                 (zulu,),
             )
-        self.assertEqual("2024-03-05T14:30:00Z", zulu.canonical)
+        self.assertEqual("2024-03-05T14:30:00Z", zulu.observed)
+        self.assertEqual("2024-03-05T14:30:00+00:00", zulu.canonical)
         self.assertEqual(
             "2024-03-05T10:30:00-04:00",
             negative_offset.date_lexical,
