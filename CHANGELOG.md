@@ -13,7 +13,12 @@
   unsafe manifestation evidence remains reviewer-visible but non-voting.
   `publishedYear` uses shared year support, while full-day `publishedDate`
   always requires two independent sources. Advance exact-current contracts to
-  `metadata-report-v21`, `fixed-conservative-v3`,
+  Contradictory or multiple provider work relations retain one canonical
+  candidate binding plus one closed contradiction fact, suppress unrelated
+  work-scoped authority, and keep the edition date visible but non-voting.
+  Timestamp comparison uses the stated lexical calendar day rather than UTC
+  instant equality. Advance exact-current contracts to
+  `metadata-report-v22`, `fixed-conservative-v3`,
   `shadow-review-packet-v3`, and `shadow-review-request-v4`; earlier
   pre-release schemas are rejected without migration under ADR-0013. (#409)
 

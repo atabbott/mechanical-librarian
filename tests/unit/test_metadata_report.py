@@ -915,7 +915,7 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v21", report.schema_version)
+        self.assertEqual("metadata-report-v22", report.schema_version)
         previous = report.to_data()
         previous["schema_version"] = "metadata-report-v13"
         with self.assertRaises(ReportValueError):
@@ -2526,7 +2526,7 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(
             {
                 zulu.reference: Comparison.AGREEMENT,
-                different.reference: Comparison.DISAGREEMENT,
+                different.reference: Comparison.AGREEMENT,
                 day.reference: Comparison.DISAGREEMENT,
             },
             {
@@ -2556,10 +2556,10 @@ class MetadataReportTests(unittest.TestCase):
             (
                 ComparisonLink(
                     rollover.reference,
-                    Comparison.AGREEMENT,
-                    ComparisonMethod.EXACT,
-                    PublicationDateRelation.EXACT,
-                    DatePrecision.DAY,
+                    Comparison.DISAGREEMENT,
+                    ComparisonMethod.NONE,
+                    PublicationDateRelation.FINER_CONFLICT,
+                    DatePrecision.MONTH,
                 ),
             ),
             comparison_links(
@@ -2567,6 +2567,45 @@ class MetadataReportTests(unittest.TestCase):
                 (rollover,),
             ),
         )
+        stated_day_cases = (
+            (
+                "2024-03-05T23:30:00-02:00",
+                "2024-03-05T01:30:00+00:00",
+                PublicationDateRelation.EXACT,
+                DatePrecision.DAY,
+            ),
+            (
+                "2024-03-05T23:30:00-02:00",
+                "2024-03-06T01:30:00+00:00",
+                PublicationDateRelation.FINER_CONFLICT,
+                DatePrecision.MONTH,
+            ),
+        )
+        for left, right, relation, shared in stated_day_cases:
+            with self.subTest(left=left, right=right):
+                expected = (relation, shared)
+                self.assertEqual(
+                    expected,
+                    publication_date_relation(
+                        left_value=left,
+                        left_event=DateEvent.MANIFESTATION_PUBLICATION,
+                        left_precision=DatePrecision.TIMESTAMP,
+                        right_value=right,
+                        right_event=DateEvent.MANIFESTATION_PUBLICATION,
+                        right_precision=DatePrecision.TIMESTAMP,
+                    ),
+                )
+                self.assertEqual(
+                    expected,
+                    publication_date_relation(
+                        left_value=right,
+                        left_event=DateEvent.MANIFESTATION_PUBLICATION,
+                        left_precision=DatePrecision.TIMESTAMP,
+                        right_value=left,
+                        right_event=DateEvent.MANIFESTATION_PUBLICATION,
+                        right_precision=DatePrecision.TIMESTAMP,
+                    ),
+                )
         for malformed in (naive, invalid):
             with (
                 self.subTest(value=malformed.canonical),
@@ -2803,6 +2842,69 @@ class MetadataReportTests(unittest.TestCase):
             PublicationDateRelation.EVENT_INCOMPATIBLE,
             work_first.evidence[0].links[0].publication_date_relation,
         )
+
+        contradictory_candidate = replace(
+            candidate,
+            evidence=(
+                ProviderEvidence(
+                    ProviderEvidenceKind.EDITION_WORK_RELATION,
+                    "work-1",
+                    ClaimScope.EDITION,
+                ),
+                ProviderEvidence(
+                    ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
+                    "contradictory_or_multiple",
+                    ClaimScope.EDITION,
+                    source_ordinal=1,
+                ),
+                replace(date_text, source_ordinal=2),
+            ),
+        )
+        self.assertFalse(
+            manifestation_publication_compatible(
+                contradictory_candidate, local
+            )
+        )
+        contradictory = finalize_candidate_comparisons(
+            contradictory_candidate, local, "catalogue"
+        )
+        retained = next(
+            evidence
+            for evidence in contradictory.evidence
+            if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual(
+            PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+            retained.links[0].publication_date_relation,
+        )
+        with self.assertRaises(ReportValueError):
+            ProviderEvidence(
+                ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
+                "work-2",
+                ClaimScope.EDITION,
+            )
+        with self.assertRaises(ReportValueError):
+            replace(
+                candidate,
+                evidence=(
+                    ProviderEvidence(
+                        ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
+                        "contradictory_or_multiple",
+                        ClaimScope.EDITION,
+                    ),
+                ),
+            )
+        with self.assertRaises(ReportValueError):
+            replace(
+                contradictory_candidate,
+                evidence=(
+                    ProviderEvidence(
+                        ProviderEvidenceKind.EDITION_WORK_RELATION,
+                        "work-2",
+                        ClaimScope.EDITION,
+                    ),
+                ),
+            )
 
     def test_identifier_evidence_classifies_provider_local_work_relations(self) -> None:
         def local(

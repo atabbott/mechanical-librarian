@@ -33,6 +33,8 @@ null when there is no shared precision. This keeps a same-month day conflict
 distinct from a same-year month conflict. Comparison is deterministic,
 provider-order independent, and retains original `YYYY`, `YYYY-MM`, and
 `YYYY-MM-DD` values without filling missing components.
+Timestamp equality is evaluated at the stated lexical calendar-day granularity
+used by the target projection, never by converting offsets to a UTC instant.
 
 A provider manifestation date becomes selectable only when the complete
 candidate contains a checksum-valid ISBN family exactly matching valid local
@@ -42,6 +44,10 @@ manifestation incompatible. Title, creator, provider rank, opaque work
 identity, and query order cannot establish manifestation applicability.
 Google Books publication text uses this same domain gate rather than an
 adapter-specific exception.
+An edition with a valid conflicting, duplicate, or multiple work relation
+retains its exact canonical candidate binding and one closed contradiction
+fact. Work-scoped claims, evidence, identity bindings, and work cover authority
+are suppressed; edition-scoped evidence remains visible and non-voting.
 
 Work-first, copyright, modification, unknown-event, and unsafe-manifestation
 dates remain retained evidence. They carry explicit incompatible links into
@@ -49,7 +55,7 @@ the reviewer packet but never vote for `publishedYear` or `publishedDate`.
 Shared year evidence may support `publishedYear`; a full-day
 `publishedDate` requires two materially independent sources.
 
-The exact-current report advances to `metadata-report-v21`, the proposal policy
+The exact-current report advances to `metadata-report-v22`, the proposal policy
 to `fixed-conservative-v3`, the reviewer packet to
 `shadow-review-packet-v3`, and the request to `shadow-review-request-v4`.
 ADR-0013 rejects all earlier pre-release database shapes without migration,

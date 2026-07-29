@@ -32,7 +32,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 
 
-REPORT_SCHEMA = "metadata-report-v21"
+REPORT_SCHEMA = "metadata-report-v22"
 COMPARISON_VERSION = "closed-title-creator-publication-v4"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -136,6 +136,9 @@ class ProviderEvidenceKind(StrEnum):
     COPYRIGHT_DATE = "copyright_date"
     PUBLICATION_DATE_TEXT = "publication_date_text"
     EDITION_WORK_RELATION = "edition_work_relation"
+    EDITION_WORK_RELATION_CONTRADICTION = (
+        "edition_work_relation_contradiction"
+    )
     FIRST_PUBLICATION_DATE = "first_publication_date"
     EDITION_COVER_ID = "edition_cover_id"
     WORK_COVER_ID = "work_cover_id"
@@ -1219,6 +1222,14 @@ class ProviderEvidence:
         ):
             raise ReportValueError("provider rich evidence source ordinal is invalid")
         _projection_text(self.value, "provider rich evidence value", MAX_SCALAR_CHARACTERS)
+        if (
+            self.kind
+            is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+            and self.value != "contradictory_or_multiple"
+        ):
+            raise ReportValueError(
+                "provider work relation contradiction is invalid"
+            )
         if self.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY:
             if self.role is None:
                 raise ReportValueError("provider rich evidence role is invalid")
@@ -1433,6 +1444,7 @@ class ProviderCandidate:
         # downstream consumer reject a forged cross-candidate attachment.
         edition_only = {
             ProviderEvidenceKind.EDITION_WORK_RELATION,
+            ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
             ProviderEvidenceKind.EDITION_COVER_ID,
             ProviderEvidenceKind.PAGE_COUNT,
             ProviderEvidenceKind.PAGINATION,
@@ -1455,14 +1467,36 @@ class ProviderCandidate:
             ProviderEvidenceKind.SEARCH_LANGUAGE,
             ProviderEvidenceKind.SEARCH_EDITION,
         }
-        if any(
-            (value.kind in edition_only and value.scope is not ClaimScope.EDITION)
-            or (value.kind in work_only and value.scope is not ClaimScope.WORK)
-            or (
-                value.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
-                and value.value != self.work_identity
-            )
+        work_relations = tuple(
+            value
             for value in self.evidence
+            if value.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
+        )
+        work_relation_contradictions = tuple(
+            value
+            for value in self.evidence
+            if value.kind
+            is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+        )
+        if (
+            len(work_relations) > 1
+            or len(work_relation_contradictions) > 1
+            or (work_relation_contradictions and len(work_relations) != 1)
+            or any(
+                (
+                    value.kind in edition_only
+                    and value.scope is not ClaimScope.EDITION
+                )
+                or (
+                    value.kind in work_only
+                    and value.scope is not ClaimScope.WORK
+                )
+                or (
+                    value.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
+                    and value.value != self.work_identity
+                )
+                for value in self.evidence
+            )
         ):
             raise ReportValueError("provider rich evidence is misbound")
         if (
@@ -2338,6 +2372,10 @@ def publication_date_relation(
         return PublicationDateRelation.MANIFESTATION_INCOMPATIBLE, None
     left = _date_components(left_value, left_precision)
     right = _date_components(right_value, right_precision)
+    if left_precision is DatePrecision.TIMESTAMP:
+        _comparison_value(ClaimKind.PUBLICATION_DATE, left_value)
+    if right_precision is DatePrecision.TIMESTAMP:
+        _comparison_value(ClaimKind.PUBLICATION_DATE, right_value)
     shared: DatePrecision | None = None
     if left[0] == right[0]:
         shared = DatePrecision.YEAR
@@ -2352,8 +2390,7 @@ def publication_date_relation(
         if (
             left_precision is DatePrecision.TIMESTAMP
             and right_precision is DatePrecision.TIMESTAMP
-            and _comparison_value(ClaimKind.PUBLICATION_DATE, left_value)
-            == _comparison_value(ClaimKind.PUBLICATION_DATE, right_value)
+            and shared is DatePrecision.DAY
         ):
             return PublicationDateRelation.EXACT, DatePrecision.DAY
         return PublicationDateRelation.FINER_CONFLICT, shared
@@ -2592,6 +2629,12 @@ def manifestation_publication_compatible(
         and evidence.scope is ClaimScope.EDITION
         and normalize_title(evidence.value).casefold()
         in _PRINT_FORMAT_CONTRADICTIONS
+        for evidence in candidate.evidence
+    ):
+        return False
+    if any(
+        evidence.kind
+        is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
         for evidence in candidate.evidence
     ):
         return False

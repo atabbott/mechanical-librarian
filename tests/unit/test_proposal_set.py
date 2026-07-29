@@ -153,6 +153,47 @@ def _publication_provider(
     return _provider(name, candidate, claims, authority=authority)
 
 
+def _contradictory_publication_provider(
+    name: str = "catalogue",
+    candidate: str = "edition-1",
+) -> ProviderObservation:
+    return _provider(
+        name,
+        candidate,
+        (
+            _claim(
+                name,
+                candidate,
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="unknown",
+            ),
+            _claim(
+                name,
+                candidate,
+                ClaimKind.PUBLICATION_DATE,
+                "2001-02-03",
+                scope=ClaimScope.EDITION,
+                order=1,
+            ),
+        ),
+        (
+            ProviderEvidence(
+                ProviderEvidenceKind.EDITION_WORK_RELATION,
+                f"{name}-work",
+                ClaimScope.EDITION,
+            ),
+            ProviderEvidence(
+                ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
+                "contradictory_or_multiple",
+                ClaimScope.EDITION,
+                source_ordinal=1,
+            ),
+        ),
+    )
+
+
 def _report(
     *,
     title: str | None = "Current title",
@@ -2082,6 +2123,36 @@ class ProposalSetTests(unittest.TestCase):
             proposal_set, TargetDestination.PUBLISHED_DATE
         )
         self.assertEqual(ProposalOutcome.INELIGIBLE, date_result.outcome)
+
+    def test_contradictory_work_relation_date_remains_non_voting(self) -> None:
+        proposal_set = evaluate_report(
+            _report(
+                fields=_fields(
+                    published_year=TargetField(
+                        TargetDestination.PUBLISHED_YEAR,
+                        TargetFieldState.MISSING,
+                    ),
+                    published_date=TargetField(
+                        TargetDestination.PUBLISHED_DATE,
+                        TargetFieldState.MISSING,
+                    ),
+                ),
+                local_claims=(_publication_local_isbn(),),
+                providers=(_contradictory_publication_provider(),),
+            )
+        )
+        self.assertEqual(
+            ProposalOutcome.INELIGIBLE,
+            _result(
+                proposal_set, TargetDestination.PUBLISHED_YEAR
+            ).outcome,
+        )
+        self.assertEqual(
+            ProposalOutcome.INELIGIBLE,
+            _result(
+                proposal_set, TargetDestination.PUBLISHED_DATE
+            ).outcome,
+        )
 
     def test_month_precision_derives_only_the_stated_year(self) -> None:
         proposal = evaluate_report(

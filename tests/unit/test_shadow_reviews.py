@@ -82,6 +82,7 @@ from mechanical_librarian.domain.shadow_review import (
 from mechanical_librarian.interfaces.cli import main
 from tests.unit.test_review_case_persistence import _report
 from tests.unit.test_proposal_set import (
+    _contradictory_publication_provider,
     _identity_bound_alias_report,
     _partially_bound_direct_author_report,
 )
@@ -713,12 +714,80 @@ class ShadowReviewTests(unittest.TestCase):
             rich_date(document)[field] = invalid
             with self.subTest(field=field):
                 with self.assertRaises(ShadowReviewValueError):
-                    ShadowReviewPacket.from_json(canonical_json(document), report)
+                    ShadowReviewPacket.from_json(
+                        canonical_json(document), report
+                    )
 
         document = json.loads(packet.to_json())
         rich_date(document)["evidence"]["kind"] = "copyright_date"
         with self.assertRaises(ShadowReviewValueError):
             ShadowReviewPacket.from_json(canonical_json(document), report)
+
+    def test_contradictory_work_relation_date_is_visible_but_not_a_candidate(
+        self,
+    ) -> None:
+        local_date = LocalClaim.create(
+            kind=ClaimKind.PUBLICATION_DATE,
+            observed="2002",
+            canonical="2002",
+            excerpt="2002",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.EDITION,
+            date_event=DateEvent.MANIFESTATION_PUBLICATION,
+            date_precision=DatePrecision.YEAR,
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields(None),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(_local_isbn(), local_date),
+            local_reasons=("package_metadata_isbn",),
+            providers=(_contradictory_publication_provider(),),
+        )
+        proposal = evaluate_report(report)
+        case = ReviewCase.create(proposal, report)
+        packet = ShadowReviewPacket.create(case, proposal, report)
+        publication = next(
+            evidence
+            for evidence in report.providers[0].candidates[0].evidence
+            if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        citation = next(
+            value
+            for value in packet.citations
+            if value["citation_id"] == (
+                "evidence_"
+                + hashlib.sha256(
+                    canonical_json(
+                        {
+                            "candidate": "edition-1",
+                            "evidence": publication.to_data(),
+                            "provider": "catalogue",
+                        }
+                    ).encode("utf-8")
+                ).hexdigest()
+            )
+        )
+        self.assertEqual(
+            "manifestation_incompatible",
+            citation["fact"]["evidence"]["links"][0][
+                "publication_date_relation"
+            ],
+        )
+        self.assertFalse(
+            any(
+                citation["citation_id"]
+                in candidate["evidence_references"]
+                for value in packet.proposals
+                for candidate in value["candidates"]
+            )
+        )
 
     def test_publication_linkage_construction_rejects_context_over_limits(
         self,

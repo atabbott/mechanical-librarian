@@ -34,6 +34,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
+    PublicationDateRelation,
     TargetDestination,
     TargetField,
     TargetFieldState,
@@ -41,6 +42,7 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
     isbn_family,
 )
+from mechanical_librarian.domain.epub_inspection import DatePrecision
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverSourceState,
@@ -3294,7 +3296,9 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 self.assertEqual((), observation.candidates)
                 self.assertEqual((), provider.cover_descriptors)
 
-    def test_invalid_required_detail_content_discards_all_candidates(self) -> None:
+    def test_conflicting_detail_relation_preserves_bounded_candidates(
+        self,
+    ) -> None:
         requests: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -3320,8 +3324,17 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             65_536,
             pacer=OpenLibraryPacer(sleep=lambda _: None),
         ).observe(_isbn_lookup((_isbn(),)))
-        self.assertEqual(ProviderStatus.MALFORMED, observation.status)
-        self.assertEqual((), observation.candidates)
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        self.assertEqual(2, len(observation.candidates))
+        self.assertEqual(
+            1,
+            sum(
+                evidence.kind
+                is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+                for candidate in observation.candidates
+                for evidence in candidate.evidence
+            ),
+        )
         self.assertEqual(
             [
                 "/search.json",
@@ -3332,34 +3345,93 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             [request.url.path for request in requests],
         )
 
-    def test_edition_with_multiple_work_relations_is_malformed(self) -> None:
-        values = {
-            "/search.json": _search("/books/OL1M"),
-            "/books/OL1M.json": {
-                **_edition("/books/OL1M"),
-                "works": [
-                    {"key": "/works/OL5W"},
-                    {"key": "/works/OL9W"},
-                ],
-            },
-            "/works/OL5W.json": _work(),
-        }
+    def test_conflicting_or_multiple_work_relations_keep_only_edition_authority(
+        self,
+    ) -> None:
+        for relations in (
+            [{"key": "/works/OL9W"}],
+            [
+                {"key": "/works/OL5W"},
+                {"key": "/works/OL5W"},
+            ],
+            [
+                {"key": "/works/OL5W"},
+                {"key": "/works/OL9W"},
+            ],
+        ):
+            values = {
+                "/search.json": _search("/books/OL1M"),
+                "/books/OL1M.json": {
+                    **_edition("/books/OL1M"),
+                    "works": relations,
+                },
+                "/works/OL5W.json": _work(),
+            }
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(
-                200,
-                headers={"content-type": "application/json"},
-                json=values[request.url.path],
-            )
+            def handler(request: httpx.Request) -> httpx.Response:
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=values[request.url.path],
+                )
 
-        observation = OpenLibraryMetadataProvider(
-            "open_library",
-            httpx.Client(transport=httpx.MockTransport(handler)),
-            65_536,
-            pacer=OpenLibraryPacer(sleep=lambda _: None),
-        ).observe(_isbn_lookup((_isbn(),)))
-        self.assertEqual(ProviderStatus.MALFORMED, observation.status)
-        self.assertEqual((), observation.candidates)
+            observation = OpenLibraryMetadataProvider(
+                "open_library",
+                httpx.Client(transport=httpx.MockTransport(handler)),
+                65_536,
+                pacer=OpenLibraryPacer(sleep=lambda _: None),
+            ).observe(_isbn_lookup((_isbn(),)))
+            with self.subTest(relations=relations):
+                self.assertEqual(
+                    ProviderStatus.CANDIDATES, observation.status
+                )
+                candidate = observation.candidates[0]
+                self.assertEqual((), candidate.identity_bindings)
+                self.assertTrue(
+                    all(
+                        claim.scope is ClaimScope.EDITION
+                        for claim in candidate.claims
+                    )
+                )
+                self.assertTrue(
+                    all(
+                        evidence.scope is ClaimScope.EDITION
+                        for evidence in candidate.evidence
+                    )
+                )
+                self.assertEqual(
+                    [
+                        "edition_work_relation",
+                        "edition_work_relation_contradiction",
+                    ],
+                    sorted(
+                        evidence.kind.value
+                        for evidence in candidate.evidence
+                        if evidence.kind
+                        in {
+                            ProviderEvidenceKind.EDITION_WORK_RELATION,
+                            ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
+                        }
+                    ),
+                )
+                publication = next(
+                    evidence
+                    for evidence in candidate.evidence
+                    if evidence.kind
+                    is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                )
+                self.assertEqual("2026-01-02", publication.value)
+                self.assertEqual(DatePrecision.DAY, publication.date_precision)
+                self.assertEqual(
+                    PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+                    publication.links[0].publication_date_relation,
+                )
+                self.assertFalse(
+                    any(
+                        claim.kind is ClaimKind.PUBLICATION_DATE
+                        for claim in candidate.claims
+                    )
+                )
 
 
 class OpenLibraryDiagnosticBoundaryTests(unittest.TestCase):

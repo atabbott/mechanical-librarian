@@ -63,7 +63,7 @@ provider call.
 
 - The database path is absent for the first invocation or already contains the
   exact current schema required by the installed increment.
-- `metadata-report-v1` through `metadata-report-v20`, and all earlier development
+- `metadata-report-v1` through `metadata-report-v21`, and all earlier development
   schemas are rejected before mutation. There is no migration, import,
   preservation, or compatibility parser. Keep an old database offline if
   required, initialize a clean database, and rerun the supported report command.
@@ -176,8 +176,8 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v21`. Every earlier report discriminator,
-including `metadata-report-v20`, remains offline and requires a clean current
+discriminator is `metadata-report-v22`. Every earlier report discriminator,
+including `metadata-report-v21`, remains offline and requires a clean current
 database under ADR-0013.
 
 Publication dates use the closed `date_precision_compatibility` comparison
@@ -195,6 +195,17 @@ that manifestation. Title, creator, work identity, provider rank, and query
 order never substitute for this binding. Work-first, copyright, modification,
 and unsafe-manifestation dates remain visible with explicit incompatible links
 but cannot vote for manifestation fields.
+When a provider edition declares a valid but conflicting, duplicate, or
+multiple work relation, the report retains exactly one canonical candidate
+relation plus one closed `edition_work_relation_contradiction` fact. It keeps
+edition-scoped facts, including the lexical publication date and precision,
+but suppresses work-scoped claims, evidence, identity bindings, and work cover
+authority. The date remains explicitly manifestation-incompatible.
+
+Timestamp comparison uses the calendar date stated in each retained lexical
+value. Different times or offsets on the same stated date agree at day
+precision; different stated dates conflict even when they denote the same UTC
+instant. Timestamp-to-day comparison remains a finer-precision conflict.
 
 Work-scoped title and creator links retain the original source values and record
 one truthful closed comparison method per link: exact bytes; NFC, case folding
