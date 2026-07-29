@@ -8,7 +8,7 @@ import math
 import re
 import unicodedata
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Mapping, Self
 
@@ -29,7 +29,11 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
     diagnostics_are_canonical,
 )
-from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
+from mechanical_librarian.domain.epub_inspection import (
+    DateEvent,
+    DatePrecision,
+    normalize_date_value as _normalize_date_value,
+)
 
 
 REPORT_SCHEMA = "metadata-report-v22"
@@ -706,33 +710,10 @@ def normalize_title(value: str) -> str:
 
 def normalize_date_value(value: str) -> tuple[str, DatePrecision]:
     """Validate one ISO-like lexical date without increasing its precision."""
-    _projection_text(value, "date lexical value", MAX_SCALAR_CHARACTERS)
-    if re.fullmatch(r"\d{4}", value):
-        year = int(value)
-        if not 1 <= year <= 9999:
-            raise ReportValueError("date lexical value is invalid")
-        return value, DatePrecision.YEAR
-    if re.fullmatch(r"\d{4}-\d{2}", value):
-        try:
-            date(int(value[:4]), int(value[5:7]), 1)
-        except ValueError as error:
-            raise ReportValueError("date lexical value is invalid") from error
-        return value, DatePrecision.MONTH
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-        try:
-            return date.fromisoformat(value).isoformat(), DatePrecision.DAY
-        except ValueError as error:
-            raise ReportValueError("date lexical value is invalid") from error
-    if "T" not in value:
-        raise ReportValueError("date lexical value is invalid")
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return _normalize_date_value(value)
     except ValueError as error:
         raise ReportValueError("date lexical value is invalid") from error
-    offset = parsed.utcoffset()
-    if offset is not None and abs(offset) > timedelta(hours=14):
-        raise ReportValueError("date lexical value is invalid")
-    return parsed.isoformat(), DatePrecision.TIMESTAMP
 
 
 def publication_date_is_voting(

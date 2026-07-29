@@ -20,7 +20,8 @@
   normalization removes zero offset seconds, and are skipped before
   provider-date comparison. Valid local publication and typed date-event facts
   bind the observed lexical to its exact parsed canonical value and precision,
-  rejecting malformed or mismatched replay before proposal evaluation.
+  rejecting malformed or mismatched isolated-inspector IPC and report replay
+  before proposal evaluation.
   Reviewer packets
   cite every non-null local operand named by a retained date link, require
   complete proposal evidence-reference coverage, and require every ordinary

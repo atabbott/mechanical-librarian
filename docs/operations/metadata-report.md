@@ -183,8 +183,9 @@ database under ADR-0013.
 Every valid local publication or typed date-event claim retains its exact
 observed lexical and binds it to the canonical value and precision produced by
 parsing that same lexical. A mismatched canonical date, mismatched precision,
-or malformed observed lexical is rejected during claim construction and report
-replay, before proposal or reviewer-packet evaluation.
+or malformed observed lexical is rejected at the isolated-inspector fact and
+IPC replay boundary as well as during claim construction and report replay,
+before proposal or reviewer-packet evaluation.
 
 Publication dates use the closed `date_precision_compatibility` comparison
 method. Each link records one exact, month-compatible, year-compatible,

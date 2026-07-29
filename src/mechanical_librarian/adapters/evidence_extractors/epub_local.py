@@ -18,14 +18,12 @@ from mechanical_librarian.domain.epub_inspection import (
     EpubInspectionField,
     EpubPackageLimits,
     EpubRearProvenance,
+    normalize_date_value,
 )
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text, validate_role_projection
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.identifiers import Fingerprint
-from mechanical_librarian.domain.metadata_report import (
-    normalize_date_value,
-    normalize_title,
-)
+from mechanical_librarian.domain.metadata_report import normalize_title
 
 _PACKAGE_FIELDS = {
     EpubPackageField.TITLE: EpubInspectionField.TITLE, EpubPackageField.SUBTITLE: EpubInspectionField.SUBTITLE,

@@ -29,8 +29,11 @@ from mechanical_librarian.domain.epub_opening import (
     OpeningResourceResult,
 )
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text
-from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
-from mechanical_librarian.domain.metadata_report import normalize_date_value
+from mechanical_librarian.domain.epub_inspection import (
+    DateEvent,
+    DatePrecision,
+    normalize_date_value,
+)
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     EpubPackageDeclarationKind,
     EpubPackageCapability,

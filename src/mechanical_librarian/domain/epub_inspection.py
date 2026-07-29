@@ -10,11 +10,16 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Callable, ClassVar, Mapping
 
-from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_role_projection
+from mechanical_librarian.domain.evidence_bounds import (
+    EvidenceValueError,
+    validate_projection_text,
+    validate_role_projection,
+)
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 
 if TYPE_CHECKING:
@@ -35,6 +40,40 @@ MAX_VALUES_PER_FIELD = 32
 MAX_WARNINGS = 32
 MAX_RAW_VALUE_CHARACTERS = 16_384
 MAX_NORMALIZED_VALUE_CHARACTERS = 16_384
+
+
+def normalize_date_value(value: str) -> tuple[str, DatePrecision]:
+    """Validate one ISO-like lexical date without increasing its precision."""
+    try:
+        validate_projection_text(value, "date lexical value", 512)
+    except EvidenceValueError as error:
+        raise ValueError("date lexical value is invalid") from error
+    if re.fullmatch(r"\d{4}", value):
+        year = int(value)
+        if not 1 <= year <= 9999:
+            raise ValueError("date lexical value is invalid")
+        return value, DatePrecision.YEAR
+    if re.fullmatch(r"\d{4}-\d{2}", value):
+        try:
+            date(int(value[:4]), int(value[5:7]), 1)
+        except ValueError as error:
+            raise ValueError("date lexical value is invalid") from error
+        return value, DatePrecision.MONTH
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        try:
+            return date.fromisoformat(value).isoformat(), DatePrecision.DAY
+        except ValueError as error:
+            raise ValueError("date lexical value is invalid") from error
+    if "T" not in value:
+        raise ValueError("date lexical value is invalid")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("date lexical value is invalid") from error
+    offset = parsed.utcoffset()
+    if offset is not None and abs(offset) > timedelta(hours=14):
+        raise ValueError("date lexical value is invalid")
+    return parsed.isoformat(), DatePrecision.TIMESTAMP
 
 
 @dataclass(frozen=True)
@@ -269,6 +308,20 @@ class EpubInspectionFact:
             and self.date_precision is None
         ) or (not is_date and self.date_precision is not None):
             raise ValueError("EPUB inspection date precision is inconsistent")
+        if is_date and self.state == "valid":
+            try:
+                normalized_date = normalize_date_value(self.observed_value)
+            except ValueError as error:
+                raise ValueError(
+                    "EPUB inspection date precision is inconsistent"
+                ) from error
+            if normalized_date != (
+                self.canonical_value,
+                self.date_precision,
+            ):
+                raise ValueError(
+                    "EPUB inspection date precision is inconsistent"
+                )
         if (
             self.field is EpubInspectionField.PUBLICATION_DATE
             and self.date_event is not DateEvent.MANIFESTATION_PUBLICATION

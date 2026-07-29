@@ -507,6 +507,49 @@ class EpubChildRearSpineTests(unittest.TestCase):
         )
         self.assertEqual(EpubInspection.from_json(inspection.to_json()), inspection)
 
+    def test_opening_date_lexical_replays_with_normalized_canonical(self) -> None:
+        package = _opening_package(
+            items=(("opening", "opening.xhtml", "application/xhtml+xml", ""),),
+            spine=("opening",),
+        )
+        value = _opening_epub(
+            package=package,
+            entries=(
+                (
+                    "EPUB/opening.xhtml",
+                    _xhtml(
+                        '<section epub:type="copyright-page">'
+                        "<p>This ebook edition published "
+                        "2024-03-05T10:30:00Z</p>"
+                        "</section>"
+                    ),
+                    8,
+                ),
+            ),
+        )
+        inspection = self._inspect_in_child(value)
+        fact = next(
+            value
+            for value in inspection.facts
+            if value.basis == "opening_matter"
+            and value.field is EpubInspectionField.PUBLICATION_DATE
+        )
+        self.assertEqual(
+            (
+                fact.observed_value,
+                fact.canonical_value,
+                fact.date_precision,
+            ),
+            (
+                "2024-03-05T10:30:00Z",
+                "2024-03-05T10:30:00+00:00",
+                DatePrecision.TIMESTAMP,
+            ),
+        )
+        self.assertEqual(
+            inspection, EpubInspection.from_json(inspection.to_json())
+        )
+
     def test_package_nonpublication_date_events_never_become_publication_facts(
         self,
     ) -> None:
@@ -1468,6 +1511,14 @@ class EpubChildRearSpineTests(unittest.TestCase):
             ],
         )
         self.assertTrue(all(fact.rear_provenance is not None for fact in facts))
+        inspection = EpubInspection(
+            EpubInspectionOutcome.SUCCESS,
+            facts[0].source,
+            facts,
+        )
+        self.assertEqual(
+            inspection, EpubInspection.from_json(inspection.to_json())
+        )
         self.assertFalse(
             any(
                 fact.field is EpubInspectionField.CONTRIBUTOR
