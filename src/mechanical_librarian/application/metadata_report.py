@@ -43,6 +43,7 @@ from mechanical_librarian.domain.metadata_report import (
     validate_provider_access_time,
 )
 from mechanical_librarian.application.failure_diagnostics import (
+    FailureDiagnostic,
     merge_provider_diagnostics,
     provider_attempt_diagnostics,
 )
@@ -358,6 +359,7 @@ def provider_observation(
     results: tuple[ProviderLaneResult, ...],
     *,
     authority: str | None = None,
+    diagnostics: tuple[FailureDiagnostic, ...] = (),
     request_accounting: ProviderRequestAccounting = ProviderRequestAccounting(),
 ) -> ProviderObservation:
     access_times = {
@@ -502,6 +504,7 @@ def provider_observation(
         authority,
         tuple(sorted(lanes, key=lambda value: value.identity)),
         accessed_at=accessed_at,
+        diagnostics=diagnostics,
         request_accounting=request_accounting,
     )
 
@@ -716,6 +719,7 @@ def qualify_provider_observation(
             lookup.kind,
             observation.authority,
             accessed_at=observation.accessed_at,
+            diagnostics=observation.diagnostics,
         )
     if observation.status is not ProviderStatus.CANDIDATES:
         return ProviderObservation(
@@ -726,6 +730,7 @@ def qualify_provider_observation(
             ProviderQueryKind.WORK,
             observation.authority,
             accessed_at=observation.accessed_at,
+            diagnostics=observation.diagnostics,
         )
     expected_title = normalize_title(lookup.title or "").casefold()
     expected_authors = tuple(
@@ -830,6 +835,7 @@ def qualify_provider_observation(
         ProviderQueryKind.WORK,
         observation.authority,
         accessed_at=observation.accessed_at,
+        diagnostics=observation.diagnostics,
     )
 
 

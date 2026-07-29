@@ -1363,6 +1363,7 @@ _PROVIDER_DIAGNOSTIC_STAGES = {
     FailureCategory.MALFORMED_OVER_BOUND_RESPONSE: FailureStage.RESPONSE,
     FailureCategory.PROVIDER_DECLARED_ERROR: FailureStage.RESPONSE,
     FailureCategory.QUOTA_RATE_LIMIT: FailureStage.RESPONSE,
+    FailureCategory.SCHEMA_CONSTRUCTION: FailureStage.SCHEMA,
     FailureCategory.TIMEOUT: FailureStage.REQUEST,
     FailureCategory.TRANSPORT: FailureStage.REQUEST,
     FailureCategory.UNKNOWN: FailureStage.RESPONSE,
