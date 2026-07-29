@@ -2222,6 +2222,88 @@ class ProposalSetTests(unittest.TestCase):
         self.assertEqual(lexical, claim.date_lexical)
         self.assertEqual(DatePrecision.TIMESTAMP, claim.date_precision)
 
+    def test_naive_timestamps_never_vote_with_any_provider_or_local_date_count(
+        self,
+    ) -> None:
+        naive = "2001-02-03T04:05:06"
+        local_date = LocalClaim.create(
+            kind=ClaimKind.PUBLICATION_DATE,
+            observed="2001",
+            canonical="2001",
+            excerpt="2001",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.EDITION,
+            date_event=DateEvent.MANIFESTATION_PUBLICATION,
+            date_precision=DatePrecision.YEAR,
+        )
+        for provider_count in (1, 2):
+            for include_local_date in (False, True):
+                providers = tuple(
+                    _publication_provider(
+                        f"catalogue_{index}",
+                        f"edition-{index}",
+                        (naive,),
+                    )
+                    for index in range(provider_count)
+                )
+                report = _report(
+                    fields=_fields(
+                        published_year=TargetField(
+                            TargetDestination.PUBLISHED_YEAR,
+                            TargetFieldState.MISSING,
+                        ),
+                        published_date=TargetField(
+                            TargetDestination.PUBLISHED_DATE,
+                            TargetFieldState.MISSING,
+                        ),
+                    ),
+                    local_claims=(
+                        _publication_local_isbn(),
+                        *((local_date,) if include_local_date else ()),
+                    ),
+                    providers=providers,
+                )
+                replayed = MetadataReport.from_json(report.to_json())
+                proposal = evaluate_report(replayed)
+                visible_naive = [
+                    evidence
+                    for provider in replayed.providers
+                    for candidate in provider.candidates
+                    for evidence in candidate.evidence
+                    if evidence.kind
+                    is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                    and evidence.value == naive
+                    and evidence.date_precision is DatePrecision.TIMESTAMP
+                ]
+                with self.subTest(
+                    providers=provider_count,
+                    local_date=include_local_date,
+                ):
+                    self.assertEqual(
+                        proposal.to_json(),
+                        evaluate_report(
+                            MetadataReport.from_json(replayed.to_json())
+                        ).to_json(),
+                    )
+                    self.assertEqual(provider_count, len(visible_naive))
+                    date = _result(
+                        proposal, TargetDestination.PUBLISHED_DATE
+                    )
+                    self.assertTrue(
+                        all(
+                            set(alternative.evidence_references)
+                            <= ({local_date.reference} if include_local_date else set())
+                            for alternative in date.alternatives
+                        )
+                    )
+                    if not include_local_date:
+                        self.assertEqual(
+                            ProposalOutcome.INELIGIBLE,
+                            date.outcome,
+                        )
+
     def test_unresolved_provider_publication_text_is_visible_but_nonselectable(
         self,
     ) -> None:

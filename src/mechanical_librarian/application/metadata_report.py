@@ -17,6 +17,7 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     ClaimKind,
+    DateLinkConfidence,
     FieldState,
     FileFacts,
     LocalClaim,
@@ -30,6 +31,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderRequestAccounting,
     ProviderQueryKind,
     ProviderStatus,
+    PublicationDateRelation,
     TargetDestination,
     TargetFacts,
     TargetField,
@@ -826,7 +828,25 @@ def qualify_provider_observation(
         tuple(
             value
             for value in candidate.evidence
-            if value.scope is ClaimScope.WORK and value.kind in allowed_evidence
+            if (
+                value.scope is ClaimScope.WORK
+                and value.kind in allowed_evidence
+            )
+            or (
+                value.scope is ClaimScope.EDITION
+                and value.kind
+                is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                and value.date_normalized is not None
+                and value.date_confidence is DateLinkConfidence.UNRESOLVED
+                and (
+                    not value.links
+                    or any(
+                        link.publication_date_relation
+                        is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+                        for link in value.links
+                    )
+                )
+            )
         ),
         tuple(
             binding

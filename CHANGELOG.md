@@ -11,6 +11,12 @@
   applicability and no closed format or work contradiction; Google Books
   `publishedDate` text is promoted only through that same gate. Work-first and
   unsafe manifestation evidence remains reviewer-visible but non-voting.
+  WORK-lane qualification preserves only bounded unresolved edition
+  publication text from edition authority so report finalization can retain
+  its manifestation-incompatible explanation. Naive timestamps remain visible
+  non-voting evidence and only timestamps with an explicit offset can be
+  promoted. Reviewer packets cite every non-null local operand named by a
+  retained date link and bind those citations back to the immutable report.
   `publishedYear` uses shared year support, while full-day `publishedDate`
   always requires two independent sources. Advance exact-current contracts to
   Contradictory or multiple provider work relations retain one canonical

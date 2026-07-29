@@ -810,12 +810,17 @@ class ShadowReviewTests(unittest.TestCase):
             evidence["links"][0]["publication_date_relation"],
         )
         self.assertIsNone(evidence["links"][0]["local_reference"])
+        self.assertFalse(
+            any(
+                value["citation_id"].startswith("local_")
+                for value in packet.citations
+            )
+        )
 
         tampered = json.loads(packet.to_json())
         retained_date(tampered)["links"] = []
         with self.assertRaises(ShadowReviewValueError):
             ShadowReviewPacket.from_json(canonical_json(tampered), report)
-
     def test_contradictory_work_relation_date_is_visible_but_not_a_candidate(
         self,
     ) -> None:
@@ -846,6 +851,14 @@ class ShadowReviewTests(unittest.TestCase):
         proposal = evaluate_report(report)
         case = ReviewCase.create(proposal, report)
         packet = ShadowReviewPacket.create(case, proposal, report)
+        self.assertIn(
+            local_date.reference,
+            {value["citation_id"] for value in packet.citations},
+        )
+        self.assertEqual(
+            packet,
+            ShadowReviewPacket.from_json(packet.to_json(), report),
+        )
         publication = next(
             evidence
             for evidence in report.providers[0].candidates[0].evidence
@@ -881,6 +894,23 @@ class ShadowReviewTests(unittest.TestCase):
                 for candidate in value["candidates"]
             )
         )
+        tampered = json.loads(packet.to_json())
+        tampered["citations"] = [
+            value
+            for value in tampered["citations"]
+            if value["citation_id"] != local_date.reference
+        ]
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(tampered), report)
+        tampered = json.loads(packet.to_json())
+        local_citation = next(
+            value
+            for value in tampered["citations"]
+            if value["citation_id"] == local_date.reference
+        )
+        local_citation["fact"]["canonical"] = "2003"
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(tampered), report)
 
     def test_publication_linkage_construction_rejects_context_over_limits(
         self,

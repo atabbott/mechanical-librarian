@@ -1116,6 +1116,20 @@ class MetadataReportTests(unittest.TestCase):
             )
 
         identity = "edition-1"
+        linked_publication = ProviderEvidence(
+            ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+            "2001-02-03",
+            ClaimScope.EDITION,
+            links=(
+                ComparisonLink(
+                    "local_" + ("a" * 64),
+                    Comparison.NOT_COMPARABLE,
+                    publication_date_relation=(
+                        PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+                    ),
+                ),
+            ),
+        )
         candidate = ProviderCandidate(
             identity,
             "work-1",
@@ -1151,6 +1165,7 @@ class MetadataReportTests(unittest.TestCase):
                             "2001-02-03",
                             ClaimScope.WORK,
                         ),
+                        linked_publication,
                     ),
                     key=lambda value: (
                         value.scope.value,
@@ -1181,9 +1196,186 @@ class MetadataReportTests(unittest.TestCase):
             {
                 ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
                 ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
             },
             {value.kind for value in qualified.candidates[0].evidence},
         )
+        self.assertEqual(
+            linked_publication,
+            next(
+                value
+                for value in qualified.candidates[0].evidence
+                if value.kind
+                is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+            ),
+        )
+
+    def test_generate_report_preserves_only_work_lane_date_explanations(
+        self,
+    ) -> None:
+        creator = LocalClaim.create(
+            kind=ClaimKind.CREATOR,
+            observed="Ada Author",
+            canonical="Ada Author",
+            excerpt="Ada Author",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+            role="author",
+        )
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        target_fields = tuple(
+            TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.VALUE,
+                ("Ada Author",),
+            )
+            if field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields("The Example")
+        )
+        snapshot = TargetSnapshot(
+            "ebook", "The Example", (selected,), fields=target_fields
+        )
+
+        class Provider:
+            cover_descriptors = ()
+
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def observe(self, plan, *, deadline=None):
+                results = []
+                for lane in plan.lanes:
+                    lookup = MetadataLookup(
+                        lane.kind,
+                        plan.local_claims,
+                        lane.title,
+                        lane.authors,
+                        lane.matched_family,
+                    )
+                    candidate = ProviderCandidate(
+                        f"{self.name}-edition",
+                        f"{self.name}-work",
+                        (
+                            ProviderClaim.create(
+                                provider=self.name,
+                                candidate=f"{self.name}-edition",
+                                kind=ClaimKind.TITLE,
+                                value="The Example",
+                                state=FieldState.VALID,
+                                scope=ClaimScope.WORK,
+                                applicability="not_applicable",
+                            ),
+                            ProviderClaim.create(
+                                provider=self.name,
+                                candidate=f"{self.name}-edition",
+                                kind=ClaimKind.CREATOR,
+                                value="Ada Author",
+                                state=FieldState.VALID,
+                                scope=ClaimScope.WORK,
+                                applicability="not_applicable",
+                                role="author",
+                                raw_order=1,
+                            ),
+                        ),
+                        (
+                            ProviderEvidence(
+                                ProviderEvidenceKind.PHYSICAL_FORMAT,
+                                "Hardcover",
+                                ClaimScope.EDITION,
+                            ),
+                            ProviderEvidence(
+                                ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+                                "2001-02-03",
+                                ClaimScope.EDITION,
+                                source_ordinal=1,
+                            ),
+                        ),
+                    )
+                    physical = ProviderObservation(
+                        self.name,
+                        ProviderStatus.CANDIDATES,
+                        candidates=(
+                            finalize_candidate_comparisons(
+                                candidate,
+                                plan.local_claims,
+                                self.name,
+                            ),
+                        ),
+                        query_kind=lane.kind,
+                    )
+                    qualified = qualify_provider_observation(
+                        physical, lookup
+                    )
+                    results.append(
+                        ProviderLaneResult(
+                            lane,
+                            qualified.status,
+                            qualified.candidates,
+                        )
+                    )
+                return provider_observation(self.name, tuple(results))
+
+        names = ("google_books", "hardcover", "open_library")
+        repository = _Repository()
+        service = GenerateMetadataReport(
+            target=_Target([snapshot, snapshot]),
+            inspector=_Inspector(
+                InspectionResult("b" * 64, (creator,))
+            ),
+            repository_factory=lambda: repository,
+            providers=tuple(
+                ProviderBinding(
+                    name,
+                    True,
+                    lambda name=name: Provider(name),
+                )
+                for name in names
+            ),
+            connection=TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/target"
+            ),
+            library=LibraryConfiguration(
+                "ebooks",
+                "primary",
+                "library-id",
+                "ebook",
+                "books",
+                names,
+            ),
+            mount=MediaMountConfiguration(
+                "books", "/media", "/library", True
+            ),
+            limits=ReportLimits(),
+        )
+        report = MetadataReport.from_json(service.run("item-1", 0))
+        self.assertEqual(set(names), {value.provider for value in report.providers})
+        for provider in report.providers:
+            self.assertEqual(
+                ProviderStatus.CANDIDATES,
+                provider.status,
+                provider.to_data(),
+            )
+            candidate = provider.candidates[0]
+            retained = next(
+                value
+                for value in candidate.evidence
+                if value.kind
+                is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+            )
+            self.assertEqual(
+                PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+                retained.links[0].publication_date_relation,
+            )
+            self.assertTrue(
+                all(
+                    value.scope is ClaimScope.WORK
+                    or value is retained
+                    for value in candidate.evidence
+                )
+            )
 
     def test_work_lookup_fails_closed_for_competing_work_or_variant_markers(self) -> None:
         lookup = MetadataLookup(

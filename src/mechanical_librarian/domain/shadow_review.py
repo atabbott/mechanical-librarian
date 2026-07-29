@@ -425,6 +425,7 @@ class ShadowReviewPacket:
             for reference, fact in evidence.items()
             if _contains_provider_date(fact)
         )
+        references.update(_date_link_local_references(report))
         if not references.issubset(evidence):
             raise ShadowReviewValueError("shadow-review evidence binding is invalid")
         citations = tuple(
@@ -447,7 +448,6 @@ class ShadowReviewPacket:
         )
         value.validate_source(report)
         return value
-
     def to_data(self) -> dict[str, object]:
         return {
             "citations": [_copy_json(value) for value in self.citations],
@@ -517,6 +517,17 @@ class ShadowReviewPacket:
                 "shadow-review provider source is unavailable"
             )
         evidence = _evidence_index(source_report.to_data())
+        cited = {
+            citation["citation_id"]: citation["fact"]
+            for citation in self.citations
+        }
+        if any(
+            cited.get(reference) != evidence.get(reference)
+            for reference in _date_link_local_references(source_report)
+        ):
+            raise ShadowReviewValueError(
+                "shadow-review local date source binding is invalid"
+            )
         for citation in self.citations:
             citation_id = citation["citation_id"]
             fact = citation["fact"]
@@ -893,6 +904,30 @@ class ShadowReviewResult:
                 "shadow-review result document is not canonical"
             )
         return value
+
+
+def _date_link_local_references(report: MetadataReport) -> set[str]:
+    """Close reviewer citations over every retained local date-link operand."""
+    references: set[str] = set()
+    for provider in report.providers:
+        for candidate in provider.candidates:
+            for value in (*candidate.claims, *candidate.evidence):
+                if (
+                    (
+                        type(value) is ProviderClaim
+                        and value.kind is ClaimKind.PUBLICATION_DATE
+                    )
+                    or (
+                        type(value) is ProviderEvidence
+                        and value.kind in _PROVIDER_DATE_EVIDENCE
+                    )
+                ):
+                    references.update(
+                        link.local_reference
+                        for link in value.links
+                        if link.local_reference is not None
+                    )
+    return references
 
 
 def _evidence_index(value: object) -> dict[str, dict[str, object]]:

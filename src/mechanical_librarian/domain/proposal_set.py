@@ -54,6 +54,7 @@ _EVIDENCE_REFERENCE = re.compile(
 _CORRELATION = re.compile(r"^correlation_[0-9a-f]{64}$")
 _REASON = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ASIN = re.compile(r"^B[0-9A-Z]{9}$")
+_EXPLICIT_TIMESTAMP_OFFSET = re.compile(r"[+-]\d{2}:\d{2}$")
 
 
 class ProposalValueError(ValueError):
@@ -933,7 +934,10 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                 parsed, precision = normalize_date_value(claim.canonical)
             except ValueError:
                 continue
-            if precision is claim.date_precision:
+            if precision is claim.date_precision and (
+                precision is not DatePrecision.TIMESTAMP
+                or _EXPLICIT_TIMESTAMP_OFFSET.search(parsed) is not None
+            ):
                 values.append(
                     _Observed(
                         ProposalValue(ProposalValueKind.TEXT, parsed),
@@ -954,6 +958,11 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                     and claim.value is not None
                     and claim.date_event is DateEvent.MANIFESTATION_PUBLICATION
                     and type(claim.date_precision) is DatePrecision
+                    and (
+                        claim.date_precision is not DatePrecision.TIMESTAMP
+                        or _EXPLICIT_TIMESTAMP_OFFSET.search(claim.value)
+                        is not None
+                    )
                 ):
                     values.append(
                         _Observed(

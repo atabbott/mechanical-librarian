@@ -82,6 +82,10 @@ rebuilds the complete provider citation from the actual candidate, and
 requires exact equality before dispatch or inspection. Missing report context
 and invented or omitted identifier/format siblings fail closed. The report
 itself never enters the reviewer request.
+Every non-null local claim reference used as an operand by a retained provider
+date link is also included as a source-bound citation. Removing or changing
+that local citation makes packet replay fail; an intentionally unbound
+manifestation-incompatible link has no local citation.
 
 ```sh
 mechanical-librarian shadow-review-request --database reports.sqlite \

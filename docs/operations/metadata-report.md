@@ -201,6 +201,9 @@ relation plus one closed `edition_work_relation_contradiction` fact. It keeps
 edition-scoped facts, including the lexical publication date and precision,
 but suppresses work-scoped claims, evidence, identity bindings, and work cover
 authority. The date remains explicitly manifestation-incompatible.
+WORK lookup qualification applies the same least-authority rule: it strips
+edition claims and evidence except for bounded unresolved publication text
+that report finalization needs to express manifestation incompatibility.
 
 Timestamp comparison uses the calendar date stated in each retained lexical
 value. Different times or offsets on the same stated date agree at day
@@ -209,6 +212,10 @@ instant. A timestamp and matching day agree exactly at day precision; matching
 month or year prefixes are month- or year-compatible respectively. A
 nonmatching stated prefix remains a finer-precision conflict at the shared
 precision.
+Only timestamps carrying an explicit UTC designator or signed offset can be
+promoted into typed publication claims. A naive timestamp remains replayable
+as unresolved publication text, but it cannot vote or be compared as an
+instant.
 
 Work-scoped title and creator links retain the original source values and record
 one truthful closed comparison method per link: exact bytes; NFC, case folding

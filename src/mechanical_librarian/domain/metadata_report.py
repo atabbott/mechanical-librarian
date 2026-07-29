@@ -2804,6 +2804,9 @@ def finalize_candidate_comparisons(
             and claim.value is not None
             and type(claim.date_event) is DateEvent
             and type(claim.date_precision) is DatePrecision
+            and _publication_precision_is_voting(
+                claim.value, claim.date_precision
+            )
         ):
             retained_claims.append(claim)
             continue
@@ -2828,6 +2831,9 @@ def finalize_candidate_comparisons(
             and type(value.date_precision) is DatePrecision
             and compatible
             and provider is not None
+            and _publication_precision_is_voting(
+                value.date_normalized, value.date_precision
+            )
         ):
             retained_claims.append(
                 ProviderClaim.create(
@@ -2870,7 +2876,21 @@ def finalize_candidate_comparisons(
                     value=value.date_normalized,
                     event=value.date_event,
                     precision=value.date_precision,
-                    local=local,
+                    local=(
+                        local
+                        if _publication_precision_is_voting(
+                            value.date_normalized, value.date_precision
+                        )
+                        else tuple(
+                            claim
+                            for claim in local
+                            if claim.kind
+                            not in {
+                                ClaimKind.PUBLICATION_DATE,
+                                ClaimKind.DATE_EVENT,
+                            }
+                        )
+                    ),
                     manifestation_compatible=(
                         compatible
                         if value.kind
@@ -3330,6 +3350,14 @@ def _comparison_value(kind: ClaimKind, value: str) -> str:
         _projection_text(value, "comparison description", MAX_DESCRIPTION_CHARACTERS)
         return " ".join(unicodedata.normalize("NFC", value).split()).casefold()
     return normalize_title(value).casefold()
+
+
+def _publication_precision_is_voting(
+    value: str, precision: DatePrecision
+) -> bool:
+    if precision is not DatePrecision.TIMESTAMP:
+        return True
+    return datetime.fromisoformat(value).utcoffset() is not None
 
 
 def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_claims: tuple[LocalClaim, ...], local_status: str, local_reasons: tuple[str, ...], providers: tuple[ProviderObservation, ...], field_results: tuple[FieldResult, ...], identifier_evidence: tuple[IdentifierEvidence, ...], cover_sources: tuple[CoverSource, ...]) -> dict[str, object]:

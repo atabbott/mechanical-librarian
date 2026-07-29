@@ -1391,7 +1391,10 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                     }
                 ]
             },
-            "/books/OL1M.json": _edition("/books/OL1M", cover=100),
+            "/books/OL1M.json": {
+                **_edition("/books/OL1M", cover=100),
+                "physical_format": "Hardcover",
+            },
             "/works/OL5W.json": _work(cover=300),
         }
 
@@ -1469,6 +1472,19 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         self.assertIn(
             ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
             {value.kind for value in candidate.evidence},
+        )
+        retained = next(
+            value
+            for value in candidate.evidence
+            if value.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual((), retained.links)
+        self.assertTrue(
+            all(
+                value.scope is ClaimScope.WORK
+                or value is retained
+                for value in candidate.evidence
+            )
         )
         search_evidence = {
             (value.kind, value.value, value.scope)

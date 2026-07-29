@@ -31,6 +31,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
+    PublicationDateRelation,
     default_target_fields,
     FileFacts,
     MAX_DESCRIPTION_CHARACTERS,
@@ -676,13 +677,15 @@ class GoogleBooksMetadataTests(unittest.TestCase):
 
     def test_work_query_requires_exact_complete_title_and_author_order(self) -> None:
         requests: list[httpx.Request] = []
+        volume = _volume()
+        volume["volumeInfo"]["publishedDate"] = "2026-04-03"
 
         def handler(request: httpx.Request) -> httpx.Response:
             requests.append(request)
             return httpx.Response(
                 200,
                 headers={"content-type": "application/json"},
-                json={"totalItems": 1, "items": [_volume()]},
+                json={"totalItems": 1, "items": [volume]},
             )
 
         lookup = MetadataLookup(
@@ -712,6 +715,19 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             any(
                 claim.kind is ClaimKind.PUBLICATION_DATE
                 for claim in observation.candidates[0].claims
+            )
+        )
+        retained = next(
+            value
+            for value in observation.candidates[0].evidence
+            if value.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        )
+        self.assertEqual((), retained.links)
+        self.assertTrue(
+            all(
+                value.scope is ClaimScope.WORK
+                or value is retained
+                for value in observation.candidates[0].evidence
             )
         )
 
