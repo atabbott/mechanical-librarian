@@ -2225,8 +2225,9 @@ _TYPOGRAPHIC_TRANSLATION = str.maketrans(
     }
 )
 _TITLE_VARIANT_MARKER = re.compile(
-    r"(?:^|[\s(\[{:;-])(?:abridged|adapted|adaptation|translated|translation|variant)"
-    r"(?:$|[\s)\]}:;,-])",
+    r"(?:^|[\s(\[{:;,'\"\-\u2013\u2014\u2018-\u201d])"
+    r"(?:abridged|abridgement|abridgment|adapted|adaptation|translated|translation|variant)"
+    r"(?:$|[\s)\]}:;,'\",\-\u2013\u2014\u2018-\u201d])",
     re.IGNORECASE,
 )
 _NAME_SUFFIX = re.compile(
@@ -2313,20 +2314,28 @@ def _creator_comparison_links(
             local_values = tuple(
                 claim.observed for claim in group if claim.canonical is not None
             )
-            method = _creator_sequence_method(provider_values, local_values)
-            if method is not ComparisonMethod.NONE:
-                provider_index = compatible_provider.index(provider)
-                agreements[group[provider_index].reference] = method
-                continue
-            method, local_index_by_claim = _bound_creator_sequence_match(
+            has_applicable_bindings = any(
+                binding.scope is provider.scope
+                and binding.role == provider.role
+                for binding in candidate.identity_bindings
+            )
+            if has_applicable_bindings:
+                method, local_index_by_claim = _bound_creator_sequence_match(
                     candidate,
                     compatible_provider,
                     local_values,
                 )
-            if method is not ComparisonMethod.NONE:
-                local_index = local_index_by_claim.get(provider.reference)
-                if local_index is not None:
-                    agreements[group[local_index].reference] = method
+                if method is not ComparisonMethod.NONE:
+                    local_index = local_index_by_claim.get(provider.reference)
+                    if local_index is not None:
+                        agreements[group[local_index].reference] = method
+            else:
+                method = _creator_sequence_method(
+                    provider_values, local_values
+                )
+                if method is not ComparisonMethod.NONE:
+                    provider_index = compatible_provider.index(provider)
+                    agreements[group[provider_index].reference] = method
 
     links: list[ComparisonLink] = []
     for claim in local:
@@ -2356,17 +2365,37 @@ def _bound_creator_sequence_match(
     provider_claims: tuple[ProviderClaim, ...],
     local_values: tuple[str, ...],
 ) -> tuple[ComparisonMethod, dict[str, int]]:
-    by_claim: dict[str, list[ProviderIdentityBinding]] = {}
-    for binding in candidate.identity_bindings:
-        by_claim.setdefault(binding.claim_reference, []).append(binding)
-    if not provider_claims or any(
-        len(by_claim.get(claim.reference, ())) != 1 for claim in provider_claims
+    claims_by_reference = {
+        claim.reference: claim for claim in provider_claims
+    }
+    bindings = tuple(
+        sorted(
+            (
+                binding
+                for binding in candidate.identity_bindings
+                if provider_claims
+                and binding.scope is provider_claims[0].scope
+                and binding.role == provider_claims[0].role
+            ),
+            key=lambda binding: (
+                binding.source_ordinal,
+                binding.identity,
+                binding.claim_reference,
+            ),
+        )
+    )
+    if (
+        not provider_claims
+        or len(bindings) != len(provider_claims)
+        or {binding.claim_reference for binding in bindings}
+        != set(claims_by_reference)
     ):
         return ComparisonMethod.NONE, {}
     ordered_identities: list[str] = []
     aliases: dict[str, list[str]] = {}
-    for claim in provider_claims:
-        binding = by_claim[claim.reference][0]
+    identity_by_claim: dict[str, str] = {}
+    for binding in bindings:
+        claim = claims_by_reference[binding.claim_reference]
         if (
             binding.scope is not claim.scope
             or binding.role != claim.role
@@ -2377,6 +2406,7 @@ def _bound_creator_sequence_match(
             ordered_identities.append(binding.identity)
             aliases[binding.identity] = []
         aliases[binding.identity].append(claim.value)
+        identity_by_claim[claim.reference] = binding.identity
     if len(ordered_identities) != len(local_values):
         return ComparisonMethod.NONE, {}
     if _has_creator_duplicates(local_values):
@@ -2424,7 +2454,7 @@ def _bound_creator_sequence_match(
         max(methods, key=_METHOD_STRENGTH.__getitem__),
         {
             claim.reference: local_index_by_identity[
-                by_claim[claim.reference][0].identity
+                identity_by_claim[claim.reference]
             ]
             for claim in provider_claims
         },
@@ -2474,17 +2504,17 @@ def _comparison_method(
             == _comparison_value(kind, local_value)
             else ComparisonMethod.NONE
         )
+    provider_typographic = _typographic_text(provider_value)
+    local_typographic = _typographic_text(local_value)
     if kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE} and (
-        _TITLE_VARIANT_MARKER.search(provider_value)
-        or _TITLE_VARIANT_MARKER.search(local_value)
+        _has_title_variant_marker(provider_value, provider_typographic)
+        or _has_title_variant_marker(local_value, local_typographic)
     ):
         return ComparisonMethod.NONE
     provider_normalized = _comparison_text(provider_value)
     local_normalized = _comparison_text(local_value)
     if provider_normalized == local_normalized:
         return ComparisonMethod.UNICODE_CASE_WHITESPACE
-    provider_typographic = _typographic_text(provider_value)
-    local_typographic = _typographic_text(local_value)
     if (
         provider_typographic is not None
         and local_typographic is not None
@@ -2503,6 +2533,16 @@ def _comparison_method(
     ):
         return ComparisonMethod.CONSERVATIVE_COMMA_INVERSION
     return ComparisonMethod.NONE
+
+
+def _has_title_variant_marker(
+    value: str, typographic: str | None
+) -> bool:
+    return (
+        _TITLE_VARIANT_MARKER.search(value) is not None
+        or typographic is not None
+        and _TITLE_VARIANT_MARKER.search(typographic) is not None
+    )
 
 
 def _comparison_text(value: str) -> str:

@@ -1762,9 +1762,11 @@ class MetadataReportTests(unittest.TestCase):
             MetadataReport.from_json(canonical_json(data))
 
     def test_title_comparison_methods_are_closed_and_preserve_diacritics(self) -> None:
-        def local(value: str) -> LocalClaim:
+        def local(
+            value: str, kind: ClaimKind = ClaimKind.TITLE
+        ) -> LocalClaim:
             return LocalClaim.create(
-                kind=ClaimKind.TITLE,
+                kind=kind,
                 observed=value,
                 canonical=normalize_title(value),
                 excerpt=value,
@@ -1776,6 +1778,11 @@ class MetadataReportTests(unittest.TestCase):
 
         cases = (
             ("Exact Title", "Exact Title", ComparisonMethod.EXACT),
+            (
+                "The Road—Translated",
+                "The Road—Translated",
+                ComparisonMethod.EXACT,
+            ),
             ("CAFE\u0301   SOCIETY", "café society", ComparisonMethod.UNICODE_CASE_WHITESPACE),
             ("The “Long\u00a0Road”—Home", 'the "long road"-home', ComparisonMethod.TYPOGRAPHIC_PUNCTUATION),
         )
@@ -1800,11 +1807,38 @@ class MetadataReportTests(unittest.TestCase):
                     ),
                 )
 
+        subtitle_claim = local(
+            "the road-abridgment", ClaimKind.SUBTITLE
+        )
+        subtitle_provider = ProviderClaim.create(
+            provider="catalogue",
+            candidate="candidate",
+            kind=ClaimKind.SUBTITLE,
+            value="The Road—Abridgment",
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+        )
+        self.assertIs(
+            comparison_links(subtitle_provider, (subtitle_claim,))[0].outcome,
+            Comparison.DISAGREEMENT,
+        )
+
         for provider_value, local_value in (
             ("Cafe", "Café"),
             ("The Road", "The Long Road"),
             ("The Road: Home", "The Road"),
             ("The Road (Translated)", "the road (translated)"),
+            ("The Road—Translated", "the road-translated"),
+            ("The Road–Translation", "the road-translation"),
+            ("The Road—Adapted", "the road-adapted"),
+            ("The Road–Adaptation", "the road-adaptation"),
+            ("The Road—Variant", "the road-variant"),
+            ("The Road–Abridged", "the road-abridged"),
+            ("The Road—Abridgement", "the road-abridgement"),
+            ("The Road–Abridgment", "the road-abridgment"),
+            ("The Road “Translated”", 'the road "translated"'),
+            ("The Road ‘Abridged’", "the road 'abridged'"),
             ("The Rod", "The Road"),
             ("The ‘Road", "the 'road"),
             ("The Road’", "the road'"),
@@ -2094,6 +2128,80 @@ class MetadataReportTests(unittest.TestCase):
             ),
         )
         self.assertEqual(replay, MetadataReport.from_json(replay.to_json()))
+        contradictory_bindings = tuple(
+            sorted(
+                (
+                    replace(bindings[0], source_ordinal=7),
+                    replace(bindings[1], source_ordinal=8),
+                    replace(bindings[2], source_ordinal=0),
+                ),
+                key=lambda value: (
+                    value.scope.value,
+                    value.role,
+                    value.source_ordinal,
+                    value.identity,
+                    value.claim_reference,
+                ),
+            )
+        )
+        contradictory = finalize_candidate_comparisons(
+            ProviderCandidate(
+                "candidate",
+                "work",
+                claims,
+                (),
+                contradictory_bindings,
+            ),
+            local_claims,
+        )
+        self.assertFalse(
+            any(
+                link.outcome is Comparison.AGREEMENT
+                for claim in contradictory.claims
+                for link in claim.links
+            )
+        )
+
+        direct_claims = claims[1:]
+        reversed_bindings = (
+            replace(bindings[2], source_ordinal=0),
+            replace(bindings[1], source_ordinal=7),
+        )
+        reversed_bound = finalize_candidate_comparisons(
+            ProviderCandidate(
+                "candidate",
+                "work",
+                direct_claims,
+                (),
+                reversed_bindings,
+            ),
+            local_claims,
+        )
+        self.assertFalse(
+            any(
+                link.outcome is Comparison.AGREEMENT
+                for claim in reversed_bound.claims
+                for link in claim.links
+            )
+        )
+
+        partial = finalize_candidate_comparisons(
+            ProviderCandidate(
+                "candidate",
+                "work",
+                direct_claims,
+                (),
+                (replace(bindings[1], source_ordinal=0),),
+            ),
+            local_claims,
+        )
+        self.assertFalse(
+            any(
+                link.outcome is Comparison.AGREEMENT
+                for claim in partial.claims
+                for link in claim.links
+            )
+        )
         duplicate_ordinal = replace(bindings[1], source_ordinal=0)
         with self.assertRaises(ReportValueError):
             ProviderCandidate(
