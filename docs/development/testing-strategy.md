@@ -85,7 +85,8 @@ The suite covers:
   `Retry-After`, accepted/rejected transport classes, deadline and partial-byte
   bounds,
   field-local scalar and collection failures, strict volume identity and
-  field-local identifier-entry rejection,
+  strict recognized `industryIdentifiers` candidate shape, with silent
+  omission of well-formed unsupported identifier types,
   cancellation/timeout behavior, and credential/raw-response redaction;
 - strict `batch-manifest-v5` replay and clean-current rejection, with exact
   54/27/49 Google Books/Hardcover/Open Library metadata-attempt maxima, one

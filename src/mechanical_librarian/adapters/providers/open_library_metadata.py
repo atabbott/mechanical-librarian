@@ -1428,31 +1428,51 @@ def _provenance(
     source: dict[str, Any],
     scope: ClaimScope,
 ) -> None:
-    revision = source.get("revision", source.get("latest_revision"))
+    try:
+        revision = _revision_value(source)
+    except ValueError:
+        revision = None
     if revision is not None:
-        if (
-            type(revision) is not int
-            or isinstance(revision, bool)
-            or not 1 <= revision <= 2_147_483_647
-        ):
-            raise ValueError("provider revision is malformed")
         evidence.append(
             ProviderEvidence(
-                ProviderEvidenceKind.REVISION, str(revision), scope
+                ProviderEvidenceKind.REVISION, revision, scope
             )
         )
-    modified = source.get("last_modified")
+    try:
+        modified = _last_modified_value(source)
+    except (ValueError, EvidenceValueError):
+        modified = None
     if modified is not None:
-        item = _mapping(modified)
-        if item.get("type") != "/type/datetime":
-            raise ValueError("provider last-modified value is malformed")
         evidence.append(
             ProviderEvidence(
                 ProviderEvidenceKind.LAST_MODIFIED,
-                _text(item.get("value")),
+                modified,
                 scope,
             )
         )
+
+
+def _revision_value(source: dict[str, Any]) -> str | None:
+    revision = source.get("revision", source.get("latest_revision"))
+    if revision is None:
+        return None
+    if (
+        type(revision) is not int
+        or isinstance(revision, bool)
+        or not 1 <= revision <= 2_147_483_647
+    ):
+        raise ValueError("provider revision is malformed")
+    return str(revision)
+
+
+def _last_modified_value(source: dict[str, Any]) -> str | None:
+    modified = source.get("last_modified")
+    if modified is None:
+        return None
+    item = _mapping(modified)
+    if item.get("type") != "/type/datetime":
+        raise ValueError("provider last-modified value is malformed")
+    return _text(item.get("value"))
 
 
 def _optional_string_evidence(
@@ -1874,6 +1894,11 @@ def _parser_optional_rejections(
                     count += 1
                 else:
                     count += sum(1 for value in values if type(value) is not str)
+    for parser in (_revision_value, _last_modified_value):
+        try:
+            parser(document)
+        except (ValueError, EvidenceValueError):
+            count += 1
     return min(count, MAX_DIAGNOSTIC_COUNT)
 
 

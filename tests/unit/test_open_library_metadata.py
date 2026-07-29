@@ -347,6 +347,139 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                         },
                     )
 
+    def test_optional_provenance_failures_are_local_diagnosed_and_replayable(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "edition revision object",
+                "edition",
+                "revision",
+                {},
+                ProviderEvidenceKind.REVISION,
+                ClaimScope.EDITION,
+                ProviderEvidenceKind.LAST_MODIFIED,
+            ),
+            (
+                "work revision scalar",
+                "work",
+                "revision",
+                "bad",
+                ProviderEvidenceKind.REVISION,
+                ClaimScope.WORK,
+                ProviderEvidenceKind.LAST_MODIFIED,
+            ),
+            (
+                "edition last-modified scalar",
+                "edition",
+                "last_modified",
+                "bad",
+                ProviderEvidenceKind.LAST_MODIFIED,
+                ClaimScope.EDITION,
+                ProviderEvidenceKind.REVISION,
+            ),
+            (
+                "work last-modified typed object",
+                "work",
+                "last_modified",
+                {
+                    "type": "/type/object",
+                    "value": "2026-01-03T03:04:05.000000",
+                },
+                ProviderEvidenceKind.LAST_MODIFIED,
+                ClaimScope.WORK,
+                ProviderEvidenceKind.REVISION,
+            ),
+        )
+        for (
+            name,
+            document,
+            field,
+            invalid,
+            omitted_kind,
+            scope,
+            sibling_kind,
+        ) in cases:
+            with self.subTest(name=name):
+                edition = _edition("/books/OL1M")
+                work = _work()
+                target = edition if document == "edition" else work
+                target[field] = invalid
+                values = {
+                    "/search.json": _search("/books/OL1M"),
+                    "/books/OL1M.json": edition,
+                    "/works/OL5W.json": work,
+                }
+                observation = OpenLibraryMetadataProvider(
+                    "open_library",
+                    httpx.Client(
+                        transport=httpx.MockTransport(
+                            lambda request: httpx.Response(
+                                200,
+                                headers={"content-type": "application/json"},
+                                json=values[request.url.path],
+                            )
+                        )
+                    ),
+                    65_536,
+                    pacer=OpenLibraryPacer(sleep=lambda _: None),
+                ).observe(_isbn_lookup((_isbn(),)))
+
+                self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+                self.assertEqual(
+                    (1,),
+                    tuple(value.count for value in observation.diagnostics),
+                )
+                candidate = observation.candidates[0]
+                self.assertTrue(
+                    any(
+                        claim.kind is ClaimKind.TITLE
+                        and claim.state is FieldState.VALID
+                        for claim in candidate.claims
+                    )
+                )
+                self.assertNotIn(
+                    (omitted_kind, scope),
+                    {(value.kind, value.scope) for value in candidate.evidence},
+                )
+                self.assertIn(
+                    (sibling_kind, scope),
+                    {(value.kind, value.scope) for value in candidate.evidence},
+                )
+                report = MetadataReport.create(
+                    target=TargetFacts(
+                        "primary",
+                        "ebooks",
+                        f"item-{document}-{field}",
+                        default_target_fields("Current title"),
+                    ),
+                    file=FileFacts(0, "a" * 64, "b" * 64),
+                    local_claims=(_isbn(),),
+                    local_reasons=("not_applicable",),
+                    providers=(observation,),
+                )
+                self.assertEqual(
+                    report,
+                    MetadataReport.from_json(report.to_json()),
+                )
+
+                if name == "work last-modified typed object":
+                    with tempfile.TemporaryDirectory() as directory:
+                        path = Path(directory) / "reports.sqlite"
+                        repository = open_repository(path)
+                        try:
+                            repository.publish(report, lambda: True)
+                        finally:
+                            repository.close()
+                        reopened = open_repository(path, create=False)
+                        try:
+                            persisted = MetadataReport.from_json(
+                                reopened.get(report.report_id)
+                            )
+                        finally:
+                            reopened.close()
+                    self.assertEqual(report, persisted)
+
     def test_nested_work_author_evidence_persists_with_exact_source_semantics(self) -> None:
         search = _search("/books/OL1M")
         search["docs"][0].update(  # type: ignore[index]

@@ -307,11 +307,12 @@ manufactured.
 Malformed or oversized scalar claim fields remain explicit field-local states,
 so valid sibling claims and evidence survive. Google Books optional authors,
 categories, revision, publication text, format, and page count follow the same
-member-local rule. Every identifier entry must be one exact bounded
-`type`/`identifier` object; a malformed optional entry is excluded and
-diagnosed without removing a valid sibling, while a well-formed unsupported
-identifier type is ignored and diagnosed. Exact volume identity, candidate
-limits and record shape remain strict.
+field-local rule. Its recognized `industryIdentifiers` candidate shape remains
+strict: the collection must be bounded and every entry must be one exact
+`type`/`identifier` object, so a malformed entry rejects the candidate rather
+than being recovered member-locally. A well-formed unsupported identifier type
+is silently ignored. Exact volume identity, candidate limits and record shape
+remain strict.
 
 Each provider candidate serializes claims in `raw_order` and rich evidence in
 canonical order. Before canonical sorting, every admitted evidence occurrence
