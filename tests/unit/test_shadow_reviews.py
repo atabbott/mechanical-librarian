@@ -79,6 +79,7 @@ from mechanical_librarian.domain.shadow_review import (
 )
 from mechanical_librarian.interfaces.cli import main
 from tests.unit.test_review_case_persistence import _report
+from tests.unit.test_proposal_set import _identity_bound_alias_report
 
 
 def _identity() -> ReviewerProfileIdentity:
@@ -179,6 +180,38 @@ class _Runner:
 
 
 class ShadowReviewTests(unittest.TestCase):
+    def test_identity_bound_creator_aliases_do_not_reach_reviewer_packet(
+        self,
+    ) -> None:
+        report = _identity_bound_alias_report(include_title=True)
+        proposal = evaluate_report(report)
+        case = ReviewCase.create(proposal, report)
+        packet = ShadowReviewPacket.create(case, proposal, report)
+        authors = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == "authors"
+        )
+        self.assertEqual(
+            [["Ada Example", "Bob Example"]],
+            [
+                candidate["value"]["value"]
+                for candidate in authors["candidates"]
+            ],
+        )
+        provider_creator_references = {
+            claim.reference
+            for claim in report.providers[0].candidates[0].claims
+            if claim.kind is ClaimKind.CREATOR
+        }
+        self.assertTrue(
+            provider_creator_references.isdisjoint(
+                reference
+                for candidate in authors["candidates"]
+                for reference in candidate["evidence_references"]
+            )
+        )
+
     def test_publication_candidate_projects_typed_source_and_access_context(
         self,
     ) -> None:

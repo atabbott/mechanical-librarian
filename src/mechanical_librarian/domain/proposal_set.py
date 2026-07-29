@@ -764,6 +764,13 @@ def _list_observations(
             )
             if (
                 destination is TargetDestination.AUTHORS
+                and not _provider_author_bindings_are_complete(
+                    candidate, claims
+                )
+            ):
+                continue
+            if (
+                destination is TargetDestination.AUTHORS
                 and len(
                     {
                         creator_comparison_key(claim.value)
@@ -783,6 +790,25 @@ def _list_observations(
                     )
                 )
     return tuple(values)
+
+
+def _provider_author_bindings_are_complete(
+    candidate: ProviderCandidate,
+    claims: tuple[ProviderClaim, ...],
+) -> bool:
+    bindings = tuple(
+        binding
+        for binding in candidate.identity_bindings
+        if binding.scope is ClaimScope.WORK and binding.role == "author"
+    )
+    if not bindings:
+        return True
+    return (
+        len(bindings) == len(claims)
+        and {binding.claim_reference for binding in bindings}
+        == {claim.reference for claim in claims}
+        and len({binding.identity for binding in bindings}) == len(bindings)
+    )
 
 
 def _controlled_creator_placeholder(claim: LocalClaim) -> bool:

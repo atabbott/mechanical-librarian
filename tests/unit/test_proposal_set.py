@@ -15,6 +15,7 @@ from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
+    Comparison,
     FieldState,
     FileFacts,
     LocalClaim,
@@ -23,6 +24,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
+    ProviderIdentityBinding,
     ProviderObservation,
     ProviderStatus,
     TargetDestination,
@@ -169,6 +171,86 @@ def _local_creator(
         applicability_basis="not_applicable",
         role="author",
         occurrence=occurrence,
+    )
+
+
+def _identity_bound_alias_report(
+    *, include_title: bool = False
+) -> MetadataReport:
+    local_claims = tuple(
+        _local_creator(value, occurrence=index)
+        for index, value in enumerate(("Ada Example", "Bob Example"))
+    )
+    creator_claims = tuple(
+        _claim(
+            "catalogue",
+            "edition-1",
+            ClaimKind.CREATOR,
+            value,
+            scope=ClaimScope.WORK,
+            role="author",
+            order=index,
+        )
+        for index, value in enumerate(
+            ("A. Example", "Ada Example", "Bob Example")
+        )
+    )
+    title_claims = (
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.TITLE,
+                "Candidate title",
+                scope=ClaimScope.WORK,
+                order=3,
+            ),
+        )
+        if include_title
+        else ()
+    )
+    bindings = tuple(
+        ProviderIdentityBinding(
+            claim.reference,
+            identity,
+            ClaimScope.WORK,
+            "author",
+            ordinal,
+        )
+        for claim, identity, ordinal in zip(
+            creator_claims,
+            ("author-1", "author-1", "author-2"),
+            (0, 2, 7),
+            strict=True,
+        )
+    )
+    candidate = finalize_candidate_comparisons(
+        ProviderCandidate(
+            "edition-1",
+            "catalogue-work",
+            creator_claims + title_claims,
+            (),
+            bindings,
+        ),
+        local_claims,
+    )
+    return _report(
+        title=None,
+        fields=_fields(
+            None,
+            authors=TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.MISSING,
+            ),
+        ),
+        local_claims=local_claims,
+        providers=(
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.CANDIDATES,
+                candidates=(candidate,),
+            ),
+        ),
     )
 
 
@@ -700,6 +782,35 @@ class ProposalSetTests(unittest.TestCase):
         )
         self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
         self.assertEqual((), result.alternatives)
+
+    def test_identity_bound_aliases_do_not_grant_three_author_authority(
+        self,
+    ) -> None:
+        report = _identity_bound_alias_report()
+        creator_claims = tuple(
+            claim
+            for claim in report.providers[0].candidates[0].claims
+            if claim.kind is ClaimKind.CREATOR
+        )
+        self.assertTrue(
+            all(
+                any(link.outcome is Comparison.AGREEMENT for link in claim.links)
+                for claim in creator_claims
+            )
+        )
+        result = _result(evaluate_report(report), TargetDestination.AUTHORS)
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
+        self.assertEqual(
+            (("Ada Example", "Bob Example"),),
+            tuple(alternative.value.value for alternative in result.alternatives),
+        )
+        self.assertTrue(
+            all(
+                reference.startswith("local_")
+                for alternative in result.alternatives
+                for reference in alternative.evidence_references
+            )
+        )
 
     def test_provider_typed_non_author_credits_preserve_complete_authors(self) -> None:
         claims = (
