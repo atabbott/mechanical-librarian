@@ -553,9 +553,21 @@ class EpubChildRearSpineTests(unittest.TestCase):
     def test_package_nonpublication_date_events_never_become_publication_facts(
         self,
     ) -> None:
-        for declared, expected in (
-            ("conversion", DateEvent.CONVERSION),
-            ("vendor-event", DateEvent.UNKNOWN),
+        for declared, expected, state, canonical, precision in (
+            (
+                "conversion",
+                DateEvent.CONVERSION,
+                "valid",
+                "2010-09-04",
+                DatePrecision.DAY,
+            ),
+            (
+                "vendor-event",
+                DateEvent.UNKNOWN,
+                "malformed",
+                None,
+                None,
+            ),
         ):
             with self.subTest(declared=declared):
                 package = EPUB2_PACKAGE.replace(
@@ -573,6 +585,8 @@ class EpubChildRearSpineTests(unittest.TestCase):
                         (
                             fact.field,
                             fact.date_event,
+                            fact.state,
+                            fact.canonical_value,
                             fact.date_precision,
                         )
                         for fact in dated
@@ -581,7 +595,9 @@ class EpubChildRearSpineTests(unittest.TestCase):
                         (
                             EpubInspectionField.DATE_EVENT,
                             expected,
-                            DatePrecision.DAY,
+                            state,
+                            canonical,
+                            precision,
                         )
                     ],
                 )

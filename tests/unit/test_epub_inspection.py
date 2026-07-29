@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import unittest
 
@@ -173,6 +174,84 @@ class EpubInspectionFactTests(unittest.TestCase):
                                 sort_keys=True,
                             )
                         )
+
+    def test_nonvalid_date_facts_cannot_retain_canonical_values_or_precision(
+        self,
+    ) -> None:
+        source = Fingerprint(
+            "sha256", SchemaVersion("source-v1"), "e" * 64
+        )
+        date_cases = (
+            (
+                EpubInspectionField.PUBLICATION_DATE,
+                DateEvent.MANIFESTATION_PUBLICATION,
+            ),
+            (EpubInspectionField.DATE_EVENT, DateEvent.COPYRIGHT),
+        )
+        state_observations = (
+            ("malformed", "not-a-date"),
+            (
+                "oversized",
+                "oversized-source-text-sha256:" + "a" * 64,
+            ),
+            (
+                "unsupported",
+                "unsafe-source-text-sha256:" + "b" * 64,
+            ),
+            ("untyped", "untyped-date"),
+            ("inapplicable", "2001"),
+        )
+        for field, event in date_cases:
+            for state, observed in state_observations:
+                fact = EpubInspectionFact(
+                    field,
+                    source,
+                    observed,
+                    None,
+                    observed,
+                    "not_applicable",
+                    "not_applicable",
+                    "not_applicable",
+                    "package_metadata",
+                    state=state,
+                    date_event=event,
+                )
+                inspection = EpubInspection(
+                    EpubInspectionOutcome.SUCCESS,
+                    source,
+                    (fact,),
+                )
+                with self.subTest(field=field, event=event, state=state):
+                    self.assertEqual(
+                        inspection,
+                        EpubInspection.from_json(inspection.to_json()),
+                    )
+                    for field_name, forged in (
+                        ("canonical_value", "2001"),
+                        ("date_precision", DatePrecision.YEAR),
+                    ):
+                        with self.assertRaisesRegex(
+                            ValueError,
+                            "EPUB inspection date precision is inconsistent",
+                        ):
+                            replace(fact, **{field_name: forged})
+                    for key, forged in (
+                        ("canonical", "2001"),
+                        ("date_precision", DatePrecision.YEAR.value),
+                    ):
+                        document = json.loads(inspection.to_json())
+                        document["facts"][0][key] = forged
+                        with self.assertRaisesRegex(
+                            ValueError,
+                            "EPUB inspection protocol is invalid",
+                        ):
+                            EpubInspection.from_json(
+                                json.dumps(
+                                    document,
+                                    separators=(",", ":"),
+                                    sort_keys=True,
+                                )
+                            )
 
         for field, event, observed, canonical, precision in (
             (

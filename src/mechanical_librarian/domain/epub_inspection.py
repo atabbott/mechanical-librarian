@@ -306,6 +306,13 @@ class EpubInspectionFact:
             is_date
             and self.state == "valid"
             and self.date_precision is None
+        ) or (
+            is_date
+            and self.state != "valid"
+            and (
+                self.canonical_value is not None
+                or self.date_precision is not None
+            )
         ) or (not is_date and self.date_precision is not None):
             raise ValueError("EPUB inspection date precision is inconsistent")
         if is_date and self.state == "valid":

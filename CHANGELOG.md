@@ -21,7 +21,9 @@
   provider-date comparison. Valid local publication and typed date-event facts
   bind the observed lexical to its exact parsed canonical value and precision,
   rejecting malformed or mismatched isolated-inspector IPC and report replay
-  before proposal evaluation.
+  before proposal evaluation. Non-valid local date facts preserve the observed
+  lexical and typed event but cannot retain a canonical value or precision
+  across IPC or report replay.
   Reviewer packets
   cite every non-null local operand named by a retained date link, require
   complete proposal evidence-reference coverage, and require every ordinary

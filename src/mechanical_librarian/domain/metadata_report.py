@@ -935,6 +935,13 @@ class LocalClaim:
                 type(self.date_precision) is not DatePrecision
                 or self.canonical is None
             )
+        ) or (
+            is_date
+            and self.state is not FieldState.VALID
+            and (
+                self.canonical is not None
+                or self.date_precision is not None
+            )
         ) or (not is_date and self.date_precision is not None):
             raise ReportValueError("local date precision is inconsistent")
         if is_date and self.state is FieldState.VALID:

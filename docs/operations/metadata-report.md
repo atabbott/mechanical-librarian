@@ -186,6 +186,9 @@ parsing that same lexical. A mismatched canonical date, mismatched precision,
 or malformed observed lexical is rejected at the isolated-inspector fact and
 IPC replay boundary as well as during claim construction and report replay,
 before proposal or reviewer-packet evaluation.
+Non-valid local date facts retain the exact observed lexical and typed event,
+but their canonical value and date precision are both absent at the isolated
+inspector IPC boundary and in the immutable report.
 
 Publication dates use the closed `date_precision_compatibility` comparison
 method. Each link records one exact, month-compatible, year-compatible,

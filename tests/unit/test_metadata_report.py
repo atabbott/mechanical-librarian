@@ -623,6 +623,84 @@ class MetadataReportTests(unittest.TestCase):
                     date_precision=precision,
                 )
 
+    def test_nonvalid_local_dates_cannot_retain_canonical_values_or_precision(
+        self,
+    ) -> None:
+        date_cases = (
+            (
+                ClaimKind.PUBLICATION_DATE,
+                DateEvent.MANIFESTATION_PUBLICATION,
+            ),
+            (ClaimKind.DATE_EVENT, DateEvent.COPYRIGHT),
+        )
+        state_observations = (
+            (FieldState.ABSENT, "absent-date"),
+            (FieldState.MALFORMED, "not-a-date"),
+            (
+                FieldState.OVERSIZED,
+                "oversized-source-text-sha256:" + "a" * 64,
+            ),
+            (
+                FieldState.UNSUPPORTED,
+                "unsafe-source-text-sha256:" + "b" * 64,
+            ),
+            (FieldState.UNTYPED, "untyped-date"),
+            (FieldState.INAPPLICABLE, "2001"),
+        )
+        for kind, event in date_cases:
+            for state, observed in state_observations:
+                claim = LocalClaim.create(
+                    kind=kind,
+                    observed=observed,
+                    canonical=None,
+                    excerpt=observed,
+                    applicability="not_applicable",
+                    checksum="not_applicable",
+                    applicability_basis="not_applicable",
+                    scope=claim_scope(kind, event),
+                    state=state,
+                    date_event=event,
+                )
+                report = MetadataReport.create(
+                    target=TargetFacts(
+                        "primary",
+                        "ebooks",
+                        "item-1",
+                        default_target_fields(None),
+                    ),
+                    file=FileFacts(0, "a" * 64, "b" * 64),
+                    local_claims=(claim,),
+                    local_reasons=("package_metadata_date",),
+                    providers=(),
+                )
+                with self.subTest(kind=kind, event=event, state=state):
+                    self.assertEqual(
+                        report,
+                        MetadataReport.from_json(report.to_json()),
+                    )
+                    for field_name, forged in (
+                        ("canonical", "2001"),
+                        ("date_precision", DatePrecision.YEAR),
+                    ):
+                        with self.assertRaisesRegex(
+                            ReportValueError,
+                            "local date precision is inconsistent",
+                        ):
+                            replace(claim, **{field_name: forged})
+                    for key, forged in (
+                        ("canonical", "2001"),
+                        ("date_precision", DatePrecision.YEAR.value),
+                    ):
+                        document = report.to_data()
+                        document["local"]["claims"][0][key] = forged
+                        with self.assertRaisesRegex(
+                            ReportValueError,
+                            "local date precision is inconsistent",
+                        ):
+                            MetadataReport.from_json(
+                                canonical_json(document)
+                            )
+
     def test_local_dates_and_contextual_credits_replay_without_candidate_conflation(
         self,
     ) -> None:

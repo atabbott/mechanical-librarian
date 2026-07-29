@@ -292,6 +292,9 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
                     canonical = None
                     date_precision = None
                     state = "malformed"
+        if date_event is not None and state != "valid":
+            canonical = None
+            date_precision = None
         if not contextual_only:
             facts.append(EpubInspectionFact(field, source, observed, canonical, observed, "not_applicable", "not_applicable", "not_applicable", "package_metadata", state=state, role=role, date_event=date_event, date_precision=date_precision))
         for contextual_role in contextual_roles:

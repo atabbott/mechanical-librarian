@@ -2421,6 +2421,9 @@ def _claim(field: OpeningField, value: str, applicability: EpubObservationApplic
             return None
         if inferred_precision is not date_precision:
             return None
+    elif date_event is not None:
+        normalized_value = None
+        date_precision = None
     if normalized_value is not None and len(normalized_value) > excerpt_characters:
         return None
     try:
