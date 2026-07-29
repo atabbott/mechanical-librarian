@@ -350,7 +350,7 @@ class ShadowReviewTests(unittest.TestCase):
         case = ReviewCase.create(proposal, report)
         packet = ShadowReviewPacket.create(case, proposal, report)
         with self.assertRaisesRegex(
-            ShadowReviewValueError, "provider source is unavailable"
+            ShadowReviewValueError, "authoritative source is unavailable"
         ):
             ShadowReviewPacket.from_json(packet.to_json())
         projected = next(
@@ -423,6 +423,78 @@ class ShadowReviewTests(unittest.TestCase):
                 self.assertRaises(ShadowReviewValueError),
             ):
                 ShadowReviewPacket.from_json(canonical_json(document), source)
+        original_document = json.loads(packet.to_json())
+        original_ids = (
+            original_document["review_case_id"],
+            [
+                (
+                    proposal["proposal_id"],
+                    [
+                        candidate["candidate_id"]
+                        for candidate in proposal["candidates"]
+                    ],
+                )
+                for proposal in original_document["proposals"]
+            ],
+        )
+        for tamper in (
+            "destination",
+            "date_typing",
+            "evidence_references",
+            "citations",
+            "complete_projection_rewrite",
+        ):
+            document = json.loads(packet.to_json())
+            publication = next(
+                value
+                for value in document["proposals"]
+                if value["destination"] == "publishedDate"
+            )
+            if tamper in {"destination", "complete_projection_rewrite"}:
+                publication["destination"] = "title"
+            if tamper in {
+                "destination",
+                "date_typing",
+                "complete_projection_rewrite",
+            }:
+                for candidate in publication["candidates"]:
+                    candidate["date_event"] = None
+                    candidate["date_precision"] = None
+            if tamper in {
+                "evidence_references",
+                "complete_projection_rewrite",
+            }:
+                for candidate in publication["candidates"]:
+                    candidate["evidence_references"] = []
+            if tamper in {"citations", "complete_projection_rewrite"}:
+                document["citations"] = []
+            self.assertEqual(
+                original_ids,
+                (
+                    document["review_case_id"],
+                    [
+                        (
+                            proposal["proposal_id"],
+                            [
+                                candidate["candidate_id"]
+                                for candidate in proposal["candidates"]
+                            ],
+                        )
+                        for proposal in document["proposals"]
+                    ],
+                ),
+            )
+            for source in (None, report):
+                with (
+                    self.subTest(
+                        tamper=f"preserved_ids_{tamper}",
+                        source="absent" if source is None else "present",
+                    ),
+                    self.assertRaises(ShadowReviewValueError),
+                ):
+                    ShadowReviewPacket.from_json(
+                        canonical_json(document), source
+                    )
         citation = next(
             value
             for value in packet.citations
@@ -1805,7 +1877,9 @@ class ShadowReviewTests(unittest.TestCase):
             )
         self.assertNotIsInstance(raised.exception, ShadowReviewIdentityError)
 
-    def test_maximum_packet_request_round_trips_and_persists(self) -> None:
+    def test_maximum_forged_packet_request_fails_source_validation(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository, case_id = self._repository(directory)
             base = repository.validate_shadow_request(
@@ -1852,9 +1926,8 @@ class ShadowReviewTests(unittest.TestCase):
             self.assertLessEqual(
                 len(request.to_json().encode("utf-8")), MAX_REQUEST_BYTES
             )
-            self.assertEqual(
-                request, repository.validate_shadow_request(request.to_json())
-            )
+            with self.assertRaises(MetadataReportError):
+                repository.validate_shadow_request(request.to_json())
             repository._connection.execute(
                 "INSERT INTO shadow_review_requests("
                 "review_request_id,review_case_id,profile_document,"
@@ -1874,15 +1947,12 @@ class ShadowReviewTests(unittest.TestCase):
                 (request.review_request_id,),
             ).fetchone()
             self.assertIsNotNone(stored)
-            self.assertEqual(
-                request, repository.validate_shadow_request(stored[0])
-            )
-            self.assertEqual(
-                request,
+            with self.assertRaises(MetadataReportError):
+                repository.validate_shadow_request(stored[0])
+            with self.assertRaises(ShadowReviewValueError):
                 repository._validated_shadow_request(
                     request.review_request_id
-                ),
-            )
+                )
             schema = repository._connection.execute(
                 "SELECT sql FROM sqlite_master "
                 "WHERE type='table' AND name='shadow_review_requests'"

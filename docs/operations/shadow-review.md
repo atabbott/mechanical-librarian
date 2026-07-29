@@ -78,17 +78,18 @@ the target destination (`manifestation_publication` plus `year` or `day`);
 source event and precision remain in the citation. This exact packet/request
 freeze is governed by ADR-0016. Provider-linked packet/request replay is not a
 standalone operation: persistence reopens the immutable source report,
-rebuilds the complete provider citation from the actual candidate, and
-requires exact equality before dispatch or inspection. Missing report context
-and invented or omitted identifier/format siblings fail closed. The report
-itself never enters the reviewer request.
+reevaluates its proposal set and review case, rebuilds the complete packet, and
+requires exact equality before dispatch or inspection. Every ordinary JSON
+replay requires that authoritative report; validation does not infer
+provenance requirements from mutable packet fields. Missing report context,
+rewritten destinations or date typing, changed proposal content, and invented
+or omitted citations or identifier/format siblings fail closed even when all
+serialized identities are preserved. The report itself never enters the
+reviewer request.
 Every projected candidate evidence reference must name an included citation.
-Whether replay needs the source report is derived from the projected proposal
-contract, including publication destinations and provider evidence references,
-not from whichever citations remain in the serialized packet. Deleting a
-provider citation, its linked local citation, or both therefore cannot turn a
-source-bound packet into a source-free packet or leave dangling proposal
-evidence.
+Deleting a provider citation, its linked local citation, or both therefore
+cannot turn a source-bound packet into a source-free packet or leave dangling
+proposal evidence.
 Every non-null local claim reference used as an operand by a retained provider
 date link is also included as a source-bound citation. Removing or changing
 that local citation makes packet replay fail; an intentionally unbound

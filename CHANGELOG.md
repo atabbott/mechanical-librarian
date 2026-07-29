@@ -16,12 +16,14 @@
   its manifestation-incompatible explanation. Naive timestamps remain visible
   non-voting evidence and only timestamps with `Z` or an exact signed
   `HH:MM` offset can be promoted; offset-second forms remain visible but
-  non-voting. Reviewer packets cite every non-null local operand named by a
-  retained date link, require complete proposal evidence-reference coverage,
-  and reject missing or source-mismatched citations against the immutable
-  report.
+  non-voting and are skipped before provider-date comparison. Reviewer packets
+  cite every non-null local operand named by a retained date link, require
+  complete proposal evidence-reference coverage, and require every ordinary
+  replay to reproduce the exact proposal, case, citation, and packet projection
+  of the immutable source report. Preserved identities cannot hide rewritten
+  destinations, date typing, evidence references, or citations.
   `publishedYear` uses shared year support, while full-day `publishedDate`
-  always requires two independent sources. Advance exact-current contracts to
+  always requires two independent sources.
   Contradictory or multiple provider work relations retain one canonical
   candidate binding plus one closed contradiction fact, suppress unrelated
   work-scoped authority, and keep the edition date visible but non-voting.

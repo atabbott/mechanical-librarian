@@ -2586,6 +2586,9 @@ def _publication_date_links(
             or claim.canonical is None
             or type(claim.date_event) is not DateEvent
             or type(claim.date_precision) is not DatePrecision
+            or not publication_date_is_voting(
+                claim.canonical, claim.date_precision
+            )
         ):
             continue
         relation, shared = publication_date_relation(

@@ -103,6 +103,7 @@ from mechanical_librarian.domain.metadata_report import (
     finalize_candidate_comparisons,
     manifestation_publication_compatible,
     normalize_title,
+    publication_date_is_voting,
     publication_date_relation,
     provider_access_time,
     stable_reference,
@@ -1376,6 +1377,153 @@ class MetadataReportTests(unittest.TestCase):
                     for value in candidate.evidence
                 )
             )
+
+    def test_generate_report_retains_non_voting_package_timestamps_without_comparison(
+        self,
+    ) -> None:
+        isbn = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="9780306406157",
+            applicability="ebook",
+            basis="package_metadata",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+            scope=ClaimScope.EDITION,
+        )
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        snapshot = TargetSnapshot("ebook", None, (selected,))
+
+        class Provider:
+            cover_descriptors = ()
+
+            def observe(self, plan, *, deadline=None):
+                results = []
+                for lane in plan.lanes:
+                    candidate = ProviderCandidate(
+                        "edition-1",
+                        "work-1",
+                        (
+                            ProviderClaim.create(
+                                provider="catalogue",
+                                candidate="edition-1",
+                                kind=ClaimKind.ISBN,
+                                value="9780306406157",
+                                state=FieldState.VALID,
+                                scope=ClaimScope.EDITION,
+                                applicability="ebook",
+                            ),
+                            ProviderClaim.create(
+                                provider="catalogue",
+                                candidate="edition-1",
+                                kind=ClaimKind.PUBLICATION_DATE,
+                                value="2001-02-03T04:05:06+00:00",
+                                state=FieldState.VALID,
+                                scope=ClaimScope.EDITION,
+                                applicability="not_applicable",
+                                raw_order=1,
+                            ),
+                        ),
+                    )
+                    physical = ProviderObservation(
+                        "catalogue",
+                        ProviderStatus.CANDIDATES,
+                        candidates=(
+                            finalize_candidate_comparisons(
+                                candidate,
+                                plan.local_claims,
+                                "catalogue",
+                            ),
+                        ),
+                        query_kind=lane.kind,
+                    )
+                    lookup = MetadataLookup(
+                        lane.kind,
+                        plan.local_claims,
+                        lane.title,
+                        lane.authors,
+                        lane.matched_family,
+                    )
+                    qualified = qualify_provider_observation(physical, lookup)
+                    results.append(
+                        ProviderLaneResult(
+                            lane,
+                            qualified.status,
+                            qualified.candidates,
+                        )
+                    )
+                return provider_observation("catalogue", tuple(results))
+
+        for lexical, voting in (
+            ("2001-02-03T04:05:06", False),
+            ("2001-02-03T04:05:06+00:00:30", False),
+            ("2001-02-03T04:05:06Z", True),
+        ):
+            with self.subTest(lexical=lexical):
+                package_date = LocalClaim.create(
+                    kind=ClaimKind.PUBLICATION_DATE,
+                    observed=lexical,
+                    canonical=lexical,
+                    excerpt=lexical,
+                    applicability="not_applicable",
+                    basis="package_metadata",
+                    checksum="not_applicable",
+                    applicability_basis="not_applicable",
+                    scope=ClaimScope.EDITION,
+                    date_event=DateEvent.MANIFESTATION_PUBLICATION,
+                    date_precision=DatePrecision.TIMESTAMP,
+                )
+                repository = _Repository()
+                service = GenerateMetadataReport(
+                    target=_Target([snapshot, snapshot]),
+                    inspector=_Inspector(
+                        InspectionResult("b" * 64, (isbn, package_date))
+                    ),
+                    repository_factory=lambda: repository,
+                    providers=(
+                        ProviderBinding("catalogue", True, Provider),
+                    ),
+                    connection=TargetConnectionConfiguration(
+                        "primary",
+                        "https://example.invalid",
+                        "/private/target",
+                    ),
+                    library=LibraryConfiguration(
+                        "ebooks",
+                        "primary",
+                        "library-id",
+                        "ebook",
+                        "books",
+                        ("catalogue",),
+                    ),
+                    mount=MediaMountConfiguration(
+                        "books", "/media", "/library", True
+                    ),
+                    limits=ReportLimits(),
+                )
+                report = MetadataReport.from_json(service.run("item-1", 0))
+                retained = next(
+                    value
+                    for value in report.local_claims
+                    if value.kind is ClaimKind.PUBLICATION_DATE
+                )
+                provider_date = next(
+                    value
+                    for value in report.providers[0].candidates[0].claims
+                    if value.kind is ClaimKind.PUBLICATION_DATE
+                )
+                self.assertEqual(package_date, retained)
+                self.assertEqual(
+                    voting,
+                    publication_date_is_voting(
+                        retained.canonical, retained.date_precision
+                    ),
+                )
+                self.assertEqual(
+                    (retained.reference,) if voting else (),
+                    tuple(value.local_reference for value in provider_date.links),
+                )
 
     def test_work_lookup_fails_closed_for_competing_work_or_variant_markers(self) -> None:
         lookup = MetadataLookup(
@@ -2883,12 +3031,9 @@ class MetadataReportTests(unittest.TestCase):
                         right_precision=left_precision,
                     ),
                 )
-        for malformed in (naive, invalid):
-            with (
-                self.subTest(value=malformed.canonical),
-                self.assertRaises(ReportValueError),
-            ):
-                comparison_links(negative_offset, (malformed,))
+        self.assertEqual((), comparison_links(negative_offset, (naive,)))
+        with self.assertRaises(ReportValueError):
+            comparison_links(negative_offset, (invalid,))
         with self.assertRaises(ReportValueError):
             comparison_links(
                 provider("2024-03-05T14:30:00"),

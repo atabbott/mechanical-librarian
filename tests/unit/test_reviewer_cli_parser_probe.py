@@ -135,7 +135,9 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
             self.assertEqual(1, len(live_requests))
             self.assertEqual(
                 live_requests[0],
-                ShadowReviewRequest.from_json(live_requests[0].to_json()),
+                ShadowReviewRequest.from_source_validated_json(
+                    live_requests[0].to_json()
+                ),
             )
             self.assertEqual(
                 "shadow-review-request-v4", live_requests[0].schema_version

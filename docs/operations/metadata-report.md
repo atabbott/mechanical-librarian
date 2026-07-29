@@ -215,7 +215,9 @@ precision.
 Only timestamps carrying `Z` or an exact signed `HH:MM` offset can be promoted
 into typed publication claims. Naive timestamps and parser-admitted
 offset-second forms remain replayable as unresolved publication text, but they
-cannot vote or participate in publication-date comparison.
+cannot vote or participate in publication-date comparison. Report generation
+skips these retained non-voting forms before comparing provider dates, so their
+presence does not abort an otherwise valid report.
 
 Work-scoped title and creator links retain the original source values and record
 one truthful closed comparison method per link: exact bytes; NFC, case folding

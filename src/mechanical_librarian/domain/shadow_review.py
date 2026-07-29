@@ -30,7 +30,11 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
     TargetDestination,
 )
-from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
+from mechanical_librarian.domain.proposal_set import (
+    ProposalOutcome,
+    ProposalSet,
+    evaluate_report,
+)
 from mechanical_librarian.domain.review_case import ReviewCase
 
 PACKET_SCHEMA = "shadow-review-packet-v3"
@@ -454,7 +458,6 @@ class ShadowReviewPacket:
             citations,
             correlation_facts,
         )
-        value.validate_source(report)
         return value
     def to_data(self) -> dict[str, object]:
         return {
@@ -514,45 +517,23 @@ class ShadowReviewPacket:
             raise ShadowReviewValueError("shadow-review packet is invalid") from error
         if value.to_json() != serialized:
             raise ShadowReviewValueError("shadow-review packet is not canonical")
-        if _requires_provider_source(value) and not source_validated:
+        if not source_validated:
             value.validate_source(source_report)
         return value
 
     def validate_source(self, source_report: MetadataReport | None) -> None:
-        """Bind provider citations to exact candidates in an authoritative report."""
+        """Require the exact packet projection of one authoritative report."""
         if type(source_report) is not MetadataReport:
             raise ShadowReviewValueError(
-                "shadow-review provider source is unavailable"
+                "shadow-review authoritative source is unavailable"
             )
-        evidence = _evidence_index(source_report.to_data())
-        cited = {
-            citation["citation_id"]: citation["fact"]
-            for citation in self.citations
-        }
-        expected_references = set(_proposal_evidence_references(self))
-        expected_references.update(
-            reference
-            for reference, fact in evidence.items()
-            if _contains_provider_date(fact)
-        )
-        expected_references.update(
-            _date_link_local_references(source_report)
-        )
-        if set(cited) != expected_references or any(
-            cited[reference] != evidence.get(reference)
-            for reference in expected_references
-        ):
+        proposal_set = evaluate_report(source_report)
+        case = ReviewCase.create(proposal_set, source_report)
+        expected = type(self).create(case, proposal_set, source_report)
+        if self != expected:
             raise ShadowReviewValueError(
-                "shadow-review source binding is invalid: evidence closure"
+                "shadow-review source binding is invalid: authoritative projection"
             )
-        for citation in self.citations:
-            citation_id = citation["citation_id"]
-            fact = citation["fact"]
-            if _is_provider_citation(citation_id, fact):
-                if evidence.get(citation_id) != fact:
-                    raise ShadowReviewValueError(
-                        "shadow-review provider source binding is invalid"
-                    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1327,31 +1308,6 @@ def _is_provider_citation(citation_id: str, fact: dict[str, object]) -> bool:
         or "provider" in fact
         or "linkage" in fact
         or _contains_provider_date(fact)
-    )
-
-
-def _proposal_evidence_references(
-    packet: ShadowReviewPacket,
-) -> frozenset[str]:
-    return frozenset(
-        reference
-        for proposal in packet.proposals
-        for candidate in proposal["candidates"]
-        for reference in candidate["evidence_references"]
-    )
-
-
-def _requires_provider_source(packet: ShadowReviewPacket) -> bool:
-    return any(
-        proposal["destination"]
-        in {
-            TargetDestination.PUBLISHED_YEAR.value,
-            TargetDestination.PUBLISHED_DATE.value,
-        }
-        for proposal in packet.proposals
-    ) or any(
-        reference.startswith(("provider_", "evidence_"))
-        for reference in _proposal_evidence_references(packet)
     )
 
 
