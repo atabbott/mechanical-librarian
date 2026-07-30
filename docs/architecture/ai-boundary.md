@@ -8,7 +8,7 @@ change policy, construct service requests, or execute writes.
 
 ## Reviewer contract
 
-The current qualification-only `shadow-review-packet-v3` contains:
+The current qualification-only `shadow-review-packet-v4` contains:
 
 - only the opaque content-addressed ReviewCase ID, never the connection,
   library, item, file identity, path, or service identifier;
@@ -16,6 +16,8 @@ The current qualification-only `shadow-review-packet-v3` contains:
   explicit loaded, missing, or unavailable state for each applicable field;
 - explicit candidate values, including closed date event and represented
   year, month, or day target precision when applicable;
+- exact versioned allowed title/subtitle/series combinations whose members are
+  admitted candidate IDs or fingerprints of the visible current field state;
 - supporting and contradicting evidence summaries, with provider date
   citations retaining lexical/normalized values, source precision, the closed
   publication-date relation and independently shared precision,
@@ -77,6 +79,11 @@ Output is one direct JSON object conforming to
 - required `problems`, containing unresolved or adverse problem codes only;
 - cited evidence IDs;
 - optional confidence facts that do not independently control apply.
+
+The output shape has no separate combination field. Trusted semantic
+validation derives the recommendation tuple for every constrained destination
+and accepts it only when exactly one packet combination matches. Reasons,
+problems, and citations cannot carry hidden control data.
 
 The structured result is the schema object itself. A backend compatibility
 layer must not evade validation by embedding another JSON document in a string

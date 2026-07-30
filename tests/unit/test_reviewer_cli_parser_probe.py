@@ -43,7 +43,7 @@ def _profile(root: Path, codex: Path, sandbox: Path) -> QualificationProfile:
         "medium",
         "shadow-review-prompt-v2",
         "codex-shadow-profile-v1",
-        "shadow-review-packet-v3",
+        "shadow-review-packet-v4",
         "shadow-review-result-v1",
         "qualification-only-policy-v1",
         120,

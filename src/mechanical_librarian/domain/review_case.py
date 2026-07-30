@@ -15,7 +15,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
 
-REVIEW_CASE_SCHEMA = "review-case-v1"
+REVIEW_CASE_SCHEMA = "review-case-v2"
 REVIEW_ADMISSION_SCHEMA = "review-admission-v1"
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _PROPOSAL_SET_ID = re.compile(r"^proposal_set_[0-9a-f]{64}$")
@@ -251,6 +251,7 @@ class ReviewCase:
     target_fingerprint: str
     file_identity: str
     _results: tuple[dict[str, object], ...] = field(repr=False)
+    _relationships: dict[str, object] = field(repr=False)
     proposal_document: str
     disposition: str = "undecided"
     schema_version: str = REVIEW_CASE_SCHEMA
@@ -262,17 +263,35 @@ class ReviewCase:
             or self.disposition != "undecided"
             or len(self._results) != len(TargetDestination)
             or not isinstance(self._target, dict)
+            or not isinstance(self._relationships, dict)
         ):
             raise ReviewCaseValueError("review case is invalid")
         try:
             proposal = ProposalSet.from_json(self.proposal_document)
+            target = TargetFacts.from_data(_thaw_json_object(self._target))
         except Exception as error:
             raise ReviewCaseValueError("review case proposal is invalid") from error
+        target_fields = {
+            value.destination: value for value in target.fields
+        }
         if (
             proposal.proposal_set_id != self.proposal_set_id
             or proposal.report_id != self.report_id
             or proposal.target_fingerprint != self.target_fingerprint
             or tuple(value.to_data() for value in proposal.results) != self._results
+            or proposal.to_data()["relationships"] != self._relationships
+            or target.fingerprint != self.target_fingerprint
+            or any(
+                selection.target_field_fingerprint
+                != hashlib.sha256(
+                    _canonical(
+                        target_fields[selection.destination].to_data()
+                    ).encode("utf-8")
+                ).hexdigest()
+                for combination in proposal.bibliographic_combinations
+                for selection in combination.selections
+                if selection.alternative_id is None
+            )
         ):
             raise ReviewCaseValueError("review case proposal is invalid")
         if self.review_case_id != self._expected_id():
@@ -282,6 +301,11 @@ class ReviewCase:
             self,
             "_results",
             tuple(_freeze_json_object(value) for value in self._results),
+        )
+        object.__setattr__(
+            self,
+            "_relationships",
+            _freeze_json_object(self._relationships),
         )
 
     @classmethod
@@ -294,17 +318,18 @@ class ReviewCase:
         ):
             raise ReviewCaseValueError("review case binding is invalid")
         results = tuple(value.to_data() for value in proposal_set.results)
-        data = cls._data(proposal_set.proposal_set_id, report.report_id, report.target.to_data(), report.target.fingerprint, report.file.identity, results, proposal_set.to_json())
+        relationships = proposal_set.to_data()["relationships"]
+        data = cls._data(proposal_set.proposal_set_id, report.report_id, report.target.to_data(), report.target.fingerprint, report.file.identity, results, relationships, proposal_set.to_json())
         identity = "review_case_" + hashlib.sha256(
             _canonical(data).encode("utf-8")
         ).hexdigest()
-        return cls(identity, proposal_set.proposal_set_id, report.report_id, report.target.to_data(), report.target.fingerprint, report.file.identity, results, proposal_set.to_json())
+        return cls(identity, proposal_set.proposal_set_id, report.report_id, report.target.to_data(), report.target.fingerprint, report.file.identity, results, relationships, proposal_set.to_json())
 
     @staticmethod
-    def _data(proposal_set_id: str, report_id: str, target: dict[str, object], target_fingerprint: str, file_identity: str, results: tuple[dict[str, object], ...], proposal_document: str) -> dict[str, object]:
+    def _data(proposal_set_id: str, report_id: str, target: dict[str, object], target_fingerprint: str, file_identity: str, results: tuple[dict[str, object], ...], relationships: dict[str, object], proposal_document: str) -> dict[str, object]:
         return {"disposition": "undecided", "proposal_set_id": proposal_set_id, "report_id": report_id, "target": _thaw_json_object(target),
                 "target_fingerprint": target_fingerprint, "file_identity": file_identity,
-                "results": [_thaw_json_object(value) for value in results], "proposal_document": proposal_document, "schema_version": REVIEW_CASE_SCHEMA}
+                "results": [_thaw_json_object(value) for value in results], "relationships": _thaw_json_object(relationships), "proposal_document": proposal_document, "schema_version": REVIEW_CASE_SCHEMA}
 
     def _expected_id(self) -> str:
         return "review_case_" + hashlib.sha256(_canonical(self.to_data()).encode("utf-8")).hexdigest()
@@ -318,6 +343,11 @@ class ReviewCase:
     def results(self) -> tuple[dict[str, object], ...]:
         """Return detached target-ordered evaluator results."""
         return tuple(_thaw_json_object(value) for value in self._results)
+
+    @property
+    def relationships(self) -> dict[str, object]:
+        """Return the detached, versioned proposal relationship projection."""
+        return _thaw_json_object(self._relationships)
 
     @property
     def actionable(self) -> tuple[dict[str, object], ...]:
@@ -335,14 +365,37 @@ class ReviewCase:
     @property
     def proposals(self) -> tuple[dict[str, object], ...]:
         """Target-ordered immutable proposal projections with stable identities."""
+        proposal = ProposalSet.from_json(self.proposal_document)
+        result_set_id = ProposalSet.create(
+            report_id=proposal.report_id,
+            target_fingerprint=proposal.target_fingerprint,
+            results=proposal.results,
+        ).proposal_set_id
+        bibliographic_destinations = {
+            TargetDestination.TITLE.value,
+            TargetDestination.SUBTITLE.value,
+            TargetDestination.SERIES.value,
+        }
+        manual_destinations = (
+            bibliographic_destinations
+            if any(
+                result["destination"] in bibliographic_destinations
+                and result["reasons"]
+                == ["no_safe_bibliographic_combination"]
+                for result in self._results
+            )
+            else set()
+        )
         return tuple(
             {
                 "destination": result["destination"],
+                "manual_required": result["destination"]
+                in manual_destinations,
                 "proposal_id": "review_proposal_" + hashlib.sha256(
                     _canonical(
                         {
                             "destination": result["destination"],
-                            "proposal_set_id": self.proposal_set_id,
+                            "proposal_set_id": result_set_id,
                             "result": result,
                         }
                     ).encode("utf-8")
@@ -353,7 +406,7 @@ class ReviewCase:
         )
 
     def to_data(self) -> dict[str, object]:
-        return self._data(self.proposal_set_id, self.report_id, self._target, self.target_fingerprint, self.file_identity, self._results, self.proposal_document)
+        return self._data(self.proposal_set_id, self.report_id, self._target, self.target_fingerprint, self.file_identity, self._results, self._relationships, self.proposal_document)
 
     def to_json(self) -> str:
         return _canonical(self.to_data())
@@ -364,7 +417,7 @@ class ReviewCase:
             if type(serialized) is not str or not serialized or len(serialized.encode("utf-8")) > MAX_REVIEW_CASE_BYTES:
                 raise ValueError
             raw = json.loads(serialized, object_pairs_hook=_unique_object)
-            if type(raw) is not dict or set(raw) != {"disposition","proposal_set_id","report_id","target","target_fingerprint","file_identity","results","proposal_document","schema_version"}:
+            if type(raw) is not dict or set(raw) != {"disposition","proposal_set_id","report_id","target","target_fingerprint","file_identity","results","relationships","proposal_document","schema_version"}:
                 raise ValueError
             value = cls.create_from_data(raw)
         except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -375,7 +428,7 @@ class ReviewCase:
 
     @classmethod
     def create_from_data(cls, raw: dict[str, object]) -> Self:
-        if raw.get("schema_version") != REVIEW_CASE_SCHEMA or raw.get("disposition") != "undecided" or type(raw.get("results")) is not list or type(raw.get("target")) is not dict:
+        if raw.get("schema_version") != REVIEW_CASE_SCHEMA or raw.get("disposition") != "undecided" or type(raw.get("results")) is not list or type(raw.get("target")) is not dict or type(raw.get("relationships")) is not dict:
             raise ReviewCaseValueError("review case is invalid")
         try:
             target = TargetFacts.from_data(raw["target"])
@@ -386,9 +439,9 @@ class ReviewCase:
             raise ReviewCaseValueError("review case is invalid")
         if target.to_data() != raw["target"] or target.fingerprint != raw["target_fingerprint"]:
             raise ReviewCaseValueError("review case target is invalid")
-        data = cls._data(raw["proposal_set_id"], raw["report_id"], raw["target"], raw["target_fingerprint"], raw["file_identity"], results, raw["proposal_document"])  # type: ignore[arg-type]
+        data = cls._data(raw["proposal_set_id"], raw["report_id"], raw["target"], raw["target_fingerprint"], raw["file_identity"], results, raw["relationships"], raw["proposal_document"])  # type: ignore[arg-type]
         identity = "review_case_" + hashlib.sha256(_canonical(data).encode("utf-8")).hexdigest()
-        return cls(identity, raw["proposal_set_id"], raw["report_id"], raw["target"], raw["target_fingerprint"], raw["file_identity"], results, raw["proposal_document"])  # type: ignore[arg-type]
+        return cls(identity, raw["proposal_set_id"], raw["report_id"], raw["target"], raw["target_fingerprint"], raw["file_identity"], results, raw["relationships"], raw["proposal_document"])  # type: ignore[arg-type]
 
 
 def is_actionable(proposal_set: ProposalSet) -> bool:

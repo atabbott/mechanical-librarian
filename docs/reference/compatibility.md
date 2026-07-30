@@ -5,9 +5,10 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v5` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v22` plus `proposal-set-v2` under
-  `fixed-conservative-v5`, or the separate `catalogue-v1` schema;
-- `review-case-v1`, `shadow-review-request-v4`, `shadow-review-inspect-v2`,
+  `metadata-report-v22` plus `proposal-set-v3` under
+  `fixed-conservative-v6`, or the separate `catalogue-v1` schema;
+- `review-case-v2`, `shadow-review-packet-v4`,
+  `shadow-review-request-v4`, `shadow-review-inspect-v2`,
   `shadow-review-failure-v2`, and the exact-current append-only
   qualification-only shadow request/attempt/dispatch/outcome schema;
 - canonical `reviewer-qualification-profile-v1` with exact
@@ -57,7 +58,7 @@ so month candidates are not write-eligible.
 Language and publisher proposal alternatives retain their admitted bytes and
 provenance. `acceptable_choice` exposes multiple closed-policy-acceptable
 outcomes without choosing one. No earlier proposal policy is interpreted:
-pre-release databases using `fixed-conservative-v4` or earlier are rejected
+pre-release databases using `fixed-conservative-v5` or earlier are rejected
 before mutation and require a clean rebuild.
 
 Until the first production release, every database, report, artifact,

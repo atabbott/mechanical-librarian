@@ -480,6 +480,7 @@ class ProposalSetTests(unittest.TestCase):
         self.assertEqual(
             {
                 "policy_version",
+                "relationships",
                 "report",
                 "results",
                 "schema_version",
@@ -490,7 +491,7 @@ class ProposalSetTests(unittest.TestCase):
             proposal_set.proposal_set_id,
             ProposalSet.from_json(proposal_set.to_json()).proposal_set_id,
         )
-        self.assertEqual("fixed-conservative-v5", POLICY_VERSION)
+        self.assertEqual("fixed-conservative-v6", POLICY_VERSION)
         self.assertEqual(POLICY_VERSION, proposal_set.policy_version)
 
     def test_prior_policy_document_is_rejected_and_current_replay_is_exact(

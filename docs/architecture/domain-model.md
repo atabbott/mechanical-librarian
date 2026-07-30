@@ -135,7 +135,7 @@ does not interpret reports from prior or intermediate development schemas.
 ## Explainable ProposalSet
 
 `ProposalSet` is the deterministic, content-addressed evaluation of one exact
-`MetadataReport` under `fixed-conservative-v5`. It binds the report ID and
+`MetadataReport` under `fixed-conservative-v6`. It binds the report ID and
 derived target fingerprint and fixed policy version. Its ordered result tuple
 contains exactly one result for every
 `TargetDestination`.
@@ -158,6 +158,12 @@ requires positive preservation evidence and never encodes a replacement. The
 ProposalSet references observations owned by the report rather than copying
 excerpts, provider payloads, cover provenance, URLs, paths, or bytes. Its ID
 is derived from its canonical document rather than serialized in it.
+
+The versioned bibliographic relationship projection is separate from that
+result tuple. It enumerates complete compatible title/subtitle/series member
+tuples using existing alternative IDs or exact target-field fingerprints.
+Relationship identity participates in ProposalSet identity and propagates
+unchanged through review admission and reviewer-packet replay.
 
 ## ReviewCase admission
 
