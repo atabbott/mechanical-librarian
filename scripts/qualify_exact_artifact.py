@@ -825,7 +825,7 @@ def _proposal_identifier(value: dict[str, object]) -> str:
     if (
         set(value) != {"policy_version", "report", "results", "schema_version"}
         or value.get("schema_version") != "proposal-set-v2"
-        or value.get("policy_version") != "fixed-conservative-v3"
+        or value.get("policy_version") != "fixed-conservative-v4"
     ):
         raise QualificationFailure("installed_review_case_failed")
     serialized = json.dumps(value, sort_keys=True, separators=(",", ":"))

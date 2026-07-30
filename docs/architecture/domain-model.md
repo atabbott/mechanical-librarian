@@ -135,7 +135,7 @@ does not interpret reports from prior or intermediate development schemas.
 ## Explainable ProposalSet
 
 `ProposalSet` is the deterministic, content-addressed evaluation of one exact
-`MetadataReport` under `fixed-conservative-v3`. It binds the report ID and
+`MetadataReport` under `fixed-conservative-v4`. It binds the report ID and
 derived target fingerprint and fixed policy version. Its ordered result tuple
 contains exactly one result for every
 `TargetDestination`.
@@ -175,6 +175,10 @@ correlation, duplicate connections to one provider authority, malformed/unloaded
 target state, role ambiguity, or incomplete
 cover evidence become unresolved choices, defer, or ineligible rather than
 being silently resolved.
+Publication alternatives preserve the manifestation event and represented
+precision. Two independent exact dates in one month can therefore support one
+month candidate without choosing either day; different months retain only
+their shared year.
 An exact controlled `Unknown` package-metadata creator sentinel remains a
 versioned local claim in the report but is not an author candidate. Other
 creator contexts and nonexact names remain ordinary evidence, and filtering a

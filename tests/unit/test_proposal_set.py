@@ -443,7 +443,7 @@ class ProposalSetTests(unittest.TestCase):
             proposal_set.proposal_set_id,
             ProposalSet.from_json(proposal_set.to_json()).proposal_set_id,
         )
-        self.assertEqual("fixed-conservative-v3", POLICY_VERSION)
+        self.assertEqual("fixed-conservative-v4", POLICY_VERSION)
         self.assertEqual(POLICY_VERSION, proposal_set.policy_version)
 
     def test_prior_policy_document_is_rejected_and_current_replay_is_exact(
@@ -631,8 +631,23 @@ class ProposalSetTests(unittest.TestCase):
         for destination, allowed in expected.items():
             for kind, value in values.items():
                 for scope in ProposalScope:
+                    candidate_value = (
+                        ProposalValue(ProposalValueKind.TEXT, "2001")
+                        if (
+                            kind is ProposalValueKind.TEXT
+                            and destination is TargetDestination.PUBLISHED_YEAR
+                        )
+                        else ProposalValue(
+                            ProposalValueKind.TEXT, "2001-02-03"
+                        )
+                        if (
+                            kind is ProposalValueKind.TEXT
+                            and destination is TargetDestination.PUBLISHED_DATE
+                        )
+                        else value
+                    )
                     alternative = ProposalAlternative.create(
-                        value,
+                        candidate_value,
                         ProposalAssessment.FILLS_EMPTY,
                         ("local_" + "a" * 64,),
                         ("correlation_" + "a" * 64,),
@@ -750,6 +765,11 @@ class ProposalSetTests(unittest.TestCase):
                 TargetDestination.PUBLISHED_DATE,
                 DateEvent.MANIFESTATION_PUBLICATION,
                 DatePrecision.YEAR,
+            ),
+            (
+                TargetDestination.PUBLISHED_DATE,
+                DateEvent.MANIFESTATION_PUBLICATION,
+                DatePrecision.MONTH,
             ),
         )
         for destination, event, precision in invalid:
@@ -2463,7 +2483,7 @@ class ProposalSetTests(unittest.TestCase):
             evidence[0].date_event,
         )
 
-    def test_conflicting_manifestation_dates_remain_explicit_choices(self) -> None:
+    def test_different_years_remain_conflicting_at_the_year_destination(self) -> None:
         providers = tuple(
             _publication_provider(
                 provider,
@@ -2476,23 +2496,31 @@ class ProposalSetTests(unittest.TestCase):
                 ("open_library", "2002-03-04"),
             )
         )
-        result = _result(
-            evaluate_report(
-                _report(
-                    fields=_fields(
-                        published_date=TargetField(
-                            TargetDestination.PUBLISHED_DATE,
-                            TargetFieldState.MISSING,
-                        )
+        proposal = evaluate_report(
+            _report(
+                fields=_fields(
+                    published_year=TargetField(
+                        TargetDestination.PUBLISHED_YEAR,
+                        TargetFieldState.MISSING,
                     ),
-                    local_claims=(_publication_local_isbn(),),
-                    providers=providers,
-                )
-            ),
-            TargetDestination.PUBLISHED_DATE,
+                    published_date=TargetField(
+                        TargetDestination.PUBLISHED_DATE,
+                        TargetFieldState.MISSING,
+                    ),
+                ),
+                local_claims=(_publication_local_isbn(),),
+                providers=providers,
+            )
         )
-        self.assertEqual(ProposalOutcome.UNRESOLVED_CHOICE, result.outcome)
-        self.assertEqual(2, len(result.alternatives))
+        year = _result(proposal, TargetDestination.PUBLISHED_YEAR)
+        published_date = _result(proposal, TargetDestination.PUBLISHED_DATE)
+        self.assertEqual(ProposalOutcome.UNRESOLVED_CHOICE, year.outcome)
+        self.assertEqual(
+            ["2001", "2002"],
+            sorted(str(value.value.value) for value in year.alternatives),
+        )
+        self.assertEqual(ProposalOutcome.INELIGIBLE, published_date.outcome)
+        self.assertEqual((), published_date.alternatives)
 
     def test_full_date_refining_a_populated_year_needs_independent_sources(
         self,
@@ -2634,7 +2662,7 @@ class ProposalSetTests(unittest.TestCase):
         )
         self.assertEqual(1, len(published_date.alternatives[0].correlations))
 
-    def test_day_and_month_support_year_twice_but_day_once(self) -> None:
+    def test_day_and_month_project_shared_month_with_union_support(self) -> None:
         proposal = evaluate_report(
             _report(
                 fields=_fields(
@@ -2668,12 +2696,64 @@ class ProposalSetTests(unittest.TestCase):
         published_date = _result(proposal, TargetDestination.PUBLISHED_DATE)
         self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, year.outcome)
         self.assertEqual(2, len(year.alternatives[0].correlations))
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, published_date.outcome)
         self.assertEqual(
-            ProposalOutcome.UNRESOLVED_CHOICE, published_date.outcome
+            ("2001-02", DatePrecision.MONTH),
+            (
+                published_date.alternatives[0].value.value,
+                published_date.alternatives[0].date_precision,
+            ),
         )
-        self.assertEqual(1, len(published_date.alternatives[0].correlations))
+        self.assertEqual(2, len(published_date.alternatives[0].correlations))
+        self.assertEqual(
+            2, len(published_date.alternatives[0].evidence_references)
+        )
 
-    def test_same_year_day_conflicts_preserve_only_shared_year(self) -> None:
+    def test_same_month_day_conflicts_project_only_shared_month(self) -> None:
+        proposal = evaluate_report(
+            _report(
+                fields=_fields(
+                    published_year=TargetField(
+                        TargetDestination.PUBLISHED_YEAR,
+                        TargetFieldState.MISSING,
+                    ),
+                    published_date=TargetField(
+                        TargetDestination.PUBLISHED_DATE,
+                        TargetFieldState.MISSING,
+                    ),
+                ),
+                local_claims=(_publication_local_isbn(),),
+                providers=(
+                    _publication_provider(
+                        "alpha",
+                        "alpha-edition",
+                        ("2001-02-03",),
+                        authority="hardcover",
+                    ),
+                    _publication_provider(
+                        "beta",
+                        "beta-edition",
+                        ("2001-02-09",),
+                        authority="open_library",
+                    ),
+                ),
+            )
+        )
+        published_date = _result(proposal, TargetDestination.PUBLISHED_DATE)
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, published_date.outcome)
+        self.assertEqual(1, len(published_date.alternatives))
+        alternative = published_date.alternatives[0]
+        self.assertEqual("2001-02", alternative.value.value)
+        self.assertEqual(DateEvent.MANIFESTATION_PUBLICATION, alternative.date_event)
+        self.assertEqual(DatePrecision.MONTH, alternative.date_precision)
+        self.assertEqual(2, len(alternative.correlations))
+        self.assertEqual(2, len(alternative.evidence_references))
+        self.assertEqual(
+            proposal,
+            ProposalSet.from_json(proposal.to_json()),
+        )
+
+    def test_different_months_preserve_only_shared_year(self) -> None:
         proposal = evaluate_report(
             _report(
                 fields=_fields(
@@ -2708,10 +2788,8 @@ class ProposalSetTests(unittest.TestCase):
         self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, year.outcome)
         self.assertEqual("2001", year.alternatives[0].value.value)
         self.assertEqual(2, len(year.alternatives[0].correlations))
-        self.assertEqual(
-            ProposalOutcome.UNRESOLVED_CHOICE, published_date.outcome
-        )
-        self.assertEqual(2, len(published_date.alternatives))
+        self.assertEqual(ProposalOutcome.INELIGIBLE, published_date.outcome)
+        self.assertEqual((), published_date.alternatives)
     def test_cover_requires_one_complete_safe_artifact(self) -> None:
         artifact = CoverArtifact.create(
             b"cover", b"preview", "image/png", 10, 20

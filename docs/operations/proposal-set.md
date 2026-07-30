@@ -14,7 +14,7 @@ mechanical-librarian proposal-set-create \
 Every option is required. The command reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v3` policy. It does not construct or contact a metadata or
+`fixed-conservative-v4` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline:
@@ -28,11 +28,11 @@ mechanical-librarian proposal-set-get \
 Success is exactly one canonical `proposal-set-v2` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `fixed-conservative-v3` proposal documents and the exact current
+Only `fixed-conservative-v4` proposal documents and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
-`fixed-conservative-v1` or `fixed-conservative-v2` table shape is incompatible
-and is rejected before mutation; there is no proposal migration, import,
-conversion, or compatibility parser.
+`fixed-conservative-v1`, `fixed-conservative-v2`, or `fixed-conservative-v3`
+table shape is incompatible and is rejected before mutation; there is no
+proposal migration, import, conversion, or compatibility parser.
 
 ## Fixed policy
 
@@ -50,10 +50,11 @@ Alternatives retain only their bounded candidate value, work/edition/cover
 scope, assessment, stable evidence references, hashed correlation groups, and,
 for publication candidates, the closed event and target precision.
 `publishedYear` alternatives always carry target semantics
-`manifestation_publication` plus `year`; `publishedDate` alternatives always
-carry `manifestation_publication` plus `day`; every other destination carries
-neither. The exact source event and precision remain separately available
-through the evidence reference in the immutable report.
+`manifestation_publication` plus `year`; `publishedDate` alternatives carry
+`manifestation_publication` plus their represented `month` or `day` precision;
+every other destination carries neither. The exact source event and precision
+remain separately available through the evidence reference in the immutable
+report.
 They do not copy report excerpts, raw provider evidence, responses, URLs,
 paths, or image bytes. Provider access time remains in the exact immutable
 report addressed by each evidence reference; proposal derivation performs no
@@ -85,20 +86,26 @@ The policy is deliberately conservative:
   creators remain eligible under the ordinary rules;
 - selecting a full-day `publishedDate` always requires two materially
   independent correlation groups, whether or not a year is populated;
+- two independent month-capable observations that agree through `YYYY-MM`
+  produce one month candidate. Differing exact days in that month are
+  complementary month evidence, not competing month candidates. The candidate
+  carries the union of their evidence references and correlation groups;
 - work first-publication, copyright, modification, and unknown-event evidence
   never vote for manifestation date or year fields;
 - direct year-only edition evidence can fill `publishedYear` but is not
   promoted into a full `publishedDate`;
-- month-only evidence likewise derives only its stated year; day evidence may
-  become a `publishedDate` candidate, while a signed-offset timestamp may
-  reduce to that exact stated day without offset conversion. Its source
-  precision remains in the cited report fact;
+- one month observation alone derives only its stated year. A month candidate
+  requires independent month-capable support; day evidence may become a
+  `publishedDate` candidate, while a signed-offset timestamp may reduce to that
+  exact stated day without offset conversion. Source precision remains in the
+  cited report fact;
 - a timestamp without `Z` or an exact signed `HH:MM` offset remains visible in
   the report but supplies neither a year nor day vote; this includes naive and
   parser-admitted offset-second forms;
-- a day plus an agreeing year or month supports the shared year twice but the
-  day only once. Finer same-year conflicts preserve their shared coarse year;
-  they never manufacture month or day agreement;
+- a day plus an agreeing year supports the shared year twice but the day only
+  once. A day plus an independently agreeing month supports that month.
+  Different months preserve only their shared year; different years remain
+  conflicting. No rule fills or invents a missing month or day;
 - provider publication text whose event or manifestation linkage is unresolved
   remains visible evidence and never becomes a selectable candidate;
 - local work subtitles and exact-edition provider subtitles remain in their

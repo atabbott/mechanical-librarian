@@ -14,8 +14,8 @@ The current qualification-only `shadow-review-packet-v3` contains:
   library, item, file identity, path, or service identifier;
 - the exact bounded normalized current snapshot for the reviewed target and an
   explicit loaded, missing, or unavailable state for each applicable field;
-- explicit candidate values, including closed date event and target precision
-  when applicable;
+- explicit candidate values, including closed date event and represented
+  year, month, or day target precision when applicable;
 - supporting and contradicting evidence summaries, with provider date
   citations retaining lexical/normalized values, source precision, the closed
   publication-date relation and independently shared precision,

@@ -164,6 +164,7 @@ def _create_legacy_schema(connection: sqlite3.Connection) -> None:
 def _create_prior_schema(
     connection: sqlite3.Connection,
     version: str = "metadata-report-v9",
+    proposal_policy: str = "fixed-conservative-v4",
 ) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
@@ -174,7 +175,10 @@ def _create_prior_schema(
         metadata_persistence._COVER_REFERENCES_SQL,
         metadata_persistence._COVER_ARTIFACT_INDEX_SQL,
         metadata_persistence._COVER_PREVIEW_INDEX_SQL,
-        metadata_persistence._PROPOSAL_SETS_SQL,
+        metadata_persistence._PROPOSAL_SETS_SQL.replace(
+            "= 'fixed-conservative-v4'",
+            f"= '{proposal_policy}'",
+        ),
         metadata_persistence._REVIEW_CASES_SQL,
         metadata_persistence._REVIEW_POINTERS_SQL,
         metadata_persistence._REVIEW_TRANSITIONS_SQL,
@@ -278,6 +282,14 @@ class MetadataPersistenceTests(unittest.TestCase):
                 lambda connection: _create_prior_schema(
                     connection,
                     "metadata-report-v21",
+                ),
+            ),
+            (
+                "previous proposal policy v3",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v22",
+                    "fixed-conservative-v3",
                 ),
             ),
             (
@@ -4425,6 +4437,22 @@ class AudiobookshelfItemTests(unittest.TestCase):
                         TargetFieldState.MALFORMED,
                         malformed_states[destination],
                     )
+
+    def test_partial_publication_date_target_remains_unsupported(self) -> None:
+        snapshot = _target_snapshot(
+            {
+                "title": "Current title",
+                "publishedDate": "2024-03",
+            }
+        )
+        published_date = next(
+            field
+            for field in snapshot.fields
+            if field.destination is TargetDestination.PUBLISHED_DATE
+        )
+
+        self.assertIs(TargetFieldState.MALFORMED, published_date.state)
+        self.assertIsNone(published_date.value)
 
     def test_typed_target_syntax_precedes_oversized_classification(self) -> None:
         snapshot = _target_snapshot(

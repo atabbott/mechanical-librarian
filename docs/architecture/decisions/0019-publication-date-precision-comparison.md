@@ -1,7 +1,7 @@
 # ADR-0019: Close precision-aware publication-date comparison
 
 - Status: accepted
-- Date: 2026-07-29
+- Date: 2026-07-30
 - Owners: project maintainers
 - Supersedes: ADR-0016 publication-date packet projection
 - Superseded by: none
@@ -59,12 +59,20 @@ normalized provider publication text reclassified as manifestation
 publication with a `manifestation_incompatible` relation; malformed text and
 all other event kinds cannot retain it. It remains non-comparable and
 non-voting.
-Shared year evidence may support `publishedYear`; a full-day
-`publishedDate` requires two materially independent sources.
+Shared year evidence may support `publishedYear`; a full-day `publishedDate`
+requires two materially independent sources. When independently correlated
+month-capable observations disagree only below the month, the proposal policy
+projects their strongest shared `YYYY-MM` value as one month-precision
+`publishedDate` candidate. Its references and correlations are the union of
+the observations that support that precision. Finer source values and their
+conflict remain in the report and reviewer citations. Different months project
+only their shared year, and different years remain conflicting. Target state
+does not create a correlation, and no missing component is selected or padded.
 
-The exact-current report advances to `metadata-report-v22`, the proposal policy
-to `fixed-conservative-v3`, the reviewer packet to
-`shadow-review-packet-v3`, and the request to `shadow-review-request-v4`.
+The exact-current report is `metadata-report-v22`, the proposal policy is
+`fixed-conservative-v4`, the reviewer packet remains
+`shadow-review-packet-v3`, and the request remains
+`shadow-review-request-v4`.
 ADR-0013 rejects all earlier pre-release database shapes without migration,
 import, or compatibility parsing.
 
@@ -73,6 +81,7 @@ import, or compatibility parsing.
 ### Positive
 
 - Coarse agreement and finer conflict remain simultaneously explainable.
+- Complementary exact-day observations can support a truthful shared month.
 - Safe manifestation dates can contribute without provider-specific voting.
 - Incompatible facts stay visible to reviewers and deterministic replay.
 
@@ -81,6 +90,8 @@ import, or compatibility parsing.
 - Exact ISBN-family applicability deliberately rejects many plausible records.
 - A single full date cannot produce a selected day even when it supports a
   year.
+- Audiobookshelf partial-date acceptance and exact read-back remain unqualified,
+  so month candidates are report-only and not write-eligible.
 - Existing pre-release report and proposal databases must be rebuilt cleanly.
 
 ### Neutral or deferred

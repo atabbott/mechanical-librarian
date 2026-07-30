@@ -5,8 +5,8 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v5` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v22` plus `proposal-set-v2`, or the separate `catalogue-v1`
-  schema;
+  `metadata-report-v22` plus `proposal-set-v2` under
+  `fixed-conservative-v4`, or the separate `catalogue-v1` schema;
 - `review-case-v1`, `shadow-review-request-v4`, `shadow-review-inspect-v2`,
   `shadow-review-failure-v2`, and the exact-current append-only
   qualification-only shadow request/attempt/dispatch/outcome schema;
@@ -48,6 +48,11 @@ preview, one qualification-only foreground request, offline inspect, and
 explicit reevaluation. It does not support
 durable batch attempts, resume, automatic retry, workers, schedulers, parallel
 execution, normal reviewer activation, review decisions, or apply.
+
+Audiobookshelf `publishedDate` target reads remain exact ISO calendar days.
+Shared `YYYY-MM` proposal candidates are qualification-only and report-only;
+partial-date service acceptance and exact read-back have not been qualified,
+so month candidates are not write-eligible.
 
 Until the first production release, every database, report, artifact,
 configuration, and internal-document schema accepts only absent state or its

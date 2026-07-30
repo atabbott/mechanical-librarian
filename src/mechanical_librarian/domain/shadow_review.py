@@ -29,6 +29,7 @@ from mechanical_librarian.domain.metadata_report import (
     PublicationDateRelation,
     ReportValueError,
     TargetDestination,
+    normalize_date_value,
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalOutcome,
@@ -102,6 +103,23 @@ class ShadowReviewIdentityError(ShadowReviewSemanticError):
 
 def canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _candidate_date_matches_precision(candidate: dict[str, object]) -> bool:
+    wrapped = candidate.get("value")
+    if type(wrapped) is not dict or set(wrapped) != {"kind", "value"}:
+        return False
+    value = wrapped.get("value")
+    if wrapped.get("kind") != "text" or type(value) is not str:
+        return False
+    try:
+        normalized, precision = normalize_date_value(value)
+    except ValueError:
+        return False
+    return (
+        normalized == value
+        and precision.value == candidate.get("date_precision")
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,12 +285,15 @@ class ShadowReviewPacket:
             if type(candidates) is not list or not candidates:
                 raise ShadowReviewValueError("shadow-review packet is invalid")
             candidate_ids: list[object] = []
-            expected_date = (
-                ("manifestation_publication", "year")
+            expected_dates = (
+                {("manifestation_publication", "year")}
                 if destination == TargetDestination.PUBLISHED_YEAR.value
-                else ("manifestation_publication", "day")
+                else {
+                    ("manifestation_publication", "month"),
+                    ("manifestation_publication", "day"),
+                }
                 if destination == TargetDestination.PUBLISHED_DATE.value
-                else (None, None)
+                else {(None, None)}
             )
             for candidate in candidates:
                 if (
@@ -292,7 +313,15 @@ class ShadowReviewPacket:
                         candidate["date_event"],
                         candidate["date_precision"],
                     )
-                    != expected_date
+                    not in expected_dates
+                    or (
+                        destination
+                        in {
+                            TargetDestination.PUBLISHED_YEAR.value,
+                            TargetDestination.PUBLISHED_DATE.value,
+                        }
+                        and not _candidate_date_matches_precision(candidate)
+                    )
                     or type(candidate["evidence_references"]) is not list
                     or any(
                         type(reference) is not str

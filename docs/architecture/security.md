@@ -243,6 +243,11 @@ requires the immutable persisted report and compares each complete citation
 with the projection rebuilt from that exact candidate. Missing source context
 or any invented/omitted sibling fails closed without exposing the report to
 the reviewer.
+Shared-month candidates contain only the common `YYYY-MM` precision supported
+by independent retained observations. They never choose or pad a day, and the
+original finer observations remain cited. This is reviewer input only:
+Audiobookshelf partial-date writes and read-back are unqualified and remain
+unreachable.
 All auth and reviewer processes serialize on one owner-only auth-store lock.
 Only the exact canonical ChatGPT subscription status on one process stream is
 accepted when the other stream is empty and the command succeeds. Mixed,
