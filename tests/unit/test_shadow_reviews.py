@@ -86,12 +86,14 @@ from mechanical_librarian.domain.shadow_review import (
 from mechanical_librarian.interfaces.cli import main
 from tests.unit.test_review_case_persistence import _report
 from tests.unit.test_proposal_set import (
+    _claim,
     _contradictory_publication_provider,
     _fields as _proposal_fields,
     _identity_bound_alias_report,
     _partially_bound_direct_author_report,
     _publication_local_isbn,
     _publication_provider,
+    _provider,
     _report as _proposal_report,
 )
 
@@ -210,6 +212,67 @@ class _Runner:
 
 
 class ShadowReviewTests(unittest.TestCase):
+    def test_acceptable_language_choice_replays_with_all_raw_candidates(
+        self,
+    ) -> None:
+        report = _proposal_report(
+            fields=_proposal_fields(
+                language=TargetField(
+                    TargetDestination.LANGUAGE,
+                    TargetFieldState.MISSING,
+                ),
+            ),
+            providers=(
+                _provider(
+                    "alpha",
+                    "alpha-edition",
+                    (
+                        _claim(
+                            "alpha",
+                            "alpha-edition",
+                            ClaimKind.LANGUAGE,
+                            "en",
+                            scope=ClaimScope.EDITION,
+                        ),
+                    ),
+                ),
+                _provider(
+                    "beta",
+                    "beta-edition",
+                    (
+                        _claim(
+                            "beta",
+                            "beta-edition",
+                            ClaimKind.LANGUAGE,
+                            "eng",
+                            scope=ClaimScope.EDITION,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        proposal = evaluate_report(report)
+        case = ReviewCase.create(proposal, report)
+        packet = ShadowReviewPacket.create(case, proposal, report)
+        language = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == "language"
+        )
+
+        self.assertEqual("acceptable_choice", language["outcome"])
+        self.assertEqual(
+            {"en", "eng"},
+            {
+                candidate["value"]["value"]
+                for candidate in language["candidates"]
+            },
+        )
+        self.assertEqual(
+            packet,
+            ShadowReviewPacket.from_json(packet.to_json(), report),
+        )
+
     def test_shared_month_candidate_replays_in_reviewer_packet(self) -> None:
         report = _proposal_report(
             fields=_proposal_fields(

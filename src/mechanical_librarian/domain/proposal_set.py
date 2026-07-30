@@ -19,6 +19,11 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_projection_text,
 )
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
+from mechanical_librarian.domain.field_outcomes import (
+    language_identity,
+    language_outcomes_compatible,
+    publisher_statement_valid,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -36,6 +41,7 @@ from mechanical_librarian.domain.metadata_report import (
     canonical_json,
     complete_creator_identity_bindings,
     creator_comparison_key,
+    manifestation_publication_compatible,
     normalize_date_value,
     normalize_title,
     publication_date_is_voting,
@@ -43,7 +49,7 @@ from mechanical_librarian.domain.metadata_report import (
 
 
 PROPOSAL_SCHEMA = "proposal-set-v2"
-POLICY_VERSION = "fixed-conservative-v4"
+POLICY_VERSION = "fixed-conservative-v5"
 MAX_PROPOSAL_BYTES = 2_097_152
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
@@ -63,6 +69,7 @@ class ProposalValueError(ValueError):
 
 class ProposalOutcome(StrEnum):
     PROPOSE_CHANGE = "propose_change"
+    ACCEPTABLE_CHOICE = "acceptable_choice"
     UNRESOLVED_CHOICE = "unresolved_choice"
     KEEP = "keep"
     REJECT = "reject"
@@ -161,18 +168,26 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.PROPOSE_CHANGE: frozenset(
         {("unique_safe_cover",), ("unique_typed_candidate",)}
     ),
+    ProposalOutcome.ACCEPTABLE_CHOICE: frozenset(
+        {("field_policy_acceptable_choice",)}
+    ),
     ProposalOutcome.UNRESOLVED_CHOICE: frozenset(
         {
             ("competing_evidence",),
             ("date_refinement_requires_corroboration", "unique_typed_candidate"),
             ("date_year_conflict", "unique_typed_candidate"),
             ("insufficient_independent_corroboration",),
+            ("field_policy_conflict",),
             ("populated_subjective_field",),
             ("work_publication_cannot_replace",),
         }
     ),
     ProposalOutcome.KEEP: frozenset(
-        {("current_cover_verified",), ("positive_preservation_evidence",)}
+        {
+            ("current_cover_verified",),
+            ("field_policy_preservation",),
+            ("positive_preservation_evidence",),
+        }
     ),
     ProposalOutcome.REJECT: frozenset({("policy_reject",)}),
     ProposalOutcome.DEFER: frozenset(
@@ -415,17 +430,99 @@ class ProposalResult:
                 or self.selected_alternative_id not in selected
                 or self.alternatives[0].assessment
                 is ProposalAssessment.PRESERVES_TARGET
+                or (
+                    self.destination is TargetDestination.LANGUAGE
+                    and self.alternatives[0].assessment
+                    is ProposalAssessment.REPLACES_TARGET
+                )
+            ):
+                raise ProposalValueError("proposal selection is inconsistent")
+        elif self.outcome is ProposalOutcome.ACCEPTABLE_CHOICE:
+            if (
+                self.destination
+                not in {
+                    TargetDestination.LANGUAGE,
+                    TargetDestination.PUBLISHER,
+                }
+                or len(self.alternatives) < 2
+                or self.selected_alternative_id is not None
+                or any(
+                    value.assessment is ProposalAssessment.PRESERVES_TARGET
+                    for value in self.alternatives
+                )
+                or (
+                    self.destination is TargetDestination.LANGUAGE
+                    and any(
+                        value.assessment
+                        is ProposalAssessment.REPLACES_TARGET
+                        for value in self.alternatives
+                    )
+                )
+                or not _field_policy_accepts_all(
+                    self.destination, self.alternatives
+                )
             ):
                 raise ProposalValueError("proposal selection is inconsistent")
         elif self.outcome is ProposalOutcome.UNRESOLVED_CHOICE:
-            if not self.alternatives or self.selected_alternative_id is not None:
+            if (
+                not self.alternatives
+                or self.selected_alternative_id is not None
+                or (
+                    self.reasons == ("field_policy_conflict",)
+                    and (
+                        self.destination
+                        not in {
+                            TargetDestination.LANGUAGE,
+                            TargetDestination.PUBLISHER,
+                        }
+                        or not _field_policy_conflicts(
+                            self.destination, self.alternatives
+                        )
+                    )
+                )
+            ):
                 raise ProposalValueError("proposal selection is inconsistent")
         elif self.outcome is ProposalOutcome.KEEP:
             if (
-                len(self.alternatives) != 1
-                or self.alternatives[0].assessment
-                is not ProposalAssessment.PRESERVES_TARGET
+                not self.alternatives
+                or not any(
+                    value.assessment is ProposalAssessment.PRESERVES_TARGET
+                    for value in self.alternatives
+                )
                 or self.selected_alternative_id is not None
+                or (
+                    self.destination is TargetDestination.LANGUAGE
+                    and self.reasons != ("field_policy_preservation",)
+                )
+                or (
+                    self.reasons == ("field_policy_preservation",)
+                    and (
+                        self.destination
+                        not in {
+                            TargetDestination.LANGUAGE,
+                            TargetDestination.PUBLISHER,
+                        }
+                        or not _field_policy_accepts_all(
+                            self.destination, self.alternatives
+                        )
+                        or (
+                            self.destination is TargetDestination.LANGUAGE
+                            and any(
+                                value.assessment
+                                is not ProposalAssessment.PRESERVES_TARGET
+                                for value in self.alternatives
+                            )
+                        )
+                    )
+                )
+                or (
+                    self.reasons != ("field_policy_preservation",)
+                    and (
+                        len(self.alternatives) != 1
+                        or self.alternatives[0].assessment
+                        is not ProposalAssessment.PRESERVES_TARGET
+                    )
+                )
             ):
                 raise ProposalValueError("proposal selection is inconsistent")
         elif (
@@ -626,12 +723,17 @@ def _observations(
         TargetDestination.LANGUAGE: (ClaimKind.LANGUAGE, ClaimScope.EDITION),
     }
     kind, scope = mapping.get(destination, (ClaimKind.SUBTITLE, ClaimScope.WORK))
+    kinds = (
+        {ClaimKind.PUBLISHER, ClaimKind.IMPRINT}
+        if destination is TargetDestination.PUBLISHER
+        else {kind}
+    )
     local_scope = ClaimScope.WORK if destination is TargetDestination.SUBTITLE else scope
     provider_scope = ClaimScope.EDITION if destination is TargetDestination.SUBTITLE else scope
     values: list[_Observed] = []
     for claim in report.local_claims:
         if (
-            claim.kind is kind
+            claim.kind in kinds
             and claim.scope is local_scope
             and claim.state is FieldState.VALID
             and claim.canonical is not None
@@ -641,6 +743,7 @@ def _observations(
                 report, destination, claim.reference
             )
             and _eligible_description(destination, claim.canonical)
+            and _eligible_field_value(destination, claim.canonical)
         ):
             values.append(
                 _Observed(
@@ -654,7 +757,7 @@ def _observations(
         for candidate in provider.candidates:
             for claim in candidate.claims:
                 if (
-                    claim.kind is kind
+                    claim.kind in kinds
                     and claim.scope is provider_scope
                     and claim.state is FieldState.VALID
                     and claim.value is not None
@@ -665,6 +768,19 @@ def _observations(
                         report, destination, claim.reference
                     )
                     and _eligible_description(destination, claim.value)
+                    and _eligible_field_value(destination, claim.value)
+                    and (
+                        destination is not TargetDestination.PUBLISHER
+                        or manifestation_publication_compatible(
+                            candidate,
+                            report.local_claims,
+                        )
+                        and _accepted_provider_manifestation_anchor(
+                            report,
+                            provider.provider,
+                            candidate,
+                        )
+                    )
                 ):
                     values.append(
                         _Observed(
@@ -1347,7 +1463,47 @@ def _evaluate(
         return ProposalResult(
             destination, outcome, (), None, (reason,), dependencies
         )
+    if (
+        destination
+        in {
+            TargetDestination.LANGUAGE,
+            TargetDestination.PUBLISHER,
+        }
+        and _field_policy_conflicts(destination, alternatives)
+    ):
+        return ProposalResult(
+            destination,
+            ProposalOutcome.UNRESOLVED_CHOICE,
+            alternatives,
+            None,
+            ("field_policy_conflict",),
+            dependencies,
+        )
     if len(alternatives) != 1:
+        if destination in {
+            TargetDestination.LANGUAGE,
+            TargetDestination.PUBLISHER,
+        }:
+            if target.state is TargetFieldState.VALUE and any(
+                value.assessment is ProposalAssessment.PRESERVES_TARGET
+                for value in alternatives
+            ):
+                return ProposalResult(
+                    destination,
+                    ProposalOutcome.KEEP,
+                    alternatives,
+                    None,
+                    ("field_policy_preservation",),
+                    dependencies,
+                )
+            return ProposalResult(
+                destination,
+                ProposalOutcome.ACCEPTABLE_CHOICE,
+                alternatives,
+                None,
+                ("field_policy_acceptable_choice",),
+                dependencies,
+            )
         return ProposalResult(
             destination,
             ProposalOutcome.UNRESOLVED_CHOICE,
@@ -1358,12 +1514,17 @@ def _evaluate(
         )
     alternative = alternatives[0]
     if alternative.assessment is ProposalAssessment.PRESERVES_TARGET:
+        reason = (
+            "field_policy_preservation"
+            if destination is TargetDestination.LANGUAGE
+            else "positive_preservation_evidence"
+        )
         return ProposalResult(
             destination,
             ProposalOutcome.KEEP,
             alternatives,
             None,
-            ("positive_preservation_evidence",),
+            (reason,),
             dependencies,
         )
     subjective = destination in {
@@ -1413,6 +1574,45 @@ def _evaluate(
         alternative.alternative_id,
         ("unique_typed_candidate",),
         dependencies,
+    )
+
+
+def _field_policy_accepts_all(
+    destination: TargetDestination,
+    alternatives: tuple[ProposalAlternative, ...],
+) -> bool:
+    values = tuple(
+        value.value.value
+        for value in alternatives
+        if value.value.kind is ProposalValueKind.TEXT
+        and type(value.value.value) is str
+    )
+    if len(values) != len(alternatives):
+        return False
+    if destination is TargetDestination.PUBLISHER:
+        return all(publisher_statement_valid(value) for value in values)
+    if destination is TargetDestination.LANGUAGE:
+        return (
+            all(language_identity(value) is not None for value in values)
+            and all(
+                language_outcomes_compatible(left, right)
+                for index, left in enumerate(values)
+                for right in values[index + 1 :]
+            )
+        )
+    return False
+
+
+def _field_policy_conflicts(
+    destination: TargetDestination,
+    alternatives: tuple[ProposalAlternative, ...],
+) -> bool:
+    return not _field_policy_accepts_all(destination, alternatives) or (
+        destination is TargetDestination.LANGUAGE
+        and any(
+            value.assessment is ProposalAssessment.REPLACES_TARGET
+            for value in alternatives
+        )
     )
 
 
@@ -1493,11 +1693,8 @@ def _value(
     if destination in {
         TargetDestination.TITLE,
         TargetDestination.SUBTITLE,
-        TargetDestination.PUBLISHER,
     }:
         value = normalize_title(value)
-    elif destination is TargetDestination.LANGUAGE:
-        value = value.casefold()
     elif destination is TargetDestination.ASIN:
         value = value.upper()
     return ProposalValue(ProposalValueKind.TEXT, value)
@@ -1526,6 +1723,8 @@ def _matches(
             _comparison(destination, item) for item in candidate.value
         )
     if type(target) is str and type(candidate.value) is str:
+        if destination is TargetDestination.LANGUAGE:
+            return language_outcomes_compatible(target, candidate.value)
         return _comparison(destination, target) == _comparison(
             destination, candidate.value
         )
@@ -1550,6 +1749,15 @@ def _observation_key(destination: TargetDestination, value: ProposalValue) -> st
         )
     elif type(value.value) is tuple:
         normalized = tuple(_comparison(destination, item) for item in value.value)
+    elif (
+        destination
+        in {
+            TargetDestination.LANGUAGE,
+            TargetDestination.PUBLISHER,
+        }
+        and type(value.value) is str
+    ):
+        normalized = value.value
     elif type(value.value) is str:
         normalized = _comparison(destination, value.value)
     else:
@@ -1581,11 +1789,44 @@ def _eligible_identifier_reference(
     )
 
 
+def _accepted_provider_manifestation_anchor(
+    report: MetadataReport,
+    provider: str,
+    candidate: ProviderCandidate,
+) -> bool:
+    accepted_references = {
+        evidence.reference
+        for evidence in report.identifier_evidence
+        if evidence.relation is IdentifierRelation.ACCEPTED
+        and evidence.provider == provider
+        and evidence.candidate_identity == candidate.identity
+        and evidence.work_identity == candidate.work_identity
+    }
+    return any(
+        claim.kind is ClaimKind.ISBN
+        and claim.scope is ClaimScope.EDITION
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+        and claim.applicability == "ebook"
+        and claim.reference in accepted_references
+        for claim in candidate.claims
+    )
+
+
 def _eligible_description(
     destination: TargetDestination, value: str
 ) -> bool:
     return destination is not TargetDestination.DESCRIPTION or (
         "<" not in value and ">" not in value
+    )
+
+
+def _eligible_field_value(
+    destination: TargetDestination, value: str
+) -> bool:
+    return (
+        destination is not TargetDestination.PUBLISHER
+        or publisher_statement_valid(value)
     )
 
 

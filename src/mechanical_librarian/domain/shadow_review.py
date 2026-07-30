@@ -422,6 +422,7 @@ class ShadowReviewPacket:
         for wrapped in case.proposals:
             result = wrapped["result"]
             if result["outcome"] not in {
+                ProposalOutcome.ACCEPTABLE_CHOICE.value,
                 ProposalOutcome.PROPOSE_CHANGE.value,
                 ProposalOutcome.UNRESOLVED_CHOICE.value,
             }:

@@ -8,10 +8,10 @@ mechanical-librarian review-case-admit --config config.json --database reports.s
 ```
 
 The typed canonical result is `admitted`, `replayed`, `superseded`, `no_case`,
-`retired`, or `stale`. Only `propose_change` and `unresolved_choice` results
-create a case; `no_case` and `retired` have no empty case. Untrusted failures
-are redacted as fixed `invalid`, `incompatible`, `currentness`, or
-`persistence` codes.
+`retired`, or `stale`. `propose_change`, `acceptable_choice`, and
+`unresolved_choice` results create a case; `no_case` and `retired` have no
+empty case. Untrusted failures are redacted as fixed `invalid`,
+`incompatible`, `currentness`, or `persistence` codes.
 `superseded` and `retired` require an active prior case. After a `no_case` or
 `retired` checkpoint, the next actionable set is `admitted` and another
 nonactionable set is `no_case`.

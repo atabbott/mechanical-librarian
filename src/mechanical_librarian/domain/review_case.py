@@ -326,6 +326,7 @@ class ReviewCase:
             for value in self._results
             if value.get("outcome")
             in {
+                ProposalOutcome.ACCEPTABLE_CHOICE.value,
                 ProposalOutcome.PROPOSE_CHANGE.value,
                 ProposalOutcome.UNRESOLVED_CHOICE.value,
             }
@@ -391,7 +392,15 @@ class ReviewCase:
 
 
 def is_actionable(proposal_set: ProposalSet) -> bool:
-    return any(value.outcome in {ProposalOutcome.PROPOSE_CHANGE, ProposalOutcome.UNRESOLVED_CHOICE} for value in proposal_set.results)
+    return any(
+        value.outcome
+        in {
+            ProposalOutcome.ACCEPTABLE_CHOICE,
+            ProposalOutcome.PROPOSE_CHANGE,
+            ProposalOutcome.UNRESOLVED_CHOICE,
+        }
+        for value in proposal_set.results
+    )
 
 
 def _canonical(value: object) -> str:

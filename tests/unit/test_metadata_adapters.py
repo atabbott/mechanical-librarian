@@ -164,7 +164,7 @@ def _create_legacy_schema(connection: sqlite3.Connection) -> None:
 def _create_prior_schema(
     connection: sqlite3.Connection,
     version: str = "metadata-report-v9",
-    proposal_policy: str = "fixed-conservative-v4",
+    proposal_policy: str = "fixed-conservative-v5",
 ) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
@@ -176,7 +176,7 @@ def _create_prior_schema(
         metadata_persistence._COVER_ARTIFACT_INDEX_SQL,
         metadata_persistence._COVER_PREVIEW_INDEX_SQL,
         metadata_persistence._PROPOSAL_SETS_SQL.replace(
-            "= 'fixed-conservative-v4'",
+            "= 'fixed-conservative-v5'",
             f"= '{proposal_policy}'",
         ),
         metadata_persistence._REVIEW_CASES_SQL,
@@ -290,6 +290,14 @@ class MetadataPersistenceTests(unittest.TestCase):
                     connection,
                     "metadata-report-v22",
                     "fixed-conservative-v3",
+                ),
+            ),
+            (
+                "previous proposal policy v4",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v22",
+                    "fixed-conservative-v4",
                 ),
             ),
             (

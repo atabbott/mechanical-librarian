@@ -6,7 +6,7 @@ The current installed contract is intentionally narrow:
 - `config-v5` only;
 - an absent database or the installed exact current report database containing
   `metadata-report-v22` plus `proposal-set-v2` under
-  `fixed-conservative-v4`, or the separate `catalogue-v1` schema;
+  `fixed-conservative-v5`, or the separate `catalogue-v1` schema;
 - `review-case-v1`, `shadow-review-request-v4`, `shadow-review-inspect-v2`,
   `shadow-review-failure-v2`, and the exact-current append-only
   qualification-only shadow request/attempt/dispatch/outcome schema;
@@ -53,6 +53,12 @@ Audiobookshelf `publishedDate` target reads remain exact ISO calendar days.
 Shared `YYYY-MM` proposal candidates are qualification-only and report-only;
 partial-date service acceptance and exact read-back have not been qualified,
 so month candidates are not write-eligible.
+
+Language and publisher proposal alternatives retain their admitted bytes and
+provenance. `acceptable_choice` exposes multiple closed-policy-acceptable
+outcomes without choosing one. No earlier proposal policy is interpreted:
+pre-release databases using `fixed-conservative-v4` or earlier are rejected
+before mutation and require a clean rebuild.
 
 Until the first production release, every database, report, artifact,
 configuration, and internal-document schema accepts only absent state or its
