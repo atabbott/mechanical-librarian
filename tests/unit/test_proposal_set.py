@@ -2169,6 +2169,78 @@ class ProposalSetTests(unittest.TestCase):
                     ),
                 )
 
+    def test_publisher_anchor_must_reference_accepted_edition_isbn(self) -> None:
+        provider = _provider(
+            "catalogue",
+            "edition-1",
+            (
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.ISBN,
+                    "9780306406157",
+                    scope=ClaimScope.EDITION,
+                    applicability="unknown",
+                ),
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.ISBN,
+                    "9780306406157",
+                    scope=ClaimScope.WORK,
+                    applicability="ebook",
+                    order=1,
+                ),
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.PUBLISHER,
+                    "Wrong Scope Press",
+                    scope=ClaimScope.EDITION,
+                    order=2,
+                ),
+            ),
+        )
+        fields = _fields(
+            publisher=TargetField(
+                TargetDestination.PUBLISHER,
+                TargetFieldState.MISSING,
+            )
+        )
+        report = _report(
+            fields=fields,
+            local_claims=(_explicit_local_ebook_isbn(),),
+            providers=(provider,),
+        )
+        isbn_claims = {
+            claim.reference: claim
+            for claim in provider.candidates[0].claims
+            if claim.kind is ClaimKind.ISBN
+        }
+        provider_evidence = {
+            (
+                isbn_claims[evidence.reference].scope,
+                isbn_claims[evidence.reference].applicability,
+            ): evidence.relation
+            for evidence in report.identifier_evidence
+            if evidence.provider == "catalogue"
+        }
+
+        result = _result(
+            evaluate_report(report),
+            TargetDestination.PUBLISHER,
+        )
+
+        self.assertEqual(
+            {
+                (ClaimScope.EDITION, "unknown"): IdentifierRelation.ASSOCIATED,
+                (ClaimScope.WORK, "ebook"): IdentifierRelation.ACCEPTED,
+            },
+            provider_evidence,
+        )
+        self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
+        self.assertEqual((), result.alternatives)
+
     def test_selected_epub_publisher_does_not_need_provider_anchor(self) -> None:
         local_publisher = LocalClaim.create(
             kind=ClaimKind.PUBLISHER,

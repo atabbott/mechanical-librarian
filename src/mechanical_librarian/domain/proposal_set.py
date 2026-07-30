@@ -1804,6 +1804,10 @@ def _accepted_provider_manifestation_anchor(
     }
     return any(
         claim.kind is ClaimKind.ISBN
+        and claim.scope is ClaimScope.EDITION
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+        and claim.applicability == "ebook"
         and claim.reference in accepted_references
         for claim in candidate.claims
     )

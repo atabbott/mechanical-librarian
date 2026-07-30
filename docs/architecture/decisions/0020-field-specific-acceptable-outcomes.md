@@ -45,10 +45,12 @@ malformed, and target-only values cannot gain evidence authority.
 
 `acceptable_choice` is a new proposal outcome. It retains at least two
 field-policy-acceptable alternatives and selects none. It is actionable and is
-projected into the existing reviewer packet. `keep` may retain multiple
-language or publisher alternatives only when admitted evidence actually
-supports the current value; target syntax alone is not evidence. A true
-language contradiction remains `unresolved_choice`.
+projected into the existing reviewer packet. This narrowly extends ADR-0014's
+actionable-admission vocabulary; ADR-0014's transaction, immutability,
+currentness, and authority decisions remain unchanged. `keep` may retain
+multiple language or publisher alternatives only when admitted evidence
+actually supports the current value; target syntax alone is not evidence. A
+true language contradiction remains `unresolved_choice`.
 
 The exact-current proposal policy is `fixed-conservative-v5`. ADR-0013 rejects
 earlier proposal-store shapes without migration, import, or conversion.

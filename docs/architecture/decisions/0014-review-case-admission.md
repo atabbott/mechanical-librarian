@@ -15,10 +15,9 @@ The transaction also requires byte-exact agreement with the deterministic
 fixed-policy evaluator output for the bound report, so structurally valid
 synthetic ProposalSets cannot enter the review lineage.
 
-`propose_change`, `acceptable_choice`, and `unresolved_choice` results are
-actionable. The case retains all sixteen results as context and remains
-undecided; no reviewer decision, target write, provider call, queue, or
-background work is introduced.
+Only `propose_change` and `unresolved_choice` results are actionable. The case
+retains all sixteen results as context and remains undecided; no reviewer
+decision, target write, provider call, queue, or background work is introduced.
 
 ## Consequences
 
