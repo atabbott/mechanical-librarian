@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Project publication-date evidence to its strongest independently supported
+  precision. Exact agreeing days remain full-day `publishedDate` candidates;
+  differing days in one month or a day plus an independently supported month
+  produce one `YYYY-MM` candidate with the union of their references and
+  correlations; different months retain only shared `publishedYear` support;
+  and different years remain conflicting. Original observations and finer
+  conflicts remain cited rather than being padded or discarded. Reviewer
+  packets preserve the resulting `manifestation_publication` event and
+  `month` or `day` precision. The Audiobookshelf runtime remains report-only:
+  partial-date writes are unsupported and no proposal grants write authority.
+  Advance the exact-current proposal policy to `fixed-conservative-v4`; earlier
+  proposal-store policy shapes are rejected without migration. (#422)
+
 - Preserve publication-date precision and incompatibility explicitly under
   `closed-title-creator-publication-v4`. Date links distinguish exact,
   month-compatible, year-compatible, finer-conflict, event-incompatible, and

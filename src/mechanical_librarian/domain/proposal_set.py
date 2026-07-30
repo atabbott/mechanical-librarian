@@ -43,7 +43,7 @@ from mechanical_librarian.domain.metadata_report import (
 
 
 PROPOSAL_SCHEMA = "proposal-set-v2"
-POLICY_VERSION = "fixed-conservative-v3"
+POLICY_VERSION = "fixed-conservative-v4"
 MAX_PROPOSAL_BYTES = 2_097_152
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
@@ -137,14 +137,22 @@ _DESTINATION_VALUE_SCOPES: dict[
 }
 
 _DESTINATION_DATE_SEMANTICS: dict[
-    TargetDestination, tuple[DateEvent | None, DatePrecision | None]
+    TargetDestination,
+    frozenset[tuple[DateEvent | None, DatePrecision | None]],
 ] = {
     destination: (
-        (DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.YEAR)
+        frozenset(
+            {(DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.YEAR)}
+        )
         if destination is TargetDestination.PUBLISHED_YEAR
-        else (DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.DAY)
+        else frozenset(
+            {
+                (DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.MONTH),
+                (DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.DAY),
+            }
+        )
         if destination is TargetDestination.PUBLISHED_DATE
-        else (None, None)
+        else frozenset({(None, None)})
     )
     for destination in TargetDestination
 }
@@ -363,14 +371,40 @@ class ProposalResult:
             for alternative in self.alternatives
         ):
             raise ProposalValueError("proposal alternative is incompatible with destination")
-        expected_date = _DESTINATION_DATE_SEMANTICS[self.destination]
+        expected_dates = _DESTINATION_DATE_SEMANTICS[self.destination]
         if any(
-            (alternative.date_event, alternative.date_precision) != expected_date
+            (alternative.date_event, alternative.date_precision)
+            not in expected_dates
             for alternative in self.alternatives
         ):
             raise ProposalValueError(
                 "proposal alternative date is incompatible with destination"
             )
+        for alternative in self.alternatives:
+            if alternative.date_event is None:
+                continue
+            if (
+                alternative.value.kind is not ProposalValueKind.TEXT
+                or type(alternative.value.value) is not str
+            ):
+                raise ProposalValueError(
+                    "proposal alternative date is incompatible with destination"
+                )
+            try:
+                normalized, precision = normalize_date_value(
+                    alternative.value.value
+                )
+            except ValueError as error:
+                raise ProposalValueError(
+                    "proposal alternative date is incompatible with destination"
+                ) from error
+            if (
+                normalized != alternative.value.value
+                or precision is not alternative.date_precision
+            ):
+                raise ProposalValueError(
+                    "proposal alternative date is incompatible with destination"
+                )
         if self.reasons not in _OUTCOME_REASON_SETS[self.outcome]:
             raise ProposalValueError("proposal reasons are incompatible with outcome")
         selected = {value.alternative_id for value in self.alternatives}
@@ -515,7 +549,7 @@ class _Observed:
     correlation: str
     scope: ProposalScope
     date_event: DateEvent | None = None
-    source_precision: DatePrecision | None = None
+    date_precision: DatePrecision | None = None
 
 
 def evaluate_report(report: MetadataReport) -> ProposalSet:
@@ -984,7 +1018,7 @@ def _publication_results(
     date_target = targets[TargetDestination.PUBLISHED_DATE]
     year_target = targets[TargetDestination.PUBLISHED_YEAR]
     publication_values = _date_observations(report)
-    dates = tuple(
+    direct_dates = tuple(
         _Observed(
             ProposalValue(
                 ProposalValueKind.TEXT,
@@ -994,16 +1028,44 @@ def _publication_results(
             value.correlation,
             value.scope,
             value.date_event,
-            value.source_precision,
+            DatePrecision.DAY,
         )
         for value in publication_values
         if (
             type(value.value.value) is str
-            and value.source_precision in {
+            and value.date_precision in {
                 DatePrecision.DAY,
                 DatePrecision.TIMESTAMP,
             }
         )
+    )
+    month_dates = tuple(
+        _Observed(
+            ProposalValue(
+                ProposalValueKind.TEXT,
+                str(value.value.value)[:7],
+            ),
+            value.references,
+            value.correlation,
+            value.scope,
+            value.date_event,
+            DatePrecision.MONTH,
+        )
+        for value in publication_values
+        if (
+            type(value.value.value) is str
+            and value.date_precision
+            in {
+                DatePrecision.MONTH,
+                DatePrecision.DAY,
+                DatePrecision.TIMESTAMP,
+            }
+        )
+    )
+    dates = _strongest_shared_date(
+        publication_values,
+        direct_dates,
+        month_dates,
     )
     years = tuple(
         _Observed(
@@ -1012,7 +1074,7 @@ def _publication_results(
             value.correlation,
             value.scope,
             value.date_event,
-            value.source_precision,
+            DatePrecision.YEAR,
         )
         for value in publication_values
     )
@@ -1067,6 +1129,66 @@ def _publication_results(
         TargetDestination.PUBLISHED_DATE: date_result,
         TargetDestination.PUBLISHED_YEAR: year_result,
     }
+
+
+def _strongest_shared_date(
+    source: tuple[_Observed, ...],
+    days: tuple[_Observed, ...],
+    months: tuple[_Observed, ...],
+) -> tuple[_Observed, ...]:
+    possible: list[tuple[_Observed, ...]] = []
+    for precision, observations, length in (
+        (DatePrecision.DAY, days, 10),
+        (DatePrecision.MONTH, months, 7),
+    ):
+        projected = {
+            str(value.value.value)[:length] for value in observations
+        }
+        if len(projected) != 1:
+            continue
+        candidate = next(iter(projected))
+        if not all(
+            _date_compatible_with_projection(value, candidate, precision)
+            for value in source
+        ):
+            continue
+        possible.append(observations)
+    for observations in possible:
+        if len({value.correlation for value in observations}) >= 2:
+            return observations
+    return next(
+        (
+            observations
+            for observations in possible
+            if observations[0].date_precision is DatePrecision.DAY
+        ),
+        (),
+    )
+
+
+def _date_compatible_with_projection(
+    observation: _Observed,
+    candidate: str,
+    precision: DatePrecision,
+) -> bool:
+    if (
+        type(observation.value.value) is not str
+        or type(observation.date_precision) is not DatePrecision
+    ):
+        return False
+    shared_length = min(
+        {
+            DatePrecision.YEAR: 4,
+            DatePrecision.MONTH: 7,
+            DatePrecision.DAY: 10,
+            DatePrecision.TIMESTAMP: 10,
+        }[observation.date_precision],
+        {
+            DatePrecision.MONTH: 7,
+            DatePrecision.DAY: 10,
+        }[precision],
+    )
+    return observation.value.value[:shared_length] == candidate[:shared_length]
 
 
 def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult:
@@ -1299,13 +1421,35 @@ def _alternatives(
     target: TargetField,
     observations: tuple[_Observed, ...],
 ) -> tuple[ProposalAlternative, ...]:
-    grouped: dict[tuple[str, ProposalScope], list[_Observed]] = {}
+    grouped: dict[
+        tuple[
+            str,
+            ProposalScope,
+            DateEvent | None,
+            DatePrecision | None,
+        ],
+        list[_Observed],
+    ] = {}
     for value in observations:
         grouped.setdefault(
-            (_observation_key(destination, value.value), value.scope), []
+            (
+                _observation_key(destination, value.value),
+                value.scope,
+                value.date_event,
+                value.date_precision,
+            ),
+            [],
         ).append(value)
     alternatives: list[ProposalAlternative] = []
-    for key in sorted(grouped, key=lambda item: (item[0], item[1].value)):
+    for key in sorted(
+        grouped,
+        key=lambda item: (
+            item[0],
+            item[1].value,
+            "" if item[2] is None else item[2].value,
+            "" if item[3] is None else item[3].value,
+        ),
+    ):
         values = grouped[key]
         proposal_value = min(
             (value.value for value in values),
@@ -1320,7 +1464,8 @@ def _alternatives(
         else:
             assessment = ProposalAssessment.FILLS_EMPTY
         scope = values[0].scope
-        date_event, date_precision = _DESTINATION_DATE_SEMANTICS[destination]
+        date_event = values[0].date_event
+        date_precision = values[0].date_precision
         alternatives.append(
             ProposalAlternative.create(
                 proposal_value,

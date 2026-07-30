@@ -87,8 +87,12 @@ from mechanical_librarian.interfaces.cli import main
 from tests.unit.test_review_case_persistence import _report
 from tests.unit.test_proposal_set import (
     _contradictory_publication_provider,
+    _fields as _proposal_fields,
     _identity_bound_alias_report,
     _partially_bound_direct_author_report,
+    _publication_local_isbn,
+    _publication_provider,
+    _report as _proposal_report,
 )
 
 
@@ -206,6 +210,68 @@ class _Runner:
 
 
 class ShadowReviewTests(unittest.TestCase):
+    def test_shared_month_candidate_replays_in_reviewer_packet(self) -> None:
+        report = _proposal_report(
+            fields=_proposal_fields(
+                published_year=TargetField(
+                    TargetDestination.PUBLISHED_YEAR,
+                    TargetFieldState.MISSING,
+                ),
+                published_date=TargetField(
+                    TargetDestination.PUBLISHED_DATE,
+                    TargetFieldState.MISSING,
+                ),
+            ),
+            local_claims=(_publication_local_isbn(),),
+            providers=(
+                _publication_provider(
+                    "alpha",
+                    "alpha-edition",
+                    ("2001-02-03",),
+                    authority="hardcover",
+                ),
+                _publication_provider(
+                    "beta",
+                    "beta-edition",
+                    ("2001-02-09",),
+                    authority="open_library",
+                ),
+            ),
+        )
+        proposal = evaluate_report(report)
+        case = ReviewCase.create(proposal, report)
+        packet = ShadowReviewPacket.create(case, proposal, report)
+        published_date = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == "publishedDate"
+        )
+
+        self.assertEqual(1, len(published_date["candidates"]))
+        candidate = published_date["candidates"][0]
+        self.assertEqual("2001-02", candidate["value"]["value"])
+        self.assertEqual("manifestation_publication", candidate["date_event"])
+        self.assertEqual("month", candidate["date_precision"])
+        self.assertEqual(2, len(candidate["correlations"]))
+        self.assertEqual(
+            packet,
+            ShadowReviewPacket.from_json(packet.to_json(), report),
+        )
+        mismatched = json.loads(packet.to_json())
+        next(
+            value
+            for value in mismatched["proposals"]
+            if value["destination"] == "publishedDate"
+        )["candidates"][0]["value"]["value"] = "2001-02-03"
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket(
+                mismatched["review_case_id"],
+                tuple(mismatched["proposals"]),
+                tuple(mismatched["citations"]),
+                tuple(mismatched["correlations"]),
+                mismatched["schema_version"],
+            )
+
     def test_identity_bound_creator_aliases_do_not_reach_reviewer_packet(
         self,
     ) -> None:

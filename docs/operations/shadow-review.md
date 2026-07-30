@@ -74,7 +74,8 @@ are mandatory. Missing linkage on either a typed provider date claim or rich
 date evidence, opaque-only references, content-address mismatch, private or
 credential-shaped context, malformed/noncanonical facts, or over-bound
 linkage rejects the packet before invocation. Candidate date typing describes
-the target destination (`manifestation_publication` plus `year` or `day`);
+the target destination (`manifestation_publication` plus `year`, `month`, or
+`day`);
 source event and precision remain in the citation. This exact packet/request
 freeze is governed by ADR-0016. Provider-linked packet/request replay is not a
 standalone operation: persistence reopens the immutable source report,

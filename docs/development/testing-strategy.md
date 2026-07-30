@@ -132,12 +132,17 @@ CLI against a disposable loopback target, synthetic media, private secrets, and
 an absent database. Unit proposal-policy coverage includes whitespace, case, and
 width variants of the controlled package creator placeholder. The installed
 proposal path uses a whitespace/case variant and requires a nonmutating authors
-result under `fixed-conservative-v3`. Persistence tests reject both a
-`fixed-conservative-v1` document and the prior proposal-store table shape
+result under `fixed-conservative-v4`. Persistence tests reject both a
+`fixed-conservative-v1` document and prior proposal-store table shapes
 without mutation, then prove exact deterministic replay under the current
 policy. Every synthetic EPUB member has a fixed timestamp so the probe identity
 does not depend on the qualification wall clock. No live library or provider is
 used in development or CI.
+
+Focused publication-date tests cover exact-day refinement, shared-month
+projection, different-month year fallback, different-year conflict, independent
+correlation and reference closure, canonical proposal/packet replay, and
+logical qualification routing between `publishedDate` and `publishedYear`.
 
 The #374 synthetic indicia aggregate reports contributor-role and
 manifestation-date recall separately from explicit-negative precision. Its
