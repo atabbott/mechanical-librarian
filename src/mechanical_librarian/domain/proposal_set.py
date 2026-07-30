@@ -775,6 +775,11 @@ def _observations(
                             candidate,
                             report.local_claims,
                         )
+                        and _accepted_provider_manifestation_anchor(
+                            report,
+                            provider.provider,
+                            candidate,
+                        )
                     )
                 ):
                     values.append(
@@ -1781,6 +1786,26 @@ def _eligible_identifier_reference(
         evidence.reference == reference
         and evidence.relation is IdentifierRelation.ACCEPTED
         for evidence in report.identifier_evidence
+    )
+
+
+def _accepted_provider_manifestation_anchor(
+    report: MetadataReport,
+    provider: str,
+    candidate: ProviderCandidate,
+) -> bool:
+    accepted_references = {
+        evidence.reference
+        for evidence in report.identifier_evidence
+        if evidence.relation is IdentifierRelation.ACCEPTED
+        and evidence.provider == provider
+        and evidence.candidate_identity == candidate.identity
+        and evidence.work_identity == candidate.work_identity
+    }
+    return any(
+        claim.kind is ClaimKind.ISBN
+        and claim.reference in accepted_references
+        for claim in candidate.claims
     )
 
 

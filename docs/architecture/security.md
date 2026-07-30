@@ -187,10 +187,11 @@ report. Failure output is fixed and value-free.
 Field-specific acceptable outcomes do not expand the trust boundary. Language
 comparison uses a closed registered-code and canonical script/region policy.
 Publisher acceptability starts only from an already admitted edition-bound
-local claim or a provider claim whose candidate passes the existing exact
-selected-EPUB ISBN-family and closed contradiction checks, plus a bounded
-statement syntax; target metadata, work-scoped or malformed values, and
-associated, unrelated, or unresolved provider facts cannot grant authority.
+local claim or a provider claim whose exact candidate ISBN anchor has an
+`accepted` identifier relation and passes the closed format/work contradiction
+checks, plus a bounded statement syntax; target metadata, work-scoped or
+malformed values, and associated, unrelated, or unresolved provider facts
+cannot grant authority.
 Distinct publisher/imprint/brand/group alternatives remain distinct bounded
 values with their own citations. The policy stores no inferred corporate
 equality, hierarchy, registry result, or fuzzy-match relationship.

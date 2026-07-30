@@ -19,11 +19,11 @@ _LANGUAGE_TAG = re.compile(
 )
 
 # Derived from the Library of Congress ISO 639-2 UTF-8 code list. Each alias
-# maps to the corresponding ISO 639-1 code when one exists, otherwise to the
-# terminological or sole ISO 639-2 code. Bibliographic aliases remain accepted.
+# maps to the favored current code. Bibliographic aliases remain accepted, as
+# does deprecated ISO 639-1 `bh`, which LoC replaced with favored `bih`.
 _ISO_639_ALIASES_TEXT = """
 aar=aa aa=aa abk=ab ab=ab ace=ace ach=ach ada=ada ady=ady afa=afa afh=afh afr=af af=af ain=ain aka=ak ak=ak akk=akk alb=sq sqi=sq sq=sq ale=ale alg=alg alt=alt amh=am am=am ang=ang anp=anp apa=apa ara=ar ar=ar arc=arc arg=an an=an arm=hy hye=hy hy=hy arn=arn arp=arp art=art arw=arw asm=as as=as ast=ast ath=ath aus=aus ava=av av=av ave=ae ae=ae awa=awa aym=ay ay=ay aze=az az=az
-bad=bad bai=bai bak=ba ba=ba bal=bal bam=bm bm=bm ban=ban baq=eu eus=eu eu=eu bas=bas bat=bat bej=bej bel=be be=be bem=bem ben=bn bn=bn ber=ber bho=bho bih=bih bik=bik bin=bin bis=bi bi=bi bla=bla bnt=bnt bos=bs bs=bs bra=bra bre=br br=br btk=btk bua=bua bug=bug bul=bg bg=bg bur=my mya=my my=my byn=byn
+bad=bad bai=bai bak=ba ba=ba bal=bal bam=bm bm=bm ban=ban baq=eu eus=eu eu=eu bas=bas bat=bat bej=bej bel=be be=be bem=bem ben=bn bn=bn ber=ber bho=bho bh=bih bih=bih bik=bik bin=bin bis=bi bi=bi bla=bla bnt=bnt bos=bs bs=bs bra=bra bre=br br=br btk=btk bua=bua bug=bug bul=bg bg=bg bur=my mya=my my=my byn=byn
 cad=cad cai=cai car=car cat=ca ca=ca cau=cau ceb=ceb cel=cel cha=ch ch=ch chb=chb che=ce ce=ce chg=chg chi=zh zho=zh zh=zh chk=chk chm=chm chn=chn cho=cho chp=chp chr=chr chu=cu cu=cu chv=cv cv=cv chy=chy cmc=cmc cnr=cnr cop=cop cor=kw kw=kw cos=co co=co cpe=cpe cpf=cpf cpp=cpp cre=cr cr=cr crh=crh crp=crp csb=csb cus=cus cze=cs ces=cs cs=cs
 dak=dak dan=da da=da dar=dar day=day del=del den=den dgr=dgr din=din div=dv dv=dv doi=doi dra=dra dsb=dsb dua=dua dum=dum dut=nl nld=nl nl=nl dyu=dyu dzo=dz dz=dz efi=efi egy=egy eka=eka elx=elx eng=en en=en enm=enm epo=eo eo=eo est=et et=et ewe=ee ee=ee ewo=ewo
 fan=fan fao=fo fo=fo fat=fat fij=fj fj=fj fil=fil fin=fi fi=fi fiu=fiu fon=fon fre=fr fra=fr fr=fr frm=frm fro=fro frr=frr frs=frs fry=fy fy=fy ful=ff ff=ff fur=fur gaa=gaa gay=gay gba=gba gem=gem geo=ka kat=ka ka=ka ger=de deu=de de=de gez=gez gil=gil gla=gd gd=gd gle=ga ga=ga glg=gl gl=gl glv=gv gv=gv gmh=gmh goh=goh gon=gon gor=gor got=got grb=grb grc=grc gre=el ell=el el=el grn=gn gn=gn gsw=gsw guj=gu gu=gu gwi=gwi

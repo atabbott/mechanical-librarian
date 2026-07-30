@@ -5,10 +5,12 @@
 - Evaluate language and publisher candidates through a closed field policy
   without collapsing their original values or provenance. Canonical ISO
   639-1/639-2 aliases and non-contradictory canonical script/region detail are
-  acceptable language outcomes; different base languages, incompatible
-  specified script/region, and malformed codes remain unresolved. Valid
-  edition-bound publisher and imprint statements may be acceptable at any
-  publishing-business level without asserting corporate equality or hierarchy.
+  acceptable language outcomes; deprecated `bh` remains an alias of favored
+  `bih`. Different base languages, incompatible specified script/region, and
+  malformed codes remain unresolved. Valid edition-bound publisher and imprint
+  statements with an accepted provider manifestation anchor may be acceptable
+  at any publishing-business level without asserting corporate equality or
+  hierarchy.
   Add the non-selecting `acceptable_choice` proposal outcome and allow
   evidence-supported language/publisher preservation to retain every
   acceptable raw alternative. Work-scoped, malformed, unrelated, and

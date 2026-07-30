@@ -146,7 +146,7 @@ authorization.
 Delivered F10b admission requires a complete target-shaped ProposalSet
 and preserves it as one immutable undecided case; it does not introduce a
 decision surface, reviewer identity, queue, or write operation. It requires at
-least one `propose_change` or `unresolved_choice`.
+least one `propose_change`, `acceptable_choice`, or `unresolved_choice`.
 
 Human actions are explicit and field-aware:
 

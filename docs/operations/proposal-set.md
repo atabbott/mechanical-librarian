@@ -80,17 +80,19 @@ The policy is deliberately conservative:
 - populated values need positive preservation evidence for `keep`;
 - canonical ISO 639-1/639-2 aliases identify one base language. A valid
   language-only observation can support a current, more specific script or
-  region when no observation contradicts it. Different base languages,
-  specified scripts, or specified regions remain unresolved, as do malformed
-  or noncanonical tags;
+  region when no observation contradicts it. The deprecated `bh` alias remains
+  accepted but resolves to LoC's favored `bih` identity. Different base
+  languages, specified scripts, or specified regions remain unresolved, as do
+  malformed or noncanonical tags;
 - valid edition-bound publisher and imprint observations may each be an
   acceptable publisher-field outcome. Provider observations must also pass
-  the existing exact selected-EPUB ISBN-family binding and closed format/work
-  contradiction checks. Their original values and references stay in separate
-  alternatives: the policy asserts no legal equality, hierarchy, parent,
-  imprint, brand, or fuzzy company match. Associated-manifestation,
-  work-scoped, unrelated, unresolved-scope, malformed, and target-only
-  statements grant no publisher authority;
+  an exact `accepted` identifier relation for an ISBN claim on that same
+  provider candidate plus the closed format/work contradiction checks. Their
+  original values and references stay in separate alternatives: the policy
+  asserts no legal equality, hierarchy, parent, imprint, brand, or fuzzy
+  company match. Associated-manifestation, work-scoped, unrelated,
+  unresolved-scope, malformed, and target-only statements grant no publisher
+  authority;
 - populated replacement candidates normally need one unique value from at
   least two materially independent correlation groups. Otherwise, bounded
   choices remain `unresolved_choice`. Connections to the same upstream adapter

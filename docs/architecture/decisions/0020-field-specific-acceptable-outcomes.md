@@ -26,16 +26,18 @@ compatibility only; report claims and proposal alternatives retain their
 original admitted value and evidence references.
 
 Language policy accepts current ISO 639-1 and ISO 639-2 aliases as the same
-base language. A canonical language-only tag is compatible with a more
-specific canonical script or region tag. Two specified scripts or regions
-must agree. Different base languages, incompatible specified scripts or
-regions, unregistered primary codes, and malformed or noncanonical tags remain
-conflicting.
+base language. The deprecated ISO 639-1 alias `bh` remains accepted but maps
+to LoC's favored `bih` identity. A canonical language-only tag is compatible
+with a more specific canonical script or region tag. Two specified scripts or
+regions must agree. Different base languages, incompatible specified scripts
+or regions, unregistered primary codes, and malformed or noncanonical tags
+remain conflicting.
 
 Publisher policy admits only syntactically valid publisher or imprint claims
 already bound to edition scope by selected local evidence or a provider
-candidate whose exact usable ISBN family intersects the selected EPUB's and
-whose closed edition evidence has no format or work-relation contradiction.
+candidate whose exact ISBN claim has an `accepted` identifier relation to the
+selected EPUB and whose closed edition evidence has no format or work-relation
+contradiction.
 Distinct plausible publisher, imprint, brand, and publishing-group statements
 are acceptable outcomes, not assertions that the organizations are legally
 equal. Work-scoped, associated-manifestation, unrelated, unresolved-scope,

@@ -18,6 +18,7 @@ from mechanical_librarian.domain.metadata_report import (
     Comparison,
     FieldState,
     FileFacts,
+    IdentifierRelation,
     LocalClaim,
     MetadataReport,
     ProviderCandidate,
@@ -124,6 +125,19 @@ def _publication_local_isbn() -> LocalClaim:
     )
 
 
+def _explicit_local_ebook_isbn() -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+        scope=ClaimScope.EDITION,
+    )
+
+
 def _publication_provider(
     name: str,
     candidate: str,
@@ -162,6 +176,7 @@ def _manifestation_publisher_provider(
     value: str,
     *,
     isbn: str = "9780306406157",
+    applicability: str = "ebook",
 ) -> ProviderObservation:
     return _provider(
         name,
@@ -173,7 +188,7 @@ def _manifestation_publisher_provider(
                 ClaimKind.ISBN,
                 isbn,
                 scope=ClaimScope.EDITION,
-                applicability="unknown",
+                applicability=applicability,
             ),
             _claim(
                 name,
@@ -1732,6 +1747,45 @@ class ProposalSetTests(unittest.TestCase):
             ProposalSet.from_json(proposal_set.to_json()),
         )
 
+    def test_deprecated_bh_language_alias_maps_to_favored_bih(self) -> None:
+        providers = tuple(
+            _provider(
+                provider,
+                f"{provider}-edition",
+                (
+                    _claim(
+                        provider,
+                        f"{provider}-edition",
+                        ClaimKind.LANGUAGE,
+                        value,
+                        scope=ClaimScope.EDITION,
+                    ),
+                ),
+            )
+            for provider, value in (("alpha", "bh"), ("beta", "bih"))
+        )
+        fields = _fields(
+            language=TargetField(
+                TargetDestination.LANGUAGE,
+                TargetFieldState.MISSING,
+            )
+        )
+
+        proposal_set = evaluate_report(
+            _report(fields=fields, providers=providers)
+        )
+        result = _result(proposal_set, TargetDestination.LANGUAGE)
+
+        self.assertEqual(ProposalOutcome.ACCEPTABLE_CHOICE, result.outcome)
+        self.assertEqual(
+            {"bh", "bih"},
+            {alternative.value.value for alternative in result.alternatives},
+        )
+        self.assertEqual(
+            proposal_set,
+            ProposalSet.from_json(proposal_set.to_json()),
+        )
+
     def test_language_policy_rejects_base_script_region_and_malformed_conflicts(
         self,
     ) -> None:
@@ -1852,7 +1906,7 @@ class ProposalSetTests(unittest.TestCase):
                 _report(
                     fields=fields,
                     local_claims=(
-                        _publication_local_isbn(),
+                        _explicit_local_ebook_isbn(),
                         local_publisher,
                     ),
                     providers=providers,
@@ -1910,7 +1964,7 @@ class ProposalSetTests(unittest.TestCase):
             evaluate_report(
                 _report(
                     fields=fields,
-                    local_claims=(_publication_local_isbn(),),
+                    local_claims=(_explicit_local_ebook_isbn(),),
                     providers=providers,
                 )
             ),
@@ -1945,7 +1999,7 @@ class ProposalSetTests(unittest.TestCase):
                         ClaimKind.ISBN,
                         "9780306406157",
                         scope=ClaimScope.EDITION,
-                        applicability="unknown",
+                        applicability="ebook",
                     ),
                     _claim(
                         "alpha",
@@ -1976,7 +2030,7 @@ class ProposalSetTests(unittest.TestCase):
             evaluate_report(
                 _report(
                     fields=fields,
-                    local_claims=(_publication_local_isbn(),),
+                    local_claims=(_explicit_local_ebook_isbn(),),
                     providers=invalid_or_wrong_scope,
                 )
             ),
@@ -2005,7 +2059,7 @@ class ProposalSetTests(unittest.TestCase):
             evaluate_report(
                 _report(
                     fields=fields,
-                    local_claims=(_publication_local_isbn(),),
+                    local_claims=(_explicit_local_ebook_isbn(),),
                     providers=(provider,),
                 )
             ),
@@ -2037,7 +2091,7 @@ class ProposalSetTests(unittest.TestCase):
             evaluate_report(
                 _report(
                     fields=fields,
-                    local_claims=(_publication_local_isbn(),),
+                    local_claims=(_explicit_local_ebook_isbn(),),
                     providers=(provider,),
                 )
             ),
@@ -2046,6 +2100,112 @@ class ProposalSetTests(unittest.TestCase):
 
         self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
         self.assertEqual((), result.alternatives)
+
+    def test_publisher_provider_requires_accepted_identifier_anchor(self) -> None:
+        fields = _fields(
+            publisher=TargetField(
+                TargetDestination.PUBLISHER,
+                TargetFieldState.MISSING,
+            )
+        )
+        controls = (
+            (
+                "unresolved",
+                (_publication_local_isbn(),),
+                "unknown",
+                IdentifierRelation.UNRESOLVED,
+                ProposalOutcome.INELIGIBLE,
+            ),
+            (
+                "associated",
+                (_explicit_local_ebook_isbn(),),
+                "unknown",
+                IdentifierRelation.ASSOCIATED,
+                ProposalOutcome.INELIGIBLE,
+            ),
+            (
+                "accepted",
+                (_explicit_local_ebook_isbn(),),
+                "ebook",
+                IdentifierRelation.ACCEPTED,
+                ProposalOutcome.PROPOSE_CHANGE,
+            ),
+        )
+        for name, local_claims, applicability, relation, outcome in controls:
+            with self.subTest(name=name):
+                provider = _manifestation_publisher_provider(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.PUBLISHER,
+                    "Bound Press",
+                    applicability=applicability,
+                )
+                report = _report(
+                    fields=fields,
+                    local_claims=local_claims,
+                    providers=(provider,),
+                )
+                provider_relations = {
+                    evidence.relation
+                    for evidence in report.identifier_evidence
+                    if evidence.provider == "catalogue"
+                    and evidence.candidate_identity == "edition-1"
+                }
+
+                result = _result(
+                    evaluate_report(report),
+                    TargetDestination.PUBLISHER,
+                )
+
+                self.assertEqual({relation}, provider_relations)
+                self.assertEqual(outcome, result.outcome)
+                self.assertEqual(
+                    ("Bound Press",)
+                    if outcome is ProposalOutcome.PROPOSE_CHANGE
+                    else (),
+                    tuple(
+                        alternative.value.value
+                        for alternative in result.alternatives
+                    ),
+                )
+
+    def test_selected_epub_publisher_does_not_need_provider_anchor(self) -> None:
+        local_publisher = LocalClaim.create(
+            kind=ClaimKind.PUBLISHER,
+            observed="Selected EPUB Press",
+            canonical="Selected EPUB Press",
+            excerpt="Selected EPUB Press",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.EDITION,
+        )
+        fields = _fields(
+            publisher=TargetField(
+                TargetDestination.PUBLISHER,
+                TargetFieldState.MISSING,
+            )
+        )
+
+        result = _result(
+            evaluate_report(
+                _report(
+                    fields=fields,
+                    local_claims=(local_publisher,),
+                )
+            ),
+            TargetDestination.PUBLISHER,
+        )
+
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
+        self.assertEqual(
+            "Selected EPUB Press",
+            result.alternatives[0].value.value,
+        )
+        self.assertEqual(
+            (local_publisher.reference,),
+            result.alternatives[0].evidence_references,
+        )
 
     def test_ambiguous_local_creator_does_not_become_partial_authors(self) -> None:
         claims = tuple(
