@@ -31,7 +31,7 @@ from scripts.qualify_exact_artifact import (
 class ExactArtifactQualificationTests(unittest.TestCase):
     def test_installed_probe_requires_the_current_proposal_policy(self) -> None:
         proposal = {
-            "policy_version": "fixed-conservative-v4",
+            "policy_version": "fixed-conservative-v5",
             "report": {
                 "report_id": "report_" + "a" * 64,
                 "target_fingerprint": "b" * 64,
@@ -40,7 +40,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
             "schema_version": "proposal-set-v2",
         }
         self.assertTrue(_proposal_identifier(proposal).startswith("proposal_set_"))
-        proposal["policy_version"] = "fixed-conservative-v3"
+        proposal["policy_version"] = "fixed-conservative-v4"
         with self.assertRaises(QualificationFailure):
             _proposal_identifier(proposal)
 

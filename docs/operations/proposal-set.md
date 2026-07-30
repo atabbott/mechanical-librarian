@@ -14,7 +14,7 @@ mechanical-librarian proposal-set-create \
 Every option is required. The command reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v4` policy. It does not construct or contact a metadata or
+`fixed-conservative-v5` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline:
@@ -28,11 +28,12 @@ mechanical-librarian proposal-set-get \
 Success is exactly one canonical `proposal-set-v2` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `fixed-conservative-v4` proposal documents and the exact current
+Only `fixed-conservative-v5` proposal documents and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
-`fixed-conservative-v1`, `fixed-conservative-v2`, or `fixed-conservative-v3`
-table shape is incompatible and is rejected before mutation; there is no
-proposal migration, import, conversion, or compatibility parser.
+`fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
+`fixed-conservative-v4` table shape is incompatible and is rejected before
+mutation; there is no proposal migration, import, conversion, or compatibility
+parser.
 
 ## Fixed policy
 
@@ -41,8 +42,8 @@ and fixed policy version. It
 contains exactly one ordered result for title, subtitle, authors, narrators,
 series, genres, publishedYear, publishedDate, publisher, description, isbn,
 asin, language, explicit, tags, and cover. Each result is one of
-`propose_change`, `unresolved_choice`, `keep`, `reject`, `defer`, or
-`ineligible`.
+`propose_change`, `acceptable_choice`, `unresolved_choice`, `keep`, `reject`,
+`defer`, or `ineligible`.
 The canonical document does not serialize its content-addressed ProposalSet ID;
 the ID is derived from those canonical bytes and remains the exact-get input.
 
@@ -60,17 +61,36 @@ paths, or image bytes. Provider access time remains in the exact immutable
 report addressed by each evidence reference; proposal derivation performs no
 provider access and does not refresh or manufacture that time.
 
-`propose_change` carries exactly one selected safe candidate. `unresolved_choice`
-carries one or more bounded candidates but selects none. `defer` carries no
-candidate because evidence or capability prevents a decision surface. `keep`
-records one positive preservation alternative. `reject` is a closed no-choice
-variant for a future explicit policy rejection; the fixed 0.9 evaluator has no
-deletion inference and does not emit it. `ineligible` likewise has no choice.
-None of these outcomes admits a review, decision, apply, or write action.
+`propose_change` carries exactly one selected safe candidate.
+`acceptable_choice` carries at least two language or publisher candidates that
+the closed field policy accepts and selects none; it is not a conflict.
+`unresolved_choice` carries one or more bounded candidates but selects none
+because a material contradiction or another unresolved rule remains. `defer`
+carries no candidate because evidence or capability prevents a decision
+surface. `keep` normally records one positive preservation alternative; for
+language and publisher it may retain multiple alternatives when admitted
+evidence supports the current value and every retained candidate is
+policy-compatible. `reject` is a closed no-choice variant for a future
+explicit policy rejection; the fixed evaluator has no deletion inference and
+does not emit it. `ineligible` likewise has no choice. Proposal evaluation
+grants no decision, apply, or write action.
 
 The policy is deliberately conservative:
 
 - populated values need positive preservation evidence for `keep`;
+- canonical ISO 639-1/639-2 aliases identify one base language. A valid
+  language-only observation can support a current, more specific script or
+  region when no observation contradicts it. Different base languages,
+  specified scripts, or specified regions remain unresolved, as do malformed
+  or noncanonical tags;
+- valid edition-bound publisher and imprint observations may each be an
+  acceptable publisher-field outcome. Provider observations must also pass
+  the existing exact selected-EPUB ISBN-family binding and closed format/work
+  contradiction checks. Their original values and references stay in separate
+  alternatives: the policy asserts no legal equality, hierarchy, parent,
+  imprint, brand, or fuzzy company match. Associated-manifestation,
+  work-scoped, unrelated, unresolved-scope, malformed, and target-only
+  statements grant no publisher authority;
 - populated replacement candidates normally need one unique value from at
   least two materially independent correlation groups. Otherwise, bounded
   choices remain `unresolved_choice`. Connections to the same upstream adapter

@@ -178,11 +178,22 @@ ProposalSet contains only bounded alternatives, assessments, stable evidence
 references, hashed correlation groups, closed date event/precision context,
 and policy/version bindings; it does
 not duplicate report excerpts or provider/cover payloads. These documents
-contain no credentials, private paths, raw or rejected provider values,
+contain no credentials, private paths, unadmitted or rejected provider values,
 provider bodies, or arbitrary EPUB text. Optional invalid values cross the
 adapter boundary only as value-free bounded schema counts. Target and provider
 titles pass the same closed public-safe projection before they can enter a
 report. Failure output is fixed and value-free.
+
+Field-specific acceptable outcomes do not expand the trust boundary. Language
+comparison uses a closed registered-code and canonical script/region policy.
+Publisher acceptability starts only from an already admitted edition-bound
+local claim or a provider claim whose candidate passes the existing exact
+selected-EPUB ISBN-family and closed contradiction checks, plus a bounded
+statement syntax; target metadata, work-scoped or malformed values, and
+associated, unrelated, or unresolved provider facts cannot grant authority.
+Distinct publisher/imprint/brand/group alternatives remain distinct bounded
+values with their own citations. The policy stores no inferred corporate
+equality, hierarchy, registry result, or fuzzy-match relationship.
 Production, conversion, scanning, software, retailer, and workflow credits
 remain a separate contextual claim kind and therefore cannot cross the
 bibliographic contributor or author candidate boundary.

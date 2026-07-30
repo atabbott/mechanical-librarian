@@ -96,6 +96,15 @@ date link is also included as a source-bound citation. Removing or changing
 that local citation makes packet replay fail; an intentionally unbound
 manifestation-incompatible link has no local citation.
 
+The packet also includes `acceptable_choice` language and publisher proposals.
+Those proposals retain every distinct admitted candidate value, assessment,
+correlation, and evidence reference and carry no preselected candidate.
+Compatible language codes are not rewritten to one spelling, and plausible
+publisher/imprint/brand/group statements are not represented as a corporate
+equality or hierarchy. A result may recommend an included candidate under the
+ordinary untrusted-advice contract; the packet itself grants no decision or
+write authority.
+
 ```sh
 mechanical-librarian shadow-review-request --database reports.sqlite \
   --review-case-id review_case_<64-lowercase-hex> \
