@@ -430,6 +430,11 @@ class ProposalResult:
                 or self.selected_alternative_id not in selected
                 or self.alternatives[0].assessment
                 is ProposalAssessment.PRESERVES_TARGET
+                or (
+                    self.destination is TargetDestination.LANGUAGE
+                    and self.alternatives[0].assessment
+                    is ProposalAssessment.REPLACES_TARGET
+                )
             ):
                 raise ProposalValueError("proposal selection is inconsistent")
         elif self.outcome is ProposalOutcome.ACCEPTABLE_CHOICE:
@@ -444,6 +449,14 @@ class ProposalResult:
                 or any(
                     value.assessment is ProposalAssessment.PRESERVES_TARGET
                     for value in self.alternatives
+                )
+                or (
+                    self.destination is TargetDestination.LANGUAGE
+                    and any(
+                        value.assessment
+                        is ProposalAssessment.REPLACES_TARGET
+                        for value in self.alternatives
+                    )
                 )
                 or not _field_policy_accepts_all(
                     self.destination, self.alternatives
@@ -462,7 +475,7 @@ class ProposalResult:
                             TargetDestination.LANGUAGE,
                             TargetDestination.PUBLISHER,
                         }
-                        or _field_policy_accepts_all(
+                        or not _field_policy_conflicts(
                             self.destination, self.alternatives
                         )
                     )
@@ -478,6 +491,10 @@ class ProposalResult:
                 )
                 or self.selected_alternative_id is not None
                 or (
+                    self.destination is TargetDestination.LANGUAGE
+                    and self.reasons != ("field_policy_preservation",)
+                )
+                or (
                     self.reasons == ("field_policy_preservation",)
                     and (
                         self.destination
@@ -487,6 +504,14 @@ class ProposalResult:
                         }
                         or not _field_policy_accepts_all(
                             self.destination, self.alternatives
+                        )
+                        or (
+                            self.destination is TargetDestination.LANGUAGE
+                            and any(
+                                value.assessment
+                                is not ProposalAssessment.PRESERVES_TARGET
+                                for value in self.alternatives
+                            )
                         )
                     )
                 )
@@ -1439,7 +1464,7 @@ def _evaluate(
             TargetDestination.LANGUAGE,
             TargetDestination.PUBLISHER,
         }
-        and not _field_policy_accepts_all(destination, alternatives)
+        and _field_policy_conflicts(destination, alternatives)
     ):
         return ProposalResult(
             destination,
@@ -1571,6 +1596,19 @@ def _field_policy_accepts_all(
             )
         )
     return False
+
+
+def _field_policy_conflicts(
+    destination: TargetDestination,
+    alternatives: tuple[ProposalAlternative, ...],
+) -> bool:
+    return not _field_policy_accepts_all(destination, alternatives) or (
+        destination is TargetDestination.LANGUAGE
+        and any(
+            value.assessment is ProposalAssessment.REPLACES_TARGET
+            for value in alternatives
+        )
+    )
 
 
 def _alternatives(

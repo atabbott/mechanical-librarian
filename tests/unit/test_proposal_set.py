@@ -655,6 +655,120 @@ class ProposalSetTests(unittest.TestCase):
             ).outcome,
         )
 
+    def test_language_result_validation_encodes_target_compatibility(self) -> None:
+        def language_alternative(
+            value: str,
+            assessment: ProposalAssessment,
+            character: str,
+        ) -> ProposalAlternative:
+            return ProposalAlternative.create(
+                ProposalValue(ProposalValueKind.TEXT, value),
+                assessment,
+                ("provider_" + character * 64,),
+                ("correlation_" + character * 64,),
+                ProposalScope.EDITION,
+            )
+
+        preserves = language_alternative(
+            "en",
+            ProposalAssessment.PRESERVES_TARGET,
+            "a",
+        )
+        replaces_region = language_alternative(
+            "en-GB",
+            ProposalAssessment.REPLACES_TARGET,
+            "b",
+        )
+        replaces_region_alias = language_alternative(
+            "eng-GB",
+            ProposalAssessment.REPLACES_TARGET,
+            "c",
+        )
+        compatible_preserves = language_alternative(
+            "eng",
+            ProposalAssessment.PRESERVES_TARGET,
+            "d",
+        )
+        mixed = tuple(
+            sorted(
+                (preserves, replaces_region),
+                key=lambda value: value.alternative_id,
+            )
+        )
+        replacements = tuple(
+            sorted(
+                (replaces_region, replaces_region_alias),
+                key=lambda value: value.alternative_id,
+            )
+        )
+        all_preserve = tuple(
+            sorted(
+                (preserves, compatible_preserves),
+                key=lambda value: value.alternative_id,
+            )
+        )
+
+        with self.assertRaises(ProposalValueError):
+            ProposalResult(
+                TargetDestination.LANGUAGE,
+                ProposalOutcome.KEEP,
+                mixed,
+                None,
+                ("field_policy_preservation",),
+            )
+        with self.assertRaises(ProposalValueError):
+            ProposalResult(
+                TargetDestination.LANGUAGE,
+                ProposalOutcome.KEEP,
+                (preserves,),
+                None,
+                ("positive_preservation_evidence",),
+            )
+        with self.assertRaises(ProposalValueError):
+            ProposalResult(
+                TargetDestination.LANGUAGE,
+                ProposalOutcome.ACCEPTABLE_CHOICE,
+                replacements,
+                None,
+                ("field_policy_acceptable_choice",),
+            )
+        with self.assertRaises(ProposalValueError):
+            ProposalResult(
+                TargetDestination.LANGUAGE,
+                ProposalOutcome.PROPOSE_CHANGE,
+                (replaces_region,),
+                replaces_region.alternative_id,
+                ("unique_typed_candidate",),
+            )
+        self.assertEqual(
+            ProposalOutcome.UNRESOLVED_CHOICE,
+            ProposalResult(
+                TargetDestination.LANGUAGE,
+                ProposalOutcome.UNRESOLVED_CHOICE,
+                mixed,
+                None,
+                ("field_policy_conflict",),
+            ).outcome,
+        )
+        self.assertEqual(
+            ProposalOutcome.UNRESOLVED_CHOICE,
+            ProposalResult(
+                TargetDestination.LANGUAGE,
+                ProposalOutcome.UNRESOLVED_CHOICE,
+                (replaces_region,),
+                None,
+                ("field_policy_conflict",),
+            ).outcome,
+        )
+        with self.assertRaises(ProposalValueError):
+            ProposalResult(
+                TargetDestination.LANGUAGE,
+                ProposalOutcome.UNRESOLVED_CHOICE,
+                all_preserve,
+                None,
+                ("field_policy_conflict",),
+            )
+
     def test_destination_value_scope_contract_is_exhaustive(self) -> None:
         values = {
             ProposalValueKind.TEXT: ProposalValue(ProposalValueKind.TEXT, "Value"),
@@ -1412,6 +1526,157 @@ class ProposalSetTests(unittest.TestCase):
                 alternative.assessment is ProposalAssessment.PRESERVES_TARGET
                 for alternative in result.alternatives
             )
+        )
+
+    def test_language_policy_rejects_candidate_that_contradicts_target_detail(
+        self,
+    ) -> None:
+        fields = _fields(
+            language=TargetField(
+                TargetDestination.LANGUAGE,
+                TargetFieldState.VALUE,
+                "en-US",
+            )
+        )
+        providers = (
+            _provider(
+                "alpha",
+                "alpha-edition",
+                (
+                    _claim(
+                        "alpha",
+                        "alpha-edition",
+                        ClaimKind.LANGUAGE,
+                        "en",
+                        scope=ClaimScope.EDITION,
+                    ),
+                ),
+            ),
+            _provider(
+                "beta",
+                "beta-edition",
+                (
+                    _claim(
+                        "beta",
+                        "beta-edition",
+                        ClaimKind.LANGUAGE,
+                        "en-GB",
+                        scope=ClaimScope.EDITION,
+                    ),
+                ),
+            ),
+        )
+
+        result = _result(
+            evaluate_report(_report(fields=fields, providers=providers)),
+            TargetDestination.LANGUAGE,
+        )
+
+        self.assertEqual(ProposalOutcome.UNRESOLVED_CHOICE, result.outcome)
+        self.assertEqual(("field_policy_conflict",), result.reasons)
+        self.assertEqual(
+            {
+                ProposalAssessment.PRESERVES_TARGET,
+                ProposalAssessment.REPLACES_TARGET,
+            },
+            {alternative.assessment for alternative in result.alternatives},
+        )
+
+    def test_language_policy_rejects_sole_target_detail_contradiction(
+        self,
+    ) -> None:
+        controls = (
+            ("region", "en-US", "en-GB"),
+            ("script", "en-Latn", "en-Cyrl"),
+        )
+        for name, target, candidate in controls:
+            with self.subTest(name=name):
+                fields = _fields(
+                    language=TargetField(
+                        TargetDestination.LANGUAGE,
+                        TargetFieldState.VALUE,
+                        target,
+                    )
+                )
+                providers = tuple(
+                    _provider(
+                        provider,
+                        f"{provider}-edition",
+                        (
+                            _claim(
+                                provider,
+                                f"{provider}-edition",
+                                ClaimKind.LANGUAGE,
+                                candidate,
+                                scope=ClaimScope.EDITION,
+                            ),
+                        ),
+                        authority=authority,
+                    )
+                    for provider, authority in (
+                        ("hardcover", "hardcover"),
+                        ("open_library", "open_library"),
+                    )
+                )
+
+                result = _result(
+                    evaluate_report(
+                        _report(fields=fields, providers=providers)
+                    ),
+                    TargetDestination.LANGUAGE,
+                )
+
+                self.assertEqual(
+                    ProposalOutcome.UNRESOLVED_CHOICE,
+                    result.outcome,
+                )
+                self.assertEqual(
+                    ("field_policy_conflict",),
+                    result.reasons,
+                )
+                self.assertEqual(1, len(result.alternatives))
+                self.assertEqual(
+                    ProposalAssessment.REPLACES_TARGET,
+                    result.alternatives[0].assessment,
+                )
+                self.assertEqual(
+                    2,
+                    len(result.alternatives[0].correlations),
+                )
+
+    def test_language_policy_keeps_sole_less_specific_evidence(self) -> None:
+        fields = _fields(
+            language=TargetField(
+                TargetDestination.LANGUAGE,
+                TargetFieldState.VALUE,
+                "en-Latn-US",
+            )
+        )
+        provider = _provider(
+            "alpha",
+            "alpha-edition",
+            (
+                _claim(
+                    "alpha",
+                    "alpha-edition",
+                    ClaimKind.LANGUAGE,
+                    "eng",
+                    scope=ClaimScope.EDITION,
+                ),
+            ),
+        )
+
+        result = _result(
+            evaluate_report(_report(fields=fields, providers=(provider,))),
+            TargetDestination.LANGUAGE,
+        )
+
+        self.assertEqual(ProposalOutcome.KEEP, result.outcome)
+        self.assertEqual(("field_policy_preservation",), result.reasons)
+        self.assertEqual(1, len(result.alternatives))
+        self.assertEqual(
+            ProposalAssessment.PRESERVES_TARGET,
+            result.alternatives[0].assessment,
         )
 
     def test_equivalent_language_candidates_are_an_acceptable_choice(self) -> None:
