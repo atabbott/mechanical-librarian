@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Bind dependent title, subtitle, and series advice to explicit
+  `bibliographic-relationships-v1` combinations without rewriting source
+  strings or changing per-destination proposal identities. Every combination
+  selects an already-admitted candidate or preserves the exact target-field
+  state; an admitted alternative that already preserves the target is encoded
+  as that target-bound preserve member, not as a candidate change. Ambiguous
+  same-scope and disagreeing edition/work titles remain report
+  provenance; exact component containment can veto duplication but cannot
+  split or create a title. When no safe tuple exists, affected results remain
+  unresolved where they retain candidates; exact target-bound companions are
+  projected as manual without inventing alternatives. Review cases and packet
+  v4 project the exact relationship contract; unchanged result-v1
+  recommendations must derive exactly one allowed tuple. Advance clean
+  exact-current contracts
+  to `proposal-set-v3`, `fixed-conservative-v6`, `review-case-v2`, and
+  `shadow-review-packet-v4`; prior proposal stores require a clean rebuild.
+  (#425)
+
 - Evaluate language and publisher candidates through a closed field policy
   without collapsing their original values or provenance. Canonical ISO
   639-1/639-2 aliases and non-contradictory canonical script/region detail are

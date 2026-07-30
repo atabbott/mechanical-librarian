@@ -176,7 +176,8 @@ relationship projection does not duplicate observations or excerpts. Report
 generation performs no decision and grants no write authority. The separate
 ProposalSet contains only bounded alternatives, assessments, stable evidence
 references, hashed correlation groups, closed date event/precision context,
-and policy/version bindings; it does
+policy/version bindings, and hashed source-bound bibliographic combination
+relationships; it does
 not duplicate report excerpts or provider/cover payloads. These documents
 contain no credentials, private paths, unadmitted or rejected provider values,
 provider bodies, or arbitrary EPUB text. Optional invalid values cross the
@@ -195,6 +196,14 @@ cannot grant authority.
 Distinct publisher/imprint/brand/group alternatives remain distinct bounded
 values with their own citations. The policy stores no inferred corporate
 equality, hierarchy, registry result, or fuzzy-match relationship.
+Bibliographic combinations likewise grant no new evidence authority. Members
+can reference only already-admitted title/subtitle/series alternatives or an
+exact fingerprint of the bound target field. Provider grouping includes the
+candidate manifestation and work identities. Ambiguous same-scope titles and
+explicitly disagreeing edition/work titles cannot re-enter through a
+combination. Exact normalized component containment can reject a tuple but can
+never split text, create a value, rank a provider, or infer an omnibus or
+translation preference.
 Production, conversion, scanning, software, retailer, and workflow credits
 remain a separate contextual claim kind and therefore cannot cross the
 bibliographic contributor or author candidate boundary.
@@ -240,7 +249,8 @@ sanitized packet and attempt. Preview reads only profile bytes and application
 state; it constructs no executable, auth, target, provider, reviewer, or other
 network client and is not fresh eligibility proof. Request may invoke only the
 exact declared Codex/model/reasoning/prompt/profile/packet/output/policy tuple.
-ADR-0019 freezes the current tuple at packet-v3/request-v4. Provider publication
+ADR-0021 advances the current tuple to packet-v4/request-v4 while leaving
+result-v1 and the prompt/profile policy unchanged. Provider publication
 citations expose only bounded allowlisted identifier and physical-format fact
 objects already admitted to the report; exact reference membership, closed
 shape, ordering, and limits are revalidated so opaque-only or malformed

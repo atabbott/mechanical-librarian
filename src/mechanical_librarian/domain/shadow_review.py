@@ -32,13 +32,14 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_date_value,
 )
 from mechanical_librarian.domain.proposal_set import (
+    BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA,
     ProposalOutcome,
     ProposalSet,
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
 
-PACKET_SCHEMA = "shadow-review-packet-v3"
+PACKET_SCHEMA = "shadow-review-packet-v4"
 RESULT_SCHEMA = "shadow-review-result-v1"
 REQUEST_SCHEMA = "shadow-review-request-v4"
 PROFILE_IDENTITY_SCHEMA = "reviewer-profile-identity-v1"
@@ -66,6 +67,8 @@ _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _REQUEST_ID = re.compile(r"^review_request_[0-9a-f]{64}$")
 _PROPOSAL_ID = re.compile(r"^review_proposal_[0-9a-f]{64}$")
 _ALTERNATIVE_ID = re.compile(r"^alternative_[0-9a-f]{64}$")
+_COMBINATION_ID = re.compile(r"^bibliographic_combination_[0-9a-f]{64}$")
+_REPRESENTATION_ID = re.compile(r"^representation_[0-9a-f]{64}$")
 _PROVIDER_REFERENCE = re.compile(r"^provider_[0-9a-f]{64}$")
 _PROVIDER_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _ASIN = re.compile(r"^B[0-9A-Z]{9}$")
@@ -239,6 +242,116 @@ class ReviewerProfileIdentity:
         return value
 
 
+def _validate_bibliographic_combinations(
+    combinations: tuple[dict[str, object], ...],
+    proposals: tuple[dict[str, object], ...],
+) -> None:
+    by_destination = {
+        proposal["destination"]: proposal
+        for proposal in proposals
+    }
+    expected_destinations = ["title", "subtitle", "series"]
+    combination_ids: list[str] = []
+    member_keys: set[str] = set()
+    for combination in combinations:
+        if (
+            type(combination) is not dict
+            or set(combination)
+            != {
+                "combination_id",
+                "selections",
+                "source_representations",
+            }
+            or type(combination["combination_id"]) is not str
+            or _COMBINATION_ID.fullmatch(
+                combination["combination_id"]
+            )
+            is None
+            or type(combination["selections"]) is not list
+            or type(combination["source_representations"]) is not list
+            or combination["source_representations"]
+            != sorted(set(combination["source_representations"]))
+            or not combination["source_representations"]
+            or any(
+                type(value) is not str
+                or _REPRESENTATION_ID.fullmatch(value) is None
+                for value in combination["source_representations"]
+            )
+        ):
+            raise ShadowReviewValueError("shadow-review packet is invalid")
+        selections = combination["selections"]
+        if [
+            value.get("destination")
+            if type(value) is dict
+            else None
+            for value in selections
+        ] != expected_destinations:
+            raise ShadowReviewValueError("shadow-review packet is invalid")
+        for selection in selections:
+            if (
+                type(selection) is not dict
+                or set(selection)
+                != {
+                    "alternative_id",
+                    "destination",
+                    "kind",
+                    "target_field_fingerprint",
+                }
+                or selection["destination"] not in by_destination
+            ):
+                raise ShadowReviewValueError("shadow-review packet is invalid")
+            proposal = by_destination[selection["destination"]]
+            candidate_ids = {
+                value["candidate_id"]
+                for value in proposal["candidates"]
+            }
+            if selection["kind"] == "candidate":
+                if (
+                    type(selection["alternative_id"]) is not str
+                    or selection["alternative_id"] not in candidate_ids
+                    or selection["target_field_fingerprint"] is not None
+                ):
+                    raise ShadowReviewValueError(
+                        "shadow-review packet is invalid"
+                    )
+            elif selection["kind"] == "preserve_target":
+                fingerprint = hashlib.sha256(
+                    canonical_json(proposal["current"]).encode("utf-8")
+                ).hexdigest()
+                if (
+                    selection["alternative_id"] is not None
+                    or selection["target_field_fingerprint"] != fingerprint
+                ):
+                    raise ShadowReviewValueError(
+                        "shadow-review packet is invalid"
+                    )
+            else:
+                raise ShadowReviewValueError(
+                    "shadow-review packet is invalid"
+                )
+        identity_data = {
+            "relationship_schema_version": (
+                BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA
+            ),
+            "selections": selections,
+            "source_representations": combination[
+                "source_representations"
+            ],
+        }
+        expected_id = "bibliographic_combination_" + hashlib.sha256(
+            canonical_json(identity_data).encode("utf-8")
+        ).hexdigest()
+        if combination["combination_id"] != expected_id:
+            raise ShadowReviewValueError("shadow-review packet is invalid")
+        member_key = canonical_json(selections)
+        if member_key in member_keys:
+            raise ShadowReviewValueError("shadow-review packet is invalid")
+        member_keys.add(member_key)
+        combination_ids.append(combination["combination_id"])
+    if combination_ids != sorted(set(combination_ids)):
+        raise ShadowReviewValueError("shadow-review packet is invalid")
+
+
 @dataclass(frozen=True, slots=True)
 class ShadowReviewPacket:
     review_case_id: str
@@ -246,6 +359,10 @@ class ShadowReviewPacket:
     citations: tuple[dict[str, object], ...]
     correlations: tuple[dict[str, object], ...]
     schema_version: str = PACKET_SCHEMA
+    bibliographic_relationship_schema_version: str = (
+        BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA
+    )
+    bibliographic_combinations: tuple[dict[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -255,6 +372,9 @@ class ShadowReviewPacket:
             or not self.proposals
             or type(self.citations) is not tuple
             or type(self.correlations) is not tuple
+            or self.bibliographic_relationship_schema_version
+            != BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA
+            or type(self.bibliographic_combinations) is not tuple
         ):
             raise ShadowReviewValueError("shadow-review packet is invalid")
         proposal_ids: list[str] = []
@@ -282,7 +402,7 @@ class ShadowReviewPacket:
                 raise ShadowReviewValueError("shadow-review packet is invalid")
             proposal_ids.append(proposal_id)
             candidates = proposal.get("candidates")
-            if type(candidates) is not list or not candidates:
+            if type(candidates) is not list:
                 raise ShadowReviewValueError("shadow-review packet is invalid")
             candidate_ids: list[object] = []
             expected_dates = (
@@ -349,6 +469,10 @@ class ShadowReviewPacket:
                 raise ShadowReviewValueError("shadow-review packet is invalid")
         if proposal_ids != sorted(set(proposal_ids)):
             raise ShadowReviewValueError("shadow-review packet is invalid")
+        _validate_bibliographic_combinations(
+            self.bibliographic_combinations,
+            self.proposals,
+        )
         for citation in self.citations:
             if (
                 type(citation) is not dict
@@ -411,6 +535,8 @@ class ShadowReviewPacket:
             != (proposal_set.proposal_set_id, report.report_id)
             or case.proposal_document != proposal_set.to_json()
             or case.target_fingerprint != report.target.fingerprint
+            or case.relationships
+            != proposal_set.to_data()["relationships"]
         ):
             raise ShadowReviewValueError("shadow-review packet binding is invalid")
         current = {
@@ -419,13 +545,23 @@ class ShadowReviewPacket:
         proposals: list[dict[str, object]] = []
         references: set[str] = set()
         correlations: dict[str, dict[str, set[str]]] = {}
+        constrained_destinations = {
+            selection.destination.value
+            for combination in proposal_set.bibliographic_combinations
+            for selection in combination.selections
+        }
         for wrapped in case.proposals:
             result = wrapped["result"]
-            if result["outcome"] not in {
-                ProposalOutcome.ACCEPTABLE_CHOICE.value,
-                ProposalOutcome.PROPOSE_CHANGE.value,
-                ProposalOutcome.UNRESOLVED_CHOICE.value,
-            }:
+            manual_required = wrapped["manual_required"]
+            if (
+                result["outcome"] not in {
+                    ProposalOutcome.ACCEPTABLE_CHOICE.value,
+                    ProposalOutcome.PROPOSE_CHANGE.value,
+                    ProposalOutcome.UNRESOLVED_CHOICE.value,
+                }
+                and result["destination"] not in constrained_destinations
+                and not manual_required
+            ):
                 continue
             candidates: list[dict[str, object]] = []
             for alternative in result["alternatives"]:
@@ -456,9 +592,17 @@ class ShadowReviewPacket:
                     ),
                     "current": current[result["destination"]],
                     "destination": result["destination"],
-                    "outcome": result["outcome"],
+                    "outcome": (
+                        ProposalOutcome.UNRESOLVED_CHOICE.value
+                        if manual_required
+                        else result["outcome"]
+                    ),
                     "proposal_id": wrapped["proposal_id"],
-                    "reasons": result["reasons"],
+                    "reasons": (
+                        ["no_safe_bibliographic_combination"]
+                        if manual_required
+                        else result["reasons"]
+                    ),
                 }
             )
         evidence = _evidence_index(report.to_data())
@@ -487,10 +631,21 @@ class ShadowReviewPacket:
             tuple(sorted(proposals, key=lambda value: value["proposal_id"])),
             citations,
             correlation_facts,
+            bibliographic_combinations=tuple(
+                value.to_data()
+                for value in proposal_set.bibliographic_combinations
+            ),
         )
         return value
     def to_data(self) -> dict[str, object]:
         return {
+            "bibliographic_combinations": [
+                _copy_json(value)
+                for value in self.bibliographic_combinations
+            ],
+            "bibliographic_relationship_schema_version": (
+                self.bibliographic_relationship_schema_version
+            ),
             "citations": [_copy_json(value) for value in self.citations],
             "correlations": [_copy_json(value) for value in self.correlations],
             "proposals": [_copy_json(value) for value in self.proposals],
@@ -522,6 +677,8 @@ class ShadowReviewPacket:
     ) -> Self:
         raw = _canonical_object(serialized, MAX_PACKET_BYTES)
         if set(raw) != {
+            "bibliographic_combinations",
+            "bibliographic_relationship_schema_version",
             "citations",
             "correlations",
             "proposals",
@@ -533,6 +690,7 @@ class ShadowReviewPacket:
             type(raw["proposals"]) is not list
             or type(raw["citations"]) is not list
             or type(raw["correlations"]) is not list
+            or type(raw["bibliographic_combinations"]) is not list
         ):
             raise ShadowReviewValueError("shadow-review packet is invalid")
         try:
@@ -542,6 +700,8 @@ class ShadowReviewPacket:
                 tuple(raw["citations"]),
                 tuple(raw["correlations"]),
                 raw["schema_version"],  # type: ignore[arg-type]
+                raw["bibliographic_relationship_schema_version"],  # type: ignore[arg-type]
+                tuple(raw["bibliographic_combinations"]),
             )
         except (TypeError, ValueError) as error:
             raise ShadowReviewValueError("shadow-review packet is invalid") from error
@@ -842,6 +1002,11 @@ class ShadowReviewResult:
             }
             for value in request.packet.proposals
         }
+        manual_bibliographic_proposals = {
+            value["proposal_id"]
+            for value in request.packet.proposals
+            if "no_safe_bibliographic_combination" in value["reasons"]
+        }
         citations = {value["citation_id"] for value in request.packet.citations}
         seen: set[str] = set()
         for recommendation in self.recommendations:
@@ -887,11 +1052,53 @@ class ShadowReviewResult:
                 raise ShadowReviewSemanticError("shadow-review result is invalid")
             if kind == "manual" and not problems:
                 raise ShadowReviewSemanticError("shadow-review result is invalid")
+            if (
+                proposal_id in manual_bibliographic_proposals
+                and kind != "manual"
+            ):
+                raise ShadowReviewSemanticError(
+                    "shadow-review bibliographic result requires manual review"
+                )
             seen.add(proposal_id)
         if seen != set(expected):
             raise ShadowReviewSemanticError(
                 "shadow-review result coverage is invalid"
             )
+        self.selected_bibliographic_combination_id(request)
+
+    def selected_bibliographic_combination_id(
+        self,
+        request: ShadowReviewRequest,
+    ) -> str | None:
+        """Derive the one allowed combination selected by existing advice."""
+        if not request.packet.bibliographic_combinations:
+            return None
+        proposal_by_id = {
+            value["proposal_id"]: value
+            for value in request.packet.proposals
+        }
+        recommendation_by_destination = {
+            proposal_by_id[value["proposal_id"]]["destination"]: value
+            for value in self.recommendations
+            if value.get("proposal_id") in proposal_by_id
+        }
+        matches: list[str] = []
+        for combination in request.packet.bibliographic_combinations:
+            if all(
+                _recommendation_matches_bibliographic_selection(
+                    recommendation_by_destination.get(
+                        selection["destination"]
+                    ),
+                    selection,
+                )
+                for selection in combination["selections"]
+            ):
+                matches.append(combination["combination_id"])  # type: ignore[arg-type]
+        if len(matches) != 1:
+            raise ShadowReviewSemanticError(
+                "shadow-review bibliographic combination is invalid"
+            )
+        return matches[0]
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -932,6 +1139,27 @@ class ShadowReviewResult:
                 "shadow-review result document is not canonical"
             )
         return value
+
+
+def _recommendation_matches_bibliographic_selection(
+    recommendation: object,
+    selection: dict[str, object],
+) -> bool:
+    if type(recommendation) is not dict:
+        return False
+    if selection["kind"] == "candidate":
+        return (
+            recommendation.get("recommendation")
+            == "recommend_candidate"
+            and recommendation.get("candidate_id")
+            == selection["alternative_id"]
+        )
+    return (
+        selection["kind"] == "preserve_target"
+        and recommendation.get("recommendation")
+        == "recommend_keep_current"
+        and recommendation.get("candidate_id") is None
+    )
 
 
 def _date_link_local_references(report: MetadataReport) -> set[str]:

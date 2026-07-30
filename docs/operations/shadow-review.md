@@ -16,7 +16,7 @@ material are never stored in the application database. The tuple is fixed to:
 - model `gpt-5.6-sol`, reasoning `medium`;
 - prompt `shadow-review-prompt-v2`;
 - profile `codex-shadow-profile-v1`;
-- packet `shadow-review-packet-v3`;
+- packet `shadow-review-packet-v4`;
 - request `shadow-review-request-v4`;
 - output `shadow-review-result-v1`;
 - policy `qualification-only-policy-v1`; and
@@ -104,6 +104,22 @@ publisher/imprint/brand/group statements are not represented as a corporate
 equality or hierarchy. A result may recommend an included candidate under the
 ordinary untrusted-advice contract; the packet itself grants no decision or
 write authority.
+
+Packet v4 also carries the exact `bibliographic-relationships-v1`
+combinations from the ProposalSet and includes every constrained title,
+subtitle, and series proposal, including a non-actionable preserve companion
+with no candidates. Result v1 is unchanged: it still contains only the
+per-destination recommendations. Semantic validation derives their exact
+candidate-or-preserve member tuple and requires it to match exactly one allowed
+combination. A candidate from another tuple, a manual recommendation inside a
+selected tuple, or contradictory keep/change advice rejects the whole result.
+The matched combination ID is an audit derivation from the exact request and
+result; it is not hidden in prose and is not another model-controlled field.
+When conservative duplicate detection cannot represent a safe tuple, the
+packet exposes all title/subtitle/series members as manual. Members with
+retained candidates remain unresolved raw results; exact target-bound
+companions carry no invented candidate and become manual only in the review
+projection. No prompt, output schema, or decision authority is added.
 
 ```sh
 mechanical-librarian shadow-review-request --database reports.sqlite \
