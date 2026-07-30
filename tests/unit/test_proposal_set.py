@@ -1868,6 +1868,60 @@ class ProposalSetTests(unittest.TestCase):
         self.assertEqual(ProposalOutcome.UNRESOLVED_CHOICE, result.outcome)
         self.assertEqual(("field_policy_conflict",), result.reasons)
 
+    def test_private_use_language_region_cannot_be_selected(self) -> None:
+        fields = _fields(
+            language=TargetField(
+                TargetDestination.LANGUAGE,
+                TargetFieldState.MISSING,
+            )
+        )
+        controls = (
+            (
+                "private_use",
+                "en-AA",
+                ProposalOutcome.UNRESOLVED_CHOICE,
+                ("field_policy_conflict",),
+                False,
+            ),
+            (
+                "registered",
+                "en-US",
+                ProposalOutcome.PROPOSE_CHANGE,
+                ("unique_typed_candidate",),
+                True,
+            ),
+        )
+        for name, value, outcome, reasons, selected in controls:
+            with self.subTest(name=name):
+                provider = _provider(
+                    "catalogue",
+                    "edition-1",
+                    (
+                        _claim(
+                            "catalogue",
+                            "edition-1",
+                            ClaimKind.LANGUAGE,
+                            value,
+                            scope=ClaimScope.EDITION,
+                        ),
+                    ),
+                )
+
+                result = _result(
+                    evaluate_report(
+                        _report(fields=fields, providers=(provider,))
+                    ),
+                    TargetDestination.LANGUAGE,
+                )
+
+                self.assertEqual(outcome, result.outcome)
+                self.assertEqual(reasons, result.reasons)
+                self.assertEqual(value, result.alternatives[0].value.value)
+                self.assertEqual(
+                    selected,
+                    result.selected_alternative_id is not None,
+                )
+
     def test_publisher_policy_keeps_distinct_supported_business_levels(self) -> None:
         local_publisher = LocalClaim.create(
             kind=ClaimKind.PUBLISHER,
