@@ -31,16 +31,25 @@ from scripts.qualify_exact_artifact import (
 class ExactArtifactQualificationTests(unittest.TestCase):
     def test_installed_probe_requires_the_current_proposal_policy(self) -> None:
         proposal = {
-            "policy_version": "fixed-conservative-v5",
+            "policy_version": "fixed-conservative-v6",
+            "relationships": {
+                "bibliographic_combinations": [],
+                "schema_version": "bibliographic-relationships-v1",
+            },
             "report": {
                 "report_id": "report_" + "a" * 64,
                 "target_fingerprint": "b" * 64,
             },
             "results": [],
-            "schema_version": "proposal-set-v2",
+            "schema_version": "proposal-set-v3",
         }
-        self.assertTrue(_proposal_identifier(proposal).startswith("proposal_set_"))
-        proposal["policy_version"] = "fixed-conservative-v4"
+        identifier = _proposal_identifier(proposal)
+        self.assertTrue(identifier.startswith("proposal_set_"))
+        proposal["relationships"]["bibliographic_combinations"] = [  # type: ignore[index]
+            {"combination_id": "combination_" + "c" * 64}
+        ]
+        self.assertNotEqual(identifier, _proposal_identifier(proposal))
+        proposal["policy_version"] = "fixed-conservative-v5"
         with self.assertRaises(QualificationFailure):
             _proposal_identifier(proposal)
 

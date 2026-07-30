@@ -14,7 +14,7 @@ mechanical-librarian proposal-set-create \
 Every option is required. The command reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v5` policy. It does not construct or contact a metadata or
+`fixed-conservative-v6` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline:
@@ -25,13 +25,13 @@ mechanical-librarian proposal-set-get \
   --proposal-set-id proposal_set_<64-lowercase-hex-characters>
 ```
 
-Success is exactly one canonical `proposal-set-v2` JSON document plus a
+Success is exactly one canonical `proposal-set-v3` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `fixed-conservative-v5` proposal documents and the exact current
+Only `fixed-conservative-v6` proposal documents and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
-`fixed-conservative-v4` table shape is incompatible and is rejected before
+`fixed-conservative-v4`, or `fixed-conservative-v5` table shape is incompatible and is rejected before
 mutation; there is no proposal migration, import, conversion, or compatibility
 parser.
 
@@ -60,6 +60,30 @@ They do not copy report excerpts, raw provider evidence, responses, URLs,
 paths, or image bytes. Provider access time remains in the exact immutable
 report addressed by each evidence reference; proposal derivation performs no
 provider access and does not refresh or manufacture that time.
+
+The separate `bibliographic-relationships-v1` projection lists allowed
+title/subtitle/series combinations without changing a result, alternative, or
+source string. Every combination covers all three destinations explicitly.
+Candidate selections reference an already-admitted alternative; preserve
+selections bind the exact current, missing, null, or empty target-field
+fingerprint. A represented alternative assessed as preserving the target uses
+the preserve selection while its source representation remains attached to the
+combination. Source representation IDs hash the local evidence basis or the
+provider, authority, candidate manifestation identity, and work identity.
+Identical member tuples are represented once.
+
+Only structured claims from one source representation are grouped. A clean
+title with at least two independent correlation groups may replace a decorated
+title inside an otherwise source-coherent component tuple. Exact normalized
+subtitle or series-name containment is a veto against duplicated text; it
+never splits, rewrites, or creates a candidate. Multiple same-scope source
+titles and a work title that disagrees with the candidate's explicit edition
+title remain report provenance but cannot become title alternatives. If a
+source exposes dependent candidates but no complete safe tuple survives, each
+affected destination with alternatives is `unresolved_choice` with
+`no_safe_bibliographic_combination`. Destinations represented only by their
+exact target state remain unchanged in the raw result; the review projection
+marks all three tuple members manual without synthesizing evidence.
 
 `propose_change` carries exactly one selected safe candidate.
 `acceptable_choice` carries at least two language or publisher candidates that

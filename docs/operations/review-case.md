@@ -18,10 +18,22 @@ nonactionable set is `no_case`.
 An unavailable external currentness preflight is `currentness`; repository
 read or write failure remains `persistence`.
 
-The complete case binds the exact ProposalSet, report, target and file identity.
+The complete `review-case-v2` case binds the exact ProposalSet, report, target
+and file identity. It also projects the exact
+`bibliographic-relationships-v1` document. Preserve selections are rechecked
+against the bound target field, so a changed value or changed missing/null/empty
+state changes case identity and cannot replay under an old combination.
+Per-destination review proposal IDs bind the report, target, and exact result
+set independently of the relationship projection. Adding or removing a
+relationship tuple therefore changes ProposalSet, case, packet, and request
+identity without renaming an otherwise unchanged field proposal. A rejected
+tuple makes all three title/subtitle/series proposal projections explicitly
+manual, including exact target-bound companions whose raw result has no
+invented alternative.
 Inside the admission transaction, the service recomputes the fixed F09o
 evaluator output from the bound report; a synthetic or otherwise different
-ProposalSet is `incompatible` and publishes no review state. A report or media
+ProposalSet, including any changed or omitted compatible-combination tuple, is
+`incompatible` and publishes no review state. A report or media
 pointer that loses currentness returns `stale`.
 Lineage checkpoints retain an attributable fixed-system audit transition. A
 newer report makes an earlier case historical without rewriting it. Use a

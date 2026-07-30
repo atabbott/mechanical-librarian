@@ -132,8 +132,8 @@ CLI against a disposable loopback target, synthetic media, private secrets, and
 an absent database. Unit proposal-policy coverage includes whitespace, case, and
 width variants of the controlled package creator placeholder. The installed
 proposal path uses a whitespace/case variant and requires a nonmutating authors
-result under `fixed-conservative-v5`. Persistence tests reject prior proposal
-documents and proposal-store table shapes, including `fixed-conservative-v4`,
+result under `fixed-conservative-v6`. Persistence tests reject prior proposal
+documents and proposal-store table shapes, including `fixed-conservative-v5`,
 without mutation, then prove exact deterministic replay under the current
 policy. Every synthetic EPUB member has a fixed timestamp so the probe identity
 does not depend on the qualification wall clock. No live library or provider is
@@ -151,6 +151,13 @@ publisher/imprint/brand/group statements, wrong-scope and malformed publisher
 controls, target non-independence, and canonical proposal/case/packet replay.
 Private acceptable-action adjudication and scoring are not product-policy
 tests.
+
+Focused bibliographic-relationship tests cover title-to-subtitle and
+title-to-series movement, clean versus decorated titles, exact-component
+duplication vetoes, ambiguous component and localized/original work titles,
+edition/work scope disagreement, no-safe-combination fallback, canonical
+proposal/case/packet replay, clean-schema persistence, exact currentness, and
+result-v1 rejection of a per-field tuple that is not one allowed combination.
 
 The #374 synthetic indicia aggregate reports contributor-role and
 manifestation-date recall separately from explicit-negative precision. Its

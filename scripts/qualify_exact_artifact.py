@@ -822,10 +822,24 @@ def _require_identifier(
 
 
 def _proposal_identifier(value: dict[str, object]) -> str:
+    relationships = value.get("relationships")
     if (
-        set(value) != {"policy_version", "report", "results", "schema_version"}
-        or value.get("schema_version") != "proposal-set-v2"
-        or value.get("policy_version") != "fixed-conservative-v5"
+        set(value)
+        != {
+            "policy_version",
+            "relationships",
+            "report",
+            "results",
+            "schema_version",
+        }
+        or value.get("schema_version") != "proposal-set-v3"
+        or value.get("policy_version") != "fixed-conservative-v6"
+        or type(relationships) is not dict
+        or set(relationships)
+        != {"bibliographic_combinations", "schema_version"}
+        or relationships.get("schema_version")
+        != "bibliographic-relationships-v1"
+        or type(relationships.get("bibliographic_combinations")) is not list
     ):
         raise QualificationFailure("installed_review_case_failed")
     serialized = json.dumps(value, sort_keys=True, separators=(",", ":"))

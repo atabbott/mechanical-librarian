@@ -48,13 +48,17 @@ from mechanical_librarian.domain.metadata_report import (
 )
 
 
-PROPOSAL_SCHEMA = "proposal-set-v2"
-POLICY_VERSION = "fixed-conservative-v5"
+PROPOSAL_SCHEMA = "proposal-set-v3"
+POLICY_VERSION = "fixed-conservative-v6"
+BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
+MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
 _PROPOSAL_SET_ID = re.compile(r"^proposal_set_[0-9a-f]{64}$")
 _ALTERNATIVE_ID = re.compile(r"^alternative_[0-9a-f]{64}$")
+_COMBINATION_ID = re.compile(r"^bibliographic_combination_[0-9a-f]{64}$")
+_REPRESENTATION_ID = re.compile(r"^representation_[0-9a-f]{64}$")
 _EVIDENCE_REFERENCE = re.compile(
     r"^(?:local|provider|evidence|abs|epub|hardcover|open_library)_[0-9a-f]{64}$"
 )
@@ -95,6 +99,18 @@ class ProposalAssessment(StrEnum):
     PRESERVES_TARGET = "preserves_target"
     FILLS_EMPTY = "fills_empty"
     REPLACES_TARGET = "replaces_target"
+
+
+class BibliographicSelectionKind(StrEnum):
+    CANDIDATE = "candidate"
+    PRESERVE_TARGET = "preserve_target"
+
+
+_BIBLIOGRAPHIC_DESTINATIONS = (
+    TargetDestination.TITLE,
+    TargetDestination.SUBTITLE,
+    TargetDestination.SERIES,
+)
 
 
 _DESTINATION_VALUE_SCOPES: dict[
@@ -178,6 +194,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("date_year_conflict", "unique_typed_candidate"),
             ("insufficient_independent_corroboration",),
             ("field_policy_conflict",),
+            ("no_safe_bibliographic_combination",),
             ("populated_subjective_field",),
             ("work_publication_cannot_replace",),
         }
@@ -346,6 +363,141 @@ class ProposalAlternative:
             "date_precision": (
                 None if self.date_precision is None else self.date_precision.value
             ),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BibliographicSelection:
+    destination: TargetDestination
+    kind: BibliographicSelectionKind
+    alternative_id: str | None
+    target_field_fingerprint: str | None
+
+    def __post_init__(self) -> None:
+        if (
+            self.destination not in _BIBLIOGRAPHIC_DESTINATIONS
+            or type(self.kind) is not BibliographicSelectionKind
+            or (
+                self.kind is BibliographicSelectionKind.CANDIDATE
+                and (
+                    type(self.alternative_id) is not str
+                    or _ALTERNATIVE_ID.fullmatch(self.alternative_id) is None
+                    or self.target_field_fingerprint is not None
+                )
+            )
+            or (
+                self.kind is BibliographicSelectionKind.PRESERVE_TARGET
+                and (
+                    self.alternative_id is not None
+                    or type(self.target_field_fingerprint) is not str
+                    or _DIGEST.fullmatch(self.target_field_fingerprint) is None
+                )
+            )
+        ):
+            raise ProposalValueError("bibliographic selection is invalid")
+
+    @classmethod
+    def candidate(
+        cls,
+        destination: TargetDestination,
+        alternative_id: str,
+    ) -> Self:
+        return cls(
+            destination,
+            BibliographicSelectionKind.CANDIDATE,
+            alternative_id,
+            None,
+        )
+
+    @classmethod
+    def preserve(
+        cls,
+        target: TargetField,
+    ) -> Self:
+        return cls(
+            target.destination,
+            BibliographicSelectionKind.PRESERVE_TARGET,
+            None,
+            _target_field_fingerprint(target),
+        )
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "alternative_id": self.alternative_id,
+            "destination": self.destination.value,
+            "kind": self.kind.value,
+            "target_field_fingerprint": self.target_field_fingerprint,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BibliographicCombination:
+    combination_id: str
+    selections: tuple[BibliographicSelection, ...]
+    source_representations: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            _COMBINATION_ID.fullmatch(self.combination_id) is None
+            or type(self.selections) is not tuple
+            or tuple(value.destination for value in self.selections)
+            != _BIBLIOGRAPHIC_DESTINATIONS
+            or any(
+                type(value) is not BibliographicSelection
+                for value in self.selections
+            )
+            or not any(
+                value.kind is BibliographicSelectionKind.CANDIDATE
+                for value in self.selections
+            )
+            or type(self.source_representations) is not tuple
+            or not self.source_representations
+            or self.source_representations
+            != tuple(sorted(set(self.source_representations)))
+            or any(
+                _REPRESENTATION_ID.fullmatch(value) is None
+                for value in self.source_representations
+            )
+        ):
+            raise ProposalValueError("bibliographic combination is invalid")
+        if self.combination_id != _bibliographic_combination_id(
+            self.selections,
+            self.source_representations,
+        ):
+            raise ProposalValueError(
+                "bibliographic combination identity is inconsistent"
+            )
+
+    @classmethod
+    def create(
+        cls,
+        selections: tuple[BibliographicSelection, ...],
+        source_representations: tuple[str, ...],
+    ) -> Self:
+        sources = tuple(sorted(set(source_representations)))
+        return cls(
+            _bibliographic_combination_id(selections, sources),
+            selections,
+            sources,
+        )
+
+    @property
+    def member_key(self) -> tuple[tuple[str, str, str | None, str | None], ...]:
+        return tuple(
+            (
+                value.destination.value,
+                value.kind.value,
+                value.alternative_id,
+                value.target_field_fingerprint,
+            )
+            for value in self.selections
+        )
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "combination_id": self.combination_id,
+            "selections": [value.to_data() for value in self.selections],
+            "source_representations": list(self.source_representations),
         }
 
 
@@ -548,6 +700,7 @@ class ProposalSet:
     report_id: str
     target_fingerprint: str
     results: tuple[ProposalResult, ...]
+    bibliographic_combinations: tuple[BibliographicCombination, ...] = ()
     schema_version: str = PROPOSAL_SCHEMA
     policy_version: str = POLICY_VERSION
 
@@ -561,8 +714,46 @@ class ProposalSet:
             or type(self.results) is not tuple
             or tuple(value.destination for value in self.results)
             != tuple(TargetDestination)
+            or type(self.bibliographic_combinations) is not tuple
+            or len(self.bibliographic_combinations)
+            > MAX_BIBLIOGRAPHIC_COMBINATIONS
+            or any(
+                type(value) is not BibliographicCombination
+                for value in self.bibliographic_combinations
+            )
+            or self.bibliographic_combinations
+            != tuple(
+                sorted(
+                    self.bibliographic_combinations,
+                    key=lambda value: value.combination_id,
+                )
+            )
+            or len(
+                {
+                    value.member_key
+                    for value in self.bibliographic_combinations
+                }
+            )
+            != len(self.bibliographic_combinations)
         ):
             raise ProposalValueError("proposal set is invalid")
+        alternatives = {
+            result.destination: {
+                alternative.alternative_id
+                for alternative in result.alternatives
+            }
+            for result in self.results
+        }
+        if any(
+            selection.kind is BibliographicSelectionKind.CANDIDATE
+            and selection.alternative_id
+            not in alternatives[selection.destination]
+            for combination in self.bibliographic_combinations
+            for selection in combination.selections
+        ):
+            raise ProposalValueError(
+                "bibliographic combination candidate is invalid"
+            )
         expected = "proposal_set_" + hashlib.sha256(
             canonical_json(self._identity_data()).encode("utf-8")
         ).hexdigest()
@@ -578,10 +769,22 @@ class ProposalSet:
         report_id: str,
         target_fingerprint: str,
         results: tuple[ProposalResult, ...],
+        bibliographic_combinations: tuple[BibliographicCombination, ...] = (),
     ) -> Self:
+        combinations = tuple(
+            sorted(
+                bibliographic_combinations,
+                key=lambda value: value.combination_id,
+            )
+        )
         identity = "proposal_set_" + hashlib.sha256(
             canonical_json(
-                _proposal_data(report_id, target_fingerprint, results)
+                _proposal_data(
+                    report_id,
+                    target_fingerprint,
+                    results,
+                    combinations,
+                )
             ).encode("utf-8")
         ).hexdigest()
         return cls(
@@ -589,6 +792,7 @@ class ProposalSet:
             report_id,
             target_fingerprint,
             results,
+            combinations,
         )
 
     def _identity_data(self) -> dict[str, object]:
@@ -599,6 +803,7 @@ class ProposalSet:
             self.report_id,
             self.target_fingerprint,
             self.results,
+            self.bibliographic_combinations,
         )
 
     def to_json(self) -> str:
@@ -645,6 +850,7 @@ class _Observed:
     references: tuple[str, ...]
     correlation: str
     scope: ProposalScope
+    representation: str
     date_event: DateEvent | None = None
     date_precision: DatePrecision | None = None
 
@@ -655,6 +861,7 @@ def evaluate_report(report: MetadataReport) -> ProposalSet:
         raise ProposalValueError("proposal report is invalid")
     targets = {value.destination: value for value in report.target.fields}
     results: dict[TargetDestination, ProposalResult] = {}
+    observed_by_destination: dict[TargetDestination, tuple[_Observed, ...]] = {}
     for destination in TargetDestination:
         if destination in {
             TargetDestination.PUBLISHED_YEAR,
@@ -663,6 +870,8 @@ def evaluate_report(report: MetadataReport) -> ProposalSet:
         }:
             continue
         observations = _observations(report, destination)
+        if destination in _BIBLIOGRAPHIC_DESTINATIONS:
+            observed_by_destination[destination] = observations
         result = _evaluate(
             destination,
             targets[destination],
@@ -691,11 +900,21 @@ def evaluate_report(report: MetadataReport) -> ProposalSet:
     results[TargetDestination.COVER] = _cover_result(
         report, targets[TargetDestination.COVER]
     )
+    combinations, unresolved = _bibliographic_combinations(
+        targets,
+        results,
+        observed_by_destination,
+    )
+    for destination in unresolved:
+        result = results[destination]
+        if result.alternatives:
+            results[destination] = _bibliographic_unresolved(result)
     ordered = tuple(results[value] for value in TargetDestination)
     return ProposalSet.create(
         report_id=report.report_id,
         target_fingerprint=report.target.fingerprint,
         results=ordered,
+        bibliographic_combinations=combinations,
     )
 
 
@@ -744,6 +963,10 @@ def _observations(
             )
             and _eligible_description(destination, claim.canonical)
             and _eligible_field_value(destination, claim.canonical)
+            and (
+                destination is not TargetDestination.TITLE
+                or _local_title_is_unambiguous(report, claim)
+            )
         ):
             values.append(
                 _Observed(
@@ -751,6 +974,7 @@ def _observations(
                     (claim.reference,),
                     _correlation("local:selected_epub"),
                     _scope(claim.scope),
+                    _local_representation(claim.basis),
                 )
             )
     for provider in report.providers:
@@ -770,6 +994,13 @@ def _observations(
                     and _eligible_description(destination, claim.value)
                     and _eligible_field_value(destination, claim.value)
                     and (
+                        destination is not TargetDestination.TITLE
+                        or _provider_title_is_unambiguous(
+                            candidate,
+                            claim,
+                        )
+                    )
+                    and (
                         destination is not TargetDestination.PUBLISHER
                         or manifestation_publication_compatible(
                             candidate,
@@ -788,6 +1019,7 @@ def _observations(
                             (claim.reference,),
                             _provider_correlation(provider),
                             _scope(claim.scope),
+                            _provider_representation(provider, candidate),
                         )
                     )
     return tuple(values)
@@ -879,6 +1111,7 @@ def _list_observations(
                     tuple(claim.reference for claim in claims),
                     _correlation("local:selected_epub"),
                     _scope(scope),
+                    _local_representation(basis),
                 )
             )
     for provider in report.providers:
@@ -938,6 +1171,7 @@ def _list_observations(
                         tuple(claim.reference for claim in claims),
                         _provider_correlation(provider),
                         _scope(scope),
+                        _provider_representation(provider, candidate),
                     )
                 )
     return tuple(values)
@@ -1007,6 +1241,7 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                     tuple(claim.reference for claim in claims),
                     _correlation("local:selected_epub"),
                     ProposalScope.WORK,
+                    _local_representation(basis),
                 )
             )
     for provider in report.providers:
@@ -1035,6 +1270,7 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                         tuple(claim.reference for claim in claims),
                         _provider_correlation(provider),
                         ProposalScope.WORK,
+                        _provider_representation(provider, candidate),
                     )
                 )
     return tuple(values)
@@ -1096,6 +1332,7 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                         (claim.reference,),
                         _correlation("local:selected_epub"),
                         ProposalScope.EDITION,
+                        _local_representation(claim.basis),
                         claim.date_event,
                         precision,
                     )
@@ -1121,6 +1358,7 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                             (claim.reference,),
                             _provider_correlation(provider),
                             ProposalScope.EDITION,
+                            _provider_representation(provider, candidate),
                             claim.date_event,
                             claim.date_precision,
                         )
@@ -1143,6 +1381,7 @@ def _publication_results(
             value.references,
             value.correlation,
             value.scope,
+            value.representation,
             value.date_event,
             DatePrecision.DAY,
         )
@@ -1164,6 +1403,7 @@ def _publication_results(
             value.references,
             value.correlation,
             value.scope,
+            value.representation,
             value.date_event,
             DatePrecision.MONTH,
         )
@@ -1189,6 +1429,7 @@ def _publication_results(
             value.references,
             value.correlation,
             value.scope,
+            value.representation,
             value.date_event,
             DatePrecision.YEAR,
         )
@@ -1838,6 +2079,430 @@ def _scope(value: ClaimScope) -> ProposalScope:
     )
 
 
+def _local_title_is_unambiguous(
+    report: MetadataReport,
+    selected: LocalClaim,
+) -> bool:
+    return (
+        sum(
+            claim.kind is ClaimKind.TITLE
+            and claim.scope is selected.scope
+            and claim.basis == selected.basis
+            and claim.state is FieldState.VALID
+            and claim.canonical is not None
+            for claim in report.local_claims
+        )
+        == 1
+    )
+
+
+def _provider_title_is_unambiguous(
+    candidate: ProviderCandidate,
+    selected: ProviderClaim,
+) -> bool:
+    scoped = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.TITLE
+        and claim.scope is selected.scope
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
+    manifestation = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.TITLE
+        and claim.scope is ClaimScope.EDITION
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
+    return len(scoped) == 1 and (
+        not manifestation
+        or (
+            len(manifestation) == 1
+            and _comparison(
+                TargetDestination.TITLE,
+                manifestation[0].value or "",
+            )
+            == _comparison(
+                TargetDestination.TITLE,
+                selected.value or "",
+            )
+        )
+    )
+
+
+def _local_representation(basis: str) -> str:
+    return _representation("local:" + basis)
+
+
+def _provider_representation(
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+) -> str:
+    return _representation(
+        canonical_json(
+            {
+                "authority": provider.authority,
+                "candidate": candidate.identity,
+                "provider": provider.provider,
+                "work": candidate.work_identity,
+            }
+        )
+    )
+
+
+def _representation(value: str) -> str:
+    return "representation_" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _target_field_fingerprint(target: TargetField) -> str:
+    return hashlib.sha256(
+        canonical_json(target.to_data()).encode("utf-8")
+    ).hexdigest()
+
+
+def _bibliographic_combination_id(
+    selections: tuple[BibliographicSelection, ...],
+    source_representations: tuple[str, ...],
+) -> str:
+    return "bibliographic_combination_" + hashlib.sha256(
+        canonical_json(
+            {
+                "relationship_schema_version": (
+                    BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA
+                ),
+                "selections": [value.to_data() for value in selections],
+                "source_representations": list(source_representations),
+            }
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _bibliographic_combinations(
+    targets: dict[TargetDestination, TargetField],
+    results: dict[TargetDestination, ProposalResult],
+    observations: dict[TargetDestination, tuple[_Observed, ...]],
+) -> tuple[
+    tuple[BibliographicCombination, ...],
+    tuple[TargetDestination, ...],
+]:
+    alternative_index = {
+        destination: {
+            (
+                _observation_key(destination, alternative.value),
+                alternative.scope,
+            ): alternative
+            for alternative in results[destination].alternatives
+        }
+        for destination in _BIBLIOGRAPHIC_DESTINATIONS
+    }
+    members: dict[
+        str,
+        dict[TargetDestination, set[str]],
+    ] = {}
+    sources_by_alternative: dict[
+        TargetDestination,
+        dict[str, set[str]],
+    ] = {
+        destination: {} for destination in _BIBLIOGRAPHIC_DESTINATIONS
+    }
+    for destination in _BIBLIOGRAPHIC_DESTINATIONS:
+        for observation in observations.get(destination, ()):
+            alternative = alternative_index[destination].get(
+                (
+                    _observation_key(destination, observation.value),
+                    observation.scope,
+                )
+            )
+            if alternative is None:
+                continue
+            members.setdefault(observation.representation, {}).setdefault(
+                destination,
+                set(),
+            ).add(alternative.alternative_id)
+            sources_by_alternative[destination].setdefault(
+                alternative.alternative_id,
+                set(),
+            ).add(observation.representation)
+
+    attempted: set[TargetDestination] = set()
+    combinations: dict[
+        tuple[tuple[str, str, str | None, str | None], ...],
+        tuple[tuple[BibliographicSelection, ...], set[str]],
+    ] = {}
+    for representation, represented in sorted(members.items()):
+        if not represented.keys() & {
+            TargetDestination.SUBTITLE,
+            TargetDestination.SERIES,
+        }:
+            continue
+        if any(len(values) != 1 for values in represented.values()):
+            attempted.update(represented)
+            continue
+        selections = _selections_for_representation(
+            targets,
+            results,
+            represented,
+        )
+        if any(
+            value.kind is BibliographicSelectionKind.CANDIDATE
+            for value in selections
+        ):
+            attempted.update(represented)
+            _retain_safe_combination(
+                combinations,
+                selections,
+                {representation},
+                targets,
+                results,
+            )
+
+        component_members = {
+            destination: values
+            for destination, values in represented.items()
+            if destination
+            in {TargetDestination.SUBTITLE, TargetDestination.SERIES}
+        }
+        for title in results[TargetDestination.TITLE].alternatives:
+            if len(title.correlations) < 2:
+                continue
+            independent_sources = sources_by_alternative[
+                TargetDestination.TITLE
+            ].get(title.alternative_id, set())
+            if len(independent_sources) < 2:
+                continue
+            cross_source = dict(component_members)
+            cross_source[TargetDestination.TITLE] = {title.alternative_id}
+            cross_selections = _selections_for_representation(
+                targets,
+                results,
+                cross_source,
+            )
+            if any(
+                value.kind is BibliographicSelectionKind.CANDIDATE
+                for value in cross_selections
+            ):
+                attempted.update(cross_source)
+                _retain_safe_combination(
+                    combinations,
+                    cross_selections,
+                    {representation, *independent_sources},
+                    targets,
+                    results,
+                )
+
+    if len(combinations) > MAX_BIBLIOGRAPHIC_COMBINATIONS:
+        return (), _BIBLIOGRAPHIC_DESTINATIONS
+
+    values = tuple(
+        sorted(
+            (
+                BibliographicCombination.create(
+                    selections,
+                    tuple(sorted(sources)),
+                )
+                for selections, sources in combinations.values()
+            ),
+            key=lambda value: value.combination_id,
+        )
+    )
+    unresolved = (
+        ()
+        if values or not attempted
+        else _BIBLIOGRAPHIC_DESTINATIONS
+    )
+    return values, unresolved
+
+
+def _selections_for_representation(
+    targets: dict[TargetDestination, TargetField],
+    results: dict[TargetDestination, ProposalResult],
+    represented: dict[TargetDestination, set[str]],
+) -> tuple[BibliographicSelection, ...]:
+    return tuple(
+        _selection_for_representation(
+            targets[destination],
+            results[destination],
+            represented.get(destination),
+        )
+        for destination in _BIBLIOGRAPHIC_DESTINATIONS
+    )
+
+
+def _selection_for_representation(
+    target: TargetField,
+    result: ProposalResult,
+    represented: set[str] | None,
+) -> BibliographicSelection:
+    if represented is None:
+        return BibliographicSelection.preserve(target)
+    alternative_id = next(iter(represented))
+    alternative = next(
+        value
+        for value in result.alternatives
+        if value.alternative_id == alternative_id
+    )
+    if alternative.assessment is ProposalAssessment.PRESERVES_TARGET:
+        return BibliographicSelection.preserve(target)
+    return BibliographicSelection.candidate(
+        target.destination,
+        alternative_id,
+    )
+
+
+def _retain_safe_combination(
+    combinations: dict[
+        tuple[tuple[str, str, str | None, str | None], ...],
+        tuple[tuple[BibliographicSelection, ...], set[str]],
+    ],
+    selections: tuple[BibliographicSelection, ...],
+    sources: set[str],
+    targets: dict[TargetDestination, TargetField],
+    results: dict[TargetDestination, ProposalResult],
+) -> None:
+    if _duplicates_bibliographic_component(
+        selections,
+        targets,
+        results,
+    ):
+        return
+    key = tuple(
+        (
+            value.destination.value,
+            value.kind.value,
+            value.alternative_id,
+            value.target_field_fingerprint,
+        )
+        for value in selections
+    )
+    existing = combinations.get(key)
+    if existing is None:
+        combinations[key] = (selections, set(sources))
+    else:
+        existing[1].update(sources)
+
+
+def _duplicates_bibliographic_component(
+    selections: tuple[BibliographicSelection, ...],
+    targets: dict[TargetDestination, TargetField],
+    results: dict[TargetDestination, ProposalResult],
+) -> bool:
+    alternatives = {
+        result.destination: {
+            alternative.alternative_id: alternative
+            for alternative in result.alternatives
+        }
+        for result in results.values()
+    }
+    selected = {value.destination: value for value in selections}
+    title_selection = selected[TargetDestination.TITLE]
+    title_value = _selected_bibliographic_value(
+        title_selection,
+        targets,
+        alternatives,
+    )
+    if type(title_value) is not str:
+        return False
+    title_tokens = _bibliographic_tokens(title_value)
+    if not title_tokens:
+        return False
+    for destination in (
+        TargetDestination.SUBTITLE,
+        TargetDestination.SERIES,
+    ):
+        component_selection = selected[destination]
+        if (
+            title_selection.kind
+            is BibliographicSelectionKind.PRESERVE_TARGET
+            and component_selection.kind
+            is BibliographicSelectionKind.PRESERVE_TARGET
+        ):
+            continue
+        component = _selected_bibliographic_value(
+            component_selection,
+            targets,
+            alternatives,
+        )
+        component_values = (
+            (component,)
+            if type(component) is str
+            else tuple(
+                item
+                for value in component
+                for item in (
+                    value.name,
+                    *(
+                        ()
+                        if value.sequence is None
+                        else (
+                            value.sequence,
+                            f"{value.name} {value.sequence}",
+                        )
+                    ),
+                )
+            )
+            if (
+                destination is TargetDestination.SERIES
+                and type(component) is tuple
+            )
+            else ()
+        )
+        if any(
+            _contains_exact_component(
+                title_tokens,
+                _bibliographic_tokens(value),
+            )
+            for value in component_values
+        ):
+            return True
+    return False
+
+
+def _selected_bibliographic_value(
+    selection: BibliographicSelection,
+    targets: dict[TargetDestination, TargetField],
+    alternatives: dict[
+        TargetDestination,
+        dict[str, ProposalAlternative],
+    ],
+) -> object:
+    if selection.kind is BibliographicSelectionKind.PRESERVE_TARGET:
+        return targets[selection.destination].value
+    alternative = alternatives[selection.destination].get(
+        selection.alternative_id or ""
+    )
+    return None if alternative is None else alternative.value.value
+
+
+def _bibliographic_tokens(value: str) -> tuple[str, ...]:
+    return tuple(
+        token.casefold()
+        for token in re.findall(r"[^\W_]+", normalize_title(value))
+    )
+
+
+def _contains_exact_component(
+    title: tuple[str, ...],
+    component: tuple[str, ...],
+) -> bool:
+    return bool(component) and any(
+        title[index : index + len(component)] == component
+        for index in range(len(title) - len(component) + 1)
+    )
+
+
+def _bibliographic_unresolved(result: ProposalResult) -> ProposalResult:
+    return ProposalResult(
+        result.destination,
+        ProposalOutcome.UNRESOLVED_CHOICE,
+        result.alternatives,
+        None,
+        ("no_safe_bibliographic_combination",),
+        result.dependencies,
+    )
+
+
 def _dependencies(
     destination: TargetDestination,
 ) -> tuple[TargetDestination, ...]:
@@ -1901,9 +2566,17 @@ def _proposal_data(
     report_id: str,
     target_fingerprint: str,
     results: tuple[ProposalResult, ...],
+    bibliographic_combinations: tuple[BibliographicCombination, ...],
 ) -> dict[str, object]:
     return {
         "policy_version": POLICY_VERSION,
+        "relationships": {
+            "bibliographic_combinations": [
+                value.to_data()
+                for value in bibliographic_combinations
+            ],
+            "schema_version": BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA,
+        },
         "report": {
             "report_id": report_id,
             "target_fingerprint": target_fingerprint,
@@ -1918,6 +2591,7 @@ def _proposal_from_data(raw: object) -> ProposalSet:
         raw,
         {
             "policy_version",
+            "relationships",
             "report",
             "results",
             "schema_version",
@@ -1927,11 +2601,27 @@ def _proposal_from_data(raw: object) -> ProposalSet:
         root["report"],
         {"report_id", "target_fingerprint"},
     )
+    relationships = _object(
+        root["relationships"],
+        {"bibliographic_combinations", "schema_version"},
+    )
+    if (
+        relationships["schema_version"]
+        != BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA
+    ):
+        raise ProposalValueError("proposal document is invalid")
     results = tuple(_result_from_data(value) for value in _list(root["results"]))
+    combinations = tuple(
+        _bibliographic_combination_from_data(value)
+        for value in _list(
+            relationships["bibliographic_combinations"]
+        )
+    )
     proposal_set = ProposalSet.create(
         report_id=report["report_id"],
         target_fingerprint=report["target_fingerprint"],
         results=results,
+        bibliographic_combinations=combinations,
     )
     if (
         root["schema_version"] != proposal_set.schema_version
@@ -1939,6 +2629,47 @@ def _proposal_from_data(raw: object) -> ProposalSet:
     ):
         raise ProposalValueError("proposal document is invalid")
     return proposal_set
+
+
+def _bibliographic_combination_from_data(
+    raw: object,
+) -> BibliographicCombination:
+    value = _object(
+        raw,
+        {
+            "combination_id",
+            "selections",
+            "source_representations",
+        },
+    )
+    return BibliographicCombination(
+        value["combination_id"],
+        tuple(
+            _bibliographic_selection_from_data(item)
+            for item in _list(value["selections"])
+        ),
+        tuple(_strings(value["source_representations"])),
+    )
+
+
+def _bibliographic_selection_from_data(
+    raw: object,
+) -> BibliographicSelection:
+    value = _object(
+        raw,
+        {
+            "alternative_id",
+            "destination",
+            "kind",
+            "target_field_fingerprint",
+        },
+    )
+    return BibliographicSelection(
+        TargetDestination(value["destination"]),
+        BibliographicSelectionKind(value["kind"]),
+        value["alternative_id"],
+        value["target_field_fingerprint"],
+    )
 
 
 def _result_from_data(raw: object) -> ProposalResult:
@@ -2059,6 +2790,11 @@ def _projection(value: object, maximum: int) -> str:
 
 
 __all__ = [
+    "BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA",
+    "BibliographicCombination",
+    "BibliographicSelection",
+    "BibliographicSelectionKind",
+    "MAX_BIBLIOGRAPHIC_COMBINATIONS",
     "MAX_PROPOSAL_BYTES",
     "POLICY_VERSION",
     "PROPOSAL_SCHEMA",
