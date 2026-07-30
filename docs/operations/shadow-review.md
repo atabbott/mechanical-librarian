@@ -16,8 +16,8 @@ material are never stored in the application database. The tuple is fixed to:
 - model `gpt-5.6-sol`, reasoning `medium`;
 - prompt `shadow-review-prompt-v2`;
 - profile `codex-shadow-profile-v1`;
-- packet `shadow-review-packet-v4`;
-- request `shadow-review-request-v4`;
+- packet `shadow-review-packet-v5`;
+- request `shadow-review-request-v5`;
 - output `shadow-review-result-v1`;
 - policy `qualification-only-policy-v1`; and
 - sandbox `bubblewrap-v1`.
@@ -28,6 +28,23 @@ wrong executable is `setup`; an unknown tuple or malformed profile is
 not Python dependencies. Record their licence/provenance with the private
 qualification evidence; F15a owns supported bundling, licence inventory, and
 SBOM inclusion.
+
+Packet v5 retains raw candidates, citations, correlations, and bibliographic
+combinations and adds a closed decision summary. Provider support is the count
+of distinct admitted provider correlation groups, not citation count; local
+support is the distinct selected-EPUB group. Target-only preservation is
+separate and never reported as independent evidence. Work-scoped facts are
+associated-work-only, edition facts are `established` only with an exact
+selected-EPUB or accepted provider manifestation anchor, and all other edition
+bindings are `unresolved`. Complete author candidates name included author
+citations and same-representation typed exclusions such as narrator/editor;
+other fields have empty role summaries. Publication candidates state exact
+date/year pairing and remain report-only with unsupported writes.
+
+The proposal summary is not reviewer advice. `candidate`, `keep_current`, and
+`manual` describe only the existing closed ProposalSet/ReviewCase outcome.
+Review result v1 still makes the untrusted recommendation and remains subject
+to complete candidate, citation, combination, and currentness validation.
 
 ## Authentication
 
@@ -105,7 +122,7 @@ equality or hierarchy. A result may recommend an included candidate under the
 ordinary untrusted-advice contract; the packet itself grants no decision or
 write authority.
 
-Packet v4 also carries the exact `bibliographic-relationships-v1`
+Packet v5 also carries the exact `bibliographic-relationships-v1`
 combinations from the ProposalSet and includes every constrained title,
 subtitle, and series proposal, including a non-actionable preserve companion
 with no candidates. Result v1 is unchanged: it still contains only the
@@ -214,7 +231,7 @@ parser, semantic validator, and cleanup as an ordinary request, and therefore
 uses the exact ordinary wrapped command from empty `/job`, including
 `--skip-git-repo-check`. It never sends a holdout and blocks the cohort on
 failure. Each request binds the canonical structured-output schema bytes and
-SHA-256 into `shadow-review-request-v4` and its identity; the executor uses
+SHA-256 into `shadow-review-request-v5` and its identity; the executor uses
 those exact bytes. The complete canonical request envelope is bounded at
 3,227,648 bytes, and the exact-current SQLite column has the same byte capacity;
 there is no truncation. The generated schema is restricted to the pinned

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Add bounded deterministic decision summaries to every shadow-review proposal
+  and candidate while retaining the complete raw citation projection.
+  Candidate summaries count distinct admitted local and provider correlation
+  groups, distinguish target-only preservation, state work/edition/cover
+  scope and conservative selected-manifestation binding, expose complete
+  author-role inclusion and same-representation non-author exclusions, bind
+  dependent bibliographic candidates to their allowed combination IDs, and
+  describe publication event, precision, paired-destination consistency, and
+  the runtime's report-only/unsupported write state. Proposal summaries state
+  only whether the closed policy found sufficient candidate evidence,
+  evidence-backed preservation, or a manual outcome; they do not choose a
+  candidate or grant authority. Advance the exact-current reviewer contracts
+  to `shadow-review-packet-v5` and `shadow-review-request-v5`; earlier
+  pre-release shadow-review stores require a clean rebuild. (#423)
+
 - Bind dependent title, subtitle, and series advice to explicit
   `bibliographic-relationships-v1` combinations without rewriting source
   strings or changing per-destination proposal identities. Every combination

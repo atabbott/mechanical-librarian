@@ -8,7 +8,7 @@ change policy, construct service requests, or execute writes.
 
 ## Reviewer contract
 
-The current qualification-only `shadow-review-packet-v4` contains:
+The current qualification-only `shadow-review-packet-v5` contains:
 
 - only the opaque content-addressed ReviewCase ID, never the connection,
   library, item, file identity, path, or service identifier;
@@ -16,8 +16,19 @@ The current qualification-only `shadow-review-packet-v4` contains:
   explicit loaded, missing, or unavailable state for each applicable field;
 - explicit candidate values, including closed date event and represented
   year, month, or day target precision when applicable;
+- a deterministic proposal summary that states only candidate, keep-current,
+  or manual evidence sufficiency and whether preservation is target-only;
+- a deterministic candidate summary containing distinct admitted provider and
+  local correlation counts, a zero-only candidate target-preservation count,
+  exact evidence scope, and conservative selected-manifestation binding;
+- for complete author candidates only, citation-bound included author roles and
+  excluded typed non-author roles from the same represented source groups;
 - exact versioned allowed title/subtitle/series combinations whose members are
-  admitted candidate IDs or fingerprints of the visible current field state;
+  admitted candidate IDs or fingerprints of the visible current field state,
+  with each dependent candidate naming its exact allowed combination IDs;
+- for publication candidates, the logical publication field, destination,
+  event, precision, paired date/year consistency, and the fixed truthful
+  `report_only=true` / `write_eligibility=unsupported` runtime state;
 - supporting and contradicting evidence summaries, with provider date
   citations retaining lexical/normalized values, source precision, the closed
   publication-date relation and independently shared precision,
@@ -31,7 +42,7 @@ The current qualification-only `shadow-review-packet-v4` contains:
 - the fixed prompt/profile/packet/output/policy identities bound by the
   qualification profile.
 
-ADR-0019 supersedes this projection with `shadow-review-request-v4`. Missing,
+ADR-0022 advances this projection to `shadow-review-request-v5`. Missing,
 opaque-only, malformed, noncanonical, or over-bound provider date linkage
 fails before reviewer invocation. This applies to cited typed provider claims
 and rich date evidence; rich evidence citation IDs are also recomputed from
@@ -46,6 +57,11 @@ The report stays inside the trusted persistence boundary and is never added to
 the reviewer projection.
 Event- and manifestation-incompatible publication facts remain visible through
 these closed links even though they never become proposal candidates.
+Summary counts are recomputed from the exact report's known local/provider
+correlation identities, never inferred from citation prefixes or opaque hash
+shape. Role exclusions remain contextual citations and never increment
+support. Ordinary packet/request replay rebuilds the complete summary from the
+authoritative report and rejects any structurally valid rewrite.
 
 Packet assembly records candidate and policy versions, source completeness, and
 the join provenance for every authoritative row. If the current snapshot,

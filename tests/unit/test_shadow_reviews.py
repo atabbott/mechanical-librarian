@@ -67,6 +67,9 @@ from mechanical_librarian.domain.review_case import (
     ReviewAdmissionStaleError,
     ReviewCase,
 )
+from mechanical_librarian.domain.reviewer_decision_summary import (
+    MAX_CREATOR_ROLE_FACTS,
+)
 from mechanical_librarian.domain.shadow_review import (
     MAX_LINKAGE_FORMAT_FACTS,
     MAX_LINKAGE_IDENTIFIER_FACTS,
@@ -88,6 +91,7 @@ from tests.unit.test_review_case_persistence import _report
 from tests.unit.test_proposal_set import (
     _claim,
     _contradictory_publication_provider,
+    _explicit_local_ebook_isbn,
     _fields as _proposal_fields,
     _identity_bound_alias_report,
     _partially_bound_direct_author_report,
@@ -108,7 +112,7 @@ def _identity() -> ReviewerProfileIdentity:
         "medium",
         "shadow-review-prompt-v2",
         "codex-shadow-profile-v1",
-        "shadow-review-packet-v4",
+        "shadow-review-packet-v5",
         "shadow-review-result-v1",
         "qualification-only-policy-v1",
         120,
@@ -268,6 +272,28 @@ class ShadowReviewTests(unittest.TestCase):
                 for candidate in language["candidates"]
             },
         )
+        self.assertTrue(
+            all(
+                candidate["decision_summary"]["support"]
+                == {
+                    "independent_provider_correlations": 1,
+                    "local_evidence": 0,
+                    "target_only_preservation": 0,
+                }
+                and candidate["decision_summary"][
+                    "selected_manifestation_binding"
+                ]
+                == "unresolved"
+                for candidate in language["candidates"]
+            )
+        )
+        self.assertEqual(
+            {
+                "evidence_sufficiency": "candidate",
+                "target_only_preservation": 0,
+            },
+            language["decision_summary"],
+        )
         self.assertEqual(
             packet,
             ShadowReviewPacket.from_json(packet.to_json(), report),
@@ -317,6 +343,26 @@ class ShadowReviewTests(unittest.TestCase):
         self.assertEqual("month", candidate["date_precision"])
         self.assertEqual(2, len(candidate["correlations"]))
         self.assertEqual(
+            {
+                "independent_provider_correlations": 2,
+                "local_evidence": 0,
+                "target_only_preservation": 0,
+            },
+            candidate["decision_summary"]["support"],
+        )
+        self.assertEqual(
+            {
+                "destination": "publishedDate",
+                "event": "manifestation_publication",
+                "logical_field": "publication",
+                "paired_destination_consistency": "consistent",
+                "precision": "month",
+                "report_only": True,
+                "write_eligibility": "unsupported",
+            },
+            candidate["decision_summary"]["publication"],
+        )
+        self.assertEqual(
             packet,
             ShadowReviewPacket.from_json(packet.to_json(), report),
         )
@@ -334,6 +380,195 @@ class ShadowReviewTests(unittest.TestCase):
                 tuple(mismatched["correlations"]),
                 mismatched["schema_version"],
             )
+        forged = json.loads(packet.to_json())
+        forged_published = next(
+            value
+            for value in forged["proposals"]
+            if value["destination"] == "publishedDate"
+        )
+        forged_published["candidates"][0]["decision_summary"]["publication"][
+            "paired_destination_consistency"
+        ] = "conflicting"
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(forged), report)
+
+    def test_complete_authors_summarize_same_representation_role_exclusions(
+        self,
+    ) -> None:
+        claims = (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CREATOR,
+                "Ada Author",
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CREATOR,
+                "Bea Author",
+                scope=ClaimScope.WORK,
+                role="author",
+                order=1,
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CONTRIBUTOR,
+                "Nia Narrator",
+                scope=ClaimScope.EDITION,
+                role="narrator",
+                order=2,
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CONTRIBUTOR,
+                "Ed Editor",
+                scope=ClaimScope.WORK,
+                role="editor",
+                order=3,
+            ),
+        )
+        report = _proposal_report(
+            title=None,
+            fields=_proposal_fields(
+                None,
+                authors=TargetField(
+                    TargetDestination.AUTHORS,
+                    TargetFieldState.MISSING,
+                ),
+            ),
+            providers=(
+                _provider("catalogue", "edition-1", claims),
+            ),
+        )
+        proposal = evaluate_report(report)
+        packet = ShadowReviewPacket.create(
+            ReviewCase.create(proposal, report),
+            proposal,
+            report,
+        )
+        authors = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == "authors"
+        )
+        summary = authors["candidates"][0]["decision_summary"]
+        self.assertEqual(
+            {
+                claim.reference
+                for claim in claims
+                if claim.role == "author"
+            },
+            {
+                fact["reference"]
+                for fact in summary["creator_roles"]["included"]
+            },
+        )
+        self.assertEqual(
+            {"editor", "narrator"},
+            {
+                fact["role"]
+                for fact in summary["creator_roles"]["excluded"]
+            },
+        )
+        self.assertEqual(
+            {
+                "independent_provider_correlations": 1,
+                "local_evidence": 0,
+                "target_only_preservation": 0,
+            },
+            summary["support"],
+        )
+        citation_ids = {
+            citation["citation_id"] for citation in packet.citations
+        }
+        self.assertTrue(
+            {
+                fact["reference"]
+                for fact in summary["creator_roles"]["excluded"]
+            }.issubset(citation_ids)
+        )
+        forged = json.loads(packet.to_json())
+        forged_authors = next(
+            value
+            for value in forged["proposals"]
+            if value["destination"] == "authors"
+        )
+        forged_authors["candidates"][0]["decision_summary"]["support"][
+            "independent_provider_correlations"
+        ] = True
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(forged), report)
+
+        forged = json.loads(packet.to_json())
+        forged_authors = next(
+            value
+            for value in forged["proposals"]
+            if value["destination"] == "authors"
+        )
+        role_fact = forged_authors["candidates"][0]["decision_summary"][
+            "creator_roles"
+        ]["included"][0]
+        forged_authors["candidates"][0]["decision_summary"]["creator_roles"][
+            "included"
+        ] = [role_fact] * (MAX_CREATOR_ROLE_FACTS + 1)
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(forged), report)
+
+        forged = json.loads(packet.to_json())
+        forged_authors = next(
+            value
+            for value in forged["proposals"]
+            if value["destination"] == "authors"
+        )
+        forged_authors["candidates"][0]["decision_summary"][
+            "selected_manifestation_binding"
+        ] = "established"
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(forged), report)
+
+    def test_selected_epub_edition_evidence_establishes_manifestation(
+        self,
+    ) -> None:
+        report = _proposal_report(
+            fields=_proposal_fields(
+                isbn=TargetField(
+                    TargetDestination.ISBN,
+                    TargetFieldState.MISSING,
+                ),
+            ),
+            local_claims=(_explicit_local_ebook_isbn(),),
+            providers=(),
+        )
+        proposal = evaluate_report(report)
+        packet = ShadowReviewPacket.create(
+            ReviewCase.create(proposal, report),
+            proposal,
+            report,
+        )
+        isbn = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == "isbn"
+        )
+        summary = isbn["candidates"][0]["decision_summary"]
+        self.assertEqual("edition", summary["evidence_scope"])
+        self.assertEqual(
+            "established",
+            summary["selected_manifestation_binding"],
+        )
+        self.assertEqual(
+            {
+                "independent_provider_correlations": 0,
+                "local_evidence": 1,
+                "target_only_preservation": 0,
+            },
+            summary["support"],
+        )
 
     def test_identity_bound_creator_aliases_do_not_reach_reviewer_packet(
         self,
@@ -2111,7 +2346,7 @@ class ShadowReviewTests(unittest.TestCase):
                 "mode": "qualification_only",
                 "model": "gpt-5.6-sol",
                 "output_version": "shadow-review-result-v1",
-                "packet_version": "shadow-review-packet-v4",
+                "packet_version": "shadow-review-packet-v5",
                 "policy_version": "qualification-only-policy-v1",
                 "profile_version": "codex-shadow-profile-v1",
                     "prompt_version": "shadow-review-prompt-v2",
@@ -2564,7 +2799,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
             "medium",
             "shadow-review-prompt-v2",
             "codex-shadow-profile-v1",
-            "shadow-review-packet-v4",
+            "shadow-review-packet-v5",
             "shadow-review-result-v1",
             "qualification-only-policy-v1",
             120,
