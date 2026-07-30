@@ -141,8 +141,9 @@ used in development or CI.
 
 Focused publication-date tests cover exact-day refinement, shared-month
 projection, different-month year fallback, different-year conflict, independent
-correlation and reference closure, canonical proposal/packet replay, and
-logical qualification routing between `publishedDate` and `publishedYear`.
+correlation and reference closure, and canonical proposal/packet replay.
+Private logical qualification routing between `publishedDate` and
+`publishedYear` is tracked separately from the product component.
 
 The #374 synthetic indicia aggregate reports contributor-role and
 manifestation-date recall separately from explicit-negative precision. Its
