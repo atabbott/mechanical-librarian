@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import signal
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -48,6 +49,7 @@ from mechanical_librarian.domain.metadata_report import (
     FieldState,
     FileFacts,
     LocalClaim,
+    MAX_CONTRIBUTIONS,
     MetadataReport,
     ProviderCandidate,
     ProviderClaim,
@@ -69,6 +71,7 @@ from mechanical_librarian.domain.review_case import (
 )
 from mechanical_librarian.domain.reviewer_decision_summary import (
     MAX_CREATOR_ROLE_FACTS,
+    MAX_DECISION_CORRELATIONS,
 )
 from mechanical_librarian.domain.shadow_review import (
     MAX_LINKAGE_FORMAT_FACTS,
@@ -76,6 +79,7 @@ from mechanical_librarian.domain.shadow_review import (
     MAX_PACKET_BYTES,
     MAX_PROFILE_IDENTITY_BYTES,
     MAX_REQUEST_BYTES,
+    REQUEST_SCHEMA,
     ReviewerProfileIdentity,
     ShadowReviewDocumentError,
     ShadowReviewIdentityError,
@@ -530,6 +534,82 @@ class ShadowReviewTests(unittest.TestCase):
         ] = "established"
         with self.assertRaises(ShadowReviewValueError):
             ShadowReviewPacket.from_json(canonical_json(forged), report)
+
+    def test_three_complete_author_representations_retain_all_role_facts(
+        self,
+    ) -> None:
+        author_values = tuple(
+            f"Author {index:02d}" for index in range(MAX_CONTRIBUTIONS)
+        )
+        providers = tuple(
+            _provider(
+                provider,
+                f"{provider}-edition",
+                tuple(
+                    _claim(
+                        provider,
+                        f"{provider}-edition",
+                        ClaimKind.CREATOR,
+                        author,
+                        scope=ClaimScope.WORK,
+                        role="author",
+                        order=index,
+                    )
+                    for index, author in enumerate(author_values)
+                ),
+                authority=authority,
+            )
+            for provider, authority in (
+                ("alpha", "hardcover"),
+                ("beta", "open_library"),
+                ("gamma", "google_books"),
+            )
+        )
+        report = _proposal_report(
+            title=None,
+            fields=_proposal_fields(
+                None,
+                authors=TargetField(
+                    TargetDestination.AUTHORS,
+                    TargetFieldState.MISSING,
+                ),
+            ),
+            providers=providers,
+        )
+        proposal = evaluate_report(report)
+        packet = ShadowReviewPacket.create(
+            ReviewCase.create(proposal, report),
+            proposal,
+            report,
+        )
+        authors = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == "authors"
+        )
+        self.assertEqual(1, len(authors["candidates"]))
+        summary = authors["candidates"][0]["decision_summary"]
+        self.assertEqual(
+            MAX_DECISION_CORRELATIONS * MAX_CONTRIBUTIONS,
+            MAX_CREATOR_ROLE_FACTS,
+        )
+        self.assertEqual(
+            3 * MAX_CONTRIBUTIONS,
+            len(summary["creator_roles"]["included"]),
+        )
+        self.assertEqual([], summary["creator_roles"]["excluded"])
+        self.assertEqual(
+            {
+                "independent_provider_correlations": 3,
+                "local_evidence": 0,
+                "target_only_preservation": 0,
+            },
+            summary["support"],
+        )
+        self.assertEqual(
+            packet,
+            ShadowReviewPacket.from_json(packet.to_json(), report),
+        )
 
     def test_selected_epub_edition_evidence_establishes_manifestation(
         self,
@@ -1625,6 +1705,12 @@ class ShadowReviewTests(unittest.TestCase):
             self.assertEqual("qualification_only", first["status"])
             self.assertEqual(first, replay)
             self.assertEqual(
+                (REQUEST_SCHEMA,),
+                repository._connection.execute(
+                    "SELECT request_schema FROM shadow_review_requests"
+                ).fetchone(),
+            )
+            self.assertEqual(
                 (1, 1, 1, 1),
                 (
                     repository._connection.execute(
@@ -1642,6 +1728,128 @@ class ShadowReviewTests(unittest.TestCase):
                 ),
             )
             repository.close()
+            reopened = open_repository(Path(directory) / "reports.sqlite")
+            reopened_replay = json.loads(
+                execute_shadow_review(
+                    reopened,
+                    case_id,
+                    _identity(),
+                    runner,
+                    claimant=(9001, "11"),
+                )
+            )
+            self.assertEqual(first, reopened_replay)
+            self.assertEqual(1, runner.calls)
+            reopened.close()
+
+    def test_prior_request_v4_schema_and_rows_are_rejected_without_change(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            repository, case_id = self._repository(directory)
+            request = repository.validate_shadow_request(
+                repository.preview_shadow_request(
+                    case_id, _identity().to_json()
+                )
+            )
+            repository._connection.execute(
+                "INSERT INTO shadow_review_requests("
+                "review_request_id,review_case_id,request_schema,"
+                "profile_document,packet_document,request_document) "
+                "VALUES(?,?,?,?,?,?)",
+                (
+                    request.review_request_id,
+                    request.review_case_id,
+                    REQUEST_SCHEMA,
+                    request.profile.to_json(),
+                    request.packet.to_json(),
+                    request.to_json(),
+                ),
+            )
+            repository._connection.commit()
+            repository.close()
+
+            connection = sqlite3.connect(path)
+            current_sql = connection.execute(
+                "SELECT sql FROM sqlite_master "
+                "WHERE type='table' AND name='shadow_review_requests'"
+            ).fetchone()[0]
+            prior_sql = current_sql.replace(
+                "request_schema TEXT NOT NULL "
+                "CHECK(request_schema='shadow-review-request-v5'), ",
+                "",
+            )
+            self.assertNotEqual(current_sql, prior_sql)
+            triggers = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type='trigger' "
+                    "AND name LIKE 'shadow_review_requests_no_%' "
+                    "ORDER BY name"
+                ).fetchall()
+            )
+            row = connection.execute(
+                "SELECT review_request_id,review_case_id,profile_document,"
+                "packet_document,request_document "
+                "FROM shadow_review_requests"
+            ).fetchone()
+            prior_row = (
+                row[0],
+                row[1],
+                row[2].replace(
+                    "shadow-review-packet-v5",
+                    "shadow-review-packet-v4",
+                ),
+                row[3].replace(
+                    "shadow-review-packet-v5",
+                    "shadow-review-packet-v4",
+                ),
+                row[4]
+                .replace(
+                    "shadow-review-request-v5",
+                    "shadow-review-request-v4",
+                )
+                .replace(
+                    "shadow-review-packet-v5",
+                    "shadow-review-packet-v4",
+                ),
+            )
+            connection.execute("DROP TRIGGER shadow_review_requests_no_delete")
+            connection.execute("DROP TRIGGER shadow_review_requests_no_update")
+            connection.execute("DROP TABLE shadow_review_requests")
+            connection.execute(prior_sql)
+            for trigger in triggers:
+                connection.execute(trigger)
+            connection.execute(
+                "INSERT INTO shadow_review_requests("
+                "review_request_id,review_case_id,profile_document,"
+                "packet_document,request_document) VALUES(?,?,?,?,?)",
+                prior_row,
+            )
+            connection.commit()
+            self.assertEqual(
+                (prior_sql,),
+                connection.execute(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type='table' AND name='shadow_review_requests'"
+                ).fetchone(),
+            )
+            self.assertEqual(
+                ("shadow-review-request-v4",),
+                connection.execute(
+                    "SELECT json_extract(request_document,'$.schema_version') "
+                    "FROM shadow_review_requests"
+                ).fetchone(),
+            )
+            connection.close()
+
+            before = hashlib.sha256(path.read_bytes()).hexdigest()
+            with self.assertRaises(MetadataReportError):
+                open_repository(path)
+            after = hashlib.sha256(path.read_bytes()).hexdigest()
+            self.assertEqual(before, after)
 
     def test_dispatched_failure_is_unknown_and_explicit_reevaluation_is_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2294,11 +2502,13 @@ class ShadowReviewTests(unittest.TestCase):
                 repository.validate_shadow_request(request.to_json())
             repository._connection.execute(
                 "INSERT INTO shadow_review_requests("
-                "review_request_id,review_case_id,profile_document,"
-                "packet_document,request_document) VALUES(?,?,?,?,?)",
+                "review_request_id,review_case_id,request_schema,"
+                "profile_document,packet_document,request_document) "
+                "VALUES(?,?,?,?,?,?)",
                 (
                     request.review_request_id,
                     request.review_case_id,
+                    REQUEST_SCHEMA,
                     request.profile.to_json(),
                     request.packet.to_json(),
                     request.to_json(),

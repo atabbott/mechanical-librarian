@@ -21,7 +21,11 @@ from mechanical_librarian.domain.proposal_set import (
 )
 
 MAX_DECISION_SUPPORT = 256
-MAX_CREATOR_ROLE_FACTS = MAX_CONTRIBUTIONS * 2
+# A candidate can aggregate the closed maximum of 256 independent provider
+# correlations plus the selected-EPUB/local correlation.  Each represented
+# source contributes at most the metadata contract's creator cardinality.
+MAX_DECISION_CORRELATIONS = MAX_DECISION_SUPPORT + 1
+MAX_CREATOR_ROLE_FACTS = MAX_DECISION_CORRELATIONS * MAX_CONTRIBUTIONS
 _COMBINATION_ID = re.compile(r"^bibliographic_combination_[0-9a-f]{64}$")
 
 
@@ -552,6 +556,7 @@ def proposal_decision_summary(
 __all__ = [
     "DecisionSummaryValueError",
     "MAX_CREATOR_ROLE_FACTS",
+    "MAX_DECISION_CORRELATIONS",
     "candidate_decision_summary",
     "compatibility_by_candidate",
     "proposal_decision_summary",

@@ -62,14 +62,18 @@ evidence sufficiency; they do not recommend, rank, select, approve, repair, or
 write.
 
 Every field has an exact closed shape. Counts reject booleans and are bounded;
-role arrays are explicitly bounded; references must belong to packet
+role arrays are explicitly bounded to the 256-provider-correlation ceiling plus
+the selected-EPUB/local correlation, multiplied by the existing
+16-contribution representation ceiling; references must belong to packet
 citations; combination IDs must match the exact packet tuples. The existing
-packet byte limit remains authoritative. Normal replay regenerates the
-ProposalSet, ReviewCase, packet, citations, and summaries from the immutable
-report and requires exact canonical equality.
+packet byte limit remains authoritative and is tighter in practice. Normal
+replay regenerates the ProposalSet, ReviewCase, packet, citations, and
+summaries from the immutable report and requires exact canonical equality.
 
 ADR-0013 applies. Earlier packet/request stores are rejected as non-current and
-require a clean rebuild; there is no migration, import, or compatibility
+require a clean rebuild. The exact `shadow_review_requests` table stores a
+`request_schema='shadow-review-request-v5'` discriminator and replay validates
+it before accepting the row; there is no migration, import, or compatibility
 parser. The public qualification-profile schema mechanically advances its
 packet-version constant so a valid runtime profile can bind packet v5.
 Private qualification assets, provider requests, scoring, prompts, result

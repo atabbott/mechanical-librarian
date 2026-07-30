@@ -206,6 +206,11 @@ or provider/candidate membership, invalid ISBN/ASIN syntax, private or
 credential-shaped context, missing rich-date-evidence linkage, malformed
 identifier and format shapes, duplicate/reordered facts, and context beyond
 either 16-fact bound. Request-v5 replay exercises the same packet-v5 validator.
+Three independently correlated complete 16-author representations retain all
+48 role facts under the correlation-derived aggregate bound, while an
+over-bound forged role array still fails closed. Persistence records and
+revalidates the exact request-v5 discriminator; a populated prior request-v4
+table is rejected without changing its database bytes.
 Access-
 time regressions inject fixed clocks at every metadata-provider boundary,
 exercise successful and terminal post-dispatch statuses, prove absent time for

@@ -47,6 +47,7 @@ from mechanical_librarian.domain.review_case import (
 from mechanical_librarian.domain.shadow_review import (
     MAX_REQUEST_BYTES,
     QUALIFICATION_MODE,
+    REQUEST_SCHEMA,
     ReviewerProfileIdentity,
     ShadowReviewPacket,
     ShadowReviewRequest,
@@ -136,6 +137,9 @@ _SHADOW_REQUESTS_SQL = (
     "CREATE TABLE shadow_review_requests ("
     "review_request_id TEXT PRIMARY KEY NOT NULL CHECK(review_request_id GLOB 'review_request_[0-9a-f]*' AND length(review_request_id)=79), "
     "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "request_schema TEXT NOT NULL CHECK(request_schema='"
+    + REQUEST_SCHEMA
+    + "'), "
     "profile_document TEXT NOT NULL CHECK(typeof(profile_document)='text' AND length(CAST(profile_document AS BLOB)) BETWEEN 2 AND 16384), "
     "packet_document TEXT NOT NULL CHECK(typeof(packet_document)='text' AND length(CAST(packet_document AS BLOB)) BETWEEN 2 AND 1048576), "
     "request_document TEXT NOT NULL CHECK(typeof(request_document)='text' AND length(CAST(request_document AS BLOB)) BETWEEN 2 AND "
@@ -971,12 +975,13 @@ class SQLiteMetadataReportRepository:
             else:
                 request = self._shadow_request(exact_id, identity)
                 existing = self._connection.execute(
-                    "SELECT request_document FROM shadow_review_requests "
+                    "SELECT request_schema,request_document "
+                    "FROM shadow_review_requests "
                     "WHERE review_request_id=?",
                     (request.review_request_id,),
                 ).fetchone()
                 if existing is not None:
-                    if existing != (request.to_json(),):
+                    if existing != (REQUEST_SCHEMA, request.to_json()):
                         raise MetadataReportError("shadow review identity conflicts")
                     attempt = self._connection.execute(
                         "SELECT attempt_id FROM shadow_review_attempts "
@@ -997,11 +1002,13 @@ class SQLiteMetadataReportRepository:
                     )
                 self._connection.execute(
                     "INSERT INTO shadow_review_requests("
-                    "review_request_id,review_case_id,profile_document,"
-                    "packet_document,request_document) VALUES(?,?,?,?,?)",
+                    "review_request_id,review_case_id,request_schema,"
+                    "profile_document,packet_document,request_document) "
+                    "VALUES(?,?,?,?,?,?)",
                     (
                         request.review_request_id,
                         request.review_case_id,
+                        REQUEST_SCHEMA,
                         request.profile.to_json(),
                         request.packet.to_json(),
                         request.to_json(),
@@ -1312,21 +1319,24 @@ class SQLiteMetadataReportRepository:
         self, review_request_id: str
     ) -> ShadowReviewRequest:
         row = self._connection.execute(
-            "SELECT review_case_id,profile_document,packet_document,"
-            "request_document FROM shadow_review_requests "
+            "SELECT request_schema,review_case_id,profile_document,"
+            "packet_document,request_document FROM shadow_review_requests "
             "WHERE review_request_id=?",
             (review_request_id,),
         ).fetchone()
         if row is None:
             raise MetadataReportError("shadow review request is unavailable")
+        if row[0] != REQUEST_SCHEMA:
+            raise MetadataReportError("shadow review request is invalid")
         request = ShadowReviewRequest.from_json(
-            row[3], self._source_report_for_review_case(row[0])
+            row[4], self._source_report_for_review_case(row[1])
         )
         if (
-            request.review_request_id != review_request_id
-            or request.review_case_id != row[0]
-            or request.profile.to_json() != row[1]
-            or request.packet.to_json() != row[2]
+            request.schema_version != row[0]
+            or request.review_request_id != review_request_id
+            or request.review_case_id != row[1]
+            or request.profile.to_json() != row[2]
+            or request.packet.to_json() != row[3]
         ):
             raise MetadataReportError("shadow review request is invalid")
         return request

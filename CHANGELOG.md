@@ -13,9 +13,12 @@
   the runtime's report-only/unsupported write state. Proposal summaries state
   only whether the closed policy found sufficient candidate evidence,
   evidence-backed preservation, or a manual outcome; they do not choose a
-  candidate or grant authority. Advance the exact-current reviewer contracts
-  to `shadow-review-packet-v5` and `shadow-review-request-v5`; earlier
-  pre-release shadow-review stores require a clean rebuild. (#423)
+  candidate or grant authority. Bound complete creator-role facts by the
+  maximum admitted aggregate correlations rather than two representations.
+  Advance the exact-current reviewer contracts to `shadow-review-packet-v5`
+  and `shadow-review-request-v5`, persist the exact request schema
+  discriminator, and reject earlier pre-release shadow-review stores for a
+  clean rebuild. (#423)
 
 - Bind dependent title, subtitle, and series advice to explicit
   `bibliographic-relationships-v1` combinations without rewriting source
