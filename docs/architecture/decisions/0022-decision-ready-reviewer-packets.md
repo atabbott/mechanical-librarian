@@ -31,10 +31,10 @@ v2, profile/policy v1, model, and reviewer authority are unchanged.
 
 Candidate support counts are counts of distinct admitted correlation groups.
 The trusted builder recomputes the one selected-EPUB identity and every
-provider-authority identity from the exact report and intersects those known
-identities with the candidate. It never classifies an opaque hash by syntax or
-counts citations. Target-only preservation is separate and cannot become
-independent support.
+metadata-provider-authority or cover-provenance-provider identity from the
+exact report and intersects those known identities with the candidate. It
+never classifies an opaque hash by syntax or counts citations. Target-only
+preservation is separate and cannot become independent support.
 
 Candidate scope is exact. Work evidence is `associated_work_only`; cover
 evidence is `not_applicable`; edition evidence is `established` only when the
@@ -56,10 +56,11 @@ runtime's lack of metadata-write authority.
 
 Proposal summaries project the closed raw result and ReviewCase manual flag as
 `candidate`, `keep_current`, or `manual`. A separate 0/1 field exposes a
-target-only current-value preserve/manual companion. An evidence-backed
-alternative that preserves the target remains zero. These fields describe
-evidence sufficiency; they do not recommend, rank, select, approve, repair, or
-write.
+populated current value as target-only whenever no evidence-backed alternative
+preserves it, including when competing evidence produces a candidate or manual
+outcome. An evidence-backed alternative that preserves the target remains
+zero. These fields describe evidence sufficiency; they do not recommend, rank,
+select, approve, repair, or write.
 
 Every field has an exact closed shape. Counts reject booleans and are bounded;
 role arrays are explicitly bounded to the 256-provider-correlation ceiling plus

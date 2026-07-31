@@ -43,6 +43,15 @@ from mechanical_librarian.application.failure_diagnostics import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverDesignation,
+    CoverProvenance,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -297,6 +306,140 @@ class ShadowReviewTests(unittest.TestCase):
                 "target_only_preservation": 0,
             },
             language["decision_summary"],
+        )
+        self.assertEqual(
+            packet,
+            ShadowReviewPacket.from_json(packet.to_json(), report),
+        )
+
+    def test_populated_competing_field_marks_target_only_preservation(
+        self,
+    ) -> None:
+        def provider(
+            name: str,
+            authority: str,
+            author: str,
+        ) -> ProviderObservation:
+            return _provider(
+                name,
+                f"{name}-edition",
+                (
+                    _claim(
+                        name,
+                        f"{name}-edition",
+                        ClaimKind.CREATOR,
+                        author,
+                        scope=ClaimScope.WORK,
+                        role="author",
+                    ),
+                ),
+                authority=authority,
+            )
+
+        cases = (
+            (
+                "manual",
+                ("Ada Author", "Bea Author"),
+                (provider("catalogue", "hardcover", "Ada Author"),),
+                "unresolved_choice",
+                "manual",
+            ),
+            (
+                "candidate",
+                ("Old Author",),
+                (
+                    provider("alpha", "hardcover", "New Author"),
+                    provider("beta", "open_library", "New Author"),
+                ),
+                "propose_change",
+                "candidate",
+            ),
+        )
+        for name, current, providers, outcome, sufficiency in cases:
+            with self.subTest(name=name):
+                report = _proposal_report(
+                    fields=_proposal_fields(
+                        authors=TargetField(
+                            TargetDestination.AUTHORS,
+                            TargetFieldState.VALUE,
+                            current,
+                        ),
+                    ),
+                    providers=providers,
+                )
+                proposal = evaluate_report(report)
+                packet = ShadowReviewPacket.create(
+                    ReviewCase.create(proposal, report),
+                    proposal,
+                    report,
+                )
+                authors = next(
+                    value
+                    for value in packet.proposals
+                    if value["destination"]
+                    == TargetDestination.AUTHORS.value
+                )
+                self.assertEqual(outcome, authors["outcome"])
+                self.assertTrue(authors["candidates"])
+                self.assertFalse(
+                    any(
+                        candidate["assessment"] == "preserves_target"
+                        for candidate in authors["candidates"]
+                    )
+                )
+                self.assertEqual(
+                    {
+                        "evidence_sufficiency": sufficiency,
+                        "target_only_preservation": 1,
+                    },
+                    authors["decision_summary"],
+                )
+                self.assertEqual(
+                    packet,
+                    ShadowReviewPacket.from_json(packet.to_json(), report),
+                )
+
+    def test_provider_cover_correlation_counts_as_independent_support(
+        self,
+    ) -> None:
+        artifact = CoverArtifact.create(
+            b"cover", b"preview", "image/png", 10, 20
+        )
+        source = CoverSource(
+            cover_source_id(
+                CoverSourceKind.HARDCOVER,
+                "catalogue:cover",
+            ),
+            CoverSourceKind.HARDCOVER,
+            CoverSourceState.RETRIEVED,
+            artifact,
+            provenance=CoverProvenance(
+                "catalogue",
+                CoverDesignation.WORK,
+                "catalogue-work",
+            ),
+        )
+        report = _proposal_report(covers=(source,))
+        proposal = evaluate_report(report)
+        packet = ShadowReviewPacket.create(
+            ReviewCase.create(proposal, report),
+            proposal,
+            report,
+        )
+        cover = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == TargetDestination.COVER.value
+        )
+        self.assertEqual("propose_change", cover["outcome"])
+        self.assertEqual(1, len(cover["candidates"]))
+        self.assertEqual(
+            {
+                "independent_provider_correlations": 1,
+                "local_evidence": 0,
+                "target_only_preservation": 0,
+            },
+            cover["candidates"][0]["decision_summary"]["support"],
         )
         self.assertEqual(
             packet,

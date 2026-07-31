@@ -662,7 +662,6 @@ class ShadowReviewPacket:
                         result,
                         manual_required=manual_required,
                         current=current[result["destination"]],
-                        combinations=proposal_set.bibliographic_combinations,
                     ),
                     "destination": result["destination"],
                     "outcome": (

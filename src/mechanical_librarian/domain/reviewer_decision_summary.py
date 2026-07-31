@@ -205,15 +205,18 @@ def correlation_identity(value: str) -> str:
 
 
 def _known_correlations(report: MetadataReport) -> tuple[str, set[str]]:
-    return (
-        correlation_identity("local:selected_epub"),
-        {
-            correlation_identity(
-                "provider:" + (provider.authority or "unknown")
-            )
-            for provider in report.providers
-        },
+    provider_correlations = {
+        correlation_identity(
+            "provider:" + (provider.authority or "unknown")
+        )
+        for provider in report.providers
+    }
+    provider_correlations.update(
+        correlation_identity("cover:" + source.provenance.provider)
+        for source in report.cover_sources
+        if source.provenance is not None
     )
+    return correlation_identity("local:selected_epub"), provider_correlations
 
 
 def compatibility_by_candidate(
@@ -517,7 +520,6 @@ def proposal_decision_summary(
     *,
     manual_required: bool,
     current: dict[str, object],
-    combinations: tuple[object, ...],
 ) -> dict[str, object]:
     """Project closed proposal-level sufficiency without making a decision."""
     outcome = result["outcome"]
@@ -532,19 +534,12 @@ def proposal_decision_summary(
         sufficiency = "candidate"
     else:
         sufficiency = "manual"
-    preserve_selected = any(
-        selection["destination"] == result["destination"]
-        and selection["kind"] == "preserve_target"
-        for combination in combinations
-        for selection in combination.to_data()["selections"]
-    )
     has_evidence_backed_preservation = any(
         alternative["assessment"] == "preserves_target"
         for alternative in result["alternatives"]
     )
     target_only = int(
         current.get("state") == "value"
-        and (manual_required or preserve_selected)
         and not has_evidence_backed_preservation
     )
     return {
