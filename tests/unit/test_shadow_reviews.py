@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import signal
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -42,12 +43,22 @@ from mechanical_librarian.application.failure_diagnostics import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverDesignation,
+    CoverProvenance,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     FieldState,
     FileFacts,
     LocalClaim,
+    MAX_CONTRIBUTIONS,
     MetadataReport,
     ProviderCandidate,
     ProviderClaim,
@@ -67,12 +78,17 @@ from mechanical_librarian.domain.review_case import (
     ReviewAdmissionStaleError,
     ReviewCase,
 )
+from mechanical_librarian.domain.reviewer_decision_summary import (
+    MAX_CREATOR_ROLE_FACTS,
+    MAX_DECISION_CORRELATIONS,
+)
 from mechanical_librarian.domain.shadow_review import (
     MAX_LINKAGE_FORMAT_FACTS,
     MAX_LINKAGE_IDENTIFIER_FACTS,
     MAX_PACKET_BYTES,
     MAX_PROFILE_IDENTITY_BYTES,
     MAX_REQUEST_BYTES,
+    REQUEST_SCHEMA,
     ReviewerProfileIdentity,
     ShadowReviewDocumentError,
     ShadowReviewIdentityError,
@@ -88,6 +104,7 @@ from tests.unit.test_review_case_persistence import _report
 from tests.unit.test_proposal_set import (
     _claim,
     _contradictory_publication_provider,
+    _explicit_local_ebook_isbn,
     _fields as _proposal_fields,
     _identity_bound_alias_report,
     _partially_bound_direct_author_report,
@@ -108,7 +125,7 @@ def _identity() -> ReviewerProfileIdentity:
         "medium",
         "shadow-review-prompt-v2",
         "codex-shadow-profile-v1",
-        "shadow-review-packet-v4",
+        "shadow-review-packet-v5",
         "shadow-review-result-v1",
         "qualification-only-policy-v1",
         120,
@@ -268,6 +285,162 @@ class ShadowReviewTests(unittest.TestCase):
                 for candidate in language["candidates"]
             },
         )
+        self.assertTrue(
+            all(
+                candidate["decision_summary"]["support"]
+                == {
+                    "independent_provider_correlations": 1,
+                    "local_evidence": 0,
+                    "target_only_preservation": 0,
+                }
+                and candidate["decision_summary"][
+                    "selected_manifestation_binding"
+                ]
+                == "unresolved"
+                for candidate in language["candidates"]
+            )
+        )
+        self.assertEqual(
+            {
+                "evidence_sufficiency": "candidate",
+                "target_only_preservation": 0,
+            },
+            language["decision_summary"],
+        )
+        self.assertEqual(
+            packet,
+            ShadowReviewPacket.from_json(packet.to_json(), report),
+        )
+
+    def test_populated_competing_field_marks_target_only_preservation(
+        self,
+    ) -> None:
+        def provider(
+            name: str,
+            authority: str,
+            author: str,
+        ) -> ProviderObservation:
+            return _provider(
+                name,
+                f"{name}-edition",
+                (
+                    _claim(
+                        name,
+                        f"{name}-edition",
+                        ClaimKind.CREATOR,
+                        author,
+                        scope=ClaimScope.WORK,
+                        role="author",
+                    ),
+                ),
+                authority=authority,
+            )
+
+        cases = (
+            (
+                "manual",
+                ("Ada Author", "Bea Author"),
+                (provider("catalogue", "hardcover", "Ada Author"),),
+                "unresolved_choice",
+                "manual",
+            ),
+            (
+                "candidate",
+                ("Old Author",),
+                (
+                    provider("alpha", "hardcover", "New Author"),
+                    provider("beta", "open_library", "New Author"),
+                ),
+                "propose_change",
+                "candidate",
+            ),
+        )
+        for name, current, providers, outcome, sufficiency in cases:
+            with self.subTest(name=name):
+                report = _proposal_report(
+                    fields=_proposal_fields(
+                        authors=TargetField(
+                            TargetDestination.AUTHORS,
+                            TargetFieldState.VALUE,
+                            current,
+                        ),
+                    ),
+                    providers=providers,
+                )
+                proposal = evaluate_report(report)
+                packet = ShadowReviewPacket.create(
+                    ReviewCase.create(proposal, report),
+                    proposal,
+                    report,
+                )
+                authors = next(
+                    value
+                    for value in packet.proposals
+                    if value["destination"]
+                    == TargetDestination.AUTHORS.value
+                )
+                self.assertEqual(outcome, authors["outcome"])
+                self.assertTrue(authors["candidates"])
+                self.assertFalse(
+                    any(
+                        candidate["assessment"] == "preserves_target"
+                        for candidate in authors["candidates"]
+                    )
+                )
+                self.assertEqual(
+                    {
+                        "evidence_sufficiency": sufficiency,
+                        "target_only_preservation": 1,
+                    },
+                    authors["decision_summary"],
+                )
+                self.assertEqual(
+                    packet,
+                    ShadowReviewPacket.from_json(packet.to_json(), report),
+                )
+
+    def test_provider_cover_correlation_counts_as_independent_support(
+        self,
+    ) -> None:
+        artifact = CoverArtifact.create(
+            b"cover", b"preview", "image/png", 10, 20
+        )
+        source = CoverSource(
+            cover_source_id(
+                CoverSourceKind.HARDCOVER,
+                "catalogue:cover",
+            ),
+            CoverSourceKind.HARDCOVER,
+            CoverSourceState.RETRIEVED,
+            artifact,
+            provenance=CoverProvenance(
+                "catalogue",
+                CoverDesignation.WORK,
+                "catalogue-work",
+            ),
+        )
+        report = _proposal_report(covers=(source,))
+        proposal = evaluate_report(report)
+        packet = ShadowReviewPacket.create(
+            ReviewCase.create(proposal, report),
+            proposal,
+            report,
+        )
+        cover = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == TargetDestination.COVER.value
+        )
+        self.assertEqual("propose_change", cover["outcome"])
+        self.assertEqual(1, len(cover["candidates"]))
+        self.assertEqual(
+            {
+                "independent_provider_correlations": 1,
+                "local_evidence": 0,
+                "target_only_preservation": 0,
+            },
+            cover["candidates"][0]["decision_summary"]["support"],
+        )
         self.assertEqual(
             packet,
             ShadowReviewPacket.from_json(packet.to_json(), report),
@@ -317,6 +490,26 @@ class ShadowReviewTests(unittest.TestCase):
         self.assertEqual("month", candidate["date_precision"])
         self.assertEqual(2, len(candidate["correlations"]))
         self.assertEqual(
+            {
+                "independent_provider_correlations": 2,
+                "local_evidence": 0,
+                "target_only_preservation": 0,
+            },
+            candidate["decision_summary"]["support"],
+        )
+        self.assertEqual(
+            {
+                "destination": "publishedDate",
+                "event": "manifestation_publication",
+                "logical_field": "publication",
+                "paired_destination_consistency": "consistent",
+                "precision": "month",
+                "report_only": True,
+                "write_eligibility": "unsupported",
+            },
+            candidate["decision_summary"]["publication"],
+        )
+        self.assertEqual(
             packet,
             ShadowReviewPacket.from_json(packet.to_json(), report),
         )
@@ -334,6 +527,271 @@ class ShadowReviewTests(unittest.TestCase):
                 tuple(mismatched["correlations"]),
                 mismatched["schema_version"],
             )
+        forged = json.loads(packet.to_json())
+        forged_published = next(
+            value
+            for value in forged["proposals"]
+            if value["destination"] == "publishedDate"
+        )
+        forged_published["candidates"][0]["decision_summary"]["publication"][
+            "paired_destination_consistency"
+        ] = "conflicting"
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(forged), report)
+
+    def test_complete_authors_summarize_same_representation_role_exclusions(
+        self,
+    ) -> None:
+        claims = (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CREATOR,
+                "Ada Author",
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CREATOR,
+                "Bea Author",
+                scope=ClaimScope.WORK,
+                role="author",
+                order=1,
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CONTRIBUTOR,
+                "Nia Narrator",
+                scope=ClaimScope.EDITION,
+                role="narrator",
+                order=2,
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CONTRIBUTOR,
+                "Ed Editor",
+                scope=ClaimScope.WORK,
+                role="editor",
+                order=3,
+            ),
+        )
+        report = _proposal_report(
+            title=None,
+            fields=_proposal_fields(
+                None,
+                authors=TargetField(
+                    TargetDestination.AUTHORS,
+                    TargetFieldState.MISSING,
+                ),
+            ),
+            providers=(
+                _provider("catalogue", "edition-1", claims),
+            ),
+        )
+        proposal = evaluate_report(report)
+        packet = ShadowReviewPacket.create(
+            ReviewCase.create(proposal, report),
+            proposal,
+            report,
+        )
+        authors = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == "authors"
+        )
+        summary = authors["candidates"][0]["decision_summary"]
+        self.assertEqual(
+            {
+                claim.reference
+                for claim in claims
+                if claim.role == "author"
+            },
+            {
+                fact["reference"]
+                for fact in summary["creator_roles"]["included"]
+            },
+        )
+        self.assertEqual(
+            {"editor", "narrator"},
+            {
+                fact["role"]
+                for fact in summary["creator_roles"]["excluded"]
+            },
+        )
+        self.assertEqual(
+            {
+                "independent_provider_correlations": 1,
+                "local_evidence": 0,
+                "target_only_preservation": 0,
+            },
+            summary["support"],
+        )
+        citation_ids = {
+            citation["citation_id"] for citation in packet.citations
+        }
+        self.assertTrue(
+            {
+                fact["reference"]
+                for fact in summary["creator_roles"]["excluded"]
+            }.issubset(citation_ids)
+        )
+        forged = json.loads(packet.to_json())
+        forged_authors = next(
+            value
+            for value in forged["proposals"]
+            if value["destination"] == "authors"
+        )
+        forged_authors["candidates"][0]["decision_summary"]["support"][
+            "independent_provider_correlations"
+        ] = True
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(forged), report)
+
+        forged = json.loads(packet.to_json())
+        forged_authors = next(
+            value
+            for value in forged["proposals"]
+            if value["destination"] == "authors"
+        )
+        role_fact = forged_authors["candidates"][0]["decision_summary"][
+            "creator_roles"
+        ]["included"][0]
+        forged_authors["candidates"][0]["decision_summary"]["creator_roles"][
+            "included"
+        ] = [role_fact] * (MAX_CREATOR_ROLE_FACTS + 1)
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(forged), report)
+
+        forged = json.loads(packet.to_json())
+        forged_authors = next(
+            value
+            for value in forged["proposals"]
+            if value["destination"] == "authors"
+        )
+        forged_authors["candidates"][0]["decision_summary"][
+            "selected_manifestation_binding"
+        ] = "established"
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(forged), report)
+
+    def test_three_complete_author_representations_retain_all_role_facts(
+        self,
+    ) -> None:
+        author_values = tuple(
+            f"Author {index:02d}" for index in range(MAX_CONTRIBUTIONS)
+        )
+        providers = tuple(
+            _provider(
+                provider,
+                f"{provider}-edition",
+                tuple(
+                    _claim(
+                        provider,
+                        f"{provider}-edition",
+                        ClaimKind.CREATOR,
+                        author,
+                        scope=ClaimScope.WORK,
+                        role="author",
+                        order=index,
+                    )
+                    for index, author in enumerate(author_values)
+                ),
+                authority=authority,
+            )
+            for provider, authority in (
+                ("alpha", "hardcover"),
+                ("beta", "open_library"),
+                ("gamma", "google_books"),
+            )
+        )
+        report = _proposal_report(
+            title=None,
+            fields=_proposal_fields(
+                None,
+                authors=TargetField(
+                    TargetDestination.AUTHORS,
+                    TargetFieldState.MISSING,
+                ),
+            ),
+            providers=providers,
+        )
+        proposal = evaluate_report(report)
+        packet = ShadowReviewPacket.create(
+            ReviewCase.create(proposal, report),
+            proposal,
+            report,
+        )
+        authors = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == "authors"
+        )
+        self.assertEqual(1, len(authors["candidates"]))
+        summary = authors["candidates"][0]["decision_summary"]
+        self.assertEqual(
+            MAX_DECISION_CORRELATIONS * MAX_CONTRIBUTIONS,
+            MAX_CREATOR_ROLE_FACTS,
+        )
+        self.assertEqual(
+            3 * MAX_CONTRIBUTIONS,
+            len(summary["creator_roles"]["included"]),
+        )
+        self.assertEqual([], summary["creator_roles"]["excluded"])
+        self.assertEqual(
+            {
+                "independent_provider_correlations": 3,
+                "local_evidence": 0,
+                "target_only_preservation": 0,
+            },
+            summary["support"],
+        )
+        self.assertEqual(
+            packet,
+            ShadowReviewPacket.from_json(packet.to_json(), report),
+        )
+
+    def test_selected_epub_edition_evidence_establishes_manifestation(
+        self,
+    ) -> None:
+        report = _proposal_report(
+            fields=_proposal_fields(
+                isbn=TargetField(
+                    TargetDestination.ISBN,
+                    TargetFieldState.MISSING,
+                ),
+            ),
+            local_claims=(_explicit_local_ebook_isbn(),),
+            providers=(),
+        )
+        proposal = evaluate_report(report)
+        packet = ShadowReviewPacket.create(
+            ReviewCase.create(proposal, report),
+            proposal,
+            report,
+        )
+        isbn = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == "isbn"
+        )
+        summary = isbn["candidates"][0]["decision_summary"]
+        self.assertEqual("edition", summary["evidence_scope"])
+        self.assertEqual(
+            "established",
+            summary["selected_manifestation_binding"],
+        )
+        self.assertEqual(
+            {
+                "independent_provider_correlations": 0,
+                "local_evidence": 1,
+                "target_only_preservation": 0,
+            },
+            summary["support"],
+        )
 
     def test_identity_bound_creator_aliases_do_not_reach_reviewer_packet(
         self,
@@ -1390,6 +1848,12 @@ class ShadowReviewTests(unittest.TestCase):
             self.assertEqual("qualification_only", first["status"])
             self.assertEqual(first, replay)
             self.assertEqual(
+                (REQUEST_SCHEMA,),
+                repository._connection.execute(
+                    "SELECT request_schema FROM shadow_review_requests"
+                ).fetchone(),
+            )
+            self.assertEqual(
                 (1, 1, 1, 1),
                 (
                     repository._connection.execute(
@@ -1407,6 +1871,128 @@ class ShadowReviewTests(unittest.TestCase):
                 ),
             )
             repository.close()
+            reopened = open_repository(Path(directory) / "reports.sqlite")
+            reopened_replay = json.loads(
+                execute_shadow_review(
+                    reopened,
+                    case_id,
+                    _identity(),
+                    runner,
+                    claimant=(9001, "11"),
+                )
+            )
+            self.assertEqual(first, reopened_replay)
+            self.assertEqual(1, runner.calls)
+            reopened.close()
+
+    def test_prior_request_v4_schema_and_rows_are_rejected_without_change(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            repository, case_id = self._repository(directory)
+            request = repository.validate_shadow_request(
+                repository.preview_shadow_request(
+                    case_id, _identity().to_json()
+                )
+            )
+            repository._connection.execute(
+                "INSERT INTO shadow_review_requests("
+                "review_request_id,review_case_id,request_schema,"
+                "profile_document,packet_document,request_document) "
+                "VALUES(?,?,?,?,?,?)",
+                (
+                    request.review_request_id,
+                    request.review_case_id,
+                    REQUEST_SCHEMA,
+                    request.profile.to_json(),
+                    request.packet.to_json(),
+                    request.to_json(),
+                ),
+            )
+            repository._connection.commit()
+            repository.close()
+
+            connection = sqlite3.connect(path)
+            current_sql = connection.execute(
+                "SELECT sql FROM sqlite_master "
+                "WHERE type='table' AND name='shadow_review_requests'"
+            ).fetchone()[0]
+            prior_sql = current_sql.replace(
+                "request_schema TEXT NOT NULL "
+                "CHECK(request_schema='shadow-review-request-v5'), ",
+                "",
+            )
+            self.assertNotEqual(current_sql, prior_sql)
+            triggers = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type='trigger' "
+                    "AND name LIKE 'shadow_review_requests_no_%' "
+                    "ORDER BY name"
+                ).fetchall()
+            )
+            row = connection.execute(
+                "SELECT review_request_id,review_case_id,profile_document,"
+                "packet_document,request_document "
+                "FROM shadow_review_requests"
+            ).fetchone()
+            prior_row = (
+                row[0],
+                row[1],
+                row[2].replace(
+                    "shadow-review-packet-v5",
+                    "shadow-review-packet-v4",
+                ),
+                row[3].replace(
+                    "shadow-review-packet-v5",
+                    "shadow-review-packet-v4",
+                ),
+                row[4]
+                .replace(
+                    "shadow-review-request-v5",
+                    "shadow-review-request-v4",
+                )
+                .replace(
+                    "shadow-review-packet-v5",
+                    "shadow-review-packet-v4",
+                ),
+            )
+            connection.execute("DROP TRIGGER shadow_review_requests_no_delete")
+            connection.execute("DROP TRIGGER shadow_review_requests_no_update")
+            connection.execute("DROP TABLE shadow_review_requests")
+            connection.execute(prior_sql)
+            for trigger in triggers:
+                connection.execute(trigger)
+            connection.execute(
+                "INSERT INTO shadow_review_requests("
+                "review_request_id,review_case_id,profile_document,"
+                "packet_document,request_document) VALUES(?,?,?,?,?)",
+                prior_row,
+            )
+            connection.commit()
+            self.assertEqual(
+                (prior_sql,),
+                connection.execute(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type='table' AND name='shadow_review_requests'"
+                ).fetchone(),
+            )
+            self.assertEqual(
+                ("shadow-review-request-v4",),
+                connection.execute(
+                    "SELECT json_extract(request_document,'$.schema_version') "
+                    "FROM shadow_review_requests"
+                ).fetchone(),
+            )
+            connection.close()
+
+            before = hashlib.sha256(path.read_bytes()).hexdigest()
+            with self.assertRaises(MetadataReportError):
+                open_repository(path)
+            after = hashlib.sha256(path.read_bytes()).hexdigest()
+            self.assertEqual(before, after)
 
     def test_dispatched_failure_is_unknown_and_explicit_reevaluation_is_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2059,11 +2645,13 @@ class ShadowReviewTests(unittest.TestCase):
                 repository.validate_shadow_request(request.to_json())
             repository._connection.execute(
                 "INSERT INTO shadow_review_requests("
-                "review_request_id,review_case_id,profile_document,"
-                "packet_document,request_document) VALUES(?,?,?,?,?)",
+                "review_request_id,review_case_id,request_schema,"
+                "profile_document,packet_document,request_document) "
+                "VALUES(?,?,?,?,?,?)",
                 (
                     request.review_request_id,
                     request.review_case_id,
+                    REQUEST_SCHEMA,
                     request.profile.to_json(),
                     request.packet.to_json(),
                     request.to_json(),
@@ -2111,7 +2699,7 @@ class ShadowReviewTests(unittest.TestCase):
                 "mode": "qualification_only",
                 "model": "gpt-5.6-sol",
                 "output_version": "shadow-review-result-v1",
-                "packet_version": "shadow-review-packet-v4",
+                "packet_version": "shadow-review-packet-v5",
                 "policy_version": "qualification-only-policy-v1",
                 "profile_version": "codex-shadow-profile-v1",
                     "prompt_version": "shadow-review-prompt-v2",
@@ -2564,7 +3152,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
             "medium",
             "shadow-review-prompt-v2",
             "codex-shadow-profile-v1",
-            "shadow-review-packet-v4",
+            "shadow-review-packet-v5",
             "shadow-review-result-v1",
             "qualification-only-policy-v1",
             120,

@@ -38,10 +38,18 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.reviewer_decision_summary import (
+    DecisionSummaryValueError,
+    candidate_decision_summary,
+    compatibility_by_candidate,
+    proposal_decision_summary,
+    validate_candidate_decision_summary,
+    validate_proposal_decision_summary,
+)
 
-PACKET_SCHEMA = "shadow-review-packet-v4"
+PACKET_SCHEMA = "shadow-review-packet-v5"
 RESULT_SCHEMA = "shadow-review-result-v1"
-REQUEST_SCHEMA = "shadow-review-request-v4"
+REQUEST_SCHEMA = "shadow-review-request-v5"
 PROFILE_IDENTITY_SCHEMA = "reviewer-profile-identity-v1"
 QUALIFICATION_MODE = "qualification_only"
 MAX_PACKET_BYTES = 1_048_576
@@ -380,11 +388,14 @@ class ShadowReviewPacket:
         proposal_ids: list[str] = []
         citation_ids: list[str] = []
         proposal_evidence_references: set[str] = set()
+        decision_role_references: set[str] = set()
         provider_date_references: set[str] = set()
+        candidate_compatibility: dict[str, list[str]] = {}
         for proposal in self.proposals:
             if type(proposal) is not dict or set(proposal) != {
                 "candidates",
                 "current",
+                "decision_summary",
                 "destination",
                 "outcome",
                 "proposal_id",
@@ -400,6 +411,14 @@ class ShadowReviewPacket:
                 not in {value.value for value in TargetDestination}
             ):
                 raise ShadowReviewValueError("shadow-review packet is invalid")
+            try:
+                validate_proposal_decision_summary(
+                    proposal["decision_summary"]
+                )
+            except DecisionSummaryValueError as error:
+                raise ShadowReviewValueError(
+                    "shadow-review packet is invalid"
+                ) from error
             proposal_ids.append(proposal_id)
             candidates = proposal.get("candidates")
             if type(candidates) is not list:
@@ -425,6 +444,7 @@ class ShadowReviewPacket:
                         "correlations",
                         "date_event",
                         "date_precision",
+                        "decision_summary",
                         "evidence_references",
                         "scope",
                         "value",
@@ -450,6 +470,22 @@ class ShadowReviewPacket:
                 ):
                     raise ShadowReviewValueError("shadow-review packet is invalid")
                 candidate_ids.append(candidate.get("candidate_id"))
+                try:
+                    role_references, compatibility_ids = (
+                        validate_candidate_decision_summary(
+                            candidate["decision_summary"],
+                            candidate=candidate,
+                            destination=destination,
+                        )
+                    )
+                except DecisionSummaryValueError as error:
+                    raise ShadowReviewValueError(
+                        "shadow-review packet is invalid"
+                    ) from error
+                decision_role_references.update(role_references)
+                candidate_compatibility[candidate["candidate_id"]] = (
+                    compatibility_ids
+                )
                 proposal_evidence_references.update(
                     candidate["evidence_references"]
                 )
@@ -473,6 +509,19 @@ class ShadowReviewPacket:
             self.bibliographic_combinations,
             self.proposals,
         )
+        expected_compatibility: dict[str, set[str]] = {}
+        for combination in self.bibliographic_combinations:
+            for selection in combination["selections"]:
+                alternative_id = selection["alternative_id"]
+                if selection["kind"] == "candidate":
+                    expected_compatibility.setdefault(
+                        alternative_id, set()
+                    ).add(combination["combination_id"])
+        for candidate_id, compatibility_ids in candidate_compatibility.items():
+            if compatibility_ids != sorted(
+                expected_compatibility.get(candidate_id, [])
+            ):
+                raise ShadowReviewValueError("shadow-review packet is invalid")
         for citation in self.citations:
             if (
                 type(citation) is not dict
@@ -501,6 +550,10 @@ class ShadowReviewPacket:
         if not proposal_evidence_references.issubset(citation_ids):
             raise ShadowReviewValueError(
                 "shadow-review proposal evidence binding is invalid"
+            )
+        if not decision_role_references.issubset(citation_ids):
+            raise ShadowReviewValueError(
+                "shadow-review decision-summary evidence binding is invalid"
             )
         correlation_ids: list[str] = []
         for correlation in self.correlations:
@@ -550,6 +603,11 @@ class ShadowReviewPacket:
             for combination in proposal_set.bibliographic_combinations
             for selection in combination.selections
         }
+        compatibility_ids = compatibility_by_candidate(proposal_set)
+        raw_results = {
+            wrapped["result"]["destination"]: wrapped["result"]
+            for wrapped in case.proposals
+        }
         for wrapped in case.proposals:
             result = wrapped["result"]
             manual_required = wrapped["manual_required"]
@@ -573,6 +631,14 @@ class ShadowReviewPacket:
                     )
                     grouped["candidate_ids"].add(alternative["alternative_id"])
                     grouped["proposal_ids"].add(wrapped["proposal_id"])
+                decision_summary, role_references = candidate_decision_summary(
+                    report,
+                    result["destination"],
+                    alternative,
+                    raw_results,
+                    compatibility_ids,
+                )
+                references.update(role_references)
                 candidates.append(
                     {
                         "assessment": alternative["assessment"],
@@ -580,6 +646,7 @@ class ShadowReviewPacket:
                         "correlations": alternative["correlations"],
                         "date_event": alternative["date_event"],
                         "date_precision": alternative["date_precision"],
+                        "decision_summary": decision_summary,
                         "evidence_references": alternative["evidence_references"],
                         "scope": alternative["scope"],
                         "value": alternative["value"],
@@ -591,6 +658,11 @@ class ShadowReviewPacket:
                         candidates, key=lambda value: value["candidate_id"]
                     ),
                     "current": current[result["destination"]],
+                    "decision_summary": proposal_decision_summary(
+                        result,
+                        manual_required=manual_required,
+                        current=current[result["destination"]],
+                    ),
                     "destination": result["destination"],
                     "outcome": (
                         ProposalOutcome.UNRESOLVED_CHOICE.value
@@ -840,8 +912,25 @@ class ShadowReviewRequest:
                             "correlations": [],
                             "date_event": None,
                             "date_precision": None,
+                            "decision_summary": {
+                                "bibliographic_compatibility_ids": [],
+                                "creator_roles": {
+                                    "excluded": [],
+                                    "included": [],
+                                },
+                                "evidence_scope": "work",
+                                "publication": None,
+                                "selected_manifestation_binding": (
+                                    "associated_work_only"
+                                ),
+                                "support": {
+                                    "independent_provider_correlations": 0,
+                                    "local_evidence": 0,
+                                    "target_only_preservation": 0,
+                                },
+                            },
                             "evidence_references": [citation_id],
-                            "scope": "field",
+                            "scope": "work",
                             "value": "Synthetic title",
                         }
                     ],
@@ -849,6 +938,10 @@ class ShadowReviewRequest:
                         "confidence": "unknown",
                         "source": "synthetic",
                         "value": "Current synthetic title",
+                    },
+                    "decision_summary": {
+                        "evidence_sufficiency": "manual",
+                        "target_only_preservation": 0,
                     },
                     "destination": "title",
                     "outcome": "unresolved_choice",

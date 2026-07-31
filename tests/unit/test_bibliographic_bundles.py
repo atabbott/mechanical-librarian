@@ -27,6 +27,8 @@ from mechanical_librarian.domain.shadow_review import (
     ShadowReviewRequest,
     ShadowReviewResult,
     ShadowReviewSemanticError,
+    ShadowReviewValueError,
+    canonical_json,
 )
 from tests.unit.test_proposal_set import _claim, _fields, _provider, _report
 from tests.unit.test_shadow_reviews import _identity
@@ -431,6 +433,18 @@ class BibliographicBundleTests(unittest.TestCase):
                 if value["destination"] == TargetDestination.TITLE.value
             ),
         )
+        title_packet = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == TargetDestination.TITLE.value
+        )
+        self.assertEqual(
+            {
+                "evidence_sufficiency": "manual",
+                "target_only_preservation": 1,
+            },
+            title_packet["decision_summary"],
+        )
         self.assertTrue(
             all(
                 value["outcome"] == ProposalOutcome.UNRESOLVED_CHOICE.value
@@ -576,7 +590,7 @@ class BibliographicBundleTests(unittest.TestCase):
 
     def test_confirmed_current_title_is_a_preserve_member(self) -> None:
         report = _bibliographic_report(
-            current_title="Secret History",
+            current_title="secret history",
             providers=(
                 _source(
                     "catalogue",
@@ -603,6 +617,22 @@ class BibliographicBundleTests(unittest.TestCase):
         case = ReviewCase.create(proposal, report)
         self.assertEqual(case, ReviewCase.from_json(case.to_json()))
         packet = ShadowReviewPacket.create(case, proposal, report)
+        title_packet = next(
+            value
+            for value in packet.proposals
+            if value["destination"] == TargetDestination.TITLE.value
+        )
+        self.assertNotEqual(
+            title_packet["current"]["value"],
+            title_packet["candidates"][0]["value"]["value"],
+        )
+        self.assertEqual(
+            {
+                "evidence_sufficiency": "keep_current",
+                "target_only_preservation": 0,
+            },
+            title_packet["decision_summary"],
+        )
         self.assertEqual(
             packet,
             ShadowReviewPacket.from_json(packet.to_json(), report),
@@ -693,6 +723,39 @@ class BibliographicBundleTests(unittest.TestCase):
         )
         request = ShadowReviewRequest.create(case, _identity(), packet)
         combination = packet.bibliographic_combinations[0]
+        for selection in combination["selections"]:
+            if selection["kind"] != "candidate":
+                continue
+            candidate = next(
+                candidate
+                for proposal_entry in packet.proposals
+                for candidate in proposal_entry["candidates"]
+                if candidate["candidate_id"]
+                == selection["alternative_id"]
+            )
+            self.assertEqual(
+                [combination["combination_id"]],
+                candidate["decision_summary"][
+                    "bibliographic_compatibility_ids"
+                ],
+            )
+        forged_packet = json.loads(packet.to_json())
+        constrained_candidate = next(
+            candidate
+            for proposal_entry in forged_packet["proposals"]
+            for candidate in proposal_entry["candidates"]
+            if candidate["decision_summary"][
+                "bibliographic_compatibility_ids"
+            ]
+        )
+        constrained_candidate["decision_summary"][
+            "bibliographic_compatibility_ids"
+        ] = []
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(
+                canonical_json(forged_packet),
+                report,
+            )
         recommendation_by_destination = {}
         for proposal_entry in packet.proposals:
             destination = proposal_entry["destination"]

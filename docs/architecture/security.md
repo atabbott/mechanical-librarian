@@ -249,8 +249,19 @@ sanitized packet and attempt. Preview reads only profile bytes and application
 state; it constructs no executable, auth, target, provider, reviewer, or other
 network client and is not fresh eligibility proof. Request may invoke only the
 exact declared Codex/model/reasoning/prompt/profile/packet/output/policy tuple.
-ADR-0021 advances the current tuple to packet-v4/request-v4 while leaving
-result-v1 and the prompt/profile policy unchanged. Provider publication
+ADR-0022 advances the current tuple to packet-v5/request-v5 while leaving
+result-v1 and the prompt/profile policy unchanged. Decision summaries contain
+only closed enums, bounded counts, existing citation IDs and bibliographic
+combination IDs. They recompute local/provider correlation identities from the
+exact report, never inspect opaque hash prefixes, and never convert target-only,
+excluded-role, wrong-scope, unresolved-manifestation, or unrepresentable facts
+into independent support. Creator-role facts come only from the same exact
+representation/correlation groups as a complete author candidate. The packet
+byte limit and explicit role/count bounds apply before egress; no path,
+credential, raw provider body, rejected value, or new source text is added.
+Source-bound replay reconstructs the complete summary and rejects forged counts,
+bindings, roles, combination membership, date pairing, or sufficiency.
+Provider publication
 citations expose only bounded allowlisted identifier and physical-format fact
 objects already admitted to the report; exact reference membership, closed
 shape, ordering, and limits are revalidated so opaque-only or malformed
