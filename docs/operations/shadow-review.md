@@ -4,6 +4,13 @@ This development surface produces untrusted advice for one exact current
 ReviewCase. It cannot decide, approve, apply, write to Audiobookshelf or media,
 run in the background, retry automatically, or activate normal review.
 
+Private cohort qualification uses the separate
+[qualification-evidence contract](../development/reviewer-qualification.md).
+Its append-only experimental retry accounting does not change this command's
+product behavior: there is still no automatic retry, and an ordinary retained
+timeout is a terminal diagnostic observation for the experiment that observed
+it.
+
 ## Qualification profile
 
 Create an owner-only (`0600`) canonical JSON file matching

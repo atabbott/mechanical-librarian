@@ -78,6 +78,11 @@ parser. A clean rebuild may be required and old state may be retained offline.
 Exact-ID and current-scope replay apply only within the exact current schema;
 current-schema restart, replay, and crash safety remain mandatory.
 
+Private qualification attempt, retry-pair, scoring, cohort, analysis, and
+manifest records are evidence formats, not installed compatibility surfaces.
+They are frozen and validated by their owning private programme and cannot be
+loaded as application state or used to widen the supported reviewer tuple.
+
 This is a pre-release reset and not a deprecation cycle. Compatibility requires
 a named present user need. A future public release must document its own
 compatibility, migration, and restore promises before users depend on them.

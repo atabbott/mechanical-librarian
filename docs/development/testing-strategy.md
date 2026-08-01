@@ -152,6 +152,17 @@ controls, target non-independence, and canonical proposal/case/packet replay.
 Private acceptable-action adjudication and scoring are not product-policy
 tests.
 
+Private shadow-review qualification follows the separate
+[execution and action-scoring contract](reviewer-qualification.md). It freezes
+the compiler catalogue, treatment, cohort, order, and scorer before fresh
+scoring; reports first-pass, retry-pair, execution-inclusive ITT, and terminal
+semantic views separately; and scores only exact catalogue actions. Ordinary
+timeouts and semantic outcomes are terminal observations. Only predeclared,
+bounded process, transport, cancellation, resource, or receipt-integrity
+failures may receive an append-only paired retry. Development and CI use no
+live library or provider for this harness; any explicitly authorized private
+provider qualification remains synthetic or irreversibly sanitized.
+
 Focused bibliographic-relationship tests cover title-to-subtitle and
 title-to-series movement, clean versus decorated titles, exact-component
 duplication vetoes, ambiguous component and localized/original work titles,

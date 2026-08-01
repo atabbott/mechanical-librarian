@@ -249,6 +249,12 @@ sanitized packet and attempt. Preview reads only profile bytes and application
 state; it constructs no executable, auth, target, provider, reviewer, or other
 network client and is not fresh eligibility proof. Request may invoke only the
 exact declared Codex/model/reasoning/prompt/profile/packet/output/policy tuple.
+Private qualification analysis keeps dispatch completion, semantic-output
+validity, and action quality as separate trust-boundary decisions. It cannot
+turn a process failure or ordinary timeout into a semantic result, infer a
+missing provider response identity, or admit an action absent from the exact
+frozen compiler catalogue. Its bounded append-only retry pairs are evidence
+handling only and grant no product retry, egress, decision, or write authority.
 ADR-0025 advances the current tuple to packet-v5/request-v6 while leaving
 result-v1 and the prompt/profile policy unchanged. Before dispatch, the
 packet-only action compiler applies fixed admissibility and abstention rules to
