@@ -8,12 +8,14 @@ The current installed contract is intentionally narrow:
   `metadata-report-v22` plus `proposal-set-v3` under
   `fixed-conservative-v6`, or the separate `catalogue-v1` schema;
 - `review-case-v2`, `shadow-review-packet-v5`,
-  `shadow-review-request-v6`, `shadow-review-inspect-v3`,
+  `shadow-review-request-v7`, `shadow-review-result-v2`,
+  `shadow-review-inspect-v3`,
   `shadow-review-failure-v2`, and the exact-current append-only
   qualification-only shadow request/attempt/dispatch/outcome schema with
   required `shadow-review-execution-provenance-v1` outcomes;
 - canonical `reviewer-qualification-profile-v1` with exact
-  `gpt-5.6-sol`/`medium` and pinned Codex CLI/Bubblewrap identities; shadow
+  `shadow-review-prompt-v3`, `codex-shadow-profile-v2`,
+  `gpt-5.6-sol`/`medium`, and pinned Codex CLI/Bubblewrap identities; shadow
   request execution requires Linux;
 - strict `batch-manifest-v5` for foreground evidence batches;
 - Audiobookshelf v2.35.1 library, library-items, and current-item responses for
@@ -63,12 +65,15 @@ pre-release databases using `fixed-conservative-v5` or earlier are rejected
 before mutation and require a clean rebuild.
 
 Packet v5 decision summaries are exact projections of the current report,
-ProposalSet, ReviewCase, and bibliographic combinations. Request v6 compiles a
+ProposalSet, ReviewCase, and bibliographic combinations. Request v7 compiles a
 packet-only action catalogue and binds a finite output schema containing only
 admissible actions and their exact citations. Packet-v4 or request-v5 stores
 are not interpreted or migrated. The qualification profile schema mechanically
-binds packet v5; prompt, model, effort, result, provider transport, and
-qualification-only policy versions are unchanged.
+binds packet v5, prompt v3, profile v2, and result v2. Request v7 binds those
+exact bytes and the changed generated output-schema contract. Earlier
+request-v6/result-v1/profile-v1 state is not interpreted or migrated. Model,
+effort, provider transport, and qualification-only policy versions are
+unchanged.
 
 Until the first production release, every database, report, artifact,
 configuration, and internal-document schema accepts only absent state or its

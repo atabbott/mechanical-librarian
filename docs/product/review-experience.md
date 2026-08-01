@@ -88,9 +88,10 @@ Every proposed field change distinguishes:
 - source consensus;
 - supporting and contradicting evidence IDs;
 - AI recommendation and reason;
-- the required AI `problems` list containing adverse or unresolved problem
-  codes, with positive support shown through the cited evidence and reason and
-  a clean approval represented as `problems: []`;
+- the required AI `problems` list containing only bounded adverse or unresolved
+  facts, with positive support shown through the cited evidence and reason;
+  the list may be empty when there is no adverse fact, including a manual
+  recommendation that is fail-closed for insufficient or conflicting support;
 - applicable risks and notices; and
 - whether the choice is allowed for the target adapter and media type.
 

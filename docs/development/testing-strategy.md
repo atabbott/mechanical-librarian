@@ -168,7 +168,7 @@ title-to-series movement, clean versus decorated titles, exact-component
 duplication vetoes, ambiguous component and localized/original work titles,
 edition/work scope disagreement, no-safe-combination fallback, canonical
 proposal/case/packet replay, clean-schema persistence, exact currentness, and
-result-v1 rejection of a per-field tuple that is not one allowed combination.
+result-v2 rejection of a per-field tuple that is not one allowed combination.
 
 The #374 synthetic indicia aggregate reports contributor-role and
 manifestation-date recall separately from explicit-negative precision. Its
@@ -227,7 +227,7 @@ opaque review-case digest changes.
 Three independently correlated complete 16-author representations retain all
 48 role facts under the correlation-derived aggregate bound, while an
 over-bound forged role array still fails closed. Persistence records and
-revalidates the exact request-v6 discriminator; a populated prior request-v5
+revalidates the exact request-v7 discriminator; a populated prior request-v6
 table is rejected without changing its database bytes.
 Populated non-bibliographic current fields remain marked target-only when
 competing provider evidence requires manual review without an evidence-backed

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Bind the final qualification shadow-recommendation contract. Manual advice
+  may now retain an empty required `problems` list when it has a bounded reason
+  and exact citations but no adverse fact; present problems remain bounded
+  actual adverse facts. The prompt now requires `candidate_id` only for exact
+  packet-candidate advice, makes keep-current an evidence-positive conclusion,
+  and sends insufficient, conflicting, unrepresentable, or out-of-catalogue
+  support to manual review without output repair. Advance the exact tuple to
+  `shadow-review-prompt-v3`, `codex-shadow-profile-v2`,
+  `shadow-review-result-v2`, and `shadow-review-request-v7`; packet v5,
+  compiler policy, provider transport, and qualification-only authority remain
+  unchanged. Earlier pre-release request-v6/result-v1/profile-v1 state requires
+  a clean rebuild. (#419, #420, #421)
+
 - Compile a deterministic, packet-only catalogue of policy-admissible
   `recommend_candidate`, `recommend_keep_current`, and `manual` shadow-review
   actions before provider dispatch. Each action has a stable identity and an

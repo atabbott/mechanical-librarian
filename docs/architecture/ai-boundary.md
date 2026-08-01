@@ -42,7 +42,8 @@ The current qualification-only `shadow-review-packet-v5` contains:
 - the fixed prompt/profile/packet/output/policy identities bound by the
   qualification profile.
 
-ADR-0025 binds this projection into `shadow-review-request-v6`. Missing,
+ADR-0026 binds the current projection and result contract into
+`shadow-review-request-v7`. Missing,
 opaque-only, malformed, noncanonical, or over-bound provider date linkage
 fails before reviewer invocation. This applies to cited typed provider claims
 and rich date evidence; rich evidence citation IDs are also recomputed from
@@ -71,8 +72,9 @@ admissible citations, and allowed bibliographic combinations. Rejected
 candidate or keep-current actions retain stable typed exclusions. The compiler
 does not consume gold decisions, accepted-action projections, prior outputs,
 scores, latency, titles, human identity, or response metadata, and an unknown
-policy obligation excludes the nonmanual action. The request-v6 output schema
-enumerates only catalogue entries; result-v1 wire shape is unchanged, while
+policy obligation excludes the nonmanual action. The request-v7 output schema
+enumerates only catalogue entries; result-v2 keeps the same required fields
+while allowing an empty adverse-fact list, and
 trusted semantic validation now requires an exact entry and action-bound
 citations.
 
@@ -100,14 +102,20 @@ review behavior. Intent cannot suppress required evidence, contradictions,
 applicability checks, output validation, or any other mandatory input or gate.
 
 Output is one direct JSON object conforming to
-`shadow-review-result-v1`. Each field recommendation contains:
+`shadow-review-result-v2`. Each field recommendation contains:
 
 - proposal ID;
 - `recommend_candidate(candidate ID)`, `recommend_keep_current`, or `manual`;
 - concise reason;
-- required `problems`, containing unresolved or adverse problem codes only;
+- required `problems`, containing unresolved or adverse facts only and empty
+  when none exist;
 - cited evidence IDs;
-- optional confidence facts that do not independently control apply.
+
+`candidate_id` is non-null only for a candidate recommendation and is JSON
+`null` for manual and keep-current. Keep-current is an evidence-positive
+conclusion under the closed destination policy, never an uncertainty fallback.
+Insufficient, conflicting, explicitly manual, or unrepresentable support stays
+manual, including when the supported value is absent from packet candidates.
 
 The output shape has no separate combination field. Trusted semantic
 validation derives the recommendation tuple for every constrained destination

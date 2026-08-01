@@ -128,10 +128,10 @@ def _identity() -> ReviewerProfileIdentity:
         "bubblewrap-v1",
         "gpt-5.6-sol",
         "medium",
-        "shadow-review-prompt-v2",
-        "codex-shadow-profile-v1",
+        "shadow-review-prompt-v3",
+        "codex-shadow-profile-v2",
         "shadow-review-packet-v5",
-        "shadow-review-result-v1",
+        "shadow-review-result-v2",
         "qualification-only-policy-v1",
         120,
         65_536,
@@ -1943,7 +1943,7 @@ class ShadowReviewTests(unittest.TestCase):
             ).fetchone()[0]
             prior_sql = current_sql.replace(
                 "request_schema TEXT NOT NULL "
-                "CHECK(request_schema='shadow-review-request-v6'), ",
+                "CHECK(request_schema='shadow-review-request-v7'), ",
                 "",
             )
             self.assertNotEqual(current_sql, prior_sql)
@@ -1974,7 +1974,7 @@ class ShadowReviewTests(unittest.TestCase):
                 ),
                 row[4]
                 .replace(
-                    "shadow-review-request-v6",
+                    "shadow-review-request-v7",
                     "shadow-review-request-v5",
                 )
                 .replace(
@@ -2011,6 +2011,43 @@ class ShadowReviewTests(unittest.TestCase):
             )
             connection.close()
 
+            before = hashlib.sha256(path.read_bytes()).hexdigest()
+            with self.assertRaises(MetadataReportError):
+                open_repository(path)
+            after = hashlib.sha256(path.read_bytes()).hexdigest()
+            self.assertEqual(before, after)
+
+    def test_prior_request_v6_schema_is_rejected_without_change(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            repository = open_repository(path)
+            repository.close()
+            connection = sqlite3.connect(path)
+            current_sql = connection.execute(
+                "SELECT sql FROM sqlite_master "
+                "WHERE type='table' AND name='shadow_review_requests'"
+            ).fetchone()[0]
+            prior_sql = current_sql.replace(
+                "shadow-review-request-v7", "shadow-review-request-v6"
+            )
+            self.assertNotEqual(current_sql, prior_sql)
+            triggers = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type='trigger' "
+                    "AND name LIKE 'shadow_review_requests_no_%' "
+                    "ORDER BY name"
+                ).fetchall()
+            )
+            connection.execute("DROP TRIGGER shadow_review_requests_no_delete")
+            connection.execute("DROP TRIGGER shadow_review_requests_no_update")
+            connection.execute("DROP TABLE shadow_review_requests")
+            connection.execute(prior_sql)
+            for trigger in triggers:
+                connection.execute(trigger)
+            connection.commit()
+            connection.close()
             before = hashlib.sha256(path.read_bytes()).hexdigest()
             with self.assertRaises(MetadataReportError):
                 open_repository(path)
@@ -2575,7 +2612,7 @@ class ShadowReviewTests(unittest.TestCase):
                         {
                             "recommendations": [],
                             "review_request_id": request.review_request_id,
-                            "schema_version": "shadow-review-result-v1",
+                            "schema_version": "shadow-review-result-v2",
                         }
                     ),
                     request,
@@ -2735,11 +2772,11 @@ class ShadowReviewTests(unittest.TestCase):
                 },
                 "mode": "qualification_only",
                 "model": "gpt-5.6-sol",
-                "output_version": "shadow-review-result-v1",
+                "output_version": "shadow-review-result-v2",
                 "packet_version": "shadow-review-packet-v5",
                 "policy_version": "qualification-only-policy-v1",
-                "profile_version": "codex-shadow-profile-v1",
-                "prompt_version": "shadow-review-prompt-v2",
+                "profile_version": "codex-shadow-profile-v2",
+                "prompt_version": "shadow-review-prompt-v3",
                 "reasoning": "medium",
                 "sandbox": {
                     "path": str(root / "missing-bwrap"),
@@ -3190,10 +3227,10 @@ class CodexShadowAdapterTests(unittest.TestCase):
             "bubblewrap-v1",
             "gpt-5.6-sol",
             "medium",
-            "shadow-review-prompt-v2",
-            "codex-shadow-profile-v1",
+            "shadow-review-prompt-v3",
+            "codex-shadow-profile-v2",
             "shadow-review-packet-v5",
-            "shadow-review-result-v1",
+            "shadow-review-result-v2",
             "qualification-only-policy-v1",
             120,
             65_536,
@@ -3989,6 +4026,131 @@ class CodexShadowAdapterTests(unittest.TestCase):
             self.assertIn("const", item["proposal_id"])
             self.assertIn("const", item["recommendation"])
             repository.close()
+
+    def test_final_recommendation_contract_has_one_exact_profile_tuple(self) -> None:
+        identity = ReviewerProfileIdentity(
+            "a" * 64,
+            "codex-cli 0.146.0-alpha.3.1",
+            "b" * 64,
+            "bubblewrap-v1",
+            "gpt-5.6-sol",
+            "medium",
+            "shadow-review-prompt-v3",
+            "codex-shadow-profile-v2",
+            "shadow-review-packet-v5",
+            "shadow-review-result-v2",
+            "qualification-only-policy-v1",
+            120,
+            65_536,
+            536_870_912,
+            16,
+            131_072,
+        )
+        self.assertEqual("shadow-review-prompt-v3", identity.prompt_version)
+        self.assertEqual("codex-shadow-profile-v2", identity.profile_version)
+        self.assertEqual("shadow-review-result-v2", identity.output_version)
+        for prompt, profile, output in (
+            (
+                "shadow-review-prompt-v2",
+                "codex-shadow-profile-v1",
+                "shadow-review-result-v1",
+            ),
+            (
+                "shadow-review-prompt-v3",
+                "codex-shadow-profile-v1",
+                "shadow-review-result-v2",
+            ),
+        ):
+            with self.subTest(prompt=prompt, profile=profile, output=output):
+                with self.assertRaises(ShadowReviewValueError):
+                    ReviewerProfileIdentity(
+                        "a" * 64,
+                        "codex-cli 0.146.0-alpha.3.1",
+                        "b" * 64,
+                        "bubblewrap-v1",
+                        "gpt-5.6-sol",
+                        "medium",
+                        prompt,
+                        profile,
+                        "shadow-review-packet-v5",
+                        output,
+                        "qualification-only-policy-v1",
+                        120,
+                        65_536,
+                        536_870_912,
+                        16,
+                        131_072,
+                    )
+
+    def test_output_schema_binds_candidate_null_and_empty_manual_problems(self) -> None:
+        request = ShadowReviewRequest.synthetic_canary(_identity())
+        variants = json.loads(request.output_schema)["properties"][
+            "recommendations"
+        ]["items"]["oneOf"]
+        by_recommendation = {
+            value["properties"]["recommendation"]["const"]: value[
+                "properties"
+            ]
+            for value in variants
+        }
+        self.assertEqual(
+            "string",
+            by_recommendation["recommend_candidate"]["candidate_id"]["type"],
+        )
+        for kind, properties in by_recommendation.items():
+            if kind == "recommend_candidate":
+                continue
+            self.assertEqual("null", properties["candidate_id"]["type"])
+            self.assertIsNone(properties["candidate_id"]["const"])
+        self.assertEqual(0, by_recommendation["manual"]["problems"]["minItems"])
+
+    def test_cited_manual_result_needs_reasons_but_not_fabricated_problems(self) -> None:
+        request = ShadowReviewRequest.synthetic_canary(_identity())
+        proposal_id = request.packet.proposals[0]["proposal_id"]
+        action = compile_shadow_review_actions(request.packet).action_for(
+            proposal_id, "manual", None
+        )
+        assert action is not None
+        self.assertTrue(action.citation_ids)
+        recommendation = {
+            "candidate_id": None,
+            "citations": list(action.citation_ids),
+            "problems": [],
+            "proposal_id": proposal_id,
+            "reasons": ["The cited evidence requires manual review."],
+            "recommendation": "manual",
+        }
+        result = ShadowReviewResult(
+            request.review_request_id,
+            (recommendation,),
+        )
+        result.validate_for(request)
+        for replacement in (
+            {"problems": [""]},
+            {"reasons": []},
+            {
+                "candidate_id": request.packet.proposals[0]["candidates"][0][
+                    "candidate_id"
+                ]
+            },
+        ):
+            with self.subTest(replacement=replacement):
+                invalid = ShadowReviewResult(
+                    request.review_request_id,
+                    ({**recommendation, **replacement},),
+                )
+                with self.assertRaises(ShadowReviewValueError):
+                    invalid.validate_for(request)
+
+    def test_prompt_binds_candidate_keep_and_manual_semantics(self) -> None:
+        request = ShadowReviewRequest.synthetic_canary(_identity())
+        prompt = codex_shadow._prompt(request, schema_digest="a" * 64)
+        self.assertIn(
+            "candidate_id is non-null only for recommend_candidate", prompt
+        )
+        self.assertIn("keep-current is evidence-positive", prompt)
+        self.assertIn("problems may be empty", prompt)
+        self.assertIn("supported value is absent from packet candidates", prompt)
 
     def test_output_schema_rejects_typeless_or_contradictory_bindings(self) -> None:
         with self.assertRaisesRegex(ShadowReviewerError, "schema"):
