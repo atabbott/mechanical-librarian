@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Compile a deterministic, packet-only catalogue of policy-admissible
+  `recommend_candidate`, `recommend_keep_current`, and `manual` shadow-review
+  actions before provider dispatch. Each action has a stable identity and an
+  exact citation and bibliographic-combination closure; rejected nonmanual
+  actions retain stable typed exclusions and unknown obligations fail closed.
+  The structured-output schema now enumerates only compiled actions, and
+  trusted result validation requires an exact action and action-bound
+  citations. Advance the exact-current request contract to
+  `shadow-review-request-v6`; result v1, packet v5, prompt, model, effort,
+  provider transport, and qualification-only authority remain unchanged.
+  Earlier request-v5 stores are rejected without migration. (#431)
+
 - Isolate ordinary qualification-reviewer provider state from primary
   credential material. Authentication management retains its explicit writable
   store, while ordinary status and inference mount a disposable per-attempt

@@ -17,7 +17,7 @@ material are never stored in the application database. The tuple is fixed to:
 - prompt `shadow-review-prompt-v2`;
 - profile `codex-shadow-profile-v1`;
 - packet `shadow-review-packet-v5`;
-- request `shadow-review-request-v5`;
+- request `shadow-review-request-v6`;
 - output `shadow-review-result-v1`;
 - policy `qualification-only-policy-v1`; and
 - sandbox `bubblewrap-v1`.
@@ -43,8 +43,19 @@ date/year pairing and remain report-only with unsupported writes.
 
 The proposal summary is not reviewer advice. `candidate`, `keep_current`, and
 `manual` describe only the existing closed ProposalSet/ReviewCase outcome.
-Review result v1 still makes the untrusted recommendation and remains subject
-to complete candidate, citation, combination, and currentness validation.
+Before request creation, the trusted domain compiler independently evaluates
+every candidate action, keep-current action, and the explicit manual action
+from packet and fixed policy facts. It emits stable action identities, exact
+citation and bibliographic-combination closures, and typed exclusions for
+rejected nonmanual actions. Unknown obligations fail closed. It does not read
+gold decisions, prior reviewer output, scores, latency, titles, human identity,
+or response metadata.
+
+Request v6 binds a finite structured-output `oneOf` containing only those
+compiled actions. Review result v1 still makes the untrusted recommendation;
+trusted validation requires the exact compiled action, action-bound citations,
+complete proposal coverage, one coherent bibliographic combination where
+applicable, and currentness.
 
 ## Authentication
 
@@ -248,7 +259,7 @@ parser, semantic validator, and cleanup as an ordinary request, and therefore
 uses the exact ordinary wrapped command from empty `/job`, including
 `--skip-git-repo-check`. It never sends a holdout and blocks the cohort on
 failure. Each request binds the canonical structured-output schema bytes and
-SHA-256 into `shadow-review-request-v5` and its identity; the executor uses
+SHA-256 into `shadow-review-request-v6` and its identity; the executor uses
 those exact bytes. The complete canonical request envelope is bounded at
 3,227,648 bytes, and the exact-current SQLite column has the same byte capacity;
 there is no truncation. The generated schema is restricted to the pinned

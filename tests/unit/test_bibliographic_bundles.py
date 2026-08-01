@@ -30,6 +30,9 @@ from mechanical_librarian.domain.shadow_review import (
     ShadowReviewValueError,
     canonical_json,
 )
+from mechanical_librarian.domain.shadow_review_actions import (
+    compile_shadow_review_actions,
+)
 from tests.unit.test_proposal_set import _claim, _fields, _provider, _report
 from tests.unit.test_shadow_reviews import _identity
 
@@ -478,15 +481,40 @@ class BibliographicBundleTests(unittest.TestCase):
                 request.review_request_id,
                 recommendations,
             ).validate_for(request)
-        manual = tuple(
-            {
-                **value,
-                "candidate_id": None,
-                "problems": ["No safe bibliographic combination."],
-                "recommendation": "manual",
-            }
-            for value in recommendations
+        catalogue = compile_shadow_review_actions(packet)
+        affected_proposal_ids = {
+            value["proposal_id"]
+            for value in packet.proposals
+            if "no_safe_bibliographic_combination" in value["reasons"]
+        }
+        self.assertFalse(
+            any(
+                action.proposal_id in affected_proposal_ids
+                and action.recommendation != "manual"
+                for action in catalogue.actions
+            )
         )
+        self.assertTrue(
+            all(
+                "no_safe_bibliographic_combination" in exclusion.reasons
+                for exclusion in catalogue.exclusions
+                if exclusion.proposal_id in affected_proposal_ids
+            )
+        )
+        manual_entries = []
+        for value in recommendations:
+            action = catalogue.action_for(value["proposal_id"], "manual", None)
+            assert action is not None
+            manual_entries.append(
+                {
+                    **value,
+                    "candidate_id": None,
+                    "citations": list(action.citation_ids),
+                    "problems": ["No safe bibliographic combination."],
+                    "recommendation": "manual",
+                }
+            )
+        manual = tuple(manual_entries)
         ShadowReviewResult(
             request.review_request_id,
             manual,
@@ -639,6 +667,7 @@ class BibliographicBundleTests(unittest.TestCase):
         )
         request = ShadowReviewRequest.create(case, _identity(), packet)
         packet_combination = packet.bibliographic_combinations[0]
+        catalogue = compile_shadow_review_actions(packet)
         recommendations = []
         for proposal_entry in packet.proposals:
             destination = proposal_entry["destination"]
@@ -647,24 +676,29 @@ class BibliographicBundleTests(unittest.TestCase):
                 for value in packet_combination["selections"]
                 if value["destination"] == destination
             )
-            recommendations.append(
-                {
-                    "candidate_id": (
-                        selection["alternative_id"]
-                        if selection["kind"] == "candidate"
-                        else None
-                    ),
-                    "citations": [packet.citations[0]["citation_id"]],
-                    "problems": [],
-                    "proposal_id": proposal_entry["proposal_id"],
-                    "reasons": ["Exact allowed bibliographic combination."],
-                    "recommendation": (
-                        "recommend_candidate"
-                        if selection["kind"] == "candidate"
-                        else "recommend_keep_current"
-                    ),
-                }
+            recommendation = {
+                "candidate_id": (
+                    selection["alternative_id"]
+                    if selection["kind"] == "candidate"
+                    else None
+                ),
+                "problems": [],
+                "proposal_id": proposal_entry["proposal_id"],
+                "reasons": ["Exact allowed bibliographic combination."],
+                "recommendation": (
+                    "recommend_candidate"
+                    if selection["kind"] == "candidate"
+                    else "recommend_keep_current"
+                ),
+            }
+            action = catalogue.action_for(
+                recommendation["proposal_id"],
+                recommendation["recommendation"],
+                recommendation["candidate_id"],
             )
+            assert action is not None
+            recommendation["citations"] = list(action.citation_ids)
+            recommendations.append(recommendation)
         result = ShadowReviewResult(
             request.review_request_id,
             tuple(recommendations),
@@ -690,16 +724,28 @@ class BibliographicBundleTests(unittest.TestCase):
             "candidate_id"
         ]
         title_recommendation["recommendation"] = "recommend_candidate"
-        with self.assertRaises(ShadowReviewSemanticError):
-            ShadowReviewResult.from_json(
-                json.dumps(
-                    invalid,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ),
-                request,
-            )
+        candidate_action = catalogue.action_for(
+            title_recommendation["proposal_id"],
+            title_recommendation["recommendation"],
+            title_recommendation["candidate_id"],
+        )
+        assert candidate_action is not None
+        title_recommendation["citations"] = list(
+            candidate_action.citation_ids
+        )
+        candidate_result = ShadowReviewResult.from_json(
+            json.dumps(
+                invalid,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            request,
+        )
+        self.assertEqual(
+            packet_combination["combination_id"],
+            candidate_result.selected_bibliographic_combination_id(request),
+        )
 
     def test_packet_and_result_bind_one_allowed_combination(self) -> None:
         report = _bibliographic_report(
@@ -723,6 +769,7 @@ class BibliographicBundleTests(unittest.TestCase):
         )
         request = ShadowReviewRequest.create(case, _identity(), packet)
         combination = packet.bibliographic_combinations[0]
+        catalogue = compile_shadow_review_actions(packet)
         for selection in combination["selections"]:
             if selection["kind"] != "candidate":
                 continue
@@ -776,14 +823,21 @@ class BibliographicBundleTests(unittest.TestCase):
             else:
                 candidate = None
                 kind = "recommend_keep_current"
-            recommendation_by_destination[destination] = {
+            recommendation = {
                 "candidate_id": candidate,
-                "citations": [packet.citations[0]["citation_id"]],
                 "problems": [],
                 "proposal_id": proposal_entry["proposal_id"],
                 "reasons": ["Exact allowed bibliographic combination."],
                 "recommendation": kind,
             }
+            action = catalogue.action_for(
+                recommendation["proposal_id"],
+                recommendation["recommendation"],
+                recommendation["candidate_id"],
+            )
+            assert action is not None
+            recommendation["citations"] = list(action.citation_ids)
+            recommendation_by_destination[destination] = recommendation
         recommendations = tuple(
             recommendation_by_destination[value["destination"]]
             for value in packet.proposals
