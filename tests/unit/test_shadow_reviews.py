@@ -4,6 +4,7 @@ import io
 import hashlib
 import json
 import os
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -28,6 +29,7 @@ from mechanical_librarian.adapters.reviewers.codex_shadow import (
 )
 from mechanical_librarian.application.shadow_reviews import (
     CitationNormalizationMarker,
+    ReviewerExecutionProvenance,
     ShadowReviewError,
     ShadowReviewRunResult,
     execute_shadow_review,
@@ -224,7 +226,11 @@ class _Runner:
         if self.fail is not None:
             raise ShadowReviewerError(self.fail, count=9, digest="c" * 64)
         return ShadowReviewRunResult(
-            _result(request), CitationNormalizationMarker(False, 0)
+            _result(request),
+            CitationNormalizationMarker(False, 0),
+            ReviewerExecutionProvenance.with_state(
+                request.profile, "not_exposed"
+            ),
         )
 
 
@@ -1846,6 +1852,14 @@ class ShadowReviewTests(unittest.TestCase):
             )
             self.assertEqual(1, runner.calls)
             self.assertEqual("qualification_only", first["status"])
+            self.assertEqual(
+                [
+                    ReviewerExecutionProvenance.with_state(
+                        _identity(), "not_exposed"
+                    ).to_projection_data()
+                ],
+                first["execution_provenance"],
+            )
             self.assertEqual(first, replay)
             self.assertEqual(
                 (REQUEST_SCHEMA,),
@@ -2255,6 +2269,9 @@ class ShadowReviewTests(unittest.TestCase):
             repository.record_shadow_failure(
                 prepared["attempt_id"],
                 reviewer_failure_diagnostic("setup").to_json(),
+                ReviewerExecutionProvenance.with_state(
+                    _identity(), "unverifiable"
+                ).to_json(),
             )
             request_id = prepared["request"]["review_request_id"]
             inspected = json.loads(
@@ -2314,7 +2331,11 @@ class ShadowReviewTests(unittest.TestCase):
             request_id = prepared["request"]["review_request_id"]
             with self.assertRaises(MetadataReportError):
                 repository.record_shadow_failure(
-                    attempt_id, invalid.to_json()
+                    attempt_id,
+                    invalid.to_json(),
+                    ReviewerExecutionProvenance.with_state(
+                        _identity(), "unverifiable"
+                    ).to_json(),
                 )
             self.assertEqual(
                 (0,),
@@ -2325,9 +2346,16 @@ class ShadowReviewTests(unittest.TestCase):
 
             repository._connection.execute(
                 "INSERT INTO shadow_review_outcomes("
-                "attempt_id,kind,result_document,failure_document) "
-                "VALUES(?,'failure',NULL,?)",
-                (attempt_id, invalid.to_json()),
+                "attempt_id,kind,result_document,failure_document,"
+                "execution_provenance_document) "
+                "VALUES(?,'failure',NULL,?,?)",
+                (
+                    attempt_id,
+                    invalid.to_json(),
+                    ReviewerExecutionProvenance.with_state(
+                        _identity(), "unverifiable"
+                    ).to_json(),
+                ),
             )
             repository._connection.commit()
             with self.assertRaises(MetadataReportError) as raised:
@@ -2702,7 +2730,7 @@ class ShadowReviewTests(unittest.TestCase):
                 "packet_version": "shadow-review-packet-v5",
                 "policy_version": "qualification-only-policy-v1",
                 "profile_version": "codex-shadow-profile-v1",
-                    "prompt_version": "shadow-review-prompt-v2",
+                "prompt_version": "shadow-review-prompt-v2",
                 "reasoning": "medium",
                 "sandbox": {
                     "path": str(root / "missing-bwrap"),
@@ -3143,6 +3171,9 @@ class CodexShadowAdapterTests(unittest.TestCase):
         jobs.mkdir()
         os.chmod(auth, 0o700)
         os.chmod(jobs, 0o700)
+        credential = auth / "auth.json"
+        credential.write_bytes(b"synthetic-primary-credential")
+        os.chmod(credential, 0o600)
         identity = ReviewerProfileIdentity(
             hashlib.sha256(codex.read_bytes()).hexdigest(),
             "codex-cli 0.146.0-alpha.3.1",
@@ -3177,6 +3208,17 @@ class CodexShadowAdapterTests(unittest.TestCase):
                 os.lseek(bound.descriptor, 0, os.SEEK_SET)
                 self.assertEqual(b"original", os.read(bound.descriptor, 64))
             self.assertEqual(b"replacement", path.read_bytes())
+
+    def test_bound_credential_detects_in_place_content_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "auth.json"
+            path.write_bytes(b"synthetic-primary-credential")
+            os.chmod(path, 0o600)
+            with codex_shadow._bound_credential(path) as credential:
+                path.write_bytes(b"synthetic-content-drift")
+                self.assertFalse(
+                    codex_shadow._credential_unchanged(path, credential)
+                )
 
     def test_auth_commands_mask_store_config_and_pin_constraints(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3258,7 +3300,15 @@ class CodexShadowAdapterTests(unittest.TestCase):
                         self.assertEqual(
                             set(codex_shadow._auth_config()), overrides
                         )
-                    self.assertEqual(1, len(run.call_args_list[0].kwargs["pass_fds"]))
+                    version_command = run.call_args_list[0].args[0]
+                    self.assertEqual(2, len(run.call_args_list[0].kwargs["pass_fds"]))
+                    self.assertEqual(
+                        str(run.call_args_list[0].kwargs["pass_fds"][1]),
+                        version_command[0].rsplit("/", 1)[1],
+                    )
+                    self.assertNotIn(str(profile.auth_store_path), version_command)
+                    self.assertIn("--unshare-net", version_command)
+                    self.assertEqual("--version", version_command[-1])
                     for call in run.call_args_list[1:]:
                         self.assertEqual(3, len(call.kwargs["pass_fds"]))
 
@@ -3322,6 +3372,61 @@ class CodexShadowAdapterTests(unittest.TestCase):
                     with self.assertRaisesRegex(ShadowReviewerError, "auth"):
                         reviewer._require_chatgpt_auth([], object(), object(), 0)
 
+    def test_ordinary_auth_status_inherits_bound_credential_descriptor(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex, sandbox = root / "codex", root / "bwrap"
+            codex.write_bytes(b"codex")
+            sandbox.write_bytes(b"bwrap")
+            os.chmod(codex, 0o700)
+            os.chmod(sandbox, 0o700)
+            profile = self._profile(root, codex, sandbox)
+            reviewer = CodexShadowReviewer(profile)
+            provider_state = root / "provider-state"
+            provider_state.mkdir(mode=0o700)
+            with (
+                codex_shadow._bound_artifact(
+                    codex, profile.identity.executable_sha256
+                ) as bound_codex,
+                codex_shadow._bound_artifact(
+                    sandbox, profile.identity.sandbox_sha256
+                ) as bound_sandbox,
+                codex_shadow._bound_credential(
+                    profile.auth_store_path / "auth.json"
+                ) as credential,
+                reviewer._empty_auth_config() as empty_config,
+                patch.object(
+                    codex_shadow.subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess(
+                        [], 0, b"Logged in using ChatGPT\n", b""
+                    ),
+                ) as run,
+            ):
+                command = reviewer._auth_command(
+                    bound_codex,
+                    bound_sandbox,
+                    empty_config,
+                    provider_state_path=provider_state,
+                    credential_path=credential.invocation_path,
+                )
+                reviewer._require_chatgpt_auth(
+                    command,
+                    bound_codex,
+                    bound_sandbox,
+                    empty_config,
+                    credential,
+                )
+                self.assertIn(credential.invocation_path, command)
+                self.assertNotIn(
+                    str(profile.auth_store_path / "auth.json"), command
+                )
+                self.assertIn(
+                    credential.descriptor, run.call_args.kwargs["pass_fds"]
+                )
+
     def test_sandbox_command_has_exact_tool_disable_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -3334,8 +3439,10 @@ class CodexShadowAdapterTests(unittest.TestCase):
             command = CodexShadowReviewer(profile)._sandbox_command(
                 root,
                 root / "result.json",
+                root / "provider-state",
                 "/proc/self/fd/10",
                 "/proc/self/fd/11",
+                "/proc/self/fd/12",
             )
             overrides = {
                 command[index + 1]
@@ -3405,6 +3512,9 @@ class CodexShadowAdapterTests(unittest.TestCase):
             os.chmod(codex, 0o700)
             os.chmod(sandbox, 0o700)
             profile = self._profile(root, codex, sandbox)
+            credential_path = profile.auth_store_path / "auth.json"
+            credential_path.write_bytes(b"synthetic-primary-credential")
+            os.chmod(credential_path, 0o600)
             reviewer = CodexShadowReviewer(profile)
             request = _request_with_citations(identity=profile.identity)
             citation_ids = [
@@ -3424,11 +3534,53 @@ class CodexShadowAdapterTests(unittest.TestCase):
             ]
             dispatches: list[tuple[int, int, str]] = []
 
-            def run_gated(*args) -> int:
+            credential_descriptors: list[int] = []
+
+            def require_auth(command, *_args) -> None:
+                jobs = list(profile.job_root_path.glob("shadow-review-*"))
+                self.assertEqual(1, len(jobs))
+                provider_state = jobs[0] / "provider-state"
+                state = command.index(str(provider_state))
+                self.assertEqual(
+                    ("--bind", str(provider_state), "/auth"),
+                    tuple(command[state - 1 : state + 2]),
+                )
+                bound_credential = _args[-1]
+                credential_descriptors.append(bound_credential.descriptor)
+                credential_path_from_fd = bound_credential.invocation_path
+                credential = command.index(credential_path_from_fd)
+                self.assertEqual(
+                    ("--ro-bind", credential_path_from_fd, "/auth/auth.json"),
+                    tuple(command[credential - 1 : credential + 2]),
+                )
+                self.assertNotIn(str(credential_path), command)
+                self.assertNotIn(str(profile.auth_store_path), command)
+
+            def run_gated(*args, **kwargs) -> int:
+                command = args[0]
                 dispatched = args[-1]
                 dispatched(1234, 1234, "5678")
                 jobs = list(profile.job_root_path.glob("shadow-review-*"))
                 self.assertEqual(1, len(jobs))
+                provider_state = jobs[0] / "provider-state"
+                self.assertTrue(provider_state.is_dir())
+                self.assertEqual(
+                    ("--bind", str(provider_state), "/auth"),
+                    tuple(command[command.index(str(provider_state)) - 1 : command.index(str(provider_state)) + 2]),
+                )
+                credential_descriptor = kwargs["credential_descriptor"]
+                credential_descriptors.append(credential_descriptor)
+                credential_path_from_fd = f"/proc/self/fd/{credential_descriptor}"
+                credential = command.index(credential_path_from_fd)
+                self.assertEqual(
+                    ("--ro-bind", credential_path_from_fd, "/auth/auth.json"),
+                    tuple(command[credential - 1 : credential + 2]),
+                )
+                self.assertNotIn(str(credential_path), command)
+                self.assertNotIn(str(profile.auth_store_path), command)
+                (provider_state / "cache.db").write_bytes(
+                    b"synthetic-provider-state"
+                )
                 (jobs[0] / "result.json").write_bytes(
                     canonical_json(untrusted).encode("utf-8")
                 )
@@ -3437,7 +3589,11 @@ class CodexShadowAdapterTests(unittest.TestCase):
             with (
                 patch.object(codex_shadow.sys, "platform", "linux"),
                 patch.object(reviewer, "_verify_codex"),
-                patch.object(reviewer, "_require_chatgpt_auth"),
+                patch.object(
+                    reviewer,
+                    "_require_chatgpt_auth",
+                    side_effect=require_auth,
+                ),
                 patch.object(reviewer, "_run_gated", side_effect=run_gated),
             ):
                 result = reviewer.run(
@@ -3451,7 +3607,34 @@ class CodexShadowAdapterTests(unittest.TestCase):
                 CitationNormalizationMarker(True, 1),
                 result.citation_normalization,
             )
+            provenance = result.execution_provenance.to_data()
+            self.assertEqual(profile.identity.to_data(), provenance["requested"])
+            self.assertEqual(
+                {
+                    field: {"state": "not_exposed", "value": None}
+                    for field in (
+                        "cost",
+                        "effort",
+                        "fallback",
+                        "model",
+                        "route",
+                        "tier",
+                        "usage",
+                    )
+                },
+                provenance["observed"],
+            )
+            self.assertEqual(
+                "shadow-review-execution-provenance-v1",
+                provenance["schema_version"],
+            )
             self.assertEqual([(1234, 1234, "5678")], dispatches)
+            self.assertEqual(2, len(credential_descriptors))
+            self.assertEqual(1, len(set(credential_descriptors)))
+            self.assertEqual(
+                b"synthetic-primary-credential",
+                credential_path.read_bytes(),
+            )
             self.assertFalse(
                 list(profile.job_root_path.glob("shadow-review-*"))
             )
@@ -3474,7 +3657,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
             for returncode in (126, 128 + signal.SIGKILL, 1):
                 reviewer = CodexShadowReviewer(profile)
 
-                def run_gated(*args, code=returncode) -> int:
+                def run_gated(*args, code=returncode, **_kwargs) -> int:
                     os.write(args[4], stdout)
                     os.write(args[5], stderr)
                     args[6](1234, 1234, "5678")
@@ -3502,6 +3685,150 @@ class CodexShadowAdapterTests(unittest.TestCase):
                 self.assertFalse(
                     list(profile.job_root_path.glob("shadow-review-*"))
                 )
+
+    def test_overlay_cleanup_failure_is_terminal_and_blocks_redispatch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex, sandbox = root / "codex", root / "bwrap"
+            codex.write_bytes(b"codex")
+            sandbox.write_bytes(b"bwrap")
+            os.chmod(codex, 0o700)
+            os.chmod(sandbox, 0o700)
+            profile = self._profile(root, codex, sandbox)
+            credential_path = profile.auth_store_path / "auth.json"
+            credential_path.write_bytes(b"synthetic-primary-credential")
+            os.chmod(credential_path, 0o600)
+            reviewer = CodexShadowReviewer(profile)
+            request = ShadowReviewRequest.synthetic_canary(profile.identity)
+            remove_tree = shutil.rmtree
+
+            def run_gated(*args, **_kwargs) -> int:
+                jobs = list(profile.job_root_path.glob("shadow-review-*"))
+                self.assertEqual(1, len(jobs))
+                (jobs[0] / "result.json").write_bytes(
+                    _result(request).to_json().encode("utf-8")
+                )
+                args[-1](1234, 1234, "5678")
+                return 0
+
+            def remove_then_fail(path: Path) -> None:
+                remove_tree(path)
+                raise OSError("private cleanup detail")
+
+            with (
+                patch.object(codex_shadow.sys, "platform", "linux"),
+                patch.object(reviewer, "_verify_codex"),
+                patch.object(reviewer, "_require_chatgpt_auth"),
+                patch.object(
+                    reviewer, "_run_gated", side_effect=run_gated
+                ),
+                patch.object(
+                    codex_shadow.shutil,
+                    "rmtree",
+                    side_effect=remove_then_fail,
+                ),
+            ):
+                with self.assertRaises(ShadowReviewerError) as raised:
+                    reviewer.run(request, lambda *_: None)
+            self.assertEqual("runtime", raised.exception.code)
+            self.assertTrue(
+                (profile.job_root_path / ".reviewer-trust-failure").is_file()
+            )
+            with (
+                patch.object(codex_shadow.sys, "platform", "linux"),
+                patch.object(reviewer, "_verify_codex"),
+                patch.object(reviewer, "_require_chatgpt_auth"),
+                patch.object(reviewer, "_run_gated") as run_again,
+                self.assertRaises(ShadowReviewerError) as blocked,
+            ):
+                reviewer.run(request, lambda *_: None)
+            self.assertEqual("setup", blocked.exception.code)
+            run_again.assert_not_called()
+
+    def test_primary_credential_drift_is_preserved_and_blocks_redispatch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex, sandbox = root / "codex", root / "bwrap"
+            codex.write_bytes(b"codex")
+            sandbox.write_bytes(b"bwrap")
+            os.chmod(codex, 0o700)
+            os.chmod(sandbox, 0o700)
+            profile = self._profile(root, codex, sandbox)
+            credential_path = profile.auth_store_path / "auth.json"
+            credential_path.write_bytes(b"synthetic-primary-credential")
+            os.chmod(credential_path, 0o600)
+            reviewer = CodexShadowReviewer(profile)
+            request = ShadowReviewRequest.synthetic_canary(profile.identity)
+
+            def run_gated(*args, **kwargs) -> int:
+                jobs = list(profile.job_root_path.glob("shadow-review-*"))
+                (jobs[0] / "result.json").write_bytes(
+                    _result(request).to_json().encode("utf-8")
+                )
+                replacement = profile.auth_store_path / "replacement.json"
+                replacement.write_bytes(b"synthetic-replacement")
+                os.chmod(replacement, 0o600)
+                os.replace(replacement, credential_path)
+                credential_descriptor = kwargs["credential_descriptor"]
+                self.assertIn(
+                    f"/proc/self/fd/{credential_descriptor}", args[0]
+                )
+                self.assertNotIn(str(credential_path), args[0])
+                args[-1](1234, 1234, "5678")
+                return 0
+
+            with (
+                patch.object(codex_shadow.sys, "platform", "linux"),
+                patch.object(reviewer, "_verify_codex"),
+                patch.object(reviewer, "_require_chatgpt_auth"),
+                patch.object(
+                    reviewer, "_run_gated", side_effect=run_gated
+                ),
+            ):
+                with self.assertRaises(ShadowReviewerError) as raised:
+                    reviewer.run(request, lambda *_: None)
+            self.assertEqual("auth", raised.exception.code)
+            self.assertEqual(b"synthetic-replacement", credential_path.read_bytes())
+            self.assertTrue(
+                (profile.job_root_path / ".reviewer-trust-failure").is_file()
+            )
+            with (
+                patch.object(codex_shadow.sys, "platform", "linux"),
+                patch.object(reviewer, "_run_gated") as run_again,
+                self.assertRaises(ShadowReviewerError) as blocked,
+            ):
+                reviewer.run(request, lambda *_: None)
+            self.assertEqual("setup", blocked.exception.code)
+            run_again.assert_not_called()
+
+    def test_dangling_trust_failure_marker_blocks_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex, sandbox = root / "codex", root / "bwrap"
+            codex.write_bytes(b"codex")
+            sandbox.write_bytes(b"bwrap")
+            os.chmod(codex, 0o700)
+            os.chmod(sandbox, 0o700)
+            profile = self._profile(root, codex, sandbox)
+            (profile.job_root_path / ".reviewer-trust-failure").symlink_to(
+                profile.job_root_path / "absent-target"
+            )
+            reviewer = CodexShadowReviewer(profile)
+            with (
+                patch.object(codex_shadow.sys, "platform", "linux"),
+                patch.object(reviewer, "_run_gated") as run_gated,
+                self.assertRaises(ShadowReviewerError) as raised,
+            ):
+                reviewer.run(
+                    ShadowReviewRequest.synthetic_canary(profile.identity),
+                    lambda *_: None,
+                )
+            self.assertEqual("setup", raised.exception.code)
+            run_gated.assert_not_called()
 
     def test_pinned_jsonl_live_schema_rejection_has_distinct_failure_code(
         self,
@@ -3533,7 +3860,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
             ).encode()
             reviewer = CodexShadowReviewer(profile)
 
-            def run_gated(*args) -> int:
+            def run_gated(*args, **_kwargs) -> int:
                 os.write(args[4], jsonl)
                 args[6](1234, 1234, "5678")
                 return 1
@@ -3999,6 +4326,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
                         lambda *_: (_ for _ in ()).throw(
                             RuntimeError("dispatch")
                         ),
+                        credential_descriptor=stdin.fileno(),
                     )
             self.assertFalse(marker.exists())
 

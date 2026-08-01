@@ -8,9 +8,10 @@ The current installed contract is intentionally narrow:
   `metadata-report-v22` plus `proposal-set-v3` under
   `fixed-conservative-v6`, or the separate `catalogue-v1` schema;
 - `review-case-v2`, `shadow-review-packet-v5`,
-  `shadow-review-request-v5`, `shadow-review-inspect-v2`,
+  `shadow-review-request-v5`, `shadow-review-inspect-v3`,
   `shadow-review-failure-v2`, and the exact-current append-only
-  qualification-only shadow request/attempt/dispatch/outcome schema;
+  qualification-only shadow request/attempt/dispatch/outcome schema with
+  required `shadow-review-execution-provenance-v1` outcomes;
 - canonical `reviewer-qualification-profile-v1` with exact
   `gpt-5.6-sol`/`medium` and pinned Codex CLI/Bubblewrap identities; shadow
   request execution requires Linux;

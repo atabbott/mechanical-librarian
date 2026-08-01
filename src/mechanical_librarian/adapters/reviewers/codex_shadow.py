@@ -22,6 +22,7 @@ from typing import Iterator, cast
 
 from mechanical_librarian.application.shadow_reviews import (
     CitationNormalizationMarker,
+    ReviewerExecutionProvenance,
     ShadowReviewError,
     ShadowReviewRunResult,
 )
@@ -226,7 +227,7 @@ class CodexShadowReviewer:
         ) as sandbox:
             with self._auth_lock():
                 with self._empty_auth_config() as empty_config:
-                    self._verify_codex(codex)
+                    self._verify_codex(codex, sandbox)
                     command = self._auth_command(codex, sandbox, empty_config)
                     if action == "start":
                         completed = self._run_auth(
@@ -282,6 +283,10 @@ class CodexShadowReviewer:
         job_path: Path | None = None
         self._require_private_directory(self._profile.auth_store_path)
         self._require_private_directory(self._profile.job_root_path)
+        trust_failure_path = (
+            self._profile.job_root_path / ".reviewer-trust-failure"
+        )
+        credential_path = self._profile.auth_store_path / "auth.json"
         with (
             _bound_artifact(
                 self._profile.codex_path,
@@ -293,82 +298,173 @@ class CodexShadowReviewer:
             ) as sandbox,
         ):
             with self._auth_lock():
-                with self._empty_auth_config() as empty_config:
-                    self._verify_codex(codex)
-                    self._require_chatgpt_auth(
-                        self._auth_command(codex, sandbox, empty_config),
-                        codex,
-                        sandbox,
-                        empty_config,
-                    )
-                try:
-                    job_path = Path(
-                        tempfile.mkdtemp(
-                            prefix="shadow-review-",
-                            dir=self._profile.job_root_path,
-                        )
-                    )
-                    os.chmod(job_path, 0o700)
-                    schema_path = job_path / "output-schema.json"
-                    result_path = job_path / "result.json"
-                    prompt_path = job_path / "prompt.bin"
-                    binding = _schema_binding(request)
-                    schema_path.write_bytes(binding.serialized)
-                    prompt_path.write_bytes(
-                        _prompt(request, schema_digest=binding.digest).encode("utf-8")
-                    )
-                    os.chmod(schema_path, 0o600)
-                    os.chmod(prompt_path, 0o600)
-                    stdout_path = job_path / "stdout.bin"
-                    stderr_path = job_path / "stderr.bin"
-                    with (
-                        prompt_path.open("rb") as prompt_file,
-                        stdout_path.open("w+b") as stdout_file,
-                        stderr_path.open("w+b") as stderr_file,
-                    ):
-                        returncode = self._run_gated(
-                            self._sandbox_command(
-                                job_path,
-                                result_path,
-                                codex.invocation_path,
-                                sandbox.invocation_path,
-                            ),
-                            codex,
-                            sandbox,
-                            prompt_file.fileno(),
-                            stdout_file.fileno(),
-                            stderr_file.fileno(),
-                            dispatched,
-                        )
-                        if returncode != 0:
-                            code, count, digest = _nonzero_failure(
-                                stdout_file,
-                                stderr_file,
-                                returncode=returncode,
-                            )
-                            raise ShadowReviewerError(
-                                code, count=count, digest=digest
-                            )
+                if _path_entry_exists(trust_failure_path):
+                    raise ShadowReviewerError("setup")
+                with _bound_credential(credential_path) as credential:
                     try:
-                        result_bytes = result_path.read_bytes()
-                    except OSError as error:
-                        raise ShadowReviewerError("malformed_output") from error
-                    return _validated_result(
-                        result_bytes,
-                        request,
-                        maximum=self._profile.identity.output_bytes,
-                    )
-                finally:
-                    if job_path is not None:
-                        shutil.rmtree(job_path, ignore_errors=True)
+                        if any(
+                            path.name.startswith("shadow-review-")
+                            for path in self._profile.job_root_path.iterdir()
+                        ):
+                            raise ShadowReviewerError("setup")
+                        job_path = Path(
+                            tempfile.mkdtemp(
+                                prefix="shadow-review-",
+                                dir=self._profile.job_root_path,
+                            )
+                        )
+                        os.chmod(job_path, 0o700)
+                        provider_state_path = job_path / "provider-state"
+                        provider_state_path.mkdir(mode=0o700)
+                        with self._empty_auth_config() as empty_config:
+                            self._verify_codex(codex, sandbox)
+                            self._require_chatgpt_auth(
+                                self._auth_command(
+                                    codex,
+                                    sandbox,
+                                    empty_config,
+                                    provider_state_path=provider_state_path,
+                                    credential_path=credential.invocation_path,
+                                ),
+                                codex,
+                                sandbox,
+                                empty_config,
+                                credential,
+                            )
+                        schema_path = job_path / "output-schema.json"
+                        result_path = job_path / "result.json"
+                        prompt_path = job_path / "prompt.bin"
+                        binding = _schema_binding(request)
+                        schema_path.write_bytes(binding.serialized)
+                        prompt_path.write_bytes(
+                            _prompt(
+                                request, schema_digest=binding.digest
+                            ).encode("utf-8")
+                        )
+                        os.chmod(schema_path, 0o600)
+                        os.chmod(prompt_path, 0o600)
+                        stdout_path = job_path / "stdout.bin"
+                        stderr_path = job_path / "stderr.bin"
+                        with (
+                            prompt_path.open("rb") as prompt_file,
+                            stdout_path.open("w+b") as stdout_file,
+                            stderr_path.open("w+b") as stderr_file,
+                        ):
+                            returncode = self._run_gated(
+                                self._sandbox_command(
+                                    job_path,
+                                    result_path,
+                                    provider_state_path,
+                                    codex.invocation_path,
+                                    sandbox.invocation_path,
+                                    credential.invocation_path,
+                                ),
+                                codex,
+                                sandbox,
+                                prompt_file.fileno(),
+                                stdout_file.fileno(),
+                                stderr_file.fileno(),
+                                dispatched,
+                                credential_descriptor=credential.descriptor,
+                            )
+                            if returncode != 0:
+                                code, count, digest = _nonzero_failure(
+                                    stdout_file,
+                                    stderr_file,
+                                    returncode=returncode,
+                                )
+                                raise ShadowReviewerError(
+                                    code, count=count, digest=digest
+                                )
+                        try:
+                            result_bytes = result_path.read_bytes()
+                        except OSError as error:
+                            raise ShadowReviewerError(
+                                "malformed_output"
+                            ) from error
+                        return _validated_result(
+                            result_bytes,
+                            request,
+                            maximum=self._profile.identity.output_bytes,
+                            execution_provenance=(
+                                ReviewerExecutionProvenance.with_state(
+                                    request.profile, "not_exposed"
+                                )
+                            ),
+                        )
+                    finally:
+                        cleanup_error: OSError | None = None
+                        if job_path is not None:
+                            try:
+                                shutil.rmtree(job_path)
+                            except OSError as error:
+                                cleanup_error = error
+                        credential_drifted = not _credential_unchanged(
+                            credential_path, credential
+                        )
+                        if credential_drifted or cleanup_error is not None:
+                            _record_trust_failure(trust_failure_path)
+                        if credential_drifted:
+                            raise ShadowReviewerError("auth")
+                        if cleanup_error is not None:
+                            raise ShadowReviewerError("runtime") from cleanup_error
 
-    def _verify_codex(self, codex: "_BoundArtifact") -> None:
+    def _verify_codex(
+        self, codex: "_BoundArtifact", sandbox: "_BoundArtifact"
+    ) -> None:
+        command = [
+            sandbox.invocation_path,
+            "--die-with-parent",
+            "--unshare-user",
+            "--unshare-pid",
+            "--unshare-ipc",
+            "--unshare-uts",
+            "--unshare-cgroup",
+            "--unshare-net",
+            "--clearenv",
+            "--dir",
+            "/runtime",
+            "--dir",
+            "/auth",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+        ]
+        for system_path in ("/usr", "/lib", "/lib64"):
+            if Path(system_path).exists():
+                command.extend(("--ro-bind", system_path, system_path))
+        command.extend(
+            (
+                "--ro-bind",
+                codex.invocation_path,
+                "/runtime/codex",
+                "--chdir",
+                "/auth",
+                "--setenv",
+                "HOME",
+                "/auth",
+                "--setenv",
+                "CODEX_HOME",
+                "/auth",
+                "--setenv",
+                "LANG",
+                "C.UTF-8",
+                "--setenv",
+                "PATH",
+                "/runtime:/usr/bin:/bin",
+                "/runtime/codex",
+                "--version",
+            )
+        )
         try:
             completed = subprocess.run(
-                [codex.invocation_path, "--version"],
-                env=self._auth_environment(),
+                command,
+                env={},
                 capture_output=True,
-                pass_fds=(codex.descriptor,),
+                pass_fds=(codex.descriptor, sandbox.descriptor),
                 timeout=min(self._profile.identity.timeout_seconds, 30),
                 check=False,
             )
@@ -388,12 +484,16 @@ class CodexShadowReviewer:
         codex: "_BoundArtifact",
         sandbox: "_BoundArtifact",
         empty_config: int,
+        credential: "_BoundCredential | None" = None,
     ) -> None:
         completed = self._run_auth(
             [*command, "login", "status"],
             codex,
             sandbox,
             empty_config,
+            credential_descriptor=(
+                credential.descriptor if credential is not None else None
+            ),
             timeout=30,
         )
         status = b"Logged in using ChatGPT"
@@ -412,7 +512,12 @@ class CodexShadowReviewer:
         codex: "_BoundArtifact",
         sandbox: "_BoundArtifact",
         empty_config: int,
+        *,
+        provider_state_path: Path | None = None,
+        credential_path: str | None = None,
     ) -> list[str]:
+        if (provider_state_path is None) != (credential_path is None):
+            raise ShadowReviewerError("setup")
         command = [
             sandbox.invocation_path,
             "--die-with-parent",
@@ -445,14 +550,26 @@ class CodexShadowReviewer:
         ):
             if Path(system_path).exists():
                 command.extend(("--ro-bind", system_path, system_path))
+        auth_mount = (
+            "--bind",
+            str(self._profile.auth_store_path),
+            "/auth",
+        )
+        if provider_state_path is not None:
+            auth_mount = (
+                "--bind",
+                str(provider_state_path),
+                "/auth",
+                "--ro-bind",
+                cast(str, credential_path),
+                "/auth/auth.json",
+            )
         command.extend(
             (
                 "--ro-bind",
                 codex.invocation_path,
                 "/runtime/codex",
-                "--bind",
-                str(self._profile.auth_store_path),
-                "/auth",
+                *auth_mount,
                 "--perms",
                 "0400",
                 "--ro-bind-data",
@@ -488,7 +605,11 @@ class CodexShadowReviewer:
         *,
         interactive: bool = False,
         timeout: int | None = None,
+        credential_descriptor: int | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
+        pass_fds = (codex.descriptor, sandbox.descriptor, empty_config)
+        if credential_descriptor is not None:
+            pass_fds = (*pass_fds, credential_descriptor)
         try:
             return subprocess.run(
                 command,
@@ -496,7 +617,7 @@ class CodexShadowReviewer:
                 stdin=None,
                 stdout=None if interactive else subprocess.PIPE,
                 stderr=None if interactive else subprocess.PIPE,
-                pass_fds=(codex.descriptor, sandbox.descriptor, empty_config),
+                pass_fds=pass_fds,
                 timeout=min(
                     self._profile.identity.timeout_seconds,
                     timeout or self._profile.identity.timeout_seconds,
@@ -585,8 +706,10 @@ class CodexShadowReviewer:
         self,
         job_path: Path,
         result_path: Path,
+        provider_state_path: Path,
         codex_path: str,
         sandbox_path: str,
+        credential_path: str,
     ) -> list[str]:
         command = [
             sandbox_path,
@@ -628,8 +751,11 @@ class CodexShadowReviewer:
                 codex_path,
                 "/runtime/codex",
                 "--bind",
-                str(self._profile.auth_store_path),
+                str(provider_state_path),
                 "/auth",
+                "--ro-bind",
+                credential_path,
+                "/auth/auth.json",
                 "--bind",
                 str(job_path),
                 "/job",
@@ -679,6 +805,8 @@ class CodexShadowReviewer:
         stdout_descriptor: int,
         stderr_descriptor: int,
         dispatched: Callable[[int, int, str], None],
+        *,
+        credential_descriptor: int,
     ) -> int:
         release_read, release_write = os.pipe()
         ready_read, ready_write = os.pipe()
@@ -698,6 +826,7 @@ class CodexShadowReviewer:
                 os.dup2(stderr_descriptor, 2)
                 os.set_inheritable(codex.descriptor, True)
                 os.set_inheritable(sandbox.descriptor, True)
+                os.set_inheritable(credential_descriptor, True)
                 self._limit_child()
                 os.execve(sandbox.invocation_path, command, {})
             except BaseException:
@@ -814,6 +943,129 @@ def process_identity_matches(pid: int, start_token: str) -> bool:
 def current_process_identity() -> tuple[int, str]:
     pid = os.getpid()
     return pid, _process_start_token(pid)
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundCredential:
+    descriptor: int
+    invocation_path: str
+    fingerprint: tuple[int, int, int, int, str]
+
+
+def _descriptor_fingerprint(
+    descriptor: int,
+) -> tuple[int, int, int, int, str]:
+    information = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(information.st_mode)
+        or information.st_uid != os.geteuid()
+        or information.st_mode & 0o077
+        or not 1 <= information.st_size <= MAX_PROFILE_BYTES
+    ):
+        raise ShadowReviewerError("auth")
+    before = (
+        information.st_dev,
+        information.st_ino,
+        information.st_size,
+        stat.S_IMODE(information.st_mode),
+    )
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    digest = hashlib.sha256()
+    while chunk := os.read(descriptor, 65_536):
+        digest.update(chunk)
+    after_information = os.fstat(descriptor)
+    after = (
+        after_information.st_dev,
+        after_information.st_ino,
+        after_information.st_size,
+        stat.S_IMODE(after_information.st_mode),
+    )
+    if before != after:
+        raise ShadowReviewerError("auth")
+    return (*before, digest.hexdigest())
+
+
+@contextmanager
+def _bound_credential(path: Path) -> Iterator[_BoundCredential]:
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError as error:
+        raise ShadowReviewerError("auth") from error
+    try:
+        try:
+            bound = _BoundCredential(
+                descriptor,
+                f"/proc/self/fd/{descriptor}",
+                _descriptor_fingerprint(descriptor),
+            )
+        except OSError as error:
+            raise ShadowReviewerError("auth") from error
+        yield bound
+    finally:
+        os.close(descriptor)
+
+
+def _credential_unchanged(
+    path: Path, credential: _BoundCredential
+) -> bool:
+    try:
+        path_information = os.lstat(path)
+        if (
+            not stat.S_ISREG(path_information.st_mode)
+            or path_information.st_uid != os.geteuid()
+            or path_information.st_mode & 0o077
+            or (
+                path_information.st_dev,
+                path_information.st_ino,
+                path_information.st_size,
+                stat.S_IMODE(path_information.st_mode),
+            )
+            != credential.fingerprint[:4]
+        ):
+            return False
+        return (
+            _descriptor_fingerprint(credential.descriptor)
+            == credential.fingerprint
+        )
+    except (OSError, ShadowReviewerError):
+        return False
+
+
+def _path_entry_exists(path: Path) -> bool:
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise ShadowReviewerError("setup") from error
+    return True
+
+
+def _record_trust_failure(path: Path) -> None:
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        os.write(descriptor, b"reviewer-trust-failure-v1\n")
+    except FileExistsError:
+        return
+    except OSError as error:
+        raise ShadowReviewerError("setup") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1026,6 +1278,7 @@ def _validated_result(
     request: ShadowReviewRequest,
     *,
     maximum: int,
+    execution_provenance: ReviewerExecutionProvenance | None = None,
 ) -> ShadowReviewRunResult:
     digest = hashlib.sha256(result_bytes).hexdigest()
     if len(result_bytes) > maximum:
@@ -1073,7 +1326,7 @@ def _validated_result(
         raise ShadowReviewerError(
             "semantic_validation", count=len(result_bytes), digest=digest
         ) from error
-    return ShadowReviewRunResult(result, marker)
+    return ShadowReviewRunResult(result, marker, execution_provenance)
 
 
 def _normalize_result_citations(

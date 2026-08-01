@@ -17,6 +17,9 @@ from mechanical_librarian.application.failure_diagnostics import (
     reviewer_diagnostic_is_admissible,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.shadow_reviews import (
+    ReviewerExecutionProvenance,
+)
 from mechanical_librarian.domain.failure_diagnostics import (
     MAX_DIAGNOSTIC_COUNT,
     FailureCategory,
@@ -167,6 +170,7 @@ _SHADOW_OUTCOMES_SQL = (
     "kind TEXT NOT NULL CHECK(kind IN ('result','failure')), "
     "result_document TEXT CHECK(result_document IS NULL OR (typeof(result_document)='text' AND length(CAST(result_document AS BLOB)) BETWEEN 2 AND 262144)), "
     "failure_document TEXT CHECK(failure_document IS NULL OR (typeof(failure_document)='text' AND length(CAST(failure_document AS BLOB)) BETWEEN 2 AND 512)), "
+    "execution_provenance_document TEXT NOT NULL CHECK(typeof(execution_provenance_document)='text' AND length(CAST(execution_provenance_document AS BLOB)) BETWEEN 2 AND 32768), "
     "CHECK((kind='result' AND result_document IS NOT NULL AND failure_document IS NULL) OR "
     "(kind='failure' AND result_document IS NULL AND failure_document IS NOT NULL)))"
 )
@@ -1087,10 +1091,19 @@ class SQLiteMetadataReportRepository:
             self._connection.rollback()
             raise MetadataReportError("shadow review dispatch failed") from error
 
-    def record_shadow_result(self, attempt_id: str, result: str) -> None:
+    def record_shadow_result(
+        self, attempt_id: str, result: str, execution_provenance: str
+    ) -> None:
         try:
             request = self._request_for_attempt(attempt_id)
             validated = ShadowReviewResult.from_json(result, request)
+            provenance = ReviewerExecutionProvenance.from_json(
+                execution_provenance
+            )
+            if provenance.requested != request.profile:
+                raise MetadataReportError(
+                    "shadow review execution provenance changed"
+                )
             self._connection.execute("BEGIN IMMEDIATE")
             if self._binding is not None:
                 self._binding.require_current()
@@ -1102,9 +1115,10 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("shadow review was not dispatched")
             self._connection.execute(
                 "INSERT INTO shadow_review_outcomes("
-                "attempt_id,kind,result_document,failure_document) "
-                "VALUES(?,'result',?,NULL)",
-                (attempt_id, validated.to_json()),
+                "attempt_id,kind,result_document,failure_document,"
+                "execution_provenance_document) "
+                "VALUES(?,'result',?,NULL,?)",
+                (attempt_id, validated.to_json(), provenance.to_json()),
             )
             if self._binding is not None:
                 self._binding.require_current()
@@ -1117,10 +1131,18 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("shadow review result failed") from error
 
     def record_shadow_failure(
-        self, attempt_id: str, diagnostic: str
+        self, attempt_id: str, diagnostic: str, execution_provenance: str
     ) -> None:
         try:
             parsed = FailureDiagnostic.from_json(diagnostic)
+            request = self._request_for_attempt(attempt_id)
+            provenance = ReviewerExecutionProvenance.from_json(
+                execution_provenance
+            )
+            if provenance.requested != request.profile:
+                raise MetadataReportError(
+                    "shadow review execution provenance changed"
+                )
             if not reviewer_diagnostic_is_admissible(parsed):
                 raise MetadataReportError("shadow review failure is invalid")
             self._connection.execute("BEGIN IMMEDIATE")
@@ -1128,9 +1150,10 @@ class SQLiteMetadataReportRepository:
                 self._binding.require_current()
             self._connection.execute(
                 "INSERT INTO shadow_review_outcomes("
-                "attempt_id,kind,result_document,failure_document) "
-                "VALUES(?,'failure',NULL,?)",
-                (attempt_id, parsed.to_json()),
+                "attempt_id,kind,result_document,failure_document,"
+                "execution_provenance_document) "
+                "VALUES(?,'failure',NULL,?,?)",
+                (attempt_id, parsed.to_json(), provenance.to_json()),
             )
             if self._binding is not None:
                 self._binding.require_current()
@@ -1138,7 +1161,7 @@ class SQLiteMetadataReportRepository:
         except MetadataReportError:
             self._connection.rollback()
             raise
-        except sqlite3.Error as error:
+        except (sqlite3.Error, ShadowReviewValueError) as error:
             self._connection.rollback()
             raise MetadataReportError("shadow review failure recording failed") from error
 
@@ -1158,7 +1181,8 @@ class SQLiteMetadataReportRepository:
             except ReviewAdmissionStaleError:
                 current = False
             rows = self._connection.execute(
-                "SELECT d.pid,o.kind,o.result_document,o.failure_document "
+                "SELECT d.pid,o.kind,o.result_document,o.failure_document,"
+                "o.execution_provenance_document "
                 "FROM shadow_review_attempts a "
                 "LEFT JOIN shadow_review_dispatches d ON d.attempt_id=a.attempt_id "
                 "LEFT JOIN shadow_review_outcomes o ON o.attempt_id=a.attempt_id "
@@ -1195,9 +1219,27 @@ class SQLiteMetadataReportRepository:
                 )
 
             top_status = "pending"
+            execution_provenance: list[dict[str, object]] = []
             for row in rows:
-                pid, kind, result_document, failure_document = row
+                (
+                    pid,
+                    kind,
+                    result_document,
+                    failure_document,
+                    provenance_document,
+                ) = row
                 status = "pending"
+                if kind is not None:
+                    provenance = ReviewerExecutionProvenance.from_json(
+                        provenance_document
+                    )
+                    if provenance.requested != request.profile:
+                        raise MetadataReportError(
+                            "shadow review execution provenance changed"
+                        )
+                    execution_provenance.append(
+                        provenance.to_projection_data()
+                    )
                 if kind == "result":
                     result = ShadowReviewResult.from_json(
                         result_document, request
@@ -1242,10 +1284,11 @@ class SQLiteMetadataReportRepository:
                             ),
                         )
                     ],
+                    "execution_provenance": execution_provenance,
                     "mode": QUALIFICATION_MODE,
                     "review_case_id": request.review_case_id,
                     "review_request_id": request.review_request_id,
-                    "schema_version": "shadow-review-inspect-v2",
+                    "schema_version": "shadow-review-inspect-v3",
                     "status": top_status,
                 }
             )

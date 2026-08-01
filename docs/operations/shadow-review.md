@@ -180,14 +180,31 @@ starting another reviewer.
 
 Executable paths are opened, verified, and held by descriptor through version,
 auth, and sandbox invocation. Authentication runs through the same pinned
-Bubblewrap boundary as review. Its private auth store is mounted at `/auth`,
-but `/auth/config.toml` is an immutable empty regular file from Bubblewrap's
+Bubblewrap boundary as review. Explicit `reviewer-auth-start`, status, and
+logout operations retain the writable private authentication store. Ordinary
+review never mounts that store writable: it creates a private `provider-state`
+directory inside the attempt job, mounts that directory at `/auth`, and nests
+only the primary `auth.json` file as a read-only `/auth/auth.json` mount through
+its validated, held no-follow descriptor. The
+ordinary preflight status check and inference use that same contained state.
+The version probe runs inside Bubblewrap with an empty, credential-free home
+and an unshared network namespace.
+In both workflows `/auth/config.toml` is an immutable empty regular file from Bubblewrap's
 `--perms 0400 --ro-bind-data` bind for the whole child lifetime. This remains
 effective if the same UID creates or replaces the underlying file after
 preflight. Auth therefore uses only supported
 `login --device-auth`, `login status`, and `logout` command scopes plus exact
 ChatGPT/file-store/update/telemetry constraints; it never relies on the
 execution-only `--ignore-user-config` option.
+
+Provider cache, database, log, and runtime files therefore remain inside one
+disposable attempt. The runner fingerprints the owner-only primary credential
+before execution and after terminal cleanup without retaining its bytes or
+digest. Credential drift is preserved, writes a value-free owner-only
+`.reviewer-trust-failure` marker, and blocks later dispatch pending explicit
+recovery. A retained attempt directory or the same durable marker from failed
+cleanup also blocks later dispatch, even if removal completed before returning
+an error; cleanup failure is a terminal runtime failure, not best-effort housekeeping.
 
 During maintainer qualification, invoke the wrapped real-artifact compatibility
 check with the already provisioned exact Python environment. Provision the pinned
@@ -265,13 +282,18 @@ flag and aggregate duplicate count; raw identifiers and ordering are not
 exposed, and the marker does not enter canonical result JSON, persistence,
 identity, or replay.
 
-`shadow-review-inspect-v2` is an offline aggregate status projection. It emits
+`shadow-review-inspect-v3` is an offline aggregate status projection. It emits
 the case and request identities, currentness, final status, bounded total
-attempt count, and sorted unique canonical diagnostic aggregates. The case
+attempt count, sorted unique canonical diagnostic aggregates, and one bounded
+execution-provenance projection per terminal attempt. Provenance separates the
+requested model, effort, profile and pinned invocation identity from provider
+observations of model, route, tier, effort, fallback, usage, and cost. Each
+observation is `observed`, `not_exposed`, or `unverifiable`; requested values
+are never relabelled as observed. The case
 identity binds `shadow-review-request` output to its requested case. Duplicate,
 split, or out-of-order aggregates fail closed. The projection emits no request,
 packet, result, attempt ID/number, PID/process-group/start token, raw output,
-digest, or timing.
+credential, private path, raw provider state, or timing.
 A dispatched attempt without a durable terminal outcome reopens as `unknown`
 with one bounded reviewer/unknown/execution diagnostic; `unknown` and `failed`
 inspection states therefore never carry an empty diagnostic list.
