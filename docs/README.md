@@ -30,6 +30,7 @@
 - [Documentation standards](development/documentation-standards.md)
 - [Recoverability qualification](development/recoverability-qualification.md)
 - [Testing strategy](development/testing-strategy.md)
+- [Shadow-review qualification evidence](development/reviewer-qualification.md)
 - [Repository structure](development/repository-structure.md)
 - [Functional slice delivery](development/slice-delivery.md)
 - [Exact-head merging](development/exact-head-merging.md)
