@@ -255,8 +255,10 @@ turn a process failure or ordinary timeout into a semantic result, infer a
 missing provider response identity, or admit an action absent from the exact
 frozen compiler catalogue. Its bounded append-only retry pairs are evidence
 handling only and grant no product retry, egress, decision, or write authority.
-ADR-0025 advances the current tuple to packet-v5/request-v6 while leaving
-result-v1 and the prompt/profile policy unchanged. Before dispatch, the
+ADR-0025 introduced packet-v5/request-v6. ADR-0026 binds
+prompt-v3/profile-v2/result-v2 and advances the current request to v7 without
+widening the compiler catalogue, provider transport, or qualification-only
+authority. Before dispatch, the
 packet-only action compiler applies fixed admissibility and abstention rules to
 each candidate, keep-current, and manual action independently. The request
 schema enumerates only compiled actions and their exact citation closures;

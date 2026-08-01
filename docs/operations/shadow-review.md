@@ -21,11 +21,11 @@ directory, an empty-job parent, and explicit resource limits. Paths and auth
 material are never stored in the application database. The tuple is fixed to:
 
 - model `gpt-5.6-sol`, reasoning `medium`;
-- prompt `shadow-review-prompt-v2`;
-- profile `codex-shadow-profile-v1`;
+- prompt `shadow-review-prompt-v3`;
+- profile `codex-shadow-profile-v2`;
 - packet `shadow-review-packet-v5`;
-- request `shadow-review-request-v6`;
-- output `shadow-review-result-v1`;
+- request `shadow-review-request-v7`;
+- output `shadow-review-result-v2`;
 - policy `qualification-only-policy-v1`; and
 - sandbox `bubblewrap-v1`.
 
@@ -58,11 +58,19 @@ rejected nonmanual actions. Unknown obligations fail closed. It does not read
 gold decisions, prior reviewer output, scores, latency, titles, human identity,
 or response metadata.
 
-Request v6 binds a finite structured-output `oneOf` containing only those
-compiled actions. Review result v1 still makes the untrusted recommendation;
+Request v7 binds a finite structured-output `oneOf` containing only those
+compiled actions. Review result v2 still makes the untrusted recommendation;
 trusted validation requires the exact compiled action, action-bound citations,
 complete proposal coverage, one coherent bibliographic combination where
 applicable, and currentness.
+
+Candidate advice names a candidate only for `recommend_candidate`; manual and
+keep-current use JSON `null`. Keep-current is a positive cited conclusion that
+the current value is supported under the closed destination policy, not a
+fallback. Insufficient, conflicting, explicitly manual, or unrepresentable
+evidence remains manual. `problems` is always present but contains only actual
+adverse facts, so it may be empty when the bounded reason and exact citations
+support manual review without an adverse fact.
 
 ## Authentication
 
@@ -143,8 +151,9 @@ write authority.
 Packet v5 also carries the exact `bibliographic-relationships-v1`
 combinations from the ProposalSet and includes every constrained title,
 subtitle, and series proposal, including a non-actionable preserve companion
-with no candidates. Result v1 is unchanged: it still contains only the
-per-destination recommendations. Semantic validation derives their exact
+with no candidates. Result v2 still contains only the per-destination
+recommendations and has no model-controlled bibliographic-combination field.
+Semantic validation derives their exact
 candidate-or-preserve member tuple and requires it to match exactly one allowed
 combination. A candidate from another tuple, a manual recommendation inside a
 selected tuple, or contradictory keep/change advice rejects the whole result.
@@ -266,7 +275,7 @@ parser, semantic validator, and cleanup as an ordinary request, and therefore
 uses the exact ordinary wrapped command from empty `/job`, including
 `--skip-git-repo-check`. It never sends a holdout and blocks the cohort on
 failure. Each request binds the canonical structured-output schema bytes and
-SHA-256 into `shadow-review-request-v6` and its identity; the executor uses
+SHA-256 into `shadow-review-request-v7` and its identity; the executor uses
 those exact bytes. The complete canonical request envelope is bounded at
 3,227,648 bytes, and the exact-current SQLite column has the same byte capacity;
 there is no truncation. The generated schema is restricted to the pinned

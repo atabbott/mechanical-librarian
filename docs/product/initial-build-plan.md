@@ -416,12 +416,14 @@ Deliverables:
 - record zero proposals as a proposal-selection/orchestration terminal outcome
   without invoking the reviewer, and require exact per-proposal coverage for
   every packet that is invoked;
-- keep `manual` as an AI result only for multiple specifically supported
-  alternatives; it may complete reviewer output but never creates a human
-  decision or apply readiness;
-- require the `AIDecision.problems` list to contain only unresolved or adverse
-  problem codes; positive support belongs in cited evidence and the concise
-  reason, so a clean approval uses `problems: []`;
+- keep `manual` as the fail-closed AI result when support is insufficient or
+  conflicting, an accepted action is unrepresentable, or no supported
+  candidate is present; it may complete reviewer output but never creates a
+  human decision or apply readiness;
+- require the `AIDecision.problems` list to contain only bounded unresolved or
+  adverse facts; positive support belongs in cited evidence and the concise
+  reason, so a manual or clean evidence-positive recommendation may use
+  `problems: []` when there is no adverse fact;
 - add replayable evaluation cohorts; and
 - support disabling AI without disabling the core product.
 

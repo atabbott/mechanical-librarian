@@ -1378,10 +1378,18 @@ def _unique_result_object(
 def _prompt(request: ShadowReviewRequest, *, schema_digest: str) -> str:
     return (
         "Outcome: provide one bounded shadow recommendation for every proposal.\n"
-        "Constraints: use only packet candidates and citations; do not infer missing "
-        "facts; choose manual when evidence is insufficient; problems are adverse "
-        "facts only.\nEvidence: the canonical packet follows.\nOutput: return only "
-        "one object matching shadow-review-result-v1.\nStop: after every proposal "
+        "Constraints: use only packet candidates, citations, and decision summaries; "
+        "do not infer missing facts or choose a closest, plausible, or familiar value. "
+        "candidate_id is non-null only for recommend_candidate and must name the exact "
+        "supported packet candidate; it is null for manual and recommend_keep_current. "
+        "keep-current is evidence-positive: use it only when cited packet evidence and "
+        "the decision summary support the current value under the closed destination "
+        "policy. Choose manual when evidence is insufficient or conflicting, when a "
+        "supported value is absent from packet candidates, or when the decision summary "
+        "requires manual review. Give at least one reason. problems contains adverse "
+        "facts only; problems may be empty when no adverse fact is present.\n"
+        "Evidence: the canonical packet follows.\nOutput: return only one object "
+        "matching " + RESULT_SCHEMA + ".\nStop: after every proposal "
         "is covered exactly once.\nSchema digest: "
         + schema_digest + "\n"
         + request.packet.to_json()

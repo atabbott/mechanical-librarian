@@ -52,9 +52,11 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 PACKET_SCHEMA = "shadow-review-packet-v5"
-RESULT_SCHEMA = "shadow-review-result-v1"
-REQUEST_SCHEMA = "shadow-review-request-v6"
+RESULT_SCHEMA = "shadow-review-result-v2"
+REQUEST_SCHEMA = "shadow-review-request-v7"
 PROFILE_IDENTITY_SCHEMA = "reviewer-profile-identity-v1"
+PROMPT_VERSION = "shadow-review-prompt-v3"
+PROFILE_VERSION = "codex-shadow-profile-v2"
 QUALIFICATION_MODE = "qualification_only"
 MAX_PACKET_BYTES = 1_048_576
 MAX_RESULT_BYTES = 262_144
@@ -168,8 +170,8 @@ class ReviewerProfileIdentity:
             or _DIGEST.fullmatch(self.sandbox_sha256) is None
             or self.model != "gpt-5.6-sol"
             or self.reasoning != "medium"
-            or self.prompt_version != "shadow-review-prompt-v2"
-            or self.profile_version != "codex-shadow-profile-v1"
+            or self.prompt_version != PROMPT_VERSION
+            or self.profile_version != PROFILE_VERSION
             or self.packet_version != PACKET_SCHEMA
             or self.output_version != RESULT_SCHEMA
             or self.policy_version != "qualification-only-policy-v1"
@@ -1151,8 +1153,6 @@ class ShadowReviewResult:
                 raise ShadowReviewSemanticError(
                     "shadow-review action citation binding is invalid"
                 )
-            if kind == "manual" and not problems:
-                raise ShadowReviewSemanticError("shadow-review result is invalid")
             if (
                 proposal_id in manual_bibliographic_proposals
                 and kind != "manual"
@@ -1870,7 +1870,6 @@ def _reviewer_action_schema(action: PolicyAction) -> dict[str, object]:
         else {"maxLength": 1, "type": "string"}
     )
     minimum_citations = len(action.citation_ids)
-    minimum_problems = 1 if action.recommendation == "manual" else 0
     candidate_type = "string" if action.candidate_id is not None else "null"
     return {
         "additionalProperties": False,
@@ -1892,7 +1891,7 @@ def _reviewer_action_schema(action: PolicyAction) -> dict[str, object]:
                     "type": "string",
                 },
                 "maxItems": MAX_PROBLEMS,
-                "minItems": minimum_problems,
+                "minItems": 0,
                 "type": "array",
             },
             "proposal_id": {

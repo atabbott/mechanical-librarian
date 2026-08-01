@@ -81,7 +81,7 @@
       "const": "gpt-5.6-sol"
     },
     "output_version": {
-      "const": "shadow-review-result-v1"
+      "const": "shadow-review-result-v2"
     },
     "packet_version": {
       "const": "shadow-review-packet-v5"
@@ -90,10 +90,10 @@
       "const": "qualification-only-policy-v1"
     },
     "profile_version": {
-      "const": "codex-shadow-profile-v1"
+      "const": "codex-shadow-profile-v2"
     },
     "prompt_version": {
-      "const": "shadow-review-prompt-v2"
+      "const": "shadow-review-prompt-v3"
     },
     "reasoning": {
       "const": "medium"
