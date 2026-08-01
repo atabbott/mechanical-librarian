@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Isolate ordinary qualification-reviewer provider state from primary
+  credential material. Authentication management retains its explicit writable
+  store, while ordinary status and inference mount a disposable per-attempt
+  `CODEX_HOME` and nest only descriptor-bound `auth.json` read-only; version
+  verification runs in a credential-free, network-isolated sandbox. Credential drift, retained
+  attempt state, and durably marked cleanup failure stop later dispatch without
+  restoring or exposing private bytes. Persist requested reviewer identity separately from
+  provider-observed model, route, tier, effort, fallback, usage, and cost using
+  explicit `observed`, `not_exposed`, or `unverifiable` states. Advance offline
+  inspection to `shadow-review-inspect-v3`; earlier pre-release databases are
+  rejected without migration. (#433)
+
 - Add bounded deterministic decision summaries to every shadow-review proposal
   and candidate while retaining the complete raw citation projection.
   Candidate summaries count distinct admitted local and provider correlation

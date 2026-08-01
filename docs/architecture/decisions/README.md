@@ -37,6 +37,7 @@ context and consequences rather than reproducing code.
 | [0020](0020-field-specific-acceptable-outcomes.md) | accepted | Model field-specific acceptable metadata outcomes without collapsing evidence |
 | [0021](0021-coherent-bibliographic-combinations.md) | accepted | Bind dependent bibliographic advice to coherent combinations |
 | [0022](0022-decision-ready-reviewer-packets.md) | accepted | Project source-validated decision summaries without deciding |
+| [0024](0024-contain-qualification-reviewer-provider-state.md) | accepted | Separate primary reviewer credentials from disposable provider state and execution provenance |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

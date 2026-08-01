@@ -34,7 +34,10 @@ from mechanical_librarian.domain.review_case import (
     ReviewCase,
 )
 from mechanical_librarian.application.review_cases import ReviewCaseError
-from mechanical_librarian.application.shadow_reviews import ShadowReviewError
+from mechanical_librarian.application.shadow_reviews import (
+    ReviewerExecutionProvenance,
+    ShadowReviewError,
+)
 from mechanical_librarian.domain.shadow_review import (
     ShadowReviewRequest,
     ShadowReviewResult,
@@ -353,6 +356,7 @@ def _validated_shadow_output(
                 "attempt_count",
                 "current",
                 "diagnostics",
+                "execution_provenance",
                 "mode",
                 "review_case_id",
                 "review_request_id",
@@ -360,12 +364,14 @@ def _validated_shadow_output(
                 "status",
             }
             or raw["mode"] != "qualification_only"
-            or raw["schema_version"] != "shadow-review-inspect-v2"
+            or raw["schema_version"] != "shadow-review-inspect-v3"
             or type(raw["current"]) is not bool
             or type(raw["attempt_count"]) is not int
             or not 1 <= raw["attempt_count"] <= 32
             or type(raw["diagnostics"]) is not list
             or len(raw["diagnostics"]) > 20
+            or type(raw["execution_provenance"]) is not list
+            or len(raw["execution_provenance"]) > raw["attempt_count"]
             or (
                 review_case_id is not None
                 and raw["review_case_id"] != review_case_id
@@ -388,6 +394,8 @@ def _validated_shadow_output(
             not in {"pending", "unknown", "failed", "qualification_only"}
         ):
             raise ValueError
+        for value in raw["execution_provenance"]:
+            ReviewerExecutionProvenance.validate_projection(value)
         diagnostics = tuple(
             FailureDiagnostic.from_json(shadow_canonical_json(value))
             for value in raw["diagnostics"]

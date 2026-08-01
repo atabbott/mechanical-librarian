@@ -287,9 +287,15 @@ accepted when the other stream is empty and the command succeeds. Mixed,
 additional, malformed, API-key, and nonzero results fail.
 
 The Linux Bubblewrap boundary exposes the pinned runtime and system libraries,
-protected auth store, and one empty private job directory, but no repository,
+one empty private job directory, but no repository,
 database, profile, media, service configuration, or target/provider
-credentials. Auth uses the same descriptor-bound boundary and masks
+credentials. Explicit authentication management may mount the owner-private
+authentication store writable. Ordinary review instead mounts a new private
+provider-state directory as writable `/auth` and nests only the primary
+`auth.json` credential as a read-only file from its validated, held no-follow
+descriptor. Its authentication-status preflight uses the same contained mount,
+while version verification uses an empty credential-free Bubblewrap home and
+an unshared network namespace. Auth uses the same descriptor-bound boundary and masks
 `/auth/config.toml` with an immutable empty `--perms 0400 --ro-bind-data`
 read-only bind for the entire child lifetime, so a same-UID creation or
 replacement after preflight cannot alter the authentication invocation. Review
@@ -328,11 +334,24 @@ discarded. Dispatched ambiguity is `unknown`; there is no automatic retry, and
 explicit reevaluation requires proof that the complete prior supervised process
 group is absent.
 
-Shadow outcome rows persist one canonical ADR-0017 diagnostic document, not a
+Ordinary execution fingerprints the owner-only primary credential before
+dispatch and after terminal cleanup. Drift is never repaired or overwritten:
+it creates a value-free owner-only trust-failure marker and blocks subsequent
+dispatch pending explicit recovery. Mutable provider cache, database, log, and
+runtime state remains inside the attempt and is deleted at terminal exit.
+Cleanup failure is terminal and creates a durable value-free dispatch block;
+any retained attempt is an independent block.
+
+Shadow outcome rows persist one canonical ADR-0017 diagnostic document and one
+`shadow-review-execution-provenance-v1` document, not a
 legacy code, exception digest, raw stream, path, prompt, packet, process fact,
-or malformed value. Offline `shadow-review-inspect-v2` aggregates identical
-documents, rejects duplicate/split/out-of-order aggregates, binds the case and
-request identities, and exposes no per-attempt or request/result content. CLI
+or malformed value. Provenance keeps the exact requested profile separate from
+provider-observed model, route, tier, effort, fallback, usage, and cost; missing
+provider fields are explicitly `not_exposed` or `unverifiable`, never inferred.
+Offline `shadow-review-inspect-v3` aggregates identical diagnostic documents,
+validates bounded provenance projections, binds the case and request identities,
+and exposes no request/result content, credential, provider state, or private
+path. CLI
 failures use the same object in `shadow-review-failure-v2`; unknown exceptions
 map to `unknown` without inspecting their text. Persistence record and replay,
 application inspection, and CLI inspection reject any diagnostic that is not

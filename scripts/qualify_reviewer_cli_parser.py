@@ -73,7 +73,7 @@ def _qualify_probe_profile(profile: QualificationProfile) -> None:
         ) as sandbox,
     ):
         with reviewer._auth_lock(), reviewer._empty_auth_config() as config_fd:
-            reviewer._verify_codex(codex)
+            reviewer._verify_codex(codex, sandbox)
             auth = reviewer._auth_command(codex, sandbox, config_fd)
             for suffix in (
                 ("login", "--device-auth", "--help"),

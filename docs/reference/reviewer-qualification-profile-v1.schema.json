@@ -3,6 +3,7 @@
   "additionalProperties": false,
   "properties": {
     "auth_store_path": {
+      "description": "Owner-private authentication store. Login and logout may write it; ordinary review mounts only its auth.json file read-only into a disposable provider-state directory.",
       "pattern": "^/",
       "type": "string"
     },
@@ -31,6 +32,7 @@
       "type": "object"
     },
     "job_root_path": {
+      "description": "Owner-private root for per-attempt jobs and disposable mutable provider state. Any retained job or trust-failure marker blocks further dispatch pending explicit recovery.",
       "pattern": "^/",
       "type": "string"
     },
