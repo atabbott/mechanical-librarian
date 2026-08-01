@@ -1417,6 +1417,7 @@ def _validate_output_schema(schema: object) -> None:
         "maxLength",
         "minItems",
         "minLength",
+        "oneOf",
         "properties",
         "required",
         "type",
@@ -1503,6 +1504,15 @@ def _validate_output_schema(schema: object) -> None:
             ):
                 raise ShadowReviewerError("schema")
             for child in value["anyOf"]:
+                visit(child)
+        if "oneOf" in value:
+            if (
+                set(value) != {"oneOf"}
+                or type(value["oneOf"]) is not list
+                or not value["oneOf"]
+            ):
+                raise ShadowReviewerError("schema")
+            for child in value["oneOf"]:
                 visit(child)
         if "properties" in value:
             if (

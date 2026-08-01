@@ -42,7 +42,7 @@ The current qualification-only `shadow-review-packet-v5` contains:
 - the fixed prompt/profile/packet/output/policy identities bound by the
   qualification profile.
 
-ADR-0022 advances this projection to `shadow-review-request-v5`. Missing,
+ADR-0025 binds this projection into `shadow-review-request-v6`. Missing,
 opaque-only, malformed, noncanonical, or over-bound provider date linkage
 fails before reviewer invocation. This applies to cited typed provider claims
 and rich date evidence; rich evidence citation IDs are also recomputed from
@@ -62,6 +62,19 @@ correlation identities, never inferred from citation prefixes or opaque hash
 shape. Role exclusions remain contextual citations and never increment
 support. Ordinary packet/request replay rebuilds the complete summary from the
 authoritative report and rejects any structurally valid rewrite.
+
+Before any reviewer dispatch, the trusted domain compiler derives
+`shadow-review-action-catalogue-v1` from the validated packet alone. Candidate,
+keep-current, and manual actions are independent catalogue entries. Each entry
+binds one proposal and recommendation, its candidate when applicable, exact
+admissible citations, and allowed bibliographic combinations. Rejected
+candidate or keep-current actions retain stable typed exclusions. The compiler
+does not consume gold decisions, accepted-action projections, prior outputs,
+scores, latency, titles, human identity, or response metadata, and an unknown
+policy obligation excludes the nonmanual action. The request-v6 output schema
+enumerates only catalogue entries; result-v1 wire shape is unchanged, while
+trusted semantic validation now requires an exact entry and action-bound
+citations.
 
 Packet assembly records candidate and policy versions, source completeness, and
 the join provenance for every authoritative row. If the current snapshot,

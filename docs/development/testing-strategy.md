@@ -205,11 +205,18 @@ fact/reference disagreement, forged kind/value/applicability/scope/raw-order
 or provider/candidate membership, invalid ISBN/ASIN syntax, private or
 credential-shaped context, missing rich-date-evidence linkage, malformed
 identifier and format shapes, duplicate/reordered facts, and context beyond
-either 16-fact bound. Request-v5 replay exercises the same packet-v5 validator.
+either 16-fact bound. Request-v6 replay exercises the same packet-v5 validator
+and recompiles the exact packet-only action catalogue. Tests cross positive
+candidate actions into destinations that previously produced only manual
+outcomes and negative actions into historically feasible destinations, then
+vary evidence scope, manifestation binding, support, citation closure,
+publication precision, and bibliographic combinations independently. Unknown
+obligations fail closed; action and exclusion identities remain stable when an
+opaque review-case digest changes.
 Three independently correlated complete 16-author representations retain all
 48 role facts under the correlation-derived aggregate bound, while an
 over-bound forged role array still fails closed. Persistence records and
-revalidates the exact request-v5 discriminator; a populated prior request-v4
+revalidates the exact request-v6 discriminator; a populated prior request-v5
 table is rejected without changing its database bytes.
 Populated non-bibliographic current fields remain marked target-only when
 competing provider evidence requires manual review without an evidence-backed

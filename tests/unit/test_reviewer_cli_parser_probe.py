@@ -140,7 +140,7 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(
-                "shadow-review-request-v5", live_requests[0].schema_version
+                "shadow-review-request-v6", live_requests[0].schema_version
             )
             self.assertTrue(
                 all(str(profile.auth_store_path) not in command for command in commands)
@@ -184,7 +184,6 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                 {
                     "$schema",
                     "additionalProperties",
-                    "anyOf",
                     "const",
                     "enum",
                     "items",
@@ -192,6 +191,7 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                     "maxLength",
                     "minItems",
                     "minLength",
+                    "oneOf",
                     "properties",
                     "required",
                     "type",

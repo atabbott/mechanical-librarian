@@ -8,7 +8,7 @@ The current installed contract is intentionally narrow:
   `metadata-report-v22` plus `proposal-set-v3` under
   `fixed-conservative-v6`, or the separate `catalogue-v1` schema;
 - `review-case-v2`, `shadow-review-packet-v5`,
-  `shadow-review-request-v5`, `shadow-review-inspect-v3`,
+  `shadow-review-request-v6`, `shadow-review-inspect-v3`,
   `shadow-review-failure-v2`, and the exact-current append-only
   qualification-only shadow request/attempt/dispatch/outcome schema with
   required `shadow-review-execution-provenance-v1` outcomes;
@@ -63,10 +63,12 @@ pre-release databases using `fixed-conservative-v5` or earlier are rejected
 before mutation and require a clean rebuild.
 
 Packet v5 decision summaries are exact projections of the current report,
-ProposalSet, ReviewCase, and bibliographic combinations. Packet/request v4
-stores are not interpreted or migrated. The qualification profile schema
-mechanically binds packet v5; prompt, model, result, and policy versions are
-unchanged.
+ProposalSet, ReviewCase, and bibliographic combinations. Request v6 compiles a
+packet-only action catalogue and binds a finite output schema containing only
+admissible actions and their exact citations. Packet-v4 or request-v5 stores
+are not interpreted or migrated. The qualification profile schema mechanically
+binds packet v5; prompt, model, effort, result, provider transport, and
+qualification-only policy versions are unchanged.
 
 Until the first production release, every database, report, artifact,
 configuration, and internal-document schema accepts only absent state or its

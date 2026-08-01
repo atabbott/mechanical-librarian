@@ -46,10 +46,14 @@ from mechanical_librarian.domain.reviewer_decision_summary import (
     validate_candidate_decision_summary,
     validate_proposal_decision_summary,
 )
+from mechanical_librarian.domain.shadow_review_actions import (
+    PolicyAction,
+    compile_shadow_review_actions,
+)
 
 PACKET_SCHEMA = "shadow-review-packet-v5"
 RESULT_SCHEMA = "shadow-review-result-v1"
-REQUEST_SCHEMA = "shadow-review-request-v5"
+REQUEST_SCHEMA = "shadow-review-request-v6"
 PROFILE_IDENTITY_SCHEMA = "reviewer-profile-identity-v1"
 QUALIFICATION_MODE = "qualification_only"
 MAX_PACKET_BYTES = 1_048_576
@@ -898,18 +902,16 @@ class ShadowReviewRequest:
         proposal_id = "review_proposal_" + ("1" * 64)
         candidate_id = "alternative_" + ("2" * 64)
         citation_id = "synthetic_citation_" + ("3" * 64)
+        correlation_id = "correlation_" + ("4" * 64)
         packet = ShadowReviewPacket(
             case_id,
             (
                 {
                     "candidates": [
                         {
-                            "assessment": {
-                                "confidence": "synthetic",
-                                "problems": [],
-                            },
+                            "assessment": "replaces_target",
                             "candidate_id": candidate_id,
-                            "correlations": [],
+                            "correlations": [correlation_id],
                             "date_event": None,
                             "date_precision": None,
                             "decision_summary": {
@@ -925,7 +927,7 @@ class ShadowReviewRequest:
                                 ),
                                 "support": {
                                     "independent_provider_correlations": 0,
-                                    "local_evidence": 0,
+                                    "local_evidence": 1,
                                     "target_only_preservation": 0,
                                 },
                             },
@@ -959,7 +961,13 @@ class ShadowReviewRequest:
                     },
                 },
             ),
-            (),
+            (
+                {
+                    "candidate_ids": [candidate_id],
+                    "correlation_id": correlation_id,
+                    "proposal_ids": [proposal_id],
+                },
+            ),
         )
         return cls.create_from_packet(profile, packet)
 
@@ -1090,11 +1098,10 @@ class ShadowReviewResult:
         ):
             raise ShadowReviewSemanticError("shadow-review result is invalid")
         expected = {
-            value["proposal_id"]: {
-                item["candidate_id"] for item in value["candidates"]
-            }
+            value["proposal_id"]: value
             for value in request.packet.proposals
         }
+        catalogue = compile_shadow_review_actions(request.packet)
         manual_bibliographic_proposals = {
             value["proposal_id"]
             for value in request.packet.proposals
@@ -1129,20 +1136,21 @@ class ShadowReviewResult:
                 or type(problems) is not list
                 or len(problems) > MAX_PROBLEMS
                 or type(used_citations) is not list
-                or not used_citations
                 or len(used_citations) > MAX_CITATIONS
                 or used_citations != sorted(set(used_citations))
                 or not set(used_citations).issubset(citations)
                 or any(not _bounded_text(value) for value in (*reasons, *problems))
             ):
                 raise ShadowReviewValueError("shadow-review result is invalid")
-            if kind == "recommend_candidate":
-                if type(candidate_id) is not str or candidate_id not in expected[proposal_id]:
-                    raise ShadowReviewSemanticError(
-                        "shadow-review result is invalid"
-                    )
-            elif candidate_id is not None:
+            action = catalogue.action_for(proposal_id, kind, candidate_id)
+            if action is None:
                 raise ShadowReviewSemanticError("shadow-review result is invalid")
+            if (
+                tuple(used_citations) != action.citation_ids
+            ):
+                raise ShadowReviewSemanticError(
+                    "shadow-review action citation binding is invalid"
+                )
             if kind == "manual" and not problems:
                 raise ShadowReviewSemanticError("shadow-review result is invalid")
             if (
@@ -1170,28 +1178,41 @@ class ShadowReviewResult:
             value["proposal_id"]: value
             for value in request.packet.proposals
         }
-        recommendation_by_destination = {
-            proposal_by_id[value["proposal_id"]]["destination"]: value
-            for value in self.recommendations
-            if value.get("proposal_id") in proposal_by_id
+        constrained = {
+            selection["destination"]
+            for combination in request.packet.bibliographic_combinations
+            for selection in combination["selections"]
         }
-        matches: list[str] = []
-        for combination in request.packet.bibliographic_combinations:
-            if all(
-                _recommendation_matches_bibliographic_selection(
-                    recommendation_by_destination.get(
-                        selection["destination"]
-                    ),
-                    selection,
+        catalogue = compile_shadow_review_actions(request.packet)
+        matches = {
+            value["combination_id"]
+            for value in request.packet.bibliographic_combinations
+        }
+        for recommendation in self.recommendations:
+            proposal = proposal_by_id.get(recommendation.get("proposal_id"))
+            if proposal is None or proposal["destination"] not in constrained:
+                continue
+            action = catalogue.action_for(
+                recommendation.get("proposal_id"),
+                recommendation.get("recommendation"),
+                recommendation.get("candidate_id"),
+            )
+            if action is None:
+                raise ShadowReviewSemanticError(
+                    "shadow-review bibliographic action is invalid"
                 )
-                for selection in combination["selections"]
-            ):
-                matches.append(combination["combination_id"])  # type: ignore[arg-type]
+            if action.recommendation == "manual":
+                return None
+            if not action.combination_ids:
+                raise ShadowReviewSemanticError(
+                    "shadow-review bibliographic action is invalid"
+                )
+            matches.intersection_update(action.combination_ids)
         if len(matches) != 1:
             raise ShadowReviewSemanticError(
                 "shadow-review bibliographic combination is invalid"
             )
-        return matches[0]
+        return next(iter(matches))
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -1232,27 +1253,6 @@ class ShadowReviewResult:
                 "shadow-review result document is not canonical"
             )
         return value
-
-
-def _recommendation_matches_bibliographic_selection(
-    recommendation: object,
-    selection: dict[str, object],
-) -> bool:
-    if type(recommendation) is not dict:
-        return False
-    if selection["kind"] == "candidate":
-        return (
-            recommendation.get("recommendation")
-            == "recommend_candidate"
-            and recommendation.get("candidate_id")
-            == selection["alternative_id"]
-        )
-    return (
-        selection["kind"] == "preserve_target"
-        and recommendation.get("recommendation")
-        == "recommend_keep_current"
-        and recommendation.get("candidate_id") is None
-    )
 
 
 def _date_link_local_references(report: MetadataReport) -> set[str]:
@@ -1833,17 +1833,97 @@ def _bounded_text(value: object) -> bool:
     )
 
 
-def _reviewer_output_schema(packet: ShadowReviewPacket, review_request_id: str) -> dict[str, object]:
-    proposal_ids = [value["proposal_id"] for value in packet.proposals]
-    citation_ids = [value["citation_id"] for value in packet.citations]
-    candidate_ids = sorted(
-        {
-            candidate["candidate_id"]
-            for proposal in packet.proposals
-            for candidate in proposal["candidates"]  # type: ignore[union-attr]
-        }
+def _reviewer_output_schema(
+    packet: ShadowReviewPacket,
+    review_request_id: str,
+) -> dict[str, object]:
+    catalogue = compile_shadow_review_actions(packet)
+    variants = [
+        _reviewer_action_schema(value)
+        for value in catalogue.actions
+    ]
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": False,
+        "properties": {
+            "recommendations": {
+                "items": {"oneOf": variants},
+                "maxItems": len(packet.proposals),
+                "minItems": len(packet.proposals),
+                "type": "array",
+            },
+            "review_request_id": {
+                "const": review_request_id,
+                "type": "string",
+            },
+            "schema_version": {"const": RESULT_SCHEMA, "type": "string"},
+        },
+        "required": ["recommendations", "review_request_id", "schema_version"],
+        "type": "object",
+    }
+
+
+def _reviewer_action_schema(action: PolicyAction) -> dict[str, object]:
+    citation_items: dict[str, object] = (
+        {"enum": list(action.citation_ids), "type": "string"}
+        if action.citation_ids
+        else {"maxLength": 1, "type": "string"}
     )
-    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "additionalProperties": False, "properties": {"recommendations": {"items": {"additionalProperties": False, "properties": {"candidate_id": {"anyOf": [{"enum": candidate_ids, "type": "string"}, {"type": "null"}]}, "citations": {"items": {"enum": citation_ids, "type": "string"}, "maxItems": MAX_CITATIONS, "minItems": 1, "type": "array"}, "problems": {"items": {"maxLength": MAX_REASON_CHARACTERS, "minLength": 1, "type": "string"}, "maxItems": MAX_PROBLEMS, "type": "array"}, "proposal_id": {"enum": proposal_ids, "type": "string"}, "reasons": {"items": {"maxLength": MAX_REASON_CHARACTERS, "minLength": 1, "type": "string"}, "maxItems": 16, "minItems": 1, "type": "array"}, "recommendation": {"enum": ["manual", "recommend_candidate", "recommend_keep_current"], "type": "string"}}, "required": ["candidate_id", "citations", "problems", "proposal_id", "reasons", "recommendation"], "type": "object"}, "maxItems": len(proposal_ids), "minItems": len(proposal_ids), "type": "array"}, "review_request_id": {"const": review_request_id, "type": "string"}, "schema_version": {"const": RESULT_SCHEMA, "type": "string"}}, "required": ["recommendations", "review_request_id", "schema_version"], "type": "object"}
+    minimum_citations = len(action.citation_ids)
+    minimum_problems = 1 if action.recommendation == "manual" else 0
+    candidate_type = "string" if action.candidate_id is not None else "null"
+    return {
+        "additionalProperties": False,
+        "properties": {
+            "candidate_id": {
+                "const": action.candidate_id,
+                "type": candidate_type,
+            },
+            "citations": {
+                "items": citation_items,
+                "maxItems": len(action.citation_ids),
+                "minItems": minimum_citations,
+                "type": "array",
+            },
+            "problems": {
+                "items": {
+                    "maxLength": MAX_REASON_CHARACTERS,
+                    "minLength": 1,
+                    "type": "string",
+                },
+                "maxItems": MAX_PROBLEMS,
+                "minItems": minimum_problems,
+                "type": "array",
+            },
+            "proposal_id": {
+                "const": action.proposal_id,
+                "type": "string",
+            },
+            "reasons": {
+                "items": {
+                    "maxLength": MAX_REASON_CHARACTERS,
+                    "minLength": 1,
+                    "type": "string",
+                },
+                "maxItems": 16,
+                "minItems": 1,
+                "type": "array",
+            },
+            "recommendation": {
+                "const": action.recommendation,
+                "type": "string",
+            },
+        },
+        "required": [
+            "candidate_id",
+            "citations",
+            "problems",
+            "proposal_id",
+            "reasons",
+            "recommendation",
+        ],
+        "type": "object",
+    }
 
 
 def _canonical_object(serialized: str, maximum: int) -> dict[str, object]:

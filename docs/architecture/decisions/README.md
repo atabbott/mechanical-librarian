@@ -38,6 +38,7 @@ context and consequences rather than reproducing code.
 | [0021](0021-coherent-bibliographic-combinations.md) | accepted | Bind dependent bibliographic advice to coherent combinations |
 | [0022](0022-decision-ready-reviewer-packets.md) | accepted | Project source-validated decision summaries without deciding |
 | [0024](0024-contain-qualification-reviewer-provider-state.md) | accepted | Separate primary reviewer credentials from disposable provider state and execution provenance |
+| [0025](0025-compile-policy-admissible-review-actions.md) | accepted | Compile packet-only policy-admissible reviewer actions before dispatch |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

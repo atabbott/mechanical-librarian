@@ -249,8 +249,14 @@ sanitized packet and attempt. Preview reads only profile bytes and application
 state; it constructs no executable, auth, target, provider, reviewer, or other
 network client and is not fresh eligibility proof. Request may invoke only the
 exact declared Codex/model/reasoning/prompt/profile/packet/output/policy tuple.
-ADR-0022 advances the current tuple to packet-v5/request-v5 while leaving
-result-v1 and the prompt/profile policy unchanged. Decision summaries contain
+ADR-0025 advances the current tuple to packet-v5/request-v6 while leaving
+result-v1 and the prompt/profile policy unchanged. Before dispatch, the
+packet-only action compiler applies fixed admissibility and abstention rules to
+each candidate, keep-current, and manual action independently. The request
+schema enumerates only compiled actions and their exact citation closures;
+unknown obligations and grounded but inadmissible nonmanual actions fail
+closed with typed exclusions. The compiler has no gold, prior-output, score,
+latency, identity, or response-metadata input. Decision summaries contain
 only closed enums, bounded counts, existing citation IDs and bibliographic
 combination IDs. They recompute local/provider correlation identities from the
 exact report, never inspect opaque hash prefixes, and never convert target-only,

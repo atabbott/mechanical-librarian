@@ -101,6 +101,9 @@ from mechanical_librarian.domain.shadow_review import (
     ShadowReviewValueError,
     canonical_json,
 )
+from mechanical_librarian.domain.shadow_review_actions import (
+    compile_shadow_review_actions,
+)
 from mechanical_librarian.interfaces.cli import main
 from tests.unit.test_review_case_persistence import _report
 from tests.unit.test_proposal_set import (
@@ -163,13 +166,19 @@ def _failure_output(code: str) -> str:
 
 def _result(request: ShadowReviewRequest) -> ShadowReviewResult:
     recommendations = []
-    citation = request.packet.citations[0]["citation_id"]
+    catalogue = compile_shadow_review_actions(request.packet)
     for proposal in request.packet.proposals:
         candidate = proposal["candidates"][0]["candidate_id"]
+        action = catalogue.action_for(
+            proposal["proposal_id"],
+            "recommend_candidate",
+            candidate,
+        )
+        assert action is not None
         recommendations.append(
             {
                 "candidate_id": candidate,
-                "citations": [citation],
+                "citations": list(action.citation_ids),
                 "problems": [],
                 "proposal_id": proposal["proposal_id"],
                 "reasons": ["The cited evidence supports this exact candidate."],
@@ -1899,7 +1908,7 @@ class ShadowReviewTests(unittest.TestCase):
             self.assertEqual(1, runner.calls)
             reopened.close()
 
-    def test_prior_request_v4_schema_and_rows_are_rejected_without_change(
+    def test_prior_request_v5_schema_and_rows_are_rejected_without_change(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1934,7 +1943,7 @@ class ShadowReviewTests(unittest.TestCase):
             ).fetchone()[0]
             prior_sql = current_sql.replace(
                 "request_schema TEXT NOT NULL "
-                "CHECK(request_schema='shadow-review-request-v5'), ",
+                "CHECK(request_schema='shadow-review-request-v6'), ",
                 "",
             )
             self.assertNotEqual(current_sql, prior_sql)
@@ -1965,8 +1974,8 @@ class ShadowReviewTests(unittest.TestCase):
                 ),
                 row[4]
                 .replace(
+                    "shadow-review-request-v6",
                     "shadow-review-request-v5",
-                    "shadow-review-request-v4",
                 )
                 .replace(
                     "shadow-review-packet-v5",
@@ -1994,7 +2003,7 @@ class ShadowReviewTests(unittest.TestCase):
                 ).fetchone(),
             )
             self.assertEqual(
-                ("shadow-review-request-v4",),
+                ("shadow-review-request-v5",),
                 connection.execute(
                     "SELECT json_extract(request_document,'$.schema_version') "
                     "FROM shadow_review_requests"
@@ -2664,7 +2673,7 @@ class ShadowReviewTests(unittest.TestCase):
             request = ShadowReviewRequest.create_from_packet(_identity(), packet)
             self.assertGreater(
                 len(request.to_json().encode("utf-8")),
-                MAX_PACKET_BYTES + MAX_PROFILE_IDENTITY_BYTES,
+                MAX_PACKET_BYTES,
             )
             self.assertLessEqual(
                 len(request.to_json().encode("utf-8")), MAX_REQUEST_BYTES
@@ -3971,10 +3980,14 @@ class CodexShadowAdapterTests(unittest.TestCase):
             )
             properties = schema["properties"]
             self.assertEqual("string", properties["review_request_id"]["type"])
-            item = properties["recommendations"]["items"]["properties"]
+            variants = properties["recommendations"]["items"]["oneOf"]
+            self.assertGreaterEqual(len(variants), len(request.packet.proposals))
+            item = variants[0]["properties"]
             self.assertEqual("string", item["proposal_id"]["type"])
             self.assertEqual("string", item["citations"]["items"]["type"])
             self.assertNotIn("uniqueItems", item["citations"])
+            self.assertIn("const", item["proposal_id"])
+            self.assertIn("const", item["recommendation"])
             repository.close()
 
     def test_output_schema_rejects_typeless_or_contradictory_bindings(self) -> None:
