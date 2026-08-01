@@ -1943,7 +1943,7 @@ class ShadowReviewTests(unittest.TestCase):
             ).fetchone()[0]
             prior_sql = current_sql.replace(
                 "request_schema TEXT NOT NULL "
-                "CHECK(request_schema='shadow-review-request-v7'), ",
+                "CHECK(request_schema='shadow-review-request-v8'), ",
                 "",
             )
             self.assertNotEqual(current_sql, prior_sql)
@@ -1974,7 +1974,7 @@ class ShadowReviewTests(unittest.TestCase):
                 ),
                 row[4]
                 .replace(
-                    "shadow-review-request-v7",
+                    "shadow-review-request-v8",
                     "shadow-review-request-v5",
                 )
                 .replace(
@@ -2028,7 +2028,7 @@ class ShadowReviewTests(unittest.TestCase):
                 "WHERE type='table' AND name='shadow_review_requests'"
             ).fetchone()[0]
             prior_sql = current_sql.replace(
-                "shadow-review-request-v7", "shadow-review-request-v6"
+                "shadow-review-request-v8", "shadow-review-request-v7"
             )
             self.assertNotEqual(current_sql, prior_sql)
             triggers = tuple(
@@ -3926,6 +3926,51 @@ class CodexShadowAdapterTests(unittest.TestCase):
             )
             self.assertNotIn(private_detail, str(raised.exception))
 
+    def test_nested_service_schema_rejection_has_distinct_failure_code(
+        self,
+    ) -> None:
+        private_detail = "In context=('properties', 'private'), oneOf is not permitted."
+        service_error = canonical_json(
+            {
+                "error": {
+                    "code": "invalid_json_schema",
+                    "message": (
+                        "Invalid schema for response_format 'codex_output_schema': "
+                        + private_detail
+                    ),
+                    "param": "text.format.schema",
+                    "type": "invalid_request_error",
+                },
+                "status": 400,
+                "type": "error",
+            }
+        )
+        jsonl = (
+            canonical_json({"thread_id": "thread_1", "type": "thread.started"})
+            + "\n"
+            + canonical_json({"type": "turn.started"})
+            + "\n"
+            + canonical_json({"message": service_error, "type": "error"})
+            + "\n"
+            + canonical_json(
+                {
+                    "error": {"message": service_error},
+                    "type": "turn.failed",
+                }
+            )
+            + "\n"
+        ).encode()
+        with tempfile.TemporaryFile("w+b") as stdout_file, tempfile.TemporaryFile(
+            "w+b"
+        ) as stderr_file:
+            stdout_file.write(jsonl)
+            code, count, digest = codex_shadow._nonzero_failure(
+                stdout_file, stderr_file, returncode=1
+            )
+        self.assertEqual("response_format", code)
+        self.assertEqual(len(jsonl), count)
+        self.assertEqual(hashlib.sha256(jsonl).hexdigest(), digest)
+
     def test_schema_rejection_signal_variance_fails_closed_to_runtime(
         self,
     ) -> None:
@@ -4017,7 +4062,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
             )
             properties = schema["properties"]
             self.assertEqual("string", properties["review_request_id"]["type"])
-            variants = properties["recommendations"]["items"]["oneOf"]
+            variants = properties["recommendations"]["items"]["anyOf"]
             self.assertGreaterEqual(len(variants), len(request.packet.proposals))
             item = variants[0]["properties"]
             self.assertEqual("string", item["proposal_id"]["type"])
@@ -4086,7 +4131,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
         request = ShadowReviewRequest.synthetic_canary(_identity())
         variants = json.loads(request.output_schema)["properties"][
             "recommendations"
-        ]["items"]["oneOf"]
+        ]["items"]["anyOf"]
         by_recommendation = {
             value["properties"]["recommendation"]["const"]: value[
                 "properties"
@@ -4153,6 +4198,10 @@ class CodexShadowAdapterTests(unittest.TestCase):
         self.assertIn("supported value is absent from packet candidates", prompt)
 
     def test_output_schema_rejects_typeless_or_contradictory_bindings(self) -> None:
+        with self.assertRaisesRegex(ShadowReviewerError, "schema"):
+            codex_shadow._validate_output_schema(
+                {"oneOf": [{"type": "string"}]}
+            )
         with self.assertRaisesRegex(ShadowReviewerError, "schema"):
             codex_shadow._validate_output_schema({"enum": ["bound"]})
         with self.assertRaisesRegex(ShadowReviewerError, "schema"):

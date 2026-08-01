@@ -38,8 +38,9 @@ context and consequences rather than reproducing code.
 | [0021](0021-coherent-bibliographic-combinations.md) | accepted | Bind dependent bibliographic advice to coherent combinations |
 | [0022](0022-decision-ready-reviewer-packets.md) | accepted | Project source-validated decision summaries without deciding |
 | [0024](0024-contain-qualification-reviewer-provider-state.md) | accepted | Separate primary reviewer credentials from disposable provider state and execution provenance |
-| [0025](0025-compile-policy-admissible-review-actions.md) | accepted | Compile packet-only policy-admissible reviewer actions before dispatch |
-| [0026](0026-bind-shadow-recommendation-semantics.md) | accepted | Bind final candidate, keep-current, and manual reviewer semantics |
+| [0025](0025-compile-policy-admissible-review-actions.md) | accepted; structured-output union mechanism superseded by 0027 | Compile packet-only policy-admissible reviewer actions before dispatch |
+| [0026](0026-bind-shadow-recommendation-semantics.md) | accepted; exact-current request version advanced by 0027 | Bind final candidate, keep-current, and manual reviewer semantics |
+| [0027](0027-provider-admissible-shadow-output-schema.md) | accepted | Use a provider-admissible exact-action union and bounded schema-rejection envelope |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

@@ -1247,10 +1247,37 @@ def _is_live_schema_rejection(stdout_file, stderr_file) -> bool:
         ):
             return False
         message = cast(str, error["message"])
-        return (
-            message.startswith(_LIVE_SCHEMA_REJECTION_PREFIX)
-            and len(message) > len(_LIVE_SCHEMA_REJECTION_PREFIX)
+        if message.startswith(_LIVE_SCHEMA_REJECTION_PREFIX):
+            return len(message) > len(_LIVE_SCHEMA_REJECTION_PREFIX)
+        service = json.loads(
+            message,
+            object_pairs_hook=_unique_failure_object,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(value)
+            ),
         )
+        if (
+            type(service) is not dict
+            or set(service) != {"error", "status", "type"}
+            or service["type"] != "error"
+            or type(service["status"]) is not int
+            or service["status"] != 400
+        ):
+            return False
+        service_error = service["error"]
+        if (
+            type(service_error) is not dict
+            or set(service_error) != {"code", "message", "param", "type"}
+            or service_error["type"] != "invalid_request_error"
+            or service_error["code"] != "invalid_json_schema"
+            or service_error["param"] != "text.format.schema"
+            or type(service_error["message"]) is not str
+        ):
+            return False
+        service_message = cast(str, service_error["message"])
+        return service_message.startswith(
+            _LIVE_SCHEMA_REJECTION_PREFIX
+        ) and len(service_message) > len(_LIVE_SCHEMA_REJECTION_PREFIX)
     except (
         OSError,
         TypeError,
@@ -1425,7 +1452,6 @@ def _validate_output_schema(schema: object) -> None:
         "maxLength",
         "minItems",
         "minLength",
-        "oneOf",
         "properties",
         "required",
         "type",
@@ -1512,15 +1538,6 @@ def _validate_output_schema(schema: object) -> None:
             ):
                 raise ShadowReviewerError("schema")
             for child in value["anyOf"]:
-                visit(child)
-        if "oneOf" in value:
-            if (
-                set(value) != {"oneOf"}
-                or type(value["oneOf"]) is not list
-                or not value["oneOf"]
-            ):
-                raise ShadowReviewerError("schema")
-            for child in value["oneOf"]:
                 visit(child)
         if "properties" in value:
             if (
