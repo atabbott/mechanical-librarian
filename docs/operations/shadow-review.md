@@ -24,7 +24,7 @@ material are never stored in the application database. The tuple is fixed to:
 - prompt `shadow-review-prompt-v3`;
 - profile `codex-shadow-profile-v2`;
 - packet `shadow-review-packet-v5`;
-- request `shadow-review-request-v7`;
+- request `shadow-review-request-v8`;
 - output `shadow-review-result-v2`;
 - policy `qualification-only-policy-v1`; and
 - sandbox `bubblewrap-v1`.
@@ -58,7 +58,7 @@ rejected nonmanual actions. Unknown obligations fail closed. It does not read
 gold decisions, prior reviewer output, scores, latency, titles, human identity,
 or response metadata.
 
-Request v7 binds a finite structured-output `oneOf` containing only those
+Request v8 binds a finite structured-output `anyOf` containing only those
 compiled actions. Review result v2 still makes the untrusted recommendation;
 trusted validation requires the exact compiled action, action-bound citations,
 complete proposal coverage, one coherent bibliographic combination where
@@ -275,11 +275,12 @@ parser, semantic validator, and cleanup as an ordinary request, and therefore
 uses the exact ordinary wrapped command from empty `/job`, including
 `--skip-git-repo-check`. It never sends a holdout and blocks the cohort on
 failure. Each request binds the canonical structured-output schema bytes and
-SHA-256 into `shadow-review-request-v7` and its identity; the executor uses
+SHA-256 into `shadow-review-request-v8` and its identity; the executor uses
 those exact bytes. The complete canonical request envelope is bounded at
 3,227,648 bytes, and the exact-current SQLite column has the same byte capacity;
 there is no truncation. The generated schema is restricted to the pinned
-structured-output subset: every `const` and `enum` has its primitive type, and
+structured-output subset: nested action variants use `anyOf`, never `oneOf`;
+every `const` and `enum` has its primitive type, and
 citation cardinality remains bounded without `uniqueItems` so later duplicate
 normalization can remain compatible.
 Invalid UTF-8, JSON, duplicate keys, noncanonical JSON, and truncated documents

@@ -53,7 +53,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 
 PACKET_SCHEMA = "shadow-review-packet-v5"
 RESULT_SCHEMA = "shadow-review-result-v2"
-REQUEST_SCHEMA = "shadow-review-request-v7"
+REQUEST_SCHEMA = "shadow-review-request-v8"
 PROFILE_IDENTITY_SCHEMA = "reviewer-profile-identity-v1"
 PROMPT_VERSION = "shadow-review-prompt-v3"
 PROFILE_VERSION = "codex-shadow-profile-v2"
@@ -1847,7 +1847,7 @@ def _reviewer_output_schema(
         "additionalProperties": False,
         "properties": {
             "recommendations": {
-                "items": {"oneOf": variants},
+                "items": {"anyOf": variants},
                 "maxItems": len(packet.proposals),
                 "minItems": len(packet.proposals),
                 "type": "array",

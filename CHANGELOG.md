@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Make the qualification shadow-review structured-output schema acceptable to
+  the provider by expressing the same exact compiled action variants with the
+  supported nested `anyOf` union and rejecting `oneOf` locally. Domain
+  validation still requires one exact compiled action and its complete
+  citation closure. Recognize the provider's bounded nested invalid-schema
+  error envelope as `response_format` while malformed, mixed, or extended
+  signals remain generic runtime failures. Advance the clean exact-current
+  request contract to `shadow-review-request-v8`; earlier request-v7 stores
+  require a clean rebuild. (#438)
+
 - Bind the final qualification shadow-recommendation contract. Manual advice
   may now retain an empty required `problems` list when it has a bounded reason
   and exact citations but no adverse fact; present problems remain bounded

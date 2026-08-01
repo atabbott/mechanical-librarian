@@ -43,7 +43,7 @@ The current qualification-only `shadow-review-packet-v5` contains:
   qualification profile.
 
 ADR-0026 binds the current projection and result contract into
-`shadow-review-request-v7`. Missing,
+`shadow-review-request-v8`. Missing,
 opaque-only, malformed, noncanonical, or over-bound provider date linkage
 fails before reviewer invocation. This applies to cited typed provider claims
 and rich date evidence; rich evidence citation IDs are also recomputed from

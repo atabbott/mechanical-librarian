@@ -372,7 +372,7 @@ class ShadowReviewActionCompilerTests(unittest.TestCase):
         request = ShadowReviewRequest.create_from_packet(_identity(), _packet(data))
         schema = json.loads(request.output_schema)
 
-        variants = schema["properties"]["recommendations"]["items"]["oneOf"]
+        variants = schema["properties"]["recommendations"]["items"]["anyOf"]
         self.assertEqual(1, len(variants))
         self.assertEqual(
             "manual",
@@ -416,7 +416,7 @@ class ShadowReviewActionCompilerTests(unittest.TestCase):
         variant = next(
             value
             for value in schema["properties"]["recommendations"]["items"][
-                "oneOf"
+                "anyOf"
             ]
             if value["properties"]["recommendation"]["const"]
             == "recommend_candidate"

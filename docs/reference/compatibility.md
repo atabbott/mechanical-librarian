@@ -8,7 +8,7 @@ The current installed contract is intentionally narrow:
   `metadata-report-v22` plus `proposal-set-v3` under
   `fixed-conservative-v6`, or the separate `catalogue-v1` schema;
 - `review-case-v2`, `shadow-review-packet-v5`,
-  `shadow-review-request-v7`, `shadow-review-result-v2`,
+  `shadow-review-request-v8`, `shadow-review-result-v2`,
   `shadow-review-inspect-v3`,
   `shadow-review-failure-v2`, and the exact-current append-only
   qualification-only shadow request/attempt/dispatch/outcome schema with
