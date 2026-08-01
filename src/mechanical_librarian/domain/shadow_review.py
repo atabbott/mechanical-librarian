@@ -53,7 +53,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 
 PACKET_SCHEMA = "shadow-review-packet-v5"
 RESULT_SCHEMA = "shadow-review-result-v2"
-REQUEST_SCHEMA = "shadow-review-request-v8"
+REQUEST_SCHEMA = "shadow-review-request-v9"
 PROFILE_IDENTITY_SCHEMA = "reviewer-profile-identity-v1"
 PROMPT_VERSION = "shadow-review-prompt-v3"
 PROFILE_VERSION = "codex-shadow-profile-v2"
@@ -1838,20 +1838,12 @@ def _reviewer_output_schema(
     review_request_id: str,
 ) -> dict[str, object]:
     catalogue = compile_shadow_review_actions(packet)
-    variants = [
-        _reviewer_action_schema(value)
-        for value in catalogue.actions
-    ]
+    recommendations = _reviewer_recommendations_schema(packet, catalogue.actions)
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": False,
         "properties": {
-            "recommendations": {
-                "items": {"anyOf": variants},
-                "maxItems": len(packet.proposals),
-                "minItems": len(packet.proposals),
-                "type": "array",
-            },
+            "recommendations": recommendations,
             "review_request_id": {
                 "const": review_request_id,
                 "type": "string",
@@ -1861,6 +1853,42 @@ def _reviewer_output_schema(
         "required": ["recommendations", "review_request_id", "schema_version"],
         "type": "object",
     }
+
+
+def _reviewer_recommendations_schema(
+    packet: ShadowReviewPacket,
+    actions: tuple[PolicyAction, ...],
+) -> dict[str, object]:
+    def array_schema(allowed: tuple[PolicyAction, ...]) -> dict[str, object]:
+        return {
+            "items": {
+                "anyOf": [_reviewer_action_schema(action) for action in allowed]
+            },
+            "maxItems": len(packet.proposals),
+            "minItems": len(packet.proposals),
+            "type": "array",
+        }
+
+    combinations = packet.bibliographic_combinations
+    if not combinations:
+        return array_schema(actions)
+    constrained_destinations = {
+        selection["destination"]
+        for combination in combinations
+        for selection in combination["selections"]
+    }
+    branches = []
+    for combination in combinations:
+        combination_id = combination["combination_id"]
+        allowed = tuple(
+            action
+            for action in actions
+            if action.destination not in constrained_destinations
+            or action.recommendation == "manual"
+            or combination_id in action.combination_ids
+        )
+        branches.append(array_schema(allowed))
+    return {"anyOf": branches}
 
 
 def _reviewer_action_schema(action: PolicyAction) -> dict[str, object]:

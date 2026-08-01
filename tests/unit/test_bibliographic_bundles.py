@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from mechanical_librarian.adapters.reviewers import codex_shadow
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -144,6 +145,74 @@ def _selections(proposal) -> list[dict[str, object]]:
 
 
 class BibliographicBundleTests(unittest.TestCase):
+    def test_output_schema_partitions_actions_by_allowed_combination(self) -> None:
+        report = _bibliographic_report(
+            current_title="Synthetic Title",
+            providers=(
+                _source(
+                    "catalogue",
+                    "edition-1",
+                    titles=("Synthetic Title",),
+                    subtitle="Synthetic Subtitle",
+                ),
+                _source(
+                    "other",
+                    "edition-2",
+                    titles=("Synthetic Title",),
+                    series="Synthetic Series",
+                    sequence="1",
+                ),
+            ),
+        )
+        proposal = evaluate_report(report)
+        case = ReviewCase.create(proposal, report)
+        packet = ShadowReviewPacket.create(case, proposal, report)
+        request = ShadowReviewRequest.create(case, _identity(), packet)
+
+        schema = json.loads(request.output_schema)
+        recommendations = schema["properties"]["recommendations"]
+        branches = recommendations["anyOf"]
+        self.assertEqual(2, len(branches))
+        codex_shadow._validate_output_schema(schema)
+
+        variants_by_branch = []
+        for branch in branches:
+            self.assertEqual(len(packet.proposals), branch["minItems"])
+            self.assertEqual(len(packet.proposals), branch["maxItems"])
+            variants_by_branch.append(
+                {
+                    (
+                        variant["properties"]["proposal_id"]["const"],
+                        variant["properties"]["recommendation"]["const"],
+                        variant["properties"]["candidate_id"]["const"],
+                    )
+                    for variant in branch["items"]["anyOf"]
+                }
+            )
+
+        catalogue = compile_shadow_review_actions(packet)
+        constrained_candidates = [
+            action
+            for action in catalogue.actions
+            if len(action.combination_ids) == 1
+            and action.destination
+            in {TargetDestination.SERIES.value, TargetDestination.SUBTITLE.value}
+            and action.recommendation == "recommend_candidate"
+        ]
+        self.assertEqual(2, len(constrained_candidates))
+        constrained_keys = [
+            (action.proposal_id, action.recommendation, action.candidate_id)
+            for action in constrained_candidates
+        ]
+        for key in constrained_keys:
+            self.assertEqual(1, sum(key in branch for branch in variants_by_branch))
+        self.assertFalse(
+            any(
+                all(key in branch for key in constrained_keys)
+                for branch in variants_by_branch
+            )
+        )
+
     def test_title_to_subtitle_is_one_explicit_complete_combination(self) -> None:
         report = _bibliographic_report(
             current_title="Secret History: A Mistborn Novella",

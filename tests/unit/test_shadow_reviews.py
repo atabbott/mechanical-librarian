@@ -1943,7 +1943,7 @@ class ShadowReviewTests(unittest.TestCase):
             ).fetchone()[0]
             prior_sql = current_sql.replace(
                 "request_schema TEXT NOT NULL "
-                "CHECK(request_schema='shadow-review-request-v8'), ",
+                "CHECK(request_schema='shadow-review-request-v9'), ",
                 "",
             )
             self.assertNotEqual(current_sql, prior_sql)
@@ -1974,7 +1974,7 @@ class ShadowReviewTests(unittest.TestCase):
                 ),
                 row[4]
                 .replace(
-                    "shadow-review-request-v8",
+                    "shadow-review-request-v9",
                     "shadow-review-request-v5",
                 )
                 .replace(
@@ -2017,7 +2017,7 @@ class ShadowReviewTests(unittest.TestCase):
             after = hashlib.sha256(path.read_bytes()).hexdigest()
             self.assertEqual(before, after)
 
-    def test_prior_request_v6_schema_is_rejected_without_change(self) -> None:
+    def test_prior_request_v8_schema_is_rejected_without_change(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "reports.sqlite"
             repository = open_repository(path)
@@ -2028,7 +2028,7 @@ class ShadowReviewTests(unittest.TestCase):
                 "WHERE type='table' AND name='shadow_review_requests'"
             ).fetchone()[0]
             prior_sql = current_sql.replace(
-                "shadow-review-request-v8", "shadow-review-request-v7"
+                "shadow-review-request-v9", "shadow-review-request-v8"
             )
             self.assertNotEqual(current_sql, prior_sql)
             triggers = tuple(
@@ -4258,7 +4258,6 @@ class CodexShadowAdapterTests(unittest.TestCase):
                 b'{"recommendations":[],"recommendations":',
                 1,
             ),
-            b" " + valid,
         )
         for serialized in malformed:
             with self.subTest(serialized=serialized[:20]):
@@ -4274,6 +4273,24 @@ class CodexShadowAdapterTests(unittest.TestCase):
                     hashlib.sha256(serialized).hexdigest(),
                     raised.exception.digest,
                 )
+        parsed = json.loads(valid)
+        reordered = {key: parsed[key] for key in reversed(tuple(parsed))}
+        reordered["recommendations"] = [
+            {key: item[key] for key in reversed(tuple(item))}
+            for item in parsed["recommendations"]
+        ]
+        formatted = json.dumps(
+            reordered,
+            ensure_ascii=False,
+            indent=2,
+        ).encode("utf-8")
+        self.assertNotEqual(valid, formatted)
+        normalized = codex_shadow._validated_result(
+            formatted,
+            request,
+            maximum=MAX_REQUEST_BYTES,
+        )
+        self.assertEqual(valid.decode("utf-8"), normalized.result.to_json())
         semantic = json.loads(valid)
         semantic["recommendations"] = []
         semantic_bytes = canonical_json(semantic).encode("utf-8")

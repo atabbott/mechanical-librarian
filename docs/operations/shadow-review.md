@@ -24,7 +24,7 @@ material are never stored in the application database. The tuple is fixed to:
 - prompt `shadow-review-prompt-v3`;
 - profile `codex-shadow-profile-v2`;
 - packet `shadow-review-packet-v5`;
-- request `shadow-review-request-v8`;
+- request `shadow-review-request-v9`;
 - output `shadow-review-result-v2`;
 - policy `qualification-only-policy-v1`; and
 - sandbox `bubblewrap-v1`.
@@ -58,11 +58,12 @@ rejected nonmanual actions. Unknown obligations fail closed. It does not read
 gold decisions, prior reviewer output, scores, latency, titles, human identity,
 or response metadata.
 
-Request v8 binds a finite structured-output `anyOf` containing only those
-compiled actions. Review result v2 still makes the untrusted recommendation;
-trusted validation requires the exact compiled action, action-bound citations,
-complete proposal coverage, one coherent bibliographic combination where
-applicable, and currentness.
+Request v9 binds finite structured-output `anyOf` branches containing only
+those compiled actions and, where applicable, partitions them by one allowed
+bibliographic combination. Review result v2 still makes the untrusted
+recommendation; trusted validation requires the exact compiled action,
+action-bound citations, complete proposal coverage, one coherent bibliographic
+combination where applicable, and currentness.
 
 Candidate advice names a candidate only for `recommend_candidate`; manual and
 keep-current use JSON `null`. Keep-current is a positive cited conclusion that
@@ -275,18 +276,23 @@ parser, semantic validator, and cleanup as an ordinary request, and therefore
 uses the exact ordinary wrapped command from empty `/job`, including
 `--skip-git-repo-check`. It never sends a holdout and blocks the cohort on
 failure. Each request binds the canonical structured-output schema bytes and
-SHA-256 into `shadow-review-request-v8` and its identity; the executor uses
+SHA-256 into `shadow-review-request-v9` and its identity; the executor uses
 those exact bytes. The complete canonical request envelope is bounded at
 3,227,648 bytes, and the exact-current SQLite column has the same byte capacity;
 there is no truncation. The generated schema is restricted to the pinned
-structured-output subset: nested action variants use `anyOf`, never `oneOf`;
-every `const` and `enum` has its primitive type, and
-citation cardinality remains bounded without `uniqueItems` so later duplicate
-normalization can remain compatible.
-Invalid UTF-8, JSON, duplicate keys, noncanonical JSON, and truncated documents
-are durable `malformed_output` diagnostics. After canonical outer shape and
-exact request-ID syntax are established, a result that names a different exact
-request is `identity` at the reviewer identity stage, before citation
+structured-output subset: nested action and combination branches use `anyOf`,
+never `oneOf`; every `const` and `enum` has its primitive type;
+bibliographic branches expose only actions compatible with one shared packet
+combination; and citation cardinality remains bounded without `uniqueItems` so
+later duplicate normalization can remain compatible.
+Invalid UTF-8, invalid JSON, duplicate keys, non-object roots, and truncated
+documents are durable `malformed_output` diagnostics. Insignificant JSON
+whitespace and object-member order are accepted only at this transient adapter
+boundary; the exact raw bytes are classified and retained until cleanup, then
+the parsed object is canonically serialized before typed domain construction.
+After parsed outer shape and exact request-ID syntax are established, a result
+that names a different exact request is `identity` at the reviewer identity
+stage, before citation
 normalization or membership checks. A missing or malformed request identity
 remains a semantic failure. Other canonical results that violate their bound
 request remain `citation_membership`; none retains raw bytes, rejected values,
@@ -294,7 +300,7 @@ request IDs, or exception digests in status. Exact repository failures map to
 `persistence` with the persistence component and stage. A store failure can
 prevent a new durable outcome, but its CLI projection remains the same bounded
 diagnostic.
-For a canonical document, the adapter validates every raw citation identifier
+For a parsed result object, the adapter validates every raw citation identifier
 against the exact packet allowlist and enforces the 256-item raw bound before
 normalizing each recommendation to a sorted unique set. Reordering and known
 duplicates alone therefore do not invalidate advice. Unknown, missing,

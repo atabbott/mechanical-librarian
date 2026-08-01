@@ -5,7 +5,8 @@
 - Owners: project maintainers
 - Supersedes: the structured-output union mechanism in ADR-0025 and the
   exact-current request version in ADR-0026
-- Superseded by: none
+- Superseded by: ADR-0028 for the exact-current request schema and
+  recommendation-array combination partitioning
 
 ## Context
 
