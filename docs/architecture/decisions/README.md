@@ -40,7 +40,8 @@ context and consequences rather than reproducing code.
 | [0024](0024-contain-qualification-reviewer-provider-state.md) | accepted | Separate primary reviewer credentials from disposable provider state and execution provenance |
 | [0025](0025-compile-policy-admissible-review-actions.md) | accepted; structured-output union mechanism superseded by 0027 | Compile packet-only policy-admissible reviewer actions before dispatch |
 | [0026](0026-bind-shadow-recommendation-semantics.md) | accepted; exact-current request version advanced by 0027 | Bind final candidate, keep-current, and manual reviewer semantics |
-| [0027](0027-provider-admissible-shadow-output-schema.md) | accepted | Use a provider-admissible exact-action union and bounded schema-rejection envelope |
+| [0027](0027-provider-admissible-shadow-output-schema.md) | accepted; exact-current request version and recommendation-array construction superseded by 0028 | Use a provider-admissible exact-action union and bounded schema-rejection envelope |
+| [0028](0028-normalize-transient-reviewer-json-and-partition-combinations.md) | accepted | Normalize transient reviewer JSON and partition finite actions by one allowed bibliographic combination |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Accept bounded duplicate-free reviewer JSON with insignificant formatting
+  variance at the transient provider boundary, while retaining exact raw bytes
+  and canonicalizing before typed domain construction and persistence. Partition
+  finite recommendation schemas by one shared allowed bibliographic combination
+  so incompatible nonmanual actions cannot satisfy the same schema branch;
+  every compiled action remains reachable and trusted validation remains
+  authoritative. Advance the clean exact-current request contract to
+  `shadow-review-request-v9`; request-v8 stores require a clean rebuild. (#440)
+
 - Make the qualification shadow-review structured-output schema acceptable to
   the provider by expressing the same exact compiled action variants with the
   supported nested `anyOf` union and rejecting `oneOf` locally. Domain

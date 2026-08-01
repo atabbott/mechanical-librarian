@@ -1326,7 +1326,7 @@ def _validated_result(
                 ValueError(value)
             ),
         )
-        if type(raw) is not dict or canonical_json(raw) != serialized:
+        if type(raw) is not dict:
             raise ShadowReviewDocumentError(
                 "shadow-review result document is malformed"
             )

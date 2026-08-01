@@ -216,7 +216,7 @@ fact/reference disagreement, forged kind/value/applicability/scope/raw-order
 or provider/candidate membership, invalid ISBN/ASIN syntax, private or
 credential-shaped context, missing rich-date-evidence linkage, malformed
 identifier and format shapes, duplicate/reordered facts, and context beyond
-either 16-fact bound. Request-v6 replay exercises the same packet-v5 validator
+either 16-fact bound. Request-v9 replay exercises the same packet-v5 validator
 and recompiles the exact packet-only action catalogue. Tests cross positive
 candidate actions into destinations that previously produced only manual
 outcomes and negative actions into historically feasible destinations, then
@@ -227,8 +227,13 @@ opaque review-case digest changes.
 Three independently correlated complete 16-author representations retain all
 48 role facts under the correlation-derived aggregate bound, while an
 over-bound forged role array still fails closed. Persistence records and
-revalidates the exact request-v7 discriminator; a populated prior request-v6
-table is rejected without changing its database bytes.
+revalidates the exact request-v9 discriminator; a prior request-v8 table is
+rejected without changing its database bytes. Reviewer adapter tests
+accept insignificant raw-result JSON formatting while retaining strict UTF-8,
+duplicate-key, shape, identity, citation and semantic failures. Synthetic
+two-combination tests prove that every compiled action remains schema-reachable
+but mutually incompatible bibliographic actions never share a recommendation
+branch.
 Populated non-bibliographic current fields remain marked target-only when
 competing provider evidence requires manual review without an evidence-backed
 preservation candidate. Actionable provider-cover candidates count their exact

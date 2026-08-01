@@ -320,9 +320,12 @@ feedback, analytics, history, and approval are disabled by exact configuration.
 Resource, time, file, output, and process counts are bounded. The exact
 per-case structured-output schema bytes are subset-validated, digest-bound into
 the canonical request and untrusted prompt, and raw output failure classes
-remain value-free. Malformed UTF-8/JSON, duplicate-key, noncanonical, and
-truncated documents are distinct from canonical parsed results that violate
-their request semantics. Only the ADR-0017 diagnostic category, closed
+remain value-free. Malformed UTF-8/JSON, duplicate-key, non-object, and
+truncated documents are distinct from parsed results that violate their
+request semantics. Insignificant JSON whitespace and object-key order are
+accepted only in the transient provider result, whose exact raw bytes remain
+private until cleanup; canonicalization occurs before typed domain construction
+and persistence. Only the ADR-0017 diagnostic category, closed
 component/stage, optional retryability/currentness, and bounded aggregate count
 cross the trust boundary.
 The pinned ordinary command enables JSONL output. Only exit status 1 with empty
@@ -331,12 +334,13 @@ stderr and a bounded, strict-UTF-8 stream ending in the exact terminal
 `codex_output_schema` maps to `live_schema_rejection`. The raw message is never
 retained. Every variant, other nonzero exit, and unrecognized failure remains
 conservatively `spawn_runtime`; malformed result documents and zero-exit
-semantic or citation failures remain distinct. Once canonical outer shape and
+semantic or citation failures remain distinct. Once parsed outer shape and
 exact request-ID syntax are proven, a zero-exit result whose request identity
 differs from the bound request maps through a typed domain error to
 reviewer/identity/identity before citation normalization or membership checks,
 without string matching or retaining either identifier. Missing or malformed
-identity remains semantic, and noncanonical input remains malformed output.
+identity remains semantic. Formatting variance alone is normalized after
+bounded duplicate-free parsing; malformed content still fails closed.
 Exact repository faults map to the persistence component/category/stage rather
 than runtime, including database open and inspection failures crossing the
 CLI-runner boundary. A dispatched attempt with no terminal outcome reopens
