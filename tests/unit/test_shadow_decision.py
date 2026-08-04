@@ -612,8 +612,8 @@ class ShadowDecisionTests(unittest.TestCase):
         )
 
         citation_disagreement = (
-            replace(title, citation_ids=("citation_a",), combination_ids=(first_id,)),
-            replace(title, citation_ids=("citation_b",), combination_ids=(second_id,)),
+            replace(title, citation_ids=("citation_a",)),
+            replace(title, citation_ids=("citation_b",)),
         )
         seam_packet, seam_catalogue, eligible = _combination_seam(
             packet, citation_disagreement
@@ -628,7 +628,7 @@ class ShadowDecisionTests(unittest.TestCase):
             json.dumps(packet.bibliographic_combinations)
         )
         preservation_combinations[1]["selections"][0]["kind"] = "preserve_target"
-        candidate = replace(title, combination_ids=(first_id,))
+        candidate = title
         preservation = PolicyAction(
             _action_id(title.proposal_id, "recommend_keep_current", None),
             title.proposal_id,
@@ -636,7 +636,7 @@ class ShadowDecisionTests(unittest.TestCase):
             "recommend_keep_current",
             None,
             title.citation_ids,
-            (second_id,),
+            title.combination_ids,
         )
         seam_packet, seam_catalogue, eligible = _combination_seam(
             packet,
