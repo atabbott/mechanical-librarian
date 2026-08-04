@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import unittest
+from dataclasses import replace
+from unittest.mock import patch
 
+from mechanical_librarian.domain import shadow_decision as shadow_decision_module
 from mechanical_librarian.domain.shadow_decision import (
     DECISION_POLICY_SHA256,
     DECISION_POLICY_VERSION,
@@ -10,13 +14,25 @@ from mechanical_librarian.domain.shadow_decision import (
     ShadowDecisionSet,
     decide_shadow_packet,
 )
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    FieldState,
+    LocalClaim,
+)
 from mechanical_librarian.domain.shadow_review import (
     ReviewerProfileIdentity,
     ShadowReviewPacket,
     ShadowReviewRequest,
+    ShadowReviewValueError,
 )
 from mechanical_librarian.domain.shadow_review_actions import (
     ACTION_POLICY_VERSION,
+    PolicyAction,
+    PolicyActionCatalogue,
+    PolicyActionCompilationError,
+    _action_id,
+    _exclude,
     compile_shadow_review_actions,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
@@ -131,6 +147,94 @@ def _rebuild(data: dict[str, object]) -> ShadowReviewPacket:
     )
 
 
+def _local_title(value: str) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed=value,
+        canonical=value,
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        basis="package_metadata",
+        excerpt=value,
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        occurrence=0,
+    )
+
+
+def _combination_packet(
+    *,
+    current_title: str | None = None,
+    providers: tuple | None = None,
+) -> ShadowReviewPacket:
+    report = _bibliographic_report(
+        current_title=current_title,
+        local_claims=(_local_title("Synthetic Work"),),
+        providers=(
+            providers
+            if providers is not None
+            else (
+                _source(
+                    "hardcover",
+                    "edition-1",
+                    titles=("Synthetic Work",),
+                    series="Synthetic Series",
+                ),
+            )
+        ),
+    )
+    proposal = evaluate_report(report)
+    case = ReviewCase.create(proposal, report)
+    return ShadowReviewPacket.create(case, proposal, report)
+
+
+def _catalogue_with_witness_variant(
+    packet: ShadowReviewPacket,
+    *,
+    destination: str,
+    variant: str,
+) -> PolicyActionCatalogue:
+    catalogue = compile_shadow_review_actions(packet)
+    proposal = next(
+        value for value in packet.proposals if value["destination"] == destination
+    )
+    combination_id = packet.bibliographic_combinations[0]["combination_id"]
+    witness = next(
+        action
+        for action in catalogue.actions
+        if action.proposal_id == proposal["proposal_id"]
+        and action.recommendation != "manual"
+        and combination_id in action.combination_ids
+    )
+    actions = [value for value in catalogue.actions if value is not witness]
+    exclusions = list(catalogue.exclusions)
+    if variant == "excluded":
+        exclusions.append(_exclude(witness, {"synthetic_witness_exclusion"}))
+    elif variant == "unbound":
+        actions.append(replace(witness, combination_ids=()))
+    elif variant in {"wrong_kind", "wrong_candidate"}:
+        candidate_id = "alternative_" + "f" * 64
+        recommendation = "recommend_candidate"
+        actions.append(
+            PolicyAction(
+                _action_id(proposal["proposal_id"], recommendation, candidate_id),
+                proposal["proposal_id"],
+                destination,
+                recommendation,
+                candidate_id,
+                witness.citation_ids,
+                witness.combination_ids,
+            )
+        )
+    elif variant != "missing":
+        raise AssertionError("unknown witness variant")
+    return PolicyActionCatalogue(
+        tuple(sorted(actions, key=lambda value: value.action_id)),
+        tuple(sorted(exclusions, key=lambda value: value.exclusion_id)),
+    )
+
+
 class ShadowDecisionTests(unittest.TestCase):
     def test_supported_fields_select_the_unique_eligible_candidate(self) -> None:
         for destination in (
@@ -232,31 +336,199 @@ class ShadowDecisionTests(unittest.TestCase):
             decide_shadow_packet(_rebuild(timestamp)).decisions[0].recommendation,
         )
 
-    def test_active_bibliographic_combination_never_selects_a_partial_set(self) -> None:
-        report = _bibliographic_report(
-            current_title="Synthetic Work: Synthetic Series",
+    def test_supported_title_projects_through_exact_unsupported_witnesses(self) -> None:
+        packet = _combination_packet()
+        self.assertEqual(1, len(packet.bibliographic_combinations))
+        catalogue = compile_shadow_review_actions(packet)
+        decisions = {
+            value.destination: value for value in decide_shadow_packet(packet).decisions
+        }
+
+        title = decisions["title"]
+        self.assertEqual("recommend_candidate", title.recommendation)
+        self.assertEqual("unique_supported_candidate", title.reason_code)
+        selected = catalogue.action_for(
+            title.proposal_id,
+            title.recommendation,
+            title.candidate_id,
+        )
+        self.assertIsNotNone(selected)
+        assert selected is not None
+        self.assertEqual(selected.action_id, title.action_id)
+        self.assertEqual(selected.citation_ids, title.citation_ids)
+        self.assertEqual(selected.combination_ids, title.combination_ids)
+
+        for destination in ("subtitle", "series"):
+            with self.subTest(destination=destination):
+                sibling = decisions[destination]
+                manual = catalogue.action_for(sibling.proposal_id, "manual", None)
+                self.assertIsNotNone(manual)
+                assert manual is not None
+                self.assertEqual(manual.action_id, sibling.action_id)
+                self.assertEqual("manual", sibling.recommendation)
+                self.assertEqual("unsupported_destination", sibling.reason_code)
+                self.assertEqual(manual.citation_ids, sibling.citation_ids)
+                self.assertEqual((), sibling.combination_ids)
+
+    def test_supported_title_preservation_projects_through_exact_witnesses(self) -> None:
+        decisions = {
+            value.destination: value
+            for value in decide_shadow_packet(
+                _combination_packet(current_title="Synthetic Work")
+            ).decisions
+        }
+        self.assertEqual("recommend_keep_current", decisions["title"].recommendation)
+        self.assertEqual(
+            "unique_supported_preservation", decisions["title"].reason_code
+        )
+        for destination in ("subtitle", "series"):
+            self.assertEqual("manual", decisions[destination].recommendation)
+            self.assertEqual(
+                "unsupported_destination", decisions[destination].reason_code
+            )
+
+    def test_missing_excluded_wrong_or_unbound_witness_keeps_title_manual(self) -> None:
+        packet = _combination_packet()
+        controls = (
+            ("series", "missing"),
+            ("series", "excluded"),
+            ("series", "unbound"),
+            ("subtitle", "wrong_kind"),
+            ("series", "wrong_candidate"),
+        )
+        for destination, variant in controls:
+            with self.subTest(destination=destination, variant=variant):
+                catalogue = _catalogue_with_witness_variant(
+                    packet,
+                    destination=destination,
+                    variant=variant,
+                )
+                with patch(
+                    "mechanical_librarian.domain.shadow_decision."
+                    "compile_shadow_review_actions",
+                    return_value=catalogue,
+                ):
+                    decisions = {
+                        value.destination: value
+                        for value in decide_shadow_packet(packet).decisions
+                    }
+                self.assertEqual("manual", decisions["title"].recommendation)
+                self.assertEqual(
+                    "bibliographic_combination_unresolved",
+                    decisions["title"].reason_code,
+                )
+                for sibling in ("subtitle", "series"):
+                    self.assertEqual("manual", decisions[sibling].recommendation)
+                    self.assertEqual(
+                        "unsupported_destination", decisions[sibling].reason_code
+                    )
+
+    def test_ambiguous_eligible_title_keeps_combination_manual(self) -> None:
+        packet = _combination_packet()
+        catalogue = compile_shadow_review_actions(packet)
+        title_proposal = next(
+            value for value in packet.proposals if value["destination"] == "title"
+        )
+        title_action = next(
+            value
+            for value in catalogue.actions
+            if value.proposal_id == title_proposal["proposal_id"]
+            and value.recommendation == "recommend_candidate"
+        )
+        competing = PolicyAction(
+            _action_id(
+                title_action.proposal_id,
+                "recommend_candidate",
+                "alternative_" + "f" * 64,
+            ),
+            title_action.proposal_id,
+            title_action.destination,
+            "recommend_candidate",
+            "alternative_" + "f" * 64,
+            title_action.citation_ids,
+            title_action.combination_ids,
+        )
+        original = shadow_decision_module._eligible_actions
+
+        def ambiguous(
+            packet_value: ShadowReviewPacket,
+            catalogue_value: PolicyActionCatalogue,
+            proposal: dict[str, object],
+        ) -> tuple[PolicyAction, ...]:
+            eligible = original(packet_value, catalogue_value, proposal)
+            return (
+                (*eligible, competing)
+                if proposal["destination"] == "title"
+                else eligible
+            )
+
+        with patch(
+            "mechanical_librarian.domain.shadow_decision._eligible_actions",
+            side_effect=ambiguous,
+        ):
+            title = next(
+                value
+                for value in decide_shadow_packet(packet).decisions
+                if value.destination == "title"
+            )
+        self.assertEqual("manual", title.recommendation)
+        self.assertEqual("bibliographic_combination_unresolved", title.reason_code)
+
+    def test_two_fully_witnessed_combinations_keep_title_manual(self) -> None:
+        packet = _combination_packet(
             providers=(
                 _source(
-                    "catalogue",
+                    "hardcover",
                     "edition-1",
+                    titles=("Synthetic Work",),
+                    subtitle="Synthetic Subtitle",
+                ),
+                _source(
+                    "open_library",
+                    "edition-2",
                     titles=("Synthetic Work",),
                     series="Synthetic Series",
                 ),
-            ),
-        )
-        proposal = evaluate_report(report)
-        case = ReviewCase.create(proposal, report)
-        packet = ShadowReviewPacket.create(case, proposal, report)
-        self.assertTrue(packet.bibliographic_combinations)
-        decisions = decide_shadow_packet(packet).decisions
-        constrained = {"title", "subtitle", "series"}
-        self.assertTrue(
-            all(
-                value.recommendation == "manual"
-                for value in decisions
-                if value.destination in constrained
             )
         )
+        self.assertEqual(2, len(packet.bibliographic_combinations))
+        decisions = {
+            value.destination: value for value in decide_shadow_packet(packet).decisions
+        }
+        self.assertEqual("manual", decisions["title"].recommendation)
+        self.assertEqual(
+            "bibliographic_combination_unresolved", decisions["title"].reason_code
+        )
+
+    def test_packet_boundary_rejects_unreachable_combination_shapes(self) -> None:
+        packet = _combination_packet()
+        mutations = (
+            lambda selections: selections.pop(),
+            lambda selections: selections.reverse(),
+            lambda selections: selections.__setitem__(
+                1, json.loads(json.dumps(selections[0]))
+            ),
+            lambda selections: selections[0].__setitem__("destination", "authors"),
+        )
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                data = json.loads(packet.to_json())
+                mutate(data["bibliographic_combinations"][0]["selections"])
+                with self.assertRaises(ShadowReviewValueError):
+                    _rebuild(data)
+
+    def test_catalogue_boundary_rejects_duplicate_action_keys(self) -> None:
+        catalogue = compile_shadow_review_actions(_combination_packet())
+        with self.assertRaises(PolicyActionCompilationError):
+            PolicyActionCatalogue(
+                tuple(
+                    sorted(
+                        (*catalogue.actions, catalogue.actions[0]),
+                        key=lambda value: value.action_id,
+                    )
+                ),
+                catalogue.exclusions,
+            )
 
     def test_identity_replay_and_document_validation_are_canonical(self) -> None:
         packet = _packet()
@@ -272,6 +544,44 @@ class ShadowDecisionTests(unittest.TestCase):
         with self.assertRaises(ShadowDecisionError):
             ShadowDecisionSet.from_json(
                 json.dumps(document, separators=(",", ":"), sort_keys=True),
+                packet,
+            )
+
+    def test_v3_policy_identity_is_frozen_and_v2_replay_is_rejected(self) -> None:
+        self.assertEqual(
+            "deterministic-shadow-decision-policy-v3", DECISION_POLICY_VERSION
+        )
+        self.assertEqual(
+            "3fb6b1daf0ecad7009400ecaa3ab5360e6083c1b79bcb88c4d62c43755091b3a",
+            DECISION_POLICY_SHA256,
+        )
+        packet = _packet()
+        document = json.loads(decide_shadow_packet(packet).to_json())
+        document["policy_version"] = "deterministic-shadow-decision-policy-v2"
+        document["policy_sha256"] = (
+            "e133a5bf47eaf76edc249d3fc7fef03d7327d3255941f8d6c078b22dee261054"
+        )
+        core = {
+            key: value
+            for key, value in document.items()
+            if key != "decision_set_id"
+        }
+        document["decision_set_id"] = "shadow_decision_set_" + hashlib.sha256(
+            json.dumps(
+                core,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        with self.assertRaises(ShadowDecisionError):
+            ShadowDecisionSet.from_json(
+                json.dumps(
+                    document,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
                 packet,
             )
 

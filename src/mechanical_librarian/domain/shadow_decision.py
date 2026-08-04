@@ -18,7 +18,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v2"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v3"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -26,6 +26,9 @@ _SUPPORTED_DESTINATIONS = frozenset(
 )
 _WORK_DESTINATIONS = frozenset({"title", "authors"})
 _PUBLICATION_DESTINATIONS = frozenset({"publishedDate", "publishedYear"})
+_COMBINATION_DESTINATIONS = ("title", "subtitle", "series")
+_COMBINATION_SELECTED_DESTINATION = "title"
+_COMBINATION_WITNESS_DESTINATIONS = ("subtitle", "series")
 _REASON_CODES = frozenset(
     {
         "ambiguous_eligible_actions",
@@ -49,8 +52,12 @@ _RULE_TABLE = {
         "unique_action_required": True,
     },
     "combinations": {
-        "atomic": True,
-        "full_compatible_combination_count": 1,
+        "exact_destination_order": list(_COMBINATION_DESTINATIONS),
+        "fully_witnessed_combination_count": 1,
+        "selected_supported_destination": _COMBINATION_SELECTED_DESTINATION,
+        "unsupported_witness_destinations": list(
+            _COMBINATION_WITNESS_DESTINATIONS
+        ),
     },
     "edition_fields": {
         "destinations": ["language", "publisher", "publishedDate", "publishedYear"],
@@ -493,29 +500,51 @@ def _base_reason(proposal: dict[str, object], eligible: tuple[PolicyAction, ...]
 
 def _combination_selections(
     packet: ShadowReviewPacket,
+    catalogue: PolicyActionCatalogue,
     eligible_by_proposal: dict[str, tuple[PolicyAction, ...]],
 ) -> tuple[dict[str, PolicyAction], set[str]] | None:
     if not packet.bibliographic_combinations:
         return {}, set()
-    proposals_by_destination = {
-        value["destination"]: value for value in packet.proposals
-    }
-    constrained = {
-        selection["destination"]
-        for combination in packet.bibliographic_combinations
-        for selection in combination["selections"]
-    }
+    proposals_by_destination: dict[str, list[dict[str, object]]] = {}
+    for proposal in packet.proposals:
+        proposals_by_destination.setdefault(proposal["destination"], []).append(
+            proposal
+        )
     qualifying: list[dict[str, PolicyAction]] = []
     for combination in packet.bibliographic_combinations:
-        chosen: dict[str, PolicyAction] = {}
         combination_id = combination["combination_id"]
+        selections = combination["selections"]
+        if (
+            tuple(value["destination"] for value in selections)
+            != _COMBINATION_DESTINATIONS
+        ):
+            continue
+        selected_title: PolicyAction | None = None
         for selection in combination["selections"]:
-            proposal = proposals_by_destination.get(selection["destination"])
-            if proposal is None:
+            destination = selection["destination"]
+            proposals = proposals_by_destination.get(destination, [])
+            if len(proposals) != 1:
+                break
+            proposal = proposals[0]
+            available = (
+                eligible_by_proposal[proposal["proposal_id"]]
+                if destination == _COMBINATION_SELECTED_DESTINATION
+                else tuple(
+                    action
+                    for action in catalogue.actions
+                    if action.proposal_id == proposal["proposal_id"]
+                    and action.destination == destination
+                    and action.recommendation != "manual"
+                )
+            )
+            if (
+                destination == _COMBINATION_SELECTED_DESTINATION
+                and len(available) != 1
+            ):
                 break
             matches = [
                 action
-                for action in eligible_by_proposal[proposal["proposal_id"]]
+                for action in available
                 if combination_id in action.combination_ids
                 and (
                     (
@@ -531,12 +560,14 @@ def _combination_selections(
             ]
             if len(matches) != 1:
                 break
-            chosen[proposal["proposal_id"]] = matches[0]
+            if destination == _COMBINATION_SELECTED_DESTINATION:
+                selected_title = matches[0]
         else:
-            qualifying.append(chosen)
+            if selected_title is not None:
+                qualifying.append({selected_title.proposal_id: selected_title})
     if len(qualifying) != 1:
         return None
-    return qualifying[0], constrained
+    return qualifying[0], set(_COMBINATION_DESTINATIONS)
 
 
 def decide_shadow_packet(packet: ShadowReviewPacket) -> ShadowDecisionSet:
@@ -555,7 +586,9 @@ def decide_shadow_packet(packet: ShadowReviewPacket) -> ShadowDecisionSet:
             )
         else:
             eligible_by_proposal[proposal["proposal_id"]] = ()
-    combination_result = _combination_selections(packet, eligible_by_proposal)
+    combination_result = _combination_selections(
+        packet, catalogue, eligible_by_proposal
+    )
     combination_actions: dict[str, PolicyAction] = {}
     constrained_destinations: set[str] = set()
     combination_failed = combination_result is None
