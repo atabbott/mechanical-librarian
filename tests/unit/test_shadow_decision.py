@@ -423,7 +423,7 @@ class ShadowDecisionTests(unittest.TestCase):
                         "unsupported_destination", decisions[sibling].reason_code
                     )
 
-    def test_ambiguous_eligible_title_keeps_combination_manual(self) -> None:
+    def test_unbound_eligible_title_does_not_preempt_exact_combination_match(self) -> None:
         packet = _combination_packet()
         catalogue = compile_shadow_review_actions(packet)
         title_proposal = next(
@@ -471,10 +471,10 @@ class ShadowDecisionTests(unittest.TestCase):
                 for value in decide_shadow_packet(packet).decisions
                 if value.destination == "title"
             )
-        self.assertEqual("manual", title.recommendation)
-        self.assertEqual("bibliographic_combination_unresolved", title.reason_code)
+        self.assertEqual("recommend_candidate", title.recommendation)
+        self.assertEqual("unique_supported_candidate", title.reason_code)
 
-    def test_two_fully_witnessed_combinations_keep_title_manual(self) -> None:
+    def test_identical_fully_witnessed_combinations_select_title_once(self) -> None:
         packet = _combination_packet(
             providers=(
                 _source(
@@ -495,10 +495,38 @@ class ShadowDecisionTests(unittest.TestCase):
         decisions = {
             value.destination: value for value in decide_shadow_packet(packet).decisions
         }
-        self.assertEqual("manual", decisions["title"].recommendation)
+        self.assertEqual("recommend_candidate", decisions["title"].recommendation)
         self.assertEqual(
-            "bibliographic_combination_unresolved", decisions["title"].reason_code
+            "unique_supported_candidate", decisions["title"].reason_code
         )
+        self.assertEqual(
+            tuple(
+                value["combination_id"]
+                for value in packet.bibliographic_combinations
+            ),
+            decisions["title"].combination_ids,
+        )
+
+    def test_identical_combination_projection_is_provider_order_invariant(self) -> None:
+        providers = (
+            _source(
+                "hardcover",
+                "edition-1",
+                titles=("Synthetic Work",),
+                subtitle="Synthetic Subtitle",
+            ),
+            _source(
+                "open_library",
+                "edition-2",
+                titles=("Synthetic Work",),
+                series="Synthetic Series",
+            ),
+        )
+        first = decide_shadow_packet(_combination_packet(providers=providers))
+        second = decide_shadow_packet(
+            _combination_packet(providers=tuple(reversed(providers)))
+        )
+        self.assertEqual(first.to_json(), second.to_json())
 
     def test_packet_boundary_rejects_unreachable_combination_shapes(self) -> None:
         packet = _combination_packet()
@@ -547,20 +575,18 @@ class ShadowDecisionTests(unittest.TestCase):
                 packet,
             )
 
-    def test_v3_policy_identity_is_frozen_and_v2_replay_is_rejected(self) -> None:
+    def test_v4_policy_identity_rejects_v3_replay(self) -> None:
         self.assertEqual(
-            "deterministic-shadow-decision-policy-v3", DECISION_POLICY_VERSION
+            "deterministic-shadow-decision-policy-v4", DECISION_POLICY_VERSION
         )
         self.assertEqual(
-            "3fb6b1daf0ecad7009400ecaa3ab5360e6083c1b79bcb88c4d62c43755091b3a",
+            "b889ef93baeff7f326fb997fd8883e47b066dd894d468ee4b28cfe4bbb12da6d",
             DECISION_POLICY_SHA256,
         )
         packet = _packet()
         document = json.loads(decide_shadow_packet(packet).to_json())
-        document["policy_version"] = "deterministic-shadow-decision-policy-v2"
-        document["policy_sha256"] = (
-            "e133a5bf47eaf76edc249d3fc7fef03d7327d3255941f8d6c078b22dee261054"
-        )
+        document["policy_version"] = "deterministic-shadow-decision-policy-v3"
+        document["policy_sha256"] = "3fb6b1daf0ecad7009400ecaa3ab5360e6083c1b79bcb88c4d62c43755091b3a"
         core = {
             key: value
             for key, value in document.items()

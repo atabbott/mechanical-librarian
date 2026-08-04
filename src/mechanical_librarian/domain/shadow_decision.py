@@ -18,7 +18,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v3"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v4"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -58,6 +58,7 @@ _RULE_TABLE = {
         "unsupported_witness_destinations": list(
             _COMBINATION_WITNESS_DESTINATIONS
         ),
+        "unanimous_full_policy_action_required": True,
     },
     "edition_fields": {
         "destinations": ["language", "publisher", "publishedDate", "publishedYear"],
@@ -537,11 +538,6 @@ def _combination_selections(
                     and action.recommendation != "manual"
                 )
             )
-            if (
-                destination == _COMBINATION_SELECTED_DESTINATION
-                and len(available) != 1
-            ):
-                break
             matches = [
                 action
                 for action in available
@@ -565,7 +561,13 @@ def _combination_selections(
         else:
             if selected_title is not None:
                 qualifying.append({selected_title.proposal_id: selected_title})
-    if len(qualifying) != 1:
+    if not qualifying:
+        return None
+    selected_title = next(iter(qualifying[0].values()))
+    if any(
+        next(iter(selection.values())) != selected_title
+        for selection in qualifying[1:]
+    ):
         return None
     return qualifying[0], set(_COMBINATION_DESTINATIONS)
 
