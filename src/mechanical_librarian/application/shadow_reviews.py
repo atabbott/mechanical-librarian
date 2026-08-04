@@ -16,9 +16,15 @@ from mechanical_librarian.application.failure_diagnostics import (
     reviewer_failure_diagnostic,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.shadow_decision import (
+    ShadowDecisionError,
+    ShadowDecisionSet,
+    decide_shadow_packet,
+)
 from mechanical_librarian.domain.shadow_review import (
     QUALIFICATION_MODE,
     ReviewerProfileIdentity,
+    ShadowReviewPacket,
     ShadowReviewIdentityError,
     ShadowReviewRequest,
     ShadowReviewResult,
@@ -323,6 +329,8 @@ class ShadowReviewRunner(Protocol):
 
 
 class ShadowReviewRepository(Protocol):
+    def preview_shadow_packet(self, review_case_id: str) -> ShadowReviewPacket: ...
+
     def validate_shadow_request(self, serialized: str) -> ShadowReviewRequest: ...
     def preview_shadow_request(
         self, review_case_id: str, profile_identity: str
@@ -383,6 +391,21 @@ def preview_shadow_review(
     except MetadataReportError as error:
         raise ShadowReviewError("persistence") from error
     except Exception as error:
+        raise ShadowReviewError("currentness") from error
+
+
+def preview_shadow_decision(
+    repository: ShadowReviewRepository,
+    review_case_id: str,
+) -> ShadowDecisionSet:
+    """Compute one provider-independent decision set from an exact current case."""
+    try:
+        return decide_shadow_packet(repository.preview_shadow_packet(review_case_id))
+    except ShadowReviewError:
+        raise
+    except MetadataReportError as error:
+        raise ShadowReviewError("persistence") from error
+    except ShadowDecisionError as error:
         raise ShadowReviewError("currentness") from error
 
 
@@ -612,5 +635,6 @@ __all__ = [
     "ShadowReviewRunner",
     "execute_shadow_review",
     "inspect_shadow_review",
+    "preview_shadow_decision",
     "preview_shadow_review",
 ]

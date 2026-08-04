@@ -871,6 +871,19 @@ class SQLiteMetadataReportRepository:
         except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
             raise MetadataReportError("review case is unavailable") from error
 
+    def preview_shadow_packet(self, review_case_id: str) -> ShadowReviewPacket:
+        """Project the exact provider-independent packet without durable state."""
+        try:
+            return self._shadow_packet(review_case_id)
+        except MetadataReportError:
+            raise
+        except (
+            sqlite3.Error,
+            ReviewCaseValueError,
+            ShadowReviewValueError,
+        ) as error:
+            raise MetadataReportError("shadow review preview failed") from error
+
     def preview_shadow_request(
         self, review_case_id: str, profile_identity: str
     ) -> str:
@@ -1332,6 +1345,15 @@ class SQLiteMetadataReportRepository:
     def _shadow_request(
         self, review_case_id: str, identity: ReviewerProfileIdentity
     ) -> ShadowReviewRequest:
+        case, packet = self._shadow_packet_source(review_case_id)
+        return ShadowReviewRequest.create(case, identity, packet)
+
+    def _shadow_packet(self, review_case_id: str) -> ShadowReviewPacket:
+        return self._shadow_packet_source(review_case_id)[1]
+
+    def _shadow_packet_source(
+        self, review_case_id: str
+    ) -> tuple[ReviewCase, ShadowReviewPacket]:
         reopened = json.loads(self.get_review_case(review_case_id))
         if (
             type(reopened) is not dict
@@ -1355,8 +1377,7 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("shadow review source is unavailable")
         proposal = ProposalSet.from_json(_validate_proposal_row(proposal_row))
         report = MetadataReport.from_json(_validate_report_row(report_row))
-        packet = ShadowReviewPacket.create(case, proposal, report)
-        return ShadowReviewRequest.create(case, identity, packet)
+        return case, ShadowReviewPacket.create(case, proposal, report)
 
     def _validated_shadow_request(
         self, review_request_id: str
@@ -1567,6 +1588,151 @@ class SQLiteMetadataReportRepository:
         finally:
             if self._binding is not None:
                 self._binding.close()
+
+
+class SQLiteShadowPreviewRepository:
+    """Narrow packet reader backed by a no-create, immutable SQLite connection."""
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        descriptor: int,
+        path: Path,
+        identity: tuple[int, int, int, int, int],
+    ) -> None:
+        self._connection = connection
+        self._descriptor = descriptor
+        self._path = path
+        self._identity = identity
+        self._reader = SQLiteMetadataReportRepository(connection)
+        self._closed = False
+
+    def _require_current(self) -> None:
+        try:
+            named = self._path.lstat()
+            opened = os.fstat(self._descriptor)
+        except OSError as error:
+            raise MetadataReportError("database authority changed") from error
+        named_identity = (
+            named.st_dev,
+            named.st_ino,
+            named.st_size,
+            named.st_mtime_ns,
+            named.st_ctime_ns,
+        )
+        opened_identity = (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_size,
+            opened.st_mtime_ns,
+            opened.st_ctime_ns,
+        )
+        if (
+            not stat.S_ISREG(named.st_mode)
+            or named_identity != self._identity
+            or opened_identity != self._identity
+        ):
+            raise MetadataReportError("database authority changed")
+        _reject_database_sidecars(self._path)
+
+    def preview_shadow_packet(self, review_case_id: str) -> ShadowReviewPacket:
+        if self._closed:
+            raise MetadataReportError("database is unavailable")
+        self._require_current()
+        try:
+            self._connection.execute("BEGIN")
+            packet = self._reader._shadow_packet(review_case_id)
+            self._connection.execute("COMMIT")
+            self._require_current()
+            return packet
+        except MetadataReportError:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
+        except (
+            sqlite3.Error,
+            ReviewCaseValueError,
+            ShadowReviewValueError,
+        ) as error:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise MetadataReportError("shadow decision preview failed") from error
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._connection.close()
+        finally:
+            os.close(self._descriptor)
+
+
+def open_shadow_preview_repository(path: Path) -> SQLiteShadowPreviewRepository:
+    """Open an exact-current SQLite database without create or write authority."""
+    descriptor = -1
+    connection: sqlite3.Connection | None = None
+    try:
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        if not nofollow:
+            raise MetadataReportError("database no-follow access is unavailable")
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | nofollow,
+        )
+        information = os.fstat(descriptor)
+        if not stat.S_ISREG(information.st_mode):
+            raise MetadataReportError("database path is invalid")
+        identity = (
+            information.st_dev,
+            information.st_ino,
+            information.st_size,
+            information.st_mtime_ns,
+            information.st_ctime_ns,
+        )
+        _reject_database_sidecars(path)
+        _validate_existing_read_only(path, descriptor)
+        _reject_database_sidecars(path)
+        absolute = str(path.absolute())
+        uri = f"file:{quote(absolute, safe='/')}?mode=ro&immutable=1"
+        before = _regular_descriptors(descriptor)
+        connection = sqlite3.connect(uri, uri=True, isolation_level=None)
+        _validate_connection_binding(connection, path, descriptor, before)
+        connection.execute("PRAGMA query_only=ON")
+        if connection.execute("PRAGMA query_only").fetchone() != (1,):
+            raise MetadataReportError("database query-only mode is unavailable")
+        if connection.execute("PRAGMA database_list").fetchall() == []:
+            raise MetadataReportError("database connection identity is unavailable")
+        _validate_schema(connection)
+        _reject_database_sidecars(path)
+        current = path.lstat()
+        if (
+            not stat.S_ISREG(current.st_mode)
+            or (
+                current.st_dev,
+                current.st_ino,
+                current.st_size,
+                current.st_mtime_ns,
+                current.st_ctime_ns,
+            )
+            != identity
+        ):
+            raise MetadataReportError("database authority changed")
+        repository = SQLiteShadowPreviewRepository(
+            connection, descriptor, path, identity
+        )
+        connection = None
+        descriptor = -1
+        return repository
+    except MetadataReportError:
+        raise
+    except (OSError, sqlite3.Error, ValueError) as error:
+        raise MetadataReportError("database is unavailable or incompatible") from error
+    finally:
+        if connection is not None:
+            connection.close()
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def open_repository(path: Path, *, create: bool = True, expected_identity: tuple[int, int] | None = None) -> SQLiteMetadataReportRepository:
@@ -2037,4 +2203,9 @@ def _validate_proposal_row(row: tuple[object, ...]) -> str:
         raise MetadataReportError("persisted proposal envelope disagrees")
     return document
 
-__all__ = ["SQLiteMetadataReportRepository", "open_repository"]
+__all__ = [
+    "SQLiteMetadataReportRepository",
+    "SQLiteShadowPreviewRepository",
+    "open_repository",
+    "open_shadow_preview_repository",
+]

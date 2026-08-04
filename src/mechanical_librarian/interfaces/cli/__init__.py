@@ -44,6 +44,7 @@ from mechanical_librarian.domain.shadow_review import (
     ShadowReviewValueError,
     canonical_json as shadow_canonical_json,
 )
+from mechanical_librarian.domain.shadow_decision import ShadowDecisionSet
 
 Runner = Callable[[Path, Path, Path, str, str, str, int], str]
 ReopenRunner = Callable[[Path, str], str]
@@ -61,6 +62,7 @@ ReviewerAuthRunner = Callable[[Path, str], str]
 ShadowPreviewRunner = Callable[[Path, str, Path], str]
 ShadowRequestRunner = Callable[[Path, str, Path], str]
 ShadowInspectRunner = Callable[[Path, str, Path], str]
+ShadowDecisionRunner = Callable[[Path, str], str]
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
@@ -168,6 +170,19 @@ def _parser() -> _Parser:
     )
     shadow_preview.add_argument(
         "--qualification-profile", required=True, metavar="PATH", type=Path
+    )
+    shadow_decision = commands.add_parser(
+        "shadow-decision-preview",
+        help="compute one provider-independent deterministic decision preview",
+    )
+    shadow_decision.add_argument(
+        "--database", required=True, metavar="PATH", type=Path
+    )
+    shadow_decision.add_argument(
+        "--review-case-id",
+        required=True,
+        metavar="REVIEW_CASE_ID",
+        type=_review_case_id,
     )
     shadow_request = commands.add_parser(
         "shadow-review-request",
@@ -472,14 +487,16 @@ def _opaque(value: str) -> str:
     return value
 
 
-def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, batch_preview_runner: BatchPreviewRunner | None = None, batch_inspect_runner: BatchInspectRunner | None = None, batch_run_runner: BatchRunRunner | None = None, proposal_create_runner: ProposalCreateRunner | None = None, proposal_get_runner: ProposalGetRunner | None = None, review_admit_runner: ReviewAdmitRunner | None = None, review_get_runner: ReviewGetRunner | None = None, reviewer_auth_runner: ReviewerAuthRunner | None = None, shadow_preview_runner: ShadowPreviewRunner | None = None, shadow_request_runner: ShadowRequestRunner | None = None, shadow_inspect_runner: ShadowInspectRunner | None = None, shadow_reevaluate_runner: ShadowInspectRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, batch_preview_runner: BatchPreviewRunner | None = None, batch_inspect_runner: BatchInspectRunner | None = None, batch_run_runner: BatchRunRunner | None = None, proposal_create_runner: ProposalCreateRunner | None = None, proposal_get_runner: ProposalGetRunner | None = None, review_admit_runner: ReviewAdmitRunner | None = None, review_get_runner: ReviewGetRunner | None = None, reviewer_auth_runner: ReviewerAuthRunner | None = None, shadow_preview_runner: ShadowPreviewRunner | None = None, shadow_request_runner: ShadowRequestRunner | None = None, shadow_inspect_runner: ShadowInspectRunner | None = None, shadow_reevaluate_runner: ShadowInspectRunner | None = None, shadow_decision_runner: ShadowDecisionRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     raw_arguments = tuple(sys.argv[1:] if argv is None else argv)
     try:
         arguments = _parser().parse_args(list(raw_arguments))
     except _ArgumentFailure:
-        if raw_arguments[:1] and (
+        if raw_arguments[:1] == ("shadow-decision-preview",):
+            errors.write("Shadow decision preview failed: invalid invocation.\n")
+        elif raw_arguments[:1] and (
             raw_arguments[0].startswith("shadow-review-")
             or raw_arguments[0].startswith("reviewer-auth-")
         ):
@@ -489,6 +506,19 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
         else:
             errors.write("Metadata report failed: invalid invocation.\n")
         return 2
+    if arguments.command == "shadow-decision-preview":
+        try:
+            if shadow_decision_runner is None:
+                raise ValueError
+            serialized = shadow_decision_runner(
+                arguments.database, arguments.review_case_id
+            )
+            serialized = ShadowDecisionSet.from_json(serialized).to_json()
+        except Exception:
+            errors.write("Shadow decision preview failed safely.\n")
+            return 1
+        output.write(serialized + "\n")
+        return 0
     if arguments.command.startswith("reviewer-auth-") or arguments.command.startswith(
         "shadow-review-"
     ):
