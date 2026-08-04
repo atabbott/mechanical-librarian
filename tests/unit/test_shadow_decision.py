@@ -4,6 +4,7 @@ import hashlib
 import json
 import unittest
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from mechanical_librarian.domain import shadow_decision as shadow_decision_module
@@ -232,6 +233,36 @@ def _catalogue_with_witness_variant(
     return PolicyActionCatalogue(
         tuple(sorted(actions, key=lambda value: value.action_id)),
         tuple(sorted(exclusions, key=lambda value: value.exclusion_id)),
+    )
+
+
+def _combination_seam(
+    packet: ShadowReviewPacket,
+    title_actions: tuple[PolicyAction, ...],
+    *,
+    combinations: tuple[dict[str, object], ...] | None = None,
+) -> tuple[object, object, dict[str, tuple[PolicyAction, ...]]]:
+    catalogue = compile_shadow_review_actions(packet)
+    title_proposal = next(
+        value for value in packet.proposals if value["destination"] == "title"
+    )
+    actions = tuple(
+        value
+        for value in catalogue.actions
+        if value.proposal_id != title_proposal["proposal_id"]
+    ) + title_actions
+    seam_packet = SimpleNamespace(
+        proposals=packet.proposals,
+        bibliographic_combinations=(
+            combinations
+            if combinations is not None
+            else packet.bibliographic_combinations
+        ),
+    )
+    return (
+        seam_packet,
+        SimpleNamespace(actions=actions),
+        {title_proposal["proposal_id"]: title_actions},
     )
 
 
@@ -528,6 +559,109 @@ class ShadowDecisionTests(unittest.TestCase):
         )
         self.assertEqual(first.to_json(), second.to_json())
 
+    def test_combination_seam_requires_at_least_one_unanimous_full_action(self) -> None:
+        self.assertEqual(
+            "at_least_one",
+            shadow_decision_module._RULE_TABLE["combinations"][
+                "fully_witnessed_combination_requirement"
+            ],
+        )
+        packet = _combination_packet(
+            providers=(
+                _source(
+                    "hardcover",
+                    "edition-1",
+                    titles=("Synthetic Work",),
+                    subtitle="Synthetic Subtitle",
+                ),
+                _source(
+                    "open_library",
+                    "edition-2",
+                    titles=("Synthetic Work",),
+                    series="Synthetic Series",
+                ),
+            )
+        )
+        catalogue = compile_shadow_review_actions(packet)
+        title = next(
+            value
+            for value in catalogue.actions
+            if value.destination == "title" and value.recommendation != "manual"
+        )
+        first_id, second_id = (
+            value["combination_id"] for value in packet.bibliographic_combinations
+        )
+
+        seam_packet, seam_catalogue, eligible = _combination_seam(packet, (title,))
+        selected = shadow_decision_module._combination_selections(
+            seam_packet, seam_catalogue, eligible
+        )
+        self.assertIsNotNone(selected)
+        assert selected is not None
+        self.assertEqual({title.proposal_id: title}, selected[0])
+        reversed_packet, reversed_catalogue, reversed_eligible = _combination_seam(
+            packet,
+            (title,),
+            combinations=tuple(reversed(packet.bibliographic_combinations)),
+        )
+        self.assertEqual(
+            selected,
+            shadow_decision_module._combination_selections(
+                reversed_packet, reversed_catalogue, reversed_eligible
+            ),
+        )
+
+        citation_disagreement = (
+            replace(title, citation_ids=("citation_a",), combination_ids=(first_id,)),
+            replace(title, citation_ids=("citation_b",), combination_ids=(second_id,)),
+        )
+        seam_packet, seam_catalogue, eligible = _combination_seam(
+            packet, citation_disagreement
+        )
+        self.assertIsNone(
+            shadow_decision_module._combination_selections(
+                seam_packet, seam_catalogue, eligible
+            )
+        )
+
+        preservation_combinations = json.loads(
+            json.dumps(packet.bibliographic_combinations)
+        )
+        preservation_combinations[1]["selections"][0]["kind"] = "preserve_target"
+        candidate = replace(title, combination_ids=(first_id,))
+        preservation = PolicyAction(
+            _action_id(title.proposal_id, "recommend_keep_current", None),
+            title.proposal_id,
+            title.destination,
+            "recommend_keep_current",
+            None,
+            title.citation_ids,
+            (second_id,),
+        )
+        seam_packet, seam_catalogue, eligible = _combination_seam(
+            packet,
+            (candidate, preservation),
+            combinations=tuple(preservation_combinations),
+        )
+        self.assertIsNone(
+            shadow_decision_module._combination_selections(
+                seam_packet, seam_catalogue, eligible
+            )
+        )
+
+        combination_disagreement = (
+            replace(title, combination_ids=(first_id,)),
+            replace(title, combination_ids=(second_id,)),
+        )
+        seam_packet, seam_catalogue, eligible = _combination_seam(
+            packet, combination_disagreement
+        )
+        self.assertIsNone(
+            shadow_decision_module._combination_selections(
+                seam_packet, seam_catalogue, eligible
+            )
+        )
+
     def test_packet_boundary_rejects_unreachable_combination_shapes(self) -> None:
         packet = _combination_packet()
         mutations = (
@@ -580,7 +714,7 @@ class ShadowDecisionTests(unittest.TestCase):
             "deterministic-shadow-decision-policy-v4", DECISION_POLICY_VERSION
         )
         self.assertEqual(
-            "b889ef93baeff7f326fb997fd8883e47b066dd894d468ee4b28cfe4bbb12da6d",
+            "a86201443a027971fdb8943763c1911300a586ecc3fe732b01622a7596649a99",
             DECISION_POLICY_SHA256,
         )
         packet = _packet()

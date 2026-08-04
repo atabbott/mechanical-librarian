@@ -53,7 +53,7 @@ _RULE_TABLE = {
     },
     "combinations": {
         "exact_destination_order": list(_COMBINATION_DESTINATIONS),
-        "fully_witnessed_combination_count": 1,
+        "fully_witnessed_combination_requirement": "at_least_one",
         "selected_supported_destination": _COMBINATION_SELECTED_DESTINATION,
         "unsupported_witness_destinations": list(
             _COMBINATION_WITNESS_DESTINATIONS
