@@ -74,13 +74,19 @@ def _packet(
         "target_only_preservation": 0,
     }
     if destination in {"publishedDate", "publishedYear"}:
-        precision = "month" if destination == "publishedDate" else "year"
+        precision = "day" if destination == "publishedDate" else "year"
         candidate["date_event"] = "manifestation_publication"
         candidate["date_precision"] = precision
         candidate["value"] = {
             "kind": "text",
-            "value": "2024-08" if precision == "month" else "2024",
+            "value": "2024-08-04" if precision == "day" else "2024",
         }
+        data["citations"][0]["fact"].update(
+            {
+                "date_event": "manifestation_publication",
+                "date_precision": precision,
+            }
+        )
         candidate["decision_summary"]["publication"] = {
             "destination": destination,
             "event": "manifestation_publication",
@@ -200,6 +206,31 @@ class ShadowDecisionTests(unittest.TestCase):
         decision = decide_shadow_packet(_rebuild(data)).decisions[0]
         self.assertEqual("manual", decision.recommendation)
         self.assertEqual("insufficient_support", decision.reason_code)
+
+    def test_published_date_precision_refinement_abstains_safely(self) -> None:
+        month = json.loads(_packet("publishedDate").to_json())
+        month_candidate = month["proposals"][0]["candidates"][0]
+        month_candidate["date_precision"] = "month"
+        month_candidate["value"] = {"kind": "text", "value": "2024-08"}
+        month_candidate["decision_summary"]["publication"]["precision"] = "month"
+        self.assertEqual(
+            "manual", decide_shadow_packet(_rebuild(month)).decisions[0].recommendation
+        )
+
+        timestamp = json.loads(_packet("publishedDate").to_json())
+        timestamp["citations"][0]["fact"]["date_precision"] = "timestamp"
+        self.assertEqual(
+            "manual",
+            decide_shadow_packet(_rebuild(timestamp)).decisions[0].recommendation,
+        )
+
+        timestamp["proposals"][0]["candidates"][0]["decision_summary"]["support"][
+            "independent_provider_correlations"
+        ] = 2
+        self.assertEqual(
+            "recommend_candidate",
+            decide_shadow_packet(_rebuild(timestamp)).decisions[0].recommendation,
+        )
 
     def test_active_bibliographic_combination_never_selects_a_partial_set(self) -> None:
         report = _bibliographic_report(
