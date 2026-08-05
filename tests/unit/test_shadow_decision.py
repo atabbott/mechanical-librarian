@@ -291,6 +291,47 @@ class ShadowDecisionTests(unittest.TestCase):
                     )
                 )
 
+    def test_report_only_source_evidence_is_not_blocked_by_write_sufficiency(self) -> None:
+        for destination in (
+            "authors",
+            "language",
+            "publisher",
+            "publishedDate",
+            "publishedYear",
+        ):
+            with self.subTest(destination=destination):
+                packet = _packet(
+                    destination,
+                    sufficiency="manual",
+                    provider_support=0,
+                    target_only=1,
+                )
+                decision = decide_shadow_packet(packet).decisions[0]
+                self.assertEqual("recommend_candidate", decision.recommendation)
+                self.assertEqual("unique_supported_candidate", decision.reason_code)
+
+    def test_report_only_source_evidence_still_requires_local_support(self) -> None:
+        for destination in (
+            "authors",
+            "language",
+            "publisher",
+            "publishedDate",
+            "publishedYear",
+        ):
+            with self.subTest(destination=destination):
+                decision = decide_shadow_packet(
+                    _packet(destination, provider_support=1, local_support=0)
+                ).decisions[0]
+                self.assertEqual("manual", decision.recommendation)
+                self.assertEqual("insufficient_support", decision.reason_code)
+
+    def test_ambiguous_report_only_source_candidates_abstain(self) -> None:
+        decision = decide_shadow_packet(
+            _packet("publisher", provider_support=0, candidate_count=2)
+        ).decisions[0]
+        self.assertEqual("manual", decision.recommendation)
+        self.assertEqual("ambiguous_eligible_actions", decision.reason_code)
+
     def test_every_unsupported_field_selects_exact_manual_action(self) -> None:
         for destination in (
             "subtitle",
@@ -709,18 +750,18 @@ class ShadowDecisionTests(unittest.TestCase):
                 packet,
             )
 
-    def test_v4_policy_identity_rejects_v3_replay(self) -> None:
+    def test_v5_policy_identity_rejects_v4_replay(self) -> None:
         self.assertEqual(
-            "deterministic-shadow-decision-policy-v4", DECISION_POLICY_VERSION
+            "deterministic-shadow-decision-policy-v5", DECISION_POLICY_VERSION
         )
         self.assertEqual(
-            "a86201443a027971fdb8943763c1911300a586ecc3fe732b01622a7596649a99",
+            "d7e765d71a6b52259a8c8e54961afe63d54344a19785b288f0ddb59b7db5e5f8",
             DECISION_POLICY_SHA256,
         )
         packet = _packet()
         document = json.loads(decide_shadow_packet(packet).to_json())
-        document["policy_version"] = "deterministic-shadow-decision-policy-v3"
-        document["policy_sha256"] = "3fb6b1daf0ecad7009400ecaa3ab5360e6083c1b79bcb88c4d62c43755091b3a"
+        document["policy_version"] = "deterministic-shadow-decision-policy-v4"
+        document["policy_sha256"] = "a86201443a027971fdb8943763c1911300a586ecc3fe732b01622a7596649a99"
         core = {
             key: value
             for key, value in document.items()

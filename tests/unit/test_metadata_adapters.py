@@ -26,6 +26,7 @@ from mechanical_librarian.adapters.providers.hardcover_metadata import (
 )
 import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
 from mechanical_librarian.application.metadata_report import (
+    CoverReadError,
     MetadataLookup,
     MetadataReportError,
     TargetCover,
@@ -4189,6 +4190,179 @@ class ProviderAdapterTests(unittest.TestCase):
 
 
 class AudiobookshelfItemTests(unittest.TestCase):
+    def test_raw_cover_accepts_matching_supported_image_signatures(self) -> None:
+        client_type = httpx.Client
+        detail = {
+            "id": "item-1",
+            "libraryId": "library-id",
+            "isInvalid": False,
+            "isMissing": False,
+            "mediaType": "book",
+            "coverPath": "/covers/item-1",
+            "media": {"metadata": {"title": "Current title"}},
+        }
+
+        def detail_factory() -> httpx.Client:
+            return client_type(
+                transport=httpx.MockTransport(
+                    lambda _request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=detail,
+                    )
+                )
+            )
+
+        cover = TargetCover(
+            hashlib.sha256(b"/covers/item-1").hexdigest(),
+            "/api/items/item-1/cover?raw=1",
+            "item-1",
+        )
+        examples = (
+            ("image/jpeg", b"\xff\xd8\xff\xe0synthetic-jpeg"),
+            ("image/png", b"\x89PNG\r\n\x1a\nsynthetic-png"),
+            ("image/webp", b"RIFF\x04\x00\x00\x00WEBPsynthetic-webp"),
+        )
+        for content_type, body in examples:
+            def raw_client() -> httpx.Client:
+                return client_type(
+                    transport=httpx.MockTransport(
+                        lambda _request: httpx.Response(
+                            200,
+                            headers={"content-type": content_type},
+                            content=body,
+                        )
+                    )
+                )
+
+            reader = AudiobookshelfItemReader(
+                client_factory=detail_factory,
+                endpoint="https://example.invalid",
+                library_id="library-id",
+                service_path="/library",
+                maximum_bytes=65_536,
+            )
+            with self.subTest(content_type=content_type), patch(
+                "mechanical_librarian.adapters.library_services.audiobookshelf_item.httpx.Client",
+                side_effect=lambda **_kwargs: raw_client(),
+            ):
+                self.assertEqual(body, reader.read_cover(cover))
+
+    def test_raw_cover_rejects_declared_type_signature_mismatch(self) -> None:
+        client_type = httpx.Client
+        detail = {
+            "id": "item-1",
+            "libraryId": "library-id",
+            "isInvalid": False,
+            "isMissing": False,
+            "mediaType": "book",
+            "coverPath": "/covers/item-1",
+            "media": {"metadata": {"title": "Current title"}},
+        }
+
+        def detail_factory() -> httpx.Client:
+            return client_type(
+                transport=httpx.MockTransport(
+                    lambda _request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=detail,
+                    )
+                )
+            )
+
+        def raw_client() -> httpx.Client:
+            return client_type(
+                transport=httpx.MockTransport(
+                    lambda _request: httpx.Response(
+                        200,
+                        headers={"content-type": "image/png"},
+                        content=b"\xff\xd8\xff\xe0synthetic-jpeg",
+                    )
+                )
+            )
+
+        reader = AudiobookshelfItemReader(
+            client_factory=detail_factory,
+            endpoint="https://example.invalid",
+            library_id="library-id",
+            service_path="/library",
+            maximum_bytes=65_536,
+        )
+        cover = TargetCover(
+            hashlib.sha256(b"/covers/item-1").hexdigest(),
+            "/api/items/item-1/cover?raw=1",
+            "item-1",
+        )
+        with patch(
+            "mechanical_librarian.adapters.library_services.audiobookshelf_item.httpx.Client",
+            side_effect=lambda **_kwargs: raw_client(),
+        ):
+            with self.assertRaises(CoverReadError):
+                reader.read_cover(cover)
+
+    def test_raw_cover_rejects_nonidentity_content_encoding(self) -> None:
+        client_type = httpx.Client
+        detail = {
+            "id": "item-1",
+            "libraryId": "library-id",
+            "isInvalid": False,
+            "isMissing": False,
+            "mediaType": "book",
+            "coverPath": "/covers/item-1",
+            "media": {"metadata": {"title": "Current title"}},
+        }
+
+        def detail_factory() -> httpx.Client:
+            return client_type(
+                transport=httpx.MockTransport(
+                    lambda _request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=detail,
+                    )
+                )
+            )
+
+        def raw_client() -> httpx.Client:
+            class EncodedStream(httpx.SyncByteStream):
+                def __iter__(self):
+                    yield b"not-a-raw-image"
+
+            def raw_response(request: httpx.Request) -> httpx.Response:
+                return httpx.Response(
+                    200,
+                    headers={
+                        "content-type": "image/png",
+                        "content-encoding": "gzip",
+                    },
+                    stream=EncodedStream(),
+                    request=request,
+                )
+
+            return client_type(
+                transport=httpx.MockTransport(raw_response)
+            )
+
+        reader = AudiobookshelfItemReader(
+            client_factory=detail_factory,
+            endpoint="https://example.invalid",
+            library_id="library-id",
+            service_path="/library",
+            maximum_bytes=65_536,
+        )
+        cover = TargetCover(
+            hashlib.sha256(b"/covers/item-1").hexdigest(),
+            "/api/items/item-1/cover?raw=1",
+            "item-1",
+        )
+        with patch(
+            "mechanical_librarian.adapters.library_services.audiobookshelf_item.httpx.Client",
+            side_effect=lambda **_kwargs: raw_client(),
+        ):
+            with self.assertRaises(CoverReadError):
+                reader.read_cover(cover)
+
     def test_raw_cover_authority_preserves_nondefault_port(self) -> None:
         self.assertEqual("example.invalid:13378", _raw_cover_authority("http://example.invalid:13378"))
         self.assertEqual("example.invalid", _raw_cover_authority("https://example.invalid"))
@@ -4750,6 +4924,94 @@ class AudiobookshelfItemTests(unittest.TestCase):
         base_file["metadata"]["relPath"] = "other.epub"
         with self.assertRaises(MetadataReportError):
             reader().read("item-1")
+
+    def test_item_relative_ebook_path_is_resolved_against_the_item_directory(self) -> None:
+        payload = {
+            "id": "item-1",
+            "libraryId": "library-id",
+            "isInvalid": False,
+            "isMissing": False,
+            "mediaType": "book",
+            "relPath": "Author/Book",
+            "media": {
+                "metadata": {"title": "Current title"},
+                "ebookFile": {
+                    "ebookFormat": "epub",
+                    "ino": "inode-1",
+                    "metadata": {
+                        "relPath": "book.epub",
+                        "path": "/library/Author/Book/book.epub",
+                        "size": 1,
+                    },
+                },
+            },
+        }
+        reader = AudiobookshelfItemReader(
+            client_factory=lambda: httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
+                )
+            ),
+            endpoint="https://example.invalid",
+            library_id="library-id",
+            service_path="/library",
+            maximum_bytes=65_536,
+        )
+
+        self.assertEqual(
+            "Author/Book/book.epub",
+            reader.read("item-1").files[0].relative_path,
+        )
+
+    def test_item_relative_ebook_path_disagreement_and_traversal_fail_closed(self) -> None:
+        payload = {
+            "id": "item-1",
+            "libraryId": "library-id",
+            "isInvalid": False,
+            "isMissing": False,
+            "mediaType": "book",
+            "relPath": "Author/Book",
+            "media": {
+                "metadata": {"title": "Current title"},
+                "ebookFile": {
+                    "ebookFormat": "epub",
+                    "ino": "inode-1",
+                    "metadata": {
+                        "relPath": "book.epub",
+                        "path": "/library/Other/book.epub",
+                        "size": 1,
+                    },
+                },
+            },
+        }
+        reader = AudiobookshelfItemReader(
+            client_factory=lambda: httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
+                )
+            ),
+            endpoint="https://example.invalid",
+            library_id="library-id",
+            service_path="/library",
+            maximum_bytes=65_536,
+        )
+
+        with self.assertRaises(MetadataReportError):
+            reader.read("item-1")
+        payload["relPath"] = "Author/../Other"
+        payload["media"]["ebookFile"]["metadata"]["path"] = (
+            "/library/Other/book.epub"
+        )
+        with self.assertRaises(MetadataReportError):
+            reader.read("item-1")
 
     def test_credential_and_private_path_target_titles_fail_without_raw_values(self) -> None:
         for hostile in (

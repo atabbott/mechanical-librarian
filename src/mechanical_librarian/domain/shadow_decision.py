@@ -18,11 +18,14 @@ from mechanical_librarian.domain.shadow_review_actions import (
 
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v4"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v5"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
     {"title", "authors", "language", "publisher", "publishedDate", "publishedYear"}
+)
+_REPORT_ONLY_SOURCE_DESTINATIONS = frozenset(
+    {"authors", "language", "publisher", "publishedDate", "publishedYear"}
 )
 _WORK_DESTINATIONS = frozenset({"title", "authors"})
 _PUBLICATION_DESTINATIONS = frozenset({"publishedDate", "publishedYear"})
@@ -45,9 +48,12 @@ _REASON_CODES = frozenset(
 _RULE_TABLE = {
     "candidate": {
         "compiler_admission_required": True,
-        "evidence_sufficiency": "candidate",
-        "independent_provider_correlations_minimum": 1,
         "local_evidence": 1,
+        "proposal_evidence_sufficiency_required_for": ["title"],
+        "same_candidate_provider_correlation_required_for": ["title"],
+        "source_evidence_report_only_destinations": sorted(
+            _REPORT_ONLY_SOURCE_DESTINATIONS
+        ),
         "target_only_preservation": 0,
         "unique_action_required": True,
     },
@@ -76,7 +82,7 @@ _RULE_TABLE = {
         "paired_destination_consistency": "consistent",
         "published_date_precision": {
             "candidate": "day",
-            "local_day": "one_or_more_provider_correlations",
+            "local_day": "source_evidence_sufficient",
             "local_timestamp_normalized_to_day": "two_or_more_provider_correlations",
         },
     },
@@ -383,11 +389,18 @@ def _candidate_is_eligible(
     expected_binding = (
         "associated_work_only" if destination in _WORK_DESTINATIONS else "established"
     )
+    source_evidence_report_only = destination in _REPORT_ONLY_SOURCE_DESTINATIONS
     if (
-        proposal["decision_summary"]["target_only_preservation"] != 0
+        (
+            not source_evidence_report_only
+            and proposal["decision_summary"]["target_only_preservation"] != 0
+        )
         or support["target_only_preservation"] != 0
         or support["local_evidence"] != 1
-        or support["independent_provider_correlations"] < 1
+        or (
+            not source_evidence_report_only
+            and support["independent_provider_correlations"] < 1
+        )
         or candidate["scope"] != expected_scope
         or summary["evidence_scope"] != expected_scope
         or summary["selected_manifestation_binding"] != expected_binding
@@ -435,19 +448,7 @@ def _eligible_actions(
 ) -> tuple[PolicyAction, ...]:
     sufficiency = proposal["decision_summary"]["evidence_sufficiency"]
     actions: list[PolicyAction] = []
-    if sufficiency == "candidate":
-        for action in catalogue.actions:
-            if (
-                action.proposal_id != proposal["proposal_id"]
-                or action.recommendation != "recommend_candidate"
-            ):
-                continue
-            candidate = _candidate_for_action(proposal, action)
-            if candidate is not None and _candidate_is_eligible(
-                packet, proposal, candidate, action
-            ):
-                actions.append(action)
-    elif sufficiency == "keep_current":
+    if sufficiency == "keep_current":
         keep = catalogue.action_for(
             proposal["proposal_id"], "recommend_keep_current", None
         )
@@ -469,23 +470,44 @@ def _eligible_actions(
                     preservation.append(candidate)
         if keep is not None and len(preservation) == 1:
             actions.append(keep)
+    elif (
+        sufficiency == "candidate"
+        or proposal["destination"] in _REPORT_ONLY_SOURCE_DESTINATIONS
+    ):
+        for action in catalogue.actions:
+            if (
+                action.proposal_id != proposal["proposal_id"]
+                or action.recommendation != "recommend_candidate"
+            ):
+                continue
+            candidate = _candidate_for_action(proposal, action)
+            if candidate is not None and _candidate_is_eligible(
+                packet, proposal, candidate, action
+            ):
+                actions.append(action)
     return tuple(actions)
 
 
 def _base_reason(proposal: dict[str, object], eligible: tuple[PolicyAction, ...]) -> str:
     summary = proposal["decision_summary"]
-    if summary["evidence_sufficiency"] == "manual":
+    source_evidence_report_only = (
+        proposal["destination"] in _REPORT_ONLY_SOURCE_DESTINATIONS
+    )
+    if not source_evidence_report_only and summary["evidence_sufficiency"] == "manual":
         return "evidence_sufficiency_manual"
-    if summary["target_only_preservation"] != 0:
+    if not source_evidence_report_only and summary["target_only_preservation"] != 0:
         return "target_only_preservation"
     if not eligible:
         candidates = proposal["candidates"]
         if candidates and any(
             value["decision_summary"]["support"]["local_evidence"] != 1
-            or value["decision_summary"]["support"][
-                "independent_provider_correlations"
-            ]
-            < 1
+            or (
+                not source_evidence_report_only
+                and value["decision_summary"]["support"][
+                    "independent_provider_correlations"
+                ]
+                < 1
+            )
             for value in candidates
         ):
             return "insufficient_support"
