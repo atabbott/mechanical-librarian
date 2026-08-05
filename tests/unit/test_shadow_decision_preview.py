@@ -17,7 +17,10 @@ from mechanical_librarian.application.shadow_reviews import preview_shadow_decis
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.shadow_decision import ShadowDecisionSet, decide_shadow_packet
-from mechanical_librarian.domain.shadow_review import ReviewerProfileIdentity
+from mechanical_librarian.domain.shadow_review import (
+    ReviewerProfileIdentity,
+    ShadowReviewPacket,
+)
 from mechanical_librarian.interfaces.cli import main
 from tests.unit.test_review_case_persistence import _report
 
@@ -143,6 +146,27 @@ class ShadowDecisionPreviewTests(unittest.TestCase):
                     open_shadow_preview_repository(link)
                 self.assertEqual(before, _snapshot(directory))
 
+    def test_wal_header_without_sidecars_fails_before_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            path, _, _, _ = _database(directory)
+            connection = sqlite3.connect(path)
+            self.assertEqual(
+                ("wal",),
+                connection.execute("PRAGMA journal_mode=WAL").fetchone(),
+            )
+            connection.close()
+            self.assertFalse(
+                any(
+                    path.with_name(path.name + suffix).exists()
+                    for suffix in ("-wal", "-shm", "-journal")
+                )
+            )
+            before = _snapshot(directory)
+            with self.assertRaises(MetadataReportError):
+                open_shadow_preview_repository(path)
+            self.assertEqual(before, _snapshot(directory))
+
     def test_unverifiable_exclusive_lock_fails_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -243,6 +267,40 @@ class ShadowDecisionPreviewTests(unittest.TestCase):
         self.assertFalse(called)
         self.assertEqual("", output.getvalue())
         self.assertEqual("Shadow decision preview failed: invalid invocation.\n", errors.getvalue())
+
+    def test_cli_rejects_decision_for_a_different_review_case(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path, case_id, packet, _ = _database(Path(temporary))
+            other_packet = ShadowReviewPacket(
+                "review_case_" + ("f" * 64),
+                packet.proposals,
+                packet.citations,
+                packet.correlations,
+                packet.schema_version,
+                packet.bibliographic_relationship_schema_version,
+                packet.bibliographic_combinations,
+            )
+            output = io.StringIO()
+            errors = io.StringIO()
+
+            status = main(
+                [
+                    "shadow-decision-preview",
+                    "--database",
+                    str(path),
+                    "--review-case-id",
+                    case_id,
+                ],
+                shadow_decision_runner=lambda _path, _case: decide_shadow_packet(
+                    other_packet
+                ).to_json(),
+                stdout=output,
+                stderr=errors,
+            )
+
+            self.assertEqual(1, status)
+            self.assertEqual("", output.getvalue())
+            self.assertEqual("Shadow decision preview failed safely.\n", errors.getvalue())
 
     def test_composed_cli_uses_read_only_repository_and_preserves_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

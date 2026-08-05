@@ -1690,6 +1690,7 @@ def open_shadow_preview_repository(path: Path) -> SQLiteShadowPreviewRepository:
             information.st_mtime_ns,
             information.st_ctime_ns,
         )
+        _validate_delete_mode_header(descriptor)
         _reject_database_sidecars(path)
         _validate_existing_read_only(path, descriptor)
         _reject_database_sidecars(path)

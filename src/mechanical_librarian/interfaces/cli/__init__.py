@@ -513,7 +513,10 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
             serialized = shadow_decision_runner(
                 arguments.database, arguments.review_case_id
             )
-            serialized = ShadowDecisionSet.from_json(serialized).to_json()
+            decision_set = ShadowDecisionSet.from_json(serialized)
+            if decision_set.review_case_id != arguments.review_case_id:
+                raise ValueError
+            serialized = decision_set.to_json()
         except Exception:
             errors.write("Shadow decision preview failed safely.\n")
             return 1
