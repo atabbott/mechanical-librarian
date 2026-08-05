@@ -9,6 +9,16 @@ This contract applies to private synthetic and sanitized qualification
 evidence. It does not add a product retry loop, a production reviewer, decision
 authority, or write authority.
 
+Deterministic shadow-decision candidates use the same separation of exposed
+development and unseen fresh evidence. Score exact installed-artifact output
+against the frozen accepted-action projection; keep construction validity,
+semantic validity, nonmanual precision and recall, wrong and unsupported
+actions, sensitive-field errors, case utility, and deterministic replay as
+separate gates. Production-data mechanism checks establish compatibility and
+representativeness but are not precision labels unless independently
+adjudicated. A semantic fresh failure is terminal evidence and is never a
+transport retry or a tuning input.
+
 ## Freeze before scoring
 
 Before a fresh cohort is scored, retain canonical bytes and SHA-256 identities
@@ -106,4 +116,3 @@ Public reports are aggregate-safe. They contain counts, rates, frozen version
 identities, and gate dispositions, but no private case rows, titles, source
 text, raw model output, paths, credentials, provider state, or human identity.
 Private receipts and manifests remain owner-only and append-only.
-

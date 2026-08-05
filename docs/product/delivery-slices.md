@@ -520,6 +520,7 @@ authority.
 | --- | --- | --- | --- |
 | F10b Production review admission | #240 | One qualifying exact-current ProposalSet becomes an immutable undecided ReviewCase, or records typed no-case retirement, without a decision or write. | Delivered. |
 | F11 Isolated AI shadow recommendation | #147 | One exact current ReviewCase can be previewed, requested, inspected, or explicitly reevaluated through an isolated qualification-only path with no normal activation authority. | Qualification-only path delivered; broader F11 qualification remains planned. |
+| F19 Deterministic shadow decision preview | #384 | One exact current ReviewCase produces a canonical provider-independent read-only decision preview with exact catalogue closure and safe manual abstention. | Candidate passed exposed development; fresh qualification remains required before delivery. |
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 

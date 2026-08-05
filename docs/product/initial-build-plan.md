@@ -332,6 +332,10 @@ Deliverables:
   provider identifier agree on the same validated canonical replacement
   identity, preserving source lineage and correlation;
 - distinguish no-op, safe automatic, AI-review, and human-review outcomes;
+- expose one canonical deterministic shadow decision preview for an exact
+  current ReviewCase through the application-owned read-only path, selecting
+  only compiler actions and abstaining atomically on ambiguity or unsupported
+  combinations;
 - omit proposals whose normalized value is equivalent to current state;
 - implement adapter/media applicability and reviewer-facing notice classes;
 - generate typed cover and series choices without applying them;
@@ -360,6 +364,9 @@ Deliverables:
 Exit criteria:
 
 - policy decisions are deterministic for identical inputs;
+- the deterministic preview replays byte-identically, covers every proposal,
+  and adds no provider/model call, persistence, default recommendation, or
+  write authority;
 - provenance is never lost during normalization or ranking;
 - correlated records cannot manufacture consensus, and no universal
   two-family minimum suppresses a qualifying decisive source;

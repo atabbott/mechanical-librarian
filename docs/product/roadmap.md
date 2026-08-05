@@ -289,6 +289,11 @@ policy, background execution, migration, tag, or release publication.
 qualification-only Codex shadow-advice path; shadow advice is not a decision or
 approval and normal activation remains unreachable.
 
+F19 adds an explicit deterministic, provider-independent decision preview for
+one exact current case. It remains report-only, read-only, non-persisted, and
+separate from both qualification-only model advice and future default or apply
+integration.
+
 ## M3: AI review in shadow mode
 
 - The isolated qualification-only Codex CLI path, schema-constrained
