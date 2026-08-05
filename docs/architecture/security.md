@@ -424,3 +424,12 @@ redirects, environment proxies, compression, retry, caching, and arbitrary
 endpoints disabled. Per-response, aggregate-byte, row, lane, request, and
 deadline bounds fail closed into typed provider outcomes; quota and service
 failures are never reclassified as `no_match`.
+
+The deterministic shadow-decision preview adds no network or credential
+authority. It opens only an existing regular exact-current report database by
+the dedicated read-only/no-create path, verifies query-only behavior, and never
+initializes, upgrades, migrates, or persists state. Success and every accepted
+failure preserve database bytes, directory entries, and SQLite sidecars. The
+domain policy can select only an exact compiler action with closed citations
+and combinations; ambiguity and unsupported state abstain to manual. The
+canonical output is operator-visible data, not approval or an apply token.

@@ -28,7 +28,10 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.batch_manifest import create as create_batch_manifest, read as read_batch_manifest
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    open_repository,
+    open_shadow_preview_repository,
+)
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
     HardcoverPacer,
@@ -89,6 +92,7 @@ from mechanical_librarian.application.review_cases import (
 from mechanical_librarian.application.shadow_reviews import (
     execute_shadow_review,
     inspect_shadow_review,
+    preview_shadow_decision,
     preview_shadow_review,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
@@ -712,6 +716,16 @@ def run_reviewer_auth(profile_path: Path, action: str) -> str:
     return CodexShadowReviewer(profile).auth(action)
 
 
+def preview_shadow_decision_case(
+    database_path: Path, review_case_id: str
+) -> str:
+    repository = open_shadow_preview_repository(database_path)
+    try:
+        return preview_shadow_decision(repository, review_case_id).to_json()
+    finally:
+        repository.close()
+
+
 def preview_shadow_review_case(
     database_path: Path, review_case_id: str, profile_path: Path
 ) -> str:
@@ -967,6 +981,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         shadow_request_runner=request_shadow_review,
         shadow_inspect_runner=inspect_shadow_review_request,
         shadow_reevaluate_runner=reevaluate_shadow_review,
+        shadow_decision_runner=preview_shadow_decision_case,
     )
 
 
@@ -974,7 +989,7 @@ __all__ = [
     "create_proposal_set", "inspect_batch", "main", "preview_batch",
     "reopen_cover_preview", "reopen_current_metadata_report",
     "reopen_metadata_report", "reopen_proposal_set", "admit_review_case", "reopen_review_case",
-    "run_reviewer_auth", "preview_shadow_review_case", "request_shadow_review",
+    "run_reviewer_auth", "preview_shadow_decision_case", "preview_shadow_review_case", "request_shadow_review",
     "inspect_shadow_review_request", "reevaluate_shadow_review", "run_batch",
     "run_catalogue", "run_metadata_report",
 ]

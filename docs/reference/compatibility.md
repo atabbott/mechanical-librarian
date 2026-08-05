@@ -10,6 +10,8 @@ The current installed contract is intentionally narrow:
 - `review-case-v2`, `shadow-review-packet-v5`,
   `shadow-review-request-v9`, `shadow-review-result-v2`,
   `shadow-review-inspect-v3`,
+  `shadow-decision-set-v1` under
+  `deterministic-shadow-decision-policy-v5`,
   `shadow-review-failure-v2`, and the exact-current append-only
   qualification-only shadow request/attempt/dispatch/outcome schema with
   required `shadow-review-execution-provenance-v1` outcomes;
@@ -52,6 +54,14 @@ preview, one qualification-only foreground request, offline inspect, and
 explicit reevaluation. It does not support
 durable batch attempts, resume, automatic retry, workers, schedulers, parallel
 execution, normal reviewer activation, review decisions, or apply.
+
+`shadow-decision-preview` supports one exact current ReviewCase from an existing
+regular report database on the platform where its read-only/no-create
+filesystem contract passes. It performs no network or provider/model dispatch
+and persists nothing. Audiobookshelf ebook detail responses may express
+`ebookFile.metadata.relPath` relative to the top-level item `relPath` when the
+absolute service path proves the same final library-relative file; disagreement,
+noncanonical paths, and traversal fail closed.
 
 Audiobookshelf `publishedDate` target reads remain exact ISO calendar days.
 Shared `YYYY-MM` proposal candidates are qualification-only and report-only;

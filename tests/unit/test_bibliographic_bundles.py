@@ -40,8 +40,9 @@ from tests.unit.test_shadow_reviews import _identity
 
 def _bibliographic_report(
     *,
-    current_title: str,
+    current_title: str | None,
     providers: tuple,
+    local_claims: tuple = (),
 ):
     return _report(
         fields=_fields(
@@ -55,6 +56,7 @@ def _bibliographic_report(
                 TargetFieldState.MISSING,
             ),
         ),
+        local_claims=local_claims,
         providers=providers,
     )
 

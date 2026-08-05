@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Add `shadow-decision-preview` for one exact current ReviewCase. The command
+  opens an existing report database read-only and no-create, compiles the exact
+  admissible action catalogue, emits one canonical deterministic decision per
+  proposal, and safely selects manual on ambiguity, conflict, unsupported
+  state, or incomplete combination closure. Policy v5 admits unique
+  selected-EPUB source-supported report-only actions for authors, language,
+  publisher, publication date, and publication year while retaining stricter
+  title eligibility. The preview performs no provider/model call, persists no
+  decision, and adds no default, approval, apply, or write authority. Accept
+  Audiobookshelf's item-relative EPUB path form only when its absolute service
+  path proves the same final library-relative file. (#384)
+
 - Accept bounded duplicate-free reviewer JSON with insignificant formatting
   variance at the transient provider boundary, while retaining exact raw bytes
   and canonicalizing before typed domain construction and persistence. Partition

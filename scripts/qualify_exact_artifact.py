@@ -600,6 +600,57 @@ def _qualify_review_case_console(
         ):
             raise QualificationFailure("installed_review_case_failed")
 
+        before_entries = tuple(
+            sorted(value.name for value in run_directory.iterdir())
+        )
+        before_information = database.stat()
+        before_database = (
+            _file_sha256(database),
+            before_information.st_dev,
+            before_information.st_ino,
+            before_information.st_mode,
+            before_information.st_nlink,
+            before_information.st_size,
+            before_information.st_mtime_ns,
+            before_information.st_ctime_ns,
+        )
+        decision_preview = _run_console_json(
+            console,
+            (
+                "shadow-decision-preview",
+                "--database",
+                str(database),
+                "--review-case-id",
+                case_id,
+            ),
+            run_directory,
+            environment,
+        )
+        after_information = database.stat()
+        after_database = (
+            _file_sha256(database),
+            after_information.st_dev,
+            after_information.st_ino,
+            after_information.st_mode,
+            after_information.st_nlink,
+            after_information.st_size,
+            after_information.st_mtime_ns,
+            after_information.st_ctime_ns,
+        )
+        decisions = decision_preview.get("decisions")
+        if (
+            decision_preview.get("schema_version") != "shadow-decision-set-v1"
+            or decision_preview.get("mode") != "qualification_only"
+            or decision_preview.get("review_case_id") != case_id
+            or type(decisions) is not list
+            or [value.get("destination") for value in decisions]
+            != ["isbn", "title", "language"]
+            or before_database != after_database
+            or before_entries
+            != tuple(sorted(value.name for value in run_directory.iterdir()))
+        ):
+            raise QualificationFailure("installed_shadow_decision_failed")
+
         payload["media"]["metadata"]["title"] = "Changed service title"  # type: ignore[index]
         successor_report = _run_console_json(
             console,
@@ -776,6 +827,7 @@ def _qualify_review_case_console(
         "concurrent_case_id": case_id,
         "replay": replay["status"],
         "retirement": retired["status"],
+        "shadow_decision": "passed",
         "schema": "installed-review-case-lifecycle-v1",
         "successor_case_id": successor_case_id,
     }

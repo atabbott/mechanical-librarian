@@ -11,6 +11,30 @@ product behavior: there is still no automatic retry, and an ordinary retained
 timeout is a terminal diagnostic observation for the experiment that observed
 it.
 
+## Deterministic decision preview
+
+An operator can compute one provider-independent decision document for an exact
+current ReviewCase without a qualification profile, model call, provider call,
+credential, or network client:
+
+```sh
+mechanical-librarian shadow-decision-preview --database reports.sqlite \
+  --review-case-id review_case_<64-lowercase-hex>
+```
+
+The command opens the existing database read-only and no-create, covers every
+proposal exactly once, and emits canonical `shadow-decision-set-v1` JSON.
+Replaying identical input is byte-identical. Ambiguous, conflicting,
+unsupported, non-unique, or insufficient evidence selects the compiler's exact
+manual action; malformed or source-invalid state fails without partial output.
+
+Policy v5 can select unique selected-EPUB source-supported report-only actions
+for authors, language, publisher, publication date, and publication year.
+Title retains stricter provider-corroborated eligibility, and all other
+destinations remain manual. The output is an explicit preview only: it is not
+persisted, is not the default recommendation path, and grants no approval,
+apply, target-write, or media-write authority. See [ADR-0029](../architecture/decisions/0029-provider-independent-shadow-decision-preview.md).
+
 ## Qualification profile
 
 Create an owner-only (`0600`) canonical JSON file matching

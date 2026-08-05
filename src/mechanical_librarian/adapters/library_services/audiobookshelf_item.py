@@ -131,7 +131,13 @@ class AudiobookshelfItemReader:
                 content_type = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
                 if content_type not in {"image/jpeg", "image/png", "image/webp"}:
                     raise CoverReadError("unsupported_format")
-                return _bounded_body(response, 8 * 1024 * 1024, deadline=deadline)
+                content_encoding = response.headers.get("content-encoding")
+                if content_encoding is not None and content_encoding.lower() != "identity":
+                    raise CoverReadError("unsupported_format")
+                body = _bounded_body(response, 8 * 1024 * 1024, deadline=deadline)
+                if _cover_signature_media_type(body) != content_type:
+                    raise CoverReadError("unsupported_format")
+                return body
 
 
 def _raw_cover_authority(endpoint: str) -> str:
@@ -140,6 +146,16 @@ def _raw_cover_authority(endpoint: str) -> str:
         return httpx.URL(endpoint).netloc.decode("ascii")
     except (AttributeError, UnicodeError, ValueError) as error:
         raise MetadataReportError("target cover is invalid") from error
+
+
+def _cover_signature_media_type(body: bytes) -> str | None:
+    if body.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if body.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if len(body) >= 12 and body[:4] == b"RIFF" and body[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 def _snapshot(source: object, item: str, library_id: str, service_path: str) -> TargetSnapshot:
@@ -167,7 +183,12 @@ def _snapshot(source: object, item: str, library_id: str, service_path: str) -> 
         raise MetadataReportError("target response is invalid")
     if len(files_source) > 128:
         raise MetadataReportError("target response is invalid")
-    files = tuple(_file(value, service_path) for value in files_source)
+    item_relative = root.get("relPath")
+    if item_relative is not None and not _is_safe_relative_path(item_relative):
+        raise MetadataReportError("target response is invalid")
+    files = tuple(
+        _file(value, service_path, item_relative) for value in files_source
+    )
     identities = tuple(value.identity for value in files)
     if len(set(identities)) != len(identities):
         raise MetadataReportError("target file identities are duplicated")
@@ -414,7 +435,11 @@ def _cover_field(
     return TargetField(destination, TargetFieldState.VALUE, cover.identity)
 
 
-def _file(source: object, service_path: str) -> TargetFile:
+def _file(
+    source: object,
+    service_path: str,
+    item_relative: str | None,
+) -> TargetFile:
     item = _mapping(source)
     metadata = _mapping(item.get("metadata"))
     format_value = item.get("ebookFormat")
@@ -438,10 +463,18 @@ def _file(source: object, service_path: str) -> TargetFile:
         if from_path is None:
             raise MetadataReportError("target file mapping is invalid")
         relative = from_path
-    elif from_path is not None and from_path != relative:
+    elif not _is_safe_relative_path(relative):
         raise MetadataReportError("target file mapping is invalid")
-    normalized = posixpath.normpath(relative)
-    if not 1 <= len(relative) <= 1024 or normalized != relative or relative.startswith("/") or any(part in {"", ".", ".."} for part in relative.split("/")):
+    elif from_path is not None:
+        item_resolved = (
+            None
+            if item_relative is None
+            else posixpath.join(item_relative, relative)
+        )
+        if from_path != relative and from_path != item_resolved:
+            raise MetadataReportError("target file mapping is invalid")
+        relative = from_path
+    if not _is_safe_relative_path(relative):
         raise MetadataReportError("target file mapping is invalid")
     size = metadata.get("size")
     inode = item.get("ino", metadata.get("ino"))
@@ -449,6 +482,16 @@ def _file(source: object, service_path: str) -> TargetFile:
         raise MetadataReportError("target file identity is invalid")
     identity = hashlib.sha256(canonical_json({"format": format_value, "inode": inode, "relative": relative, "size": size}).encode("utf-8")).hexdigest()
     return TargetFile(identity, relative, format_value)
+
+
+def _is_safe_relative_path(value: object) -> bool:
+    return (
+        type(value) is str
+        and 1 <= len(value) <= 1024
+        and posixpath.normpath(value) == value
+        and not value.startswith("/")
+        and not any(part in {"", ".", ".."} for part in value.split("/"))
+    )
 
 
 def _relative_service_path(path: str, service_path: str) -> str:

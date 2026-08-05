@@ -21,7 +21,11 @@ evidence workflow. An operator can:
 - admit one exact current actionable ProposalSet as an immutable undecided
   review case, with typed no-case retirement for non-actionable sets; and
 - preview, request, inspect, or explicitly reevaluate one isolated
-  qualification-only Codex shadow recommendation over an exact current case.
+  qualification-only Codex shadow recommendation over an exact current case;
+  and
+- compute one canonical provider-independent deterministic decision preview for
+  an exact current case without model/provider calls, persistence, or write
+  authority.
 
 The report combines all 16 current Audiobookshelf metadata destinations,
 bounded structured EPUB evidence, independent configured Hardcover and Open

@@ -6,6 +6,13 @@ AI is a replaceable, untrusted reviewer. It may recommend a decision, but it
 does not discover production credentials, select its own production inputs,
 change policy, construct service requests, or execute writes.
 
+The deterministic `shadow-decision-preview` path is outside the AI boundary. It
+uses only an exact source-validated packet and the trusted compiled action
+catalogue, performs no model or provider dispatch, and emits a non-persisted
+report-only preview. It does not convert AI advice into trusted evidence or add
+approval or write authority. Its closed policy and abstention rules are defined
+by [ADR-0029](decisions/0029-provider-independent-shadow-decision-preview.md).
+
 ## Reviewer contract
 
 The current qualification-only `shadow-review-packet-v5` contains:
