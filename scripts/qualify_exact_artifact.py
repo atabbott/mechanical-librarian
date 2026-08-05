@@ -638,7 +638,7 @@ def _qualify_review_case_console(
             after_information.st_ctime_ns,
         )
         decisions = decision_preview.get("decisions")
-        proposals = case.get("proposals")
+        proposals = case.get("results")
         if (
             decision_preview.get("schema_version") != "shadow-decision-set-v1"
             or decision_preview.get("mode") != "qualification_only"
