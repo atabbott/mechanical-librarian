@@ -638,15 +638,13 @@ def _qualify_review_case_console(
             after_information.st_ctime_ns,
         )
         decisions = decision_preview.get("decisions")
-        proposals = case.get("results")
         if (
             decision_preview.get("schema_version") != "shadow-decision-set-v1"
             or decision_preview.get("mode") != "qualification_only"
             or decision_preview.get("review_case_id") != case_id
             or type(decisions) is not list
-            or type(proposals) is not list
-            or [value.get("proposal_id") for value in decisions]
-            != [value.get("proposal_id") for value in proposals]
+            or [value.get("destination") for value in decisions]
+            != ["isbn", "title", "language"]
             or before_database != after_database
             or before_entries
             != tuple(sorted(value.name for value in run_directory.iterdir()))
