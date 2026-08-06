@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add the second F16a production increment: authenticated bounded library
+  lenses and a separate exact-field attention queue. The default view places
+  genuine unresolved human-attention work first while deterministic
+  automatic-only cases remain searchable and inspectable without controls.
+  Search-bound cursors, exact-current joins, 50-item response limits, and
+  text-only DOM rendering add no decision, apply, or target-write authority.
+  (#448)
+
 - Add the first F16a production increment: an authenticated read-only
   `review-serve` boundary for one exact-current ReviewCase, bounded evidence,
   current-case admission history, and deterministic authenticated OpenAPI.

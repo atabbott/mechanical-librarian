@@ -71,6 +71,12 @@ high-entropy session and CSRF tokens. Expired session rows are removed during
 login, logout records revocation, and failed logins use a durable five-attempt
 per five-minute global throttle without retaining client addresses.
 
+The #448 library and attention responses join only exact-current report and
+case pointers. Pages contain at most 50 rows, cursors are bound to their lens
+and search, and the field queue admits only unresolved or explicitly manual
+destinations. Sibling identifiers cannot widen a query, and automatic-only
+cases expose no mutation control.
+
 The reachable assets are private case metadata and evidence plus session
 authority. Exact canonical HTTPS Host and state-changing Origin checks prevent
 cross-origin use; secure HttpOnly SameSite cookies and per-session CSRF protect

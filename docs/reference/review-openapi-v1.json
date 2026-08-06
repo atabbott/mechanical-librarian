@@ -1,6 +1,112 @@
 {
   "components": {
     "schemas": {
+      "_AttentionItem": {
+        "additionalProperties": false,
+        "properties": {
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "detail_url": {
+            "title": "Detail Url",
+            "type": "string"
+          },
+          "item": {
+            "title": "Item",
+            "type": "string"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "notices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notices",
+            "type": "array"
+          },
+          "provenance": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Provenance",
+            "type": "array"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "destination",
+          "detail_url",
+          "item",
+          "library",
+          "notices",
+          "provenance",
+          "review_case_id",
+          "title"
+        ],
+        "title": "_AttentionItem",
+        "type": "object"
+      },
+      "_AttentionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/_AttentionItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "query",
+          "schema_version",
+          "total"
+        ],
+        "title": "_AttentionResponse",
+        "type": "object"
+      },
       "_CaseDetailResponse": {
         "additionalProperties": false,
         "properties": {
@@ -209,6 +315,113 @@
         "title": "_HistoryResponse",
         "type": "object"
       },
+      "_LibraryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/_ReviewCounts"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/_LibraryWork"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "lens": {
+            "title": "Lens",
+            "type": "string"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "counts",
+          "items",
+          "lens",
+          "next_cursor",
+          "query",
+          "schema_version"
+        ],
+        "title": "_LibraryResponse",
+        "type": "object"
+      },
+      "_LibraryWork": {
+        "additionalProperties": false,
+        "properties": {
+          "attention_count": {
+            "title": "Attention Count",
+            "type": "integer"
+          },
+          "attention_state": {
+            "title": "Attention State",
+            "type": "string"
+          },
+          "detail_url": {
+            "title": "Detail Url",
+            "type": "string"
+          },
+          "dispositions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Dispositions",
+            "type": "array"
+          },
+          "item": {
+            "title": "Item",
+            "type": "string"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attention_count",
+          "attention_state",
+          "detail_url",
+          "dispositions",
+          "item",
+          "library",
+          "review_case_id",
+          "title"
+        ],
+        "title": "_LibraryWork",
+        "type": "object"
+      },
       "_LoginRequest": {
         "additionalProperties": false,
         "properties": {
@@ -362,6 +575,30 @@
         "title": "_ProposedValue",
         "type": "object"
       },
+      "_ReviewCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "all": {
+            "title": "All",
+            "type": "integer"
+          },
+          "needs_attention": {
+            "title": "Needs Attention",
+            "type": "integer"
+          },
+          "no_attention_needed": {
+            "title": "No Attention Needed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "all",
+          "needs_attention",
+          "no_attention_needed"
+        ],
+        "title": "_ReviewCounts",
+        "type": "object"
+      },
       "_ReviewField": {
         "additionalProperties": false,
         "properties": {
@@ -378,6 +615,10 @@
           },
           "manual_required": {
             "title": "Manual Required",
+            "type": "boolean"
+          },
+          "needs_attention": {
+            "title": "Needs Attention",
             "type": "boolean"
           },
           "notices": {
@@ -414,6 +655,7 @@
           "deterministic_disposition",
           "destination",
           "manual_required",
+          "needs_attention",
           "notices",
           "proposed_values",
           "provenance",
@@ -555,6 +797,261 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/attention": {
+      "get": {
+        "operationId": "attention_api_v1_attention_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ml_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ml Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_AttentionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Attention"
+      }
+    },
+    "/api/v1/library": {
+      "get": {
+        "operationId": "library_api_v1_library_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "lens",
+            "required": false,
+            "schema": {
+              "default": "needs_attention",
+              "maxLength": 32,
+              "title": "Lens",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ml_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ml Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_LibraryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Library"
+      }
+    },
     "/api/v1/review-cases/{review_case_id}": {
       "get": {
         "operationId": "case_detail_api_v1_review_cases__review_case_id__get",
