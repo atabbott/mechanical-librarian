@@ -5,9 +5,11 @@
 - Reconcile immutable decision retries with authoritative state. A committed
   same-key/same-payload request now replays its original acknowledgement even
   after case supersession, while changed payloads retain an explicit conflict.
-  The browser reloads detail/history after a 409 and uses the same bounded
-  request identity once after response loss before reloading, without claiming
-  that an ambiguous decision was unrecorded or adding client-side authority.
+  The browser reloads detail/history after a current-case conflict, routes a
+  stale case back to the authoritative Library, and uses the same bounded
+  request identity once after response loss before reloading or requiring sign
+  in, without claiming that an ambiguous decision was unrecorded or adding
+  client-side authority.
   (#456)
 
 - Preserve the selected Library lens when searching and keep Attention search

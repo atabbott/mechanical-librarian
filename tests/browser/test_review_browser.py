@@ -404,20 +404,26 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         if attempts == 1:
                             route.abort("connectionreset")
                         else:
-                            route.fulfill(response=response)
+                            route.fulfill(
+                                status=503,
+                                content_type="application/json",
+                                body='{"error":{"code":"persistence"}}',
+                            )
 
                     loss_page.route("**/decisions", lose_first_response)
                     with loss_page.expect_navigation():
                         loss_page.get_by_role(
                             "button", name="Keep current value"
                         ).first.press("Enter")
-                    loss_page.locator(".toast").wait_for()
+                    loss_page.get_by_text(
+                        "Human decision: keep current by owner."
+                    ).wait_for(state="attached")
                     self.assertEqual(attempts, 2)
                     self.assertEqual(statuses, [200, 200])
                     self.assertEqual(len(set(keys)), 1)
                     self.assertEqual(loss_page.locator(".decision-recorded").count(), 1)
                     self.assertEqual(loss_page.get_by_role("button", name="Try again").count(), 0)
-                    self.assertEqual(len(loss_errors), 1, loss_errors)
+                    self.assertEqual(len(loss_errors), 2, loss_errors)
                     loss_context.close()
 
                 conflict_errors: list[str] = []
@@ -466,7 +472,24 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertEqual(conflict_page.locator(".decision-recorded").count(), 1)
                     self.assertEqual(conflict_page.locator(".choices").count(), 2)
                     self.assertEqual(conflict_page.get_by_role("button", name="Try again").count(), 0)
-                    self.assertEqual(len(conflict_errors), 1, conflict_errors)
+                    conflict_page.unroute("**/decisions")
+                    conflict_page.route(
+                        "**/decisions",
+                        lambda route: route.fulfill(
+                            status=409,
+                            content_type="application/json",
+                            body='{"error":{"code":"stale"}}',
+                        ),
+                    )
+                    with conflict_page.expect_navigation():
+                        conflict_page.get_by_role(
+                            "button", name="Keep current value"
+                        ).first.press("Enter")
+                    conflict_page.get_by_role(
+                        "heading", name="Review library"
+                    ).wait_for()
+                    self.assertIn("/library", conflict_page.url)
+                    self.assertEqual(len(conflict_errors), 2, conflict_errors)
                     conflict_context.close()
 
                 browser.close()
