@@ -658,6 +658,12 @@ def _cursor_binding(kind: str, lens: str, search: str | None) -> str:
 def _encode_cursor(
     offset: int, kind: str, lens: str, search: str | None
 ) -> str:
+    if (
+        type(offset) is not int
+        or isinstance(offset, bool)
+        or not 0 <= offset <= 100_000
+    ):
+        raise ReviewWebError("request")
     payload = json.dumps(
         [offset, _cursor_binding(kind, lens, search)],
         separators=(",", ":"),

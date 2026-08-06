@@ -385,6 +385,33 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                 ) as (origin, case_id):
                     assert case_id is not None
                     _login(page, origin)
+                    page.set_viewport_size({"width": 320, "height": 700})
+                    for lens in ("all", "no_attention_needed"):
+                        page.goto(f"{origin}/library?lens={lens}")
+                        page.get_by_role("heading", name="Review library").wait_for()
+                        page.get_by_label("Search title, library, or item").fill(
+                            "ÅNGSTRÖM"
+                        )
+                        with page.expect_navigation():
+                            page.get_by_role("button", name="Search").press("Enter")
+                        self.assertIn(f"lens={lens}", page.url)
+                        self.assertIn("q=%C3%85NGSTR%C3%96M", page.url)
+                        self.assertLessEqual(
+                            page.evaluate(
+                                "() => document.documentElement.scrollWidth"
+                            ),
+                            320,
+                        )
+                    page.goto(f"{origin}/attention")
+                    page.get_by_role(
+                        "heading", name=re.compile(r"^Fields needing attention")
+                    ).wait_for()
+                    page.get_by_label("Search title, library, or item").fill("title")
+                    with page.expect_navigation():
+                        page.get_by_role("button", name="Search").press("Enter")
+                    self.assertIn("/attention?q=title", page.url)
+                    self.assertNotIn("lens=", page.url)
+                    page.set_viewport_size({"width": 390, "height": 844})
 
                     def evidence_pages(route) -> None:
                         second_page = "cursor=" in route.request.url

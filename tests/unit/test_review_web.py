@@ -30,6 +30,8 @@ from mechanical_librarian.application.review_web import (
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
     ReviewWebError,
+    _decode_cursor,
+    _encode_cursor,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.interfaces.cli import main as cli_main
@@ -1049,6 +1051,17 @@ class ReviewWebTests(unittest.TestCase):
         ):
             self.assertIn(required, script)
 
+    def test_cursor_encoder_never_emits_an_unreachable_offset(self) -> None:
+        boundary = _encode_cursor(100_000, "library", "all", None)
+        self.assertEqual(
+            _decode_cursor(boundary, "library", "all", None),
+            100_000,
+        )
+        with self.assertRaises(ReviewWebError):
+            _encode_cursor(100_001, "library", "all", None)
+        with self.assertRaises(ReviewWebError):
+            _encode_cursor(True, "library", "all", None)
+
     def test_model_advice_is_separate_bounded_nondecision_data(self) -> None:
         self.repository.advice = {
             "results": [
@@ -1834,8 +1847,9 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            repository = open_repository(Path(directory) / "application.sqlite3")
-            unresolved_report = _report()
+            database = Path(directory) / "application.sqlite3"
+            repository = open_repository(database)
+            unresolved_report = _report(title="Straße ÅNGSTRÖM")
             repository.publish(unresolved_report, lambda: True)
             unresolved_proposal = evaluate_report(unresolved_report)
             repository.publish_proposal(unresolved_proposal)
@@ -1866,7 +1880,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             source = _proposal_report(providers=providers)
             automatic_report = MetadataReport.create(
                 target=TargetFacts(
-                    "primary", "ebooks", "item-2", source.target.fields
+                    "primary", "novels", "ÉDITION-2", source.target.fields
                 ),
                 file=FileFacts(1, "c" * 64, "d" * 64),
                 local_claims=source.local_claims,
@@ -1889,16 +1903,35 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 ReviewCase.from_json(attention_rows[0][0]).review_case_id,
             )
             automatic_rows = repository.list_current_review_case_documents(
-                "item-2", 10, 0, False
+                "édition-2", 10, 0, False
             )
             self.assertEqual(len(automatic_rows), 1)
+            self.assertEqual(repository.count_current_review_cases("ångström"), (1, 1))
+            self.assertEqual(repository.count_current_review_cases("STRASSE"), (1, 1))
+            self.assertEqual(repository.count_current_review_cases("NOVELS"), (1, 0))
+            self.assertEqual(repository.count_current_review_cases("%"), (0, 0))
+            self.assertEqual(repository.count_current_review_cases("_"), (0, 0))
+            self.assertEqual(repository.count_current_review_cases("\\"), (0, 0))
             queue = repository.list_current_attention_documents(
                 None, 10, 0
             )
             self.assertEqual(len(queue), 1)
             self.assertEqual(queue[0][2], "title")
             self.assertEqual(repository.count_current_attention_fields(None), 1)
+            self.assertEqual(
+                repository.count_current_attention_fields("STRASSE"),
+                1,
+            )
+            self.assertEqual(
+                len(repository.list_current_attention_documents("ångström", 10, 0)),
+                1,
+            )
             repository.close()
+            reopened = open_repository(database, create=False)
+            self.assertEqual(reopened.count_current_review_cases("ångström"), (1, 1))
+            self.assertEqual(reopened.count_current_review_cases("STRASSE"), (1, 1))
+            self.assertEqual(reopened.count_current_review_cases("NOVELS"), (1, 0))
+            reopened.close()
 
     def test_sqlite_attention_includes_coherent_manual_bibliographic_siblings(
         self,

@@ -86,6 +86,14 @@ lens, and a queue link identifies both the exact case and destination. Policy
 resolved, ineligible, rejected, disproven, and no-op fields never inflate the
 queue or its counts.
 
+Search uses locale-independent Unicode `casefold()` on both the bounded query
+and the stored title, library, and item projections before literal substring
+matching. SQL wildcard characters in the query remain escaped. The browser
+preserves the selected library lens when submitting a search, while the
+attention search remains on its separate route. Cursor offsets are capped at
+100,000; a response fails before it can emit a cursor that its decoder would
+reject.
+
 The current-case evidence resource exposes every reference used by that exact
 case through deterministic, case-bound cursor pages of at most 50 items. Cover
 references are keyed by their serialized `source_id`; provider-backed claims
