@@ -311,7 +311,10 @@ the strip position, announces a non-obscuring status, and focuses the next
 unresolved field. A failure preserves the original choice and idempotency key,
 does not advance, and focuses an explicit retry. Automatic-only fields are
 collapsed read-only context outside the strip and never expose those controls;
-model advice follows the human-decision surface.
+model advice follows the human-decision surface. Its visible state and bounded
+result are derived only from the latest persisted reevaluation attempt; older
+attempts remain immutable history but cannot override or resurface as current
+advice.
 
 Outcome #195 extends those budgets and checks across its cross-case summaries,
 history, bulk and reversal flows, and additional browser and viewport matrix.

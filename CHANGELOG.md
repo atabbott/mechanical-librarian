@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Project exact-current model advice from only the latest persisted
+  reevaluation attempt. A newer pending attempt is no longer hidden by an
+  older failure, and a newer failure cannot resurface stale successful advice;
+  the projection remains read-only and non-authoritative across restart and
+  reopen. (#462)
+
 - Activate the complete F16a browser round trip. The authenticated owner can
   choose `accept`, `keep_current`, or `reject` directly from an exact unresolved
   field, receives only a server-acknowledged success message, and advances to
