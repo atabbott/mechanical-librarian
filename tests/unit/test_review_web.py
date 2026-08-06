@@ -1024,11 +1024,22 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             pointer_written = threading.Event()
             finished = threading.Event()
             writer_errors: list[BaseException] = []
+            writer_path = (
+                database
+                if reader._binding is None
+                else reader._binding.alias_path
+            )
 
             def supersede() -> None:
                 writer = None
                 try:
-                    writer = open_repository(database)
+                    connection = sqlite3.connect(
+                        writer_path,
+                        isolation_level=None,
+                    )
+                    connection.execute("PRAGMA foreign_keys=ON")
+                    connection.execute("PRAGMA busy_timeout=5000")
+                    writer = SQLiteMetadataReportRepository(connection)
                     writer._connection.set_trace_callback(
                         lambda statement: pointer_written.set()
                         if statement.startswith("INSERT INTO current_metadata_reports")
@@ -1105,11 +1116,22 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 inserted = threading.Event()
                 finished = threading.Event()
                 writer_errors: list[BaseException] = []
+                writer_path = (
+                    database
+                    if reader._binding is None
+                    else reader._binding.alias_path
+                )
 
                 def write_decision() -> None:
                     writer = None
                     try:
-                        writer = open_repository(database)
+                        connection = sqlite3.connect(
+                            writer_path,
+                            isolation_level=None,
+                        )
+                        connection.execute("PRAGMA foreign_keys=ON")
+                        connection.execute("PRAGMA busy_timeout=5000")
+                        writer = SQLiteMetadataReportRepository(connection)
                         writer._connection.set_trace_callback(
                             lambda statement: inserted.set()
                             if statement.startswith("INSERT INTO human_decisions")
