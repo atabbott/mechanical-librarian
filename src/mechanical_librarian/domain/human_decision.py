@@ -37,6 +37,39 @@ class HumanDecision:
     request_digest: str
     occurred_at: int
 
+    @staticmethod
+    def idempotency_digest_for(idempotency_key: str) -> str:
+        if (
+            type(idempotency_key) is not str
+            or _IDEMPOTENCY_KEY.fullmatch(idempotency_key) is None
+        ):
+            raise HumanDecisionError("invalid")
+        return _sha256(idempotency_key)
+
+    def matches_request(
+        self,
+        *,
+        review_case_id: str,
+        proposal_id: str,
+        target_fingerprint: str,
+        destination: str,
+        actor: str,
+        outcome: str,
+        selected_value: dict[str, object] | None,
+        idempotency_key: str,
+    ) -> bool:
+        return (
+            self.review_case_id == review_case_id
+            and self.proposal_id == proposal_id
+            and self.target_fingerprint == target_fingerprint
+            and self.destination == destination
+            and self.actor == actor
+            and self.outcome == outcome
+            and self.selected_value == selected_value
+            and self.idempotency_digest
+            == self.idempotency_digest_for(idempotency_key)
+        )
+
     @classmethod
     def create(
         cls,
@@ -95,7 +128,7 @@ class HumanDecision:
                 raise HumanDecisionError("invalid_selection")
         elif selected_value is not None:
             raise HumanDecisionError("invalid_selection")
-        idempotency_digest = _sha256(idempotency_key)
+        idempotency_digest = cls.idempotency_digest_for(idempotency_key)
         request = {
             "actor": actor,
             "destination": destination,

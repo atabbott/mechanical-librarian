@@ -1398,6 +1398,41 @@ class SQLiteMetadataReportRepository:
         except (sqlite3.Error, HumanDecisionError, TypeError) as error:
             raise MetadataReportError("human decision is unavailable") from error
 
+    def find_human_decision(self, idempotency_digest: str) -> str | None:
+        try:
+            row = self._connection.execute(
+                "SELECT decision_id,review_case_id,proposal_id,"
+                "target_fingerprint,destination,actor,outcome,"
+                "selected_value_document,idempotency_digest,"
+                "request_digest,occurred_at,document FROM human_decisions "
+                "WHERE idempotency_digest=?",
+                (idempotency_digest,),
+            ).fetchone()
+            if row is None:
+                return None
+            decision = HumanDecision.from_json(row[11])
+            stored_columns = (
+                decision.decision_id,
+                decision.review_case_id,
+                decision.proposal_id,
+                decision.target_fingerprint,
+                decision.destination,
+                decision.actor,
+                decision.outcome,
+                _canonical_json(decision.selected_value),
+                decision.idempotency_digest,
+                decision.request_digest,
+                decision.occurred_at,
+            )
+            if (
+                stored_columns != row[:11]
+                or decision.idempotency_digest != idempotency_digest
+            ):
+                raise MetadataReportError("human decision is unavailable")
+            return decision.to_json()
+        except (sqlite3.Error, HumanDecisionError, TypeError) as error:
+            raise MetadataReportError("human decision is unavailable") from error
+
     def record_human_decision(self, decision: HumanDecision) -> str:
         try:
             self._connection.execute("BEGIN IMMEDIATE")

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Reconcile immutable decision retries with authoritative state. A committed
+  same-key/same-payload request now replays its original acknowledgement even
+  after case supersession, while changed payloads retain an explicit conflict.
+  The browser reloads detail/history after a 409 and uses the same bounded
+  request identity once after response loss before reloading, without claiming
+  that an ambiguous decision was unrecorded or adding client-side authority.
+  (#456)
+
 - Preserve the selected Library lens when searching and keep Attention search
   on its own route. Title, library, and item matching now applies one
   locale-independent Unicode casefold contract on both sides of the bounded
