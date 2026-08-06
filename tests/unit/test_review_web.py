@@ -971,17 +971,27 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
 
             competing = threading.Thread(target=competing_logout)
 
-            def interleave(statement: str) -> None:
-                if statement.startswith("SELECT 1 FROM review_sessions"):
-                    competing.start()
-                    self.assertTrue(competing_started.wait(timeout=1))
+            connection = first._connection
 
-            first._connection.set_trace_callback(interleave)
+            class InterleavingConnection:
+                def execute(self, statement: str, parameters=()):
+                    if statement.startswith("SELECT 1 FROM review_sessions"):
+                        competing.start()
+                        self.assert_competing_started()
+                    return connection.execute(statement, parameters)
+
+                def assert_competing_started(self) -> None:
+                    if not competing_started.wait(timeout=1):
+                        raise AssertionError("competing logout did not start")
+
+                def __getattr__(self, name: str):
+                    return getattr(connection, name)
+
+            first._connection = InterleavingConnection()  # type: ignore[assignment]
             self.assertEqual(
                 first.revoke_review_session("a" * 64, "d" * 64, 151),
                 "csrf",
             )
-            first._connection.set_trace_callback(None)
             competing.join(timeout=2)
             self.assertFalse(competing.is_alive())
             self.assertFalse(competing_errors)
