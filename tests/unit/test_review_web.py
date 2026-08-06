@@ -18,7 +18,10 @@ from argon2 import PasswordHasher
 from argon2.low_level import Type
 from fastapi.testclient import TestClient
 
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    SQLiteMetadataReportRepository,
+    open_repository,
+)
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.review_web import (
     InspectCurrentReviewCase,
@@ -952,7 +955,13 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "application.sqlite3"
             first = open_repository(database, cross_thread=True)
-            second = open_repository(database, cross_thread=True)
+            second = SQLiteMetadataReportRepository(
+                sqlite3.connect(
+                    database,
+                    check_same_thread=False,
+                    isolation_level=None,
+                )
+            )
             first.create_review_session("a" * 64, "c" * 64, 100, 200)
             competing_started = threading.Event()
             competing_outcomes: list[str] = []
