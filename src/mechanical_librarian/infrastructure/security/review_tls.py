@@ -45,7 +45,9 @@ def open_review_tls_identity(
             f"{prefix}/{certificate}", f"{prefix}/{private_key}"
         )
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(identity.certificate_file, identity.private_key_file)
+        context.load_cert_chain(
+            identity.certificate_file, identity.private_key_file, password=""
+        )
         os.lseek(certificate, 0, os.SEEK_SET)
         os.lseek(private_key, 0, os.SEEK_SET)
         yield identity

@@ -993,6 +993,7 @@ def run_review_server(
                 access_log=False,
                 ssl_certfile=tls.certificate_file,
                 ssl_keyfile=tls.private_key_file,
+                ssl_keyfile_password="",
             )
         except Exception:
             repository.close()

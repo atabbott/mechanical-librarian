@@ -64,8 +64,9 @@ sabotage is outside the supported threat model.
 The supported network path terminates TLS directly in `review-serve`. Its
 certificate and private-key paths are explicit schema fields, must be supplied
 together as bounded owner-controlled regular no-follow files with an owner-only
-private key, and are opened and validated as one matching identity before the
-application database or listener is opened. The retained descriptors prevent
+unencrypted private key, and are opened and validated noninteractively as one
+matching identity before the application database or listener is opened. The
+retained descriptors prevent
 path replacement from changing the
 served identity after validation. No environment substitution, plaintext mode,
 TLS-disable flag, ambient proxy-header handling, certificate issuance, or

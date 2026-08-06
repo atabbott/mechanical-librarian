@@ -65,8 +65,10 @@ including a non-default port. Configure both `tls_certificate_file` and
 `tls_private_key_file` as absolute paths to one matching identity, and make
 the certificate owner-controlled and the private key owner-only regular files
 (`chmod 644` and `chmod 600`, respectively). Missing, linked, writable-by-other,
-unreadable, malformed, or mismatched inputs fail before the database or network
-listener opens. There is no supported HTTP fallback. Forwarded proxy identity
+unreadable, encrypted, malformed, or mismatched inputs fail noninteractively
+before the database or network listener opens. Private-key passphrases are not
+a supported configuration or environment input. There is no supported HTTP
+fallback. Forwarded proxy identity
 is not accepted by Uvicorn; application proxy trust remains an explicit,
 bounded allow-list and should normally stay empty for direct TLS.
 
