@@ -524,18 +524,21 @@ authority.
 
 ## Delivery checkpoint 0.11.0: authenticated human-exception review
 
-F16a #152 is delivered through four ordered production increments. The closed
-design record #446 locks variant M at `026e338` as directional evidence, not
-production code or a pixel contract. Variant I remains lineage only. F16a owns
-bounded current-case history; the prototype's separate library activity view
-and all library-wide or cross-case history remain deferred to #195.
+F16a #152 is delivered through four ordered production increments and the
+milestone-13 corrective sequence. The closed design record #446 and corrective
+visual contract #455 lock variant M at `026e338` as the authoritative visual
+contract for the in-scope Library, Attention, and Detail surfaces; prototype
+code remains directional evidence and is not production code. Variant I
+remains lineage only. F16a owns bounded current-case history; the prototype's
+separate library activity view and all library-wide or cross-case history
+remain deferred to #195.
 
 | Increment | Issue | Demonstrable result | Planning state |
 | --- | --- | --- | --- |
 | Exact-current case inspection | #447 | An authenticated owner opens one exact-current case, bounded evidence, and current-case history through the read-only API/browser boundary. | Delivered. |
 | Attention-first library and field queue | #448 | The owner browses every current work and a separate queue containing only unresolved human-attention fields. | Delivered by #448. |
 | Immutable exact-version decision | #449 | One exact field decision is persisted idempotently and reproduced after restart without automatic, apply, or write authority. | Delivered by #449. |
-| Browser activation | #450 | The complete decision-first round trip passes the first-release browser and installed-artifact gates. | Delivered by #450; activation closes #152. |
+| Browser activation | #450, #455 | The complete decision-first round trip passes the installed-artifact gates and faithfully presents variant M in light/dark modes at 1440, 884, 390, and 320 CSS pixels. | Activated by #450; visual contract restored by #455. |
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
@@ -551,7 +554,7 @@ recreated.
 | --- | --- | --- | --- |
 | F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | Retained planned designation. |
 | F15a Supported container operation | #151 | The supported single container starts safely, runs the report and review product, survives current-schema restart, and exposes bounded redacted health, diagnostics, support, backup, and recovery evidence. | Consolidated container plus diagnostics/recovery outcome with a retained planned designation. |
-| F16a Authenticated browser review and decision | #152 | An authenticated owner finds one current case, inspects bounded evidence, makes one individual field decision, and observes immutable server-authoritative current-case history after refresh or restart. The individual round trip passes the first-release responsive, keyboard/focus, accessibility, private caching/storage, content-security, hostile-rendering, performance, synthetic-artifact, and primary-supported-browser baseline. | Delivered through #447 → #448 → #449 → #450; cross-case history remains #195. |
+| F16a Authenticated browser review and decision | #152 | An authenticated owner finds one current case, inspects bounded evidence, makes one individual field decision, and observes immutable server-authoritative current-case history after refresh or restart. The individual round trip passes the first-release responsive, keyboard/focus, accessibility, private caching/storage, content-security, hostile-rendering, performance, synthetic-artifact, and primary-supported-browser baseline. | Delivered through #447 → #448 → #449 → #450 and milestone-13 corrections through #455; cross-case history remains #195. |
 | F13 Guarded fake-service apply | #149 | A current human-approved field change from F16a is planned, backed up, idempotently applied to a fake service, read back, verified, audited, and safely failed or rolled back. | Retained planned designation; requires an applicable current human decision from F16a. |
 | F14 Audiobookshelf canary apply | #150 | After F13, the same gates perform one bounded mutation against a disposable qualified Audiobookshelf instance and prove before/request/after evidence. | Retained planned designation; depends on completed F13 qualification. |
 | F17 Continuous pre-release operation | #153 | The useful Audiobookshelf path runs repeatedly under persisted scheduling and reconciliation, survives representative failures and restarts, and remains observable and recoverable without widening authority. | Retained planned designation; excludes CWA, release production/publication, and older-schema migration. |

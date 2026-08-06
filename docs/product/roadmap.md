@@ -340,19 +340,22 @@ the guarded apply path.
 ## M6: Review experience
 
 - Implement the DUX-derived, snapshot-aware review-case and decision contract.
-- Use locked variant M at `026e338` as directional evidence. Variant I is
-  lineage rather than the selected production direction, and prototype code or
-  pixels are not production contracts.
+- Use locked variant M at `026e338` as the authoritative visual contract for
+  the in-scope Library, Attention, and Detail surfaces. Variant I is lineage
+  rather than the selected production direction; prototype code remains
+  directional evidence rather than production code.
 - Deliver the authenticated target-level queue, decision-first detail,
   progressive evidence, sibling navigation, and one guarded individual decision
   through F16a #152.
 - Qualify that individual round trip through the F16a first-release responsive,
   keyboard/focus, accessibility, private caching/storage, content-security,
   hostile-rendering, performance, synthetic-artifact, and primary-supported-
-  browser baseline.
+  browser baseline, including complete light/dark presentation at 1440, 884,
+  390, and 320 CSS pixels.
 - Keep the prototype library activity view, cross-case summaries and history,
   bulk decisions, reversal, additional
-  browser and viewport coverage, and extended accessibility, responsive,
+  browser-engine coverage beyond the primary supported browser, and extended
+  accessibility, responsive,
   privacy, content-security, performance, and synthetic-artifact budgets
   deferred together under #195.
 - Limit F16a history to the bounded current case.

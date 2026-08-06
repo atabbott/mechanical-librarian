@@ -708,6 +708,109 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                 browser.close()
             self.assertEqual(errors, [])
 
+    def test_variant_m_light_dark_visual_matrix_is_bounded_and_persistent(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.chmod(root, 0o700)
+            hash_path = root / "owner.hash"
+            hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+            os.chmod(hash_path, 0o600)
+            certificate, key = _certificate(root)
+            errors: list[str] = []
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                context = browser.new_context(
+                    ignore_https_errors=True,
+                    viewport={"width": 1440, "height": 1000},
+                )
+                page = context.new_page()
+                _capture_errors(page, errors)
+                with _server(
+                    database=root / "visual.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=_unused_port(),
+                    report=_manual_report(),
+                ) as (origin, case_id):
+                    assert case_id is not None
+                    _login(page, origin)
+
+                    for width in (1440, 884, 390, 320):
+                        page.set_viewport_size({"width": width, "height": 1000})
+                        for selected_theme in ("light", "dark"):
+                            page.goto(f"{origin}/library")
+                            page.get_by_role(
+                                "heading", name="Review library"
+                            ).wait_for()
+                            current_theme = page.locator("html").get_attribute(
+                                "data-theme"
+                            )
+                            if current_theme != selected_theme:
+                                page.locator(".theme-toggle").press("Enter")
+                            self.assertEqual(
+                                page.locator("html").get_attribute("data-theme"),
+                                selected_theme,
+                            )
+                            self.assertEqual(
+                                page.locator(".theme-toggle").get_attribute(
+                                    "aria-pressed"
+                                ),
+                                str(selected_theme == "dark").lower(),
+                            )
+
+                            for path, heading_name in (
+                                ("/library", "Review library"),
+                                ("/attention", "Fields needing attention"),
+                                (f"/review/{case_id}", "Current review case"),
+                            ):
+                                page.goto(f"{origin}{path}")
+                                page.get_by_role(
+                                    "heading",
+                                    name=(
+                                        re.compile(r"^Fields needing attention")
+                                        if path == "/attention"
+                                        else heading_name
+                                    ),
+                                ).wait_for()
+                                self.assertEqual(
+                                    page.locator("html").get_attribute("data-theme"),
+                                    selected_theme,
+                                )
+                                self.assertLessEqual(
+                                    page.evaluate(
+                                        "() => document.documentElement.scrollWidth"
+                                    ),
+                                    width,
+                                )
+                                screenshot = page.screenshot(
+                                    full_page=True,
+                                    animations="disabled",
+                                    caret="hide",
+                                )
+                                self.assertTrue(screenshot.startswith(b"\x89PNG\r\n\x1a\n"))
+                                self.assertGreater(len(screenshot), 1_000)
+
+                            page.reload()
+                            page.get_by_role(
+                                "heading", name="Current review case"
+                            ).wait_for()
+                            self.assertEqual(
+                                page.locator("html").get_attribute("data-theme"),
+                                selected_theme,
+                            )
+                            self.assertEqual(
+                                page.evaluate(
+                                    "() => [Object.keys(localStorage).length, Object.keys(sessionStorage).length]"
+                                ),
+                                [0, 0],
+                            )
+                    context.close()
+                browser.close()
+            self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()
