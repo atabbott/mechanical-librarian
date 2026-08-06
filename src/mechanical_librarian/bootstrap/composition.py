@@ -8,6 +8,8 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
+import uvicorn
+
 from mechanical_librarian.adapters.cover_artifacts import (
     CoverDecodeRejected,
     CoverDecodeTimeout,
@@ -137,6 +139,7 @@ from mechanical_librarian.infrastructure.security.credentials import (
     target_client_token,
 )
 from mechanical_librarian.interfaces.cli import main as cli_main
+from mechanical_librarian.interfaces.web import create_review_app
 
 
 class _IsolatedEpubInspector:
@@ -961,6 +964,31 @@ def _load_batch_credentials(configuration, selected_connections: set[str], selec
     return values
 
 
+def run_review_server(
+    config_path: Path, database_path: Path, host: str, port: int
+) -> None:
+    configuration = load_configuration_file(config_path)
+    if configuration.review is None:
+        raise ReviewCaseError("configuration")
+    repository = open_repository(database_path, create=False, cross_thread=True)
+    try:
+        app = create_review_app(
+            repository, configuration.review, close_repository=True
+        )
+    except Exception:
+        repository.close()
+        raise
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        proxy_headers=False,
+        server_header=False,
+        date_header=False,
+        access_log=False,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     return cli_main(
         argv,
@@ -976,6 +1004,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         proposal_get_runner=reopen_proposal_set,
         review_admit_runner=admit_review_case,
         review_get_runner=reopen_review_case,
+        review_serve_runner=run_review_server,
         reviewer_auth_runner=run_reviewer_auth,
         shadow_preview_runner=preview_shadow_review_case,
         shadow_request_runner=request_shadow_review,

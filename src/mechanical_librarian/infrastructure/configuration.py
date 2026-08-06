@@ -28,6 +28,7 @@ from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
     ProviderConnectionConfiguration,
     ReportLimits,
+    ReviewWebConfiguration,
     TargetConnectionConfiguration,
 )
 
@@ -168,6 +169,18 @@ class LimitsInput(_Closed):
     timeout_seconds: Annotated[StrictInt, Field(ge=1, le=60)] = 30
 
 
+class ReviewInput(_Closed):
+    canonical_origin: Annotated[StrictStr, Field(min_length=8, max_length=512)]
+    owner_password_hash_file: BoundedAbsolutePath
+    session_lifetime_seconds: Annotated[
+        StrictInt, Field(ge=300, le=86_400)
+    ] = 3600
+    trusted_proxy_ips: Annotated[
+        list[Annotated[StrictStr, Field(min_length=1, max_length=64)]],
+        Field(max_length=16),
+    ] = []
+
+
 class ConfigurationInput(_Closed):
     schema_version: Literal["config-v5"]
     connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=32)]
@@ -175,6 +188,7 @@ class ConfigurationInput(_Closed):
     mounts: Annotated[list[MountInput], Field(max_length=32)]
     providers: Annotated[list[ProviderInput], Field(max_length=32)]
     limits: LimitsInput = LimitsInput()
+    review: ReviewInput | None = None
 
 
 def load_configuration_file(path: Path) -> ApplicationConfiguration:
@@ -193,6 +207,14 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
             tuple(sorted((ProviderConnectionConfiguration(**item.model_dump()) for item in value.providers), key=lambda item: item.name)),
             ReportLimits(**value.limits.model_dump()),
             value.schema_version,
+            None
+            if value.review is None
+            else ReviewWebConfiguration(
+                canonical_origin=value.review.canonical_origin,
+                owner_password_hash_file=value.review.owner_password_hash_file,
+                session_lifetime_seconds=value.review.session_lifetime_seconds,
+                trusted_proxy_ips=tuple(sorted(value.review.trusted_proxy_ips)),
+            ),
         )
     except ConfigurationError:
         raise

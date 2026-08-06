@@ -34,6 +34,24 @@ The expected API surface includes:
 
 ## Review resources
 
+The delivered #447 surface is intentionally smaller than the future resource
+family below: authenticated `/api/v1` exact-current case detail, bounded
+evidence, bounded current-case admission history, session login/logout, and
+OpenAPI. Library and field queues arrive in #448. Individual decision mutation
+arrives in #449. Library-wide activity/history, cross-case summaries, bulk and
+reversal remain #195.
+
+The generated contract is frozen at
+`docs/reference/review-openapi-v1.json`. Regenerate it from the same closed
+handler response models with:
+
+```sh
+uv run python scripts/generate_review_openapi.py
+```
+
+Tests compare the canonical generated document with that artifact so response
+or privacy drift fails before merge.
+
 The API exposes server-authoritative review projections suitable for the
 bundled interface and automation clients:
 
@@ -145,8 +163,10 @@ cannot be the only durable representation of progress or failure.
 
 The first release supports a private owner account. Authentication design must
 still allow future separation of configuration, review, and write permissions.
-Password storage, sessions, recovery, rate limiting, CSRF, and proxy handling
-require a dedicated security review before implementation.
+The private owner boundary uses an explicit Argon2id hash file, opaque
+SQLite-backed sessions, durable bounded login throttling, secure HttpOnly
+SameSite cookies, CSRF, exact Host/Origin checks, private caching, and proxy
+forwarding only from configured direct peers. Password recovery is unsupported.
 
 Health liveness may be unauthenticated and minimal. Detailed health and all
 library data require authentication.

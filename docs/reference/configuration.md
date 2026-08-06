@@ -1,6 +1,7 @@
 # Configuration reference
 
-The installed `metadata-report`, `proposal-set-create`, `catalogue`, and `batch`
+The installed `metadata-report`, `proposal-set-create`, `catalogue`, `batch`,
+and `review-serve`
 operations accept one strict UTF-8 JSON document with schema version
 `config-v5`. Unknown and duplicate fields are rejected. The generated schema is
 [`config-v5.schema.json`](config-v5.schema.json) and is regenerated with:
@@ -62,7 +63,13 @@ uv run --frozen python scripts/generate_configuration_schema.py
       "secret_file": null,
       "contact_email": "operator@example.invalid"
     }
-  ]
+  ],
+  "review": {
+    "canonical_origin": "https://review.example.invalid",
+    "owner_password_hash_file": "/run/secrets/review-owner.argon2",
+    "session_lifetime_seconds": 3600,
+    "trusted_proxy_ips": []
+  }
 }
 ```
 
@@ -114,6 +121,15 @@ ranking policy:
 - `provider_response_bytes` (1,024–262,144; default 65,536)
 - `source_archive_bytes` (1,024–268,435,456; default 268,435,456)
 - `timeout_seconds` (1–60; default 30)
+
+Optional `review` configuration is required by `review-serve` and ignored by
+report-only commands. `canonical_origin` is one exact HTTPS origin. The owner
+hash file is an absolute, owner-only regular no-follow file containing one
+Argon2id PHC string. Session lifetime is 300–86,400 seconds. Proxy forwarding
+is disabled unless the direct peer is one of at most 16 explicitly listed
+`trusted_proxy_ips`; forwarded Host or scheme headers from any other peer fail
+closed. No password, raw session token, or CSRF token is stored in
+configuration or the application database.
 
 There are no provider defaults, inheritance, overrides, weights, priorities,
 configurable fallback rules, environment substitutions, or undocumented

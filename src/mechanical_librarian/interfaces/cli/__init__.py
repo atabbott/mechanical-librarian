@@ -58,6 +58,7 @@ ProposalCreateRunner = Callable[[Path, Path, Path, str], str]
 ProposalGetRunner = Callable[[Path, str], str]
 ReviewAdmitRunner = Callable[[Path, Path, Path, str], str]
 ReviewGetRunner = Callable[[Path, str], str]
+ReviewServeRunner = Callable[[Path, Path, str, int], None]
 ReviewerAuthRunner = Callable[[Path, str], str]
 ShadowPreviewRunner = Callable[[Path, str, Path], str]
 ShadowRequestRunner = Callable[[Path, str, Path], str]
@@ -149,6 +150,17 @@ def _parser() -> _Parser:
     review_get = commands.add_parser("review-case-get", help="reopen one immutable review case")
     review_get.add_argument("--database", required=True, metavar="PATH", type=Path)
     review_get.add_argument("--review-case-id", required=True, metavar="REVIEW_CASE_ID", type=lambda value: value if re.fullmatch(r"review_case_[0-9a-f]{64}", value) else (_ for _ in ()).throw(argparse.ArgumentTypeError("invalid review case id")))
+    review_serve = commands.add_parser(
+        "review-serve", help="serve the authenticated owner review interface"
+    )
+    review_serve.add_argument("--config", required=True, metavar="PATH", type=Path)
+    review_serve.add_argument("--database", required=True, metavar="PATH", type=Path)
+    review_serve.add_argument(
+        "--host",
+        choices=("127.0.0.1", "::1", "0.0.0.0", "::"),
+        default="127.0.0.1",
+    )
+    review_serve.add_argument("--port", type=_port, default=8080)
     for action in ("start", "status", "logout"):
         auth = commands.add_parser(
             f"reviewer-auth-{action}",
@@ -481,13 +493,23 @@ def _catalogue_limit(value: str) -> int:
     return result
 
 
+def _port(value: str) -> int:
+    try:
+        result = int(value, 10)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("invalid port") from error
+    if str(result) != value or not 1 <= result <= 65_535:
+        raise argparse.ArgumentTypeError("invalid port")
+    return result
+
+
 def _opaque(value: str) -> str:
     if not 1 <= len(value) <= 512 or value.strip() != value or any(character in value for character in "\x00/\\") or any(unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value):
         raise argparse.ArgumentTypeError("invalid selection")
     return value
 
 
-def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, batch_preview_runner: BatchPreviewRunner | None = None, batch_inspect_runner: BatchInspectRunner | None = None, batch_run_runner: BatchRunRunner | None = None, proposal_create_runner: ProposalCreateRunner | None = None, proposal_get_runner: ProposalGetRunner | None = None, review_admit_runner: ReviewAdmitRunner | None = None, review_get_runner: ReviewGetRunner | None = None, reviewer_auth_runner: ReviewerAuthRunner | None = None, shadow_preview_runner: ShadowPreviewRunner | None = None, shadow_request_runner: ShadowRequestRunner | None = None, shadow_inspect_runner: ShadowInspectRunner | None = None, shadow_reevaluate_runner: ShadowInspectRunner | None = None, shadow_decision_runner: ShadowDecisionRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, batch_preview_runner: BatchPreviewRunner | None = None, batch_inspect_runner: BatchInspectRunner | None = None, batch_run_runner: BatchRunRunner | None = None, proposal_create_runner: ProposalCreateRunner | None = None, proposal_get_runner: ProposalGetRunner | None = None, review_admit_runner: ReviewAdmitRunner | None = None, review_get_runner: ReviewGetRunner | None = None, review_serve_runner: ReviewServeRunner | None = None, reviewer_auth_runner: ReviewerAuthRunner | None = None, shadow_preview_runner: ShadowPreviewRunner | None = None, shadow_request_runner: ShadowRequestRunner | None = None, shadow_inspect_runner: ShadowInspectRunner | None = None, shadow_reevaluate_runner: ShadowInspectRunner | None = None, shadow_decision_runner: ShadowDecisionRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     raw_arguments = tuple(sys.argv[1:] if argv is None else argv)
@@ -506,6 +528,20 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
         else:
             errors.write("Metadata report failed: invalid invocation.\n")
         return 2
+    if arguments.command == "review-serve":
+        try:
+            if review_serve_runner is None:
+                raise ValueError
+            review_serve_runner(
+                arguments.config, arguments.database, arguments.host, arguments.port
+            )
+        except ConfigurationError:
+            errors.write("Review server failed: configuration unavailable.\n")
+            return 3
+        except Exception:
+            errors.write("Review server failed safely.\n")
+            return 1
+        return 0
     if arguments.command == "shadow-decision-preview":
         try:
             if shadow_decision_runner is None:

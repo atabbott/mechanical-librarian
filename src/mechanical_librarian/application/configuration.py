@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from ipaddress import ip_address
+from urllib.parse import urlsplit
 
 
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -31,6 +33,56 @@ def _absolute_path(value: object, label: str) -> None:
         or not value.startswith("/")
     ):
         raise ConfigurationError(f"{label} is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewWebConfiguration:
+    canonical_origin: str
+    owner_password_hash_file: str
+    session_lifetime_seconds: int = 3600
+    trusted_proxy_ips: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        try:
+            origin = urlsplit(self.canonical_origin)
+        except ValueError as error:
+            raise ConfigurationError("review canonical origin is invalid") from error
+        if (
+            type(self.canonical_origin) is not str
+            or len(self.canonical_origin) > 512
+            or origin.scheme not in {"http", "https"}
+            or not origin.hostname
+            or origin.username is not None
+            or origin.password is not None
+            or origin.path not in {"", "/"}
+            or origin.query
+            or origin.fragment
+            or self.canonical_origin.rstrip("/") != self.canonical_origin
+        ):
+            raise ConfigurationError("review canonical origin is invalid")
+        if origin.scheme != "https":
+            raise ConfigurationError("review canonical origin is invalid")
+        _absolute_path(self.owner_password_hash_file, "owner password hash file")
+        if (
+            type(self.session_lifetime_seconds) is not int
+            or not 300 <= self.session_lifetime_seconds <= 86_400
+            or type(self.trusted_proxy_ips) is not tuple
+            or len(self.trusted_proxy_ips) > 16
+            or any(
+                type(value) is not str
+                or not value
+                or len(value) > 64
+                or value.strip() != value
+                for value in self.trusted_proxy_ips
+            )
+            or self.trusted_proxy_ips != tuple(sorted(set(self.trusted_proxy_ips)))
+        ):
+            raise ConfigurationError("review web configuration is invalid")
+        try:
+            for value in self.trusted_proxy_ips:
+                ip_address(value)
+        except ValueError as error:
+            raise ConfigurationError("review web configuration is invalid") from error
 
 
 @dataclass(frozen=True, repr=False, slots=True)
@@ -162,10 +214,13 @@ class ApplicationConfiguration:
     providers: tuple[ProviderConnectionConfiguration, ...]
     limits: ReportLimits = ReportLimits()
     schema_version: str = "config-v5"
+    review: ReviewWebConfiguration | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != "config-v5":
             raise ConfigurationError("configuration schema is unsupported")
+        if self.review is not None and type(self.review) is not ReviewWebConfiguration:
+            raise ConfigurationError("review web configuration is invalid")
         typed = (
             (self.connections, TargetConnectionConfiguration, "target connections"),
             (self.libraries, LibraryConfiguration, "libraries"),

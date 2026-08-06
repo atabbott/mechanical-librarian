@@ -517,25 +517,25 @@ first-release acceptance.
 
 Deliverables:
 
-- expose versioned, cursor-paginated endpoints for cases, confirmed sibling
-  groups, evidence, and individual decisions; cross-case summaries, bulk
-  operations, and reversal remain #195 capability context;
-- implement target-level queue, decision-first detail, progressive evidence,
-  sibling navigation, and current-case history; global review summaries remain
-  #195 capability context;
-- define server-authoritative target, ordinary-case, destructive-case,
-  field-work-item, and planned-change counts with explicit partial and stale
-  semantics for the deferred cross-case summary outcome;
-- define exact-version bulk preview and commit with stale rejection,
-  idempotency, individual decision records, and compensating reversal;
+- expose versioned, cursor-paginated current-work, field-attention, exact-case,
+  bounded-evidence, current-case-history, and individual-decision endpoints;
+- implement the attention-first full library, separate exact-field attention
+  queue, decision-first detail, progressive evidence, sibling navigation, and
+  bounded current-case history;
+- persist one immutable exact-version human decision with stale rejection and
+  idempotency while retaining separate automatic, apply, and write authority;
 - satisfy the F16a first-release browser baseline in the
   [review experience](review-experience.md); and
 - document all mutations and their concurrency guards.
 
+Library-wide activity/history, cross-case summaries, bulk preview/commit,
+reversal, and their summary counts remain #195 and are not F16a constituents.
+The prototype activity view is therefore not implemented by F16a.
+
 Exit criteria:
 
 - a user can leave the service unattended and return to a bounded review queue;
-- safe decisions can be applied without shell access;
+- one decision can be acknowledged without granting apply or target-write authority;
 - rejected and historical work remains auditable; and
 - acknowledged decisions survive refresh, restart, and device changes;
 - sibling decisions cannot leak across targets; and

@@ -45,6 +45,29 @@ only to recognize HTTPX's exact wrapped remote-disconnect cause without parsing
 exception text. HTTPcore receives no additional authority through that direct
 classification dependency.
 
+F16a #447 adds the one-process authenticated HTTP and password-verification
+boundary. The lockfile pins the complete closure:
+
+| Package | Version | Relationship | SPDX licence | Product authority |
+| --- | --- | --- | --- | --- |
+| FastAPI | 0.116.1 | direct | MIT | typed `/api/v1` routing and deterministic OpenAPI only |
+| Starlette | 0.47.3 | transitive | BSD-3-Clause | ASGI request, response, cookie, and middleware primitives |
+| Uvicorn | 0.35.0 | direct | BSD-3-Clause | one HTTP process with proxy and access logging disabled by composition |
+| Click | 8.4.2 | transitive | BSD-3-Clause | Uvicorn command/runtime support only |
+| Argon2-cffi | 25.1.0 | direct | MIT | verify one owner Argon2id PHC hash; no hash or password persistence |
+| argon2-cffi-bindings | 25.1.0 | transitive | MIT | Argon2 implementation binding |
+| CFFI | 2.1.1 | transitive | MIT | native binding support |
+| pycparser | 3.0 | transitive | BSD-3-Clause | CFFI build/runtime support |
+
+FastAPI and Starlette receive only already composed application services and
+bounded DTOs. Uvicorn receives no target or provider credentials and cannot
+trust forwarded headers implicitly. Argon2 receives one submitted password and
+one descriptor-bound PHC string; neither is logged, returned, or stored in the
+application database. No Node runtime, browser framework, template engine,
+multipart parser, identity provider, cache, session service, or second process
+is introduced. The licences are compatible with AGPL-3.0-or-later; release
+notice and SBOM generation remain separate release gates.
+
 F06 adds no direct or transitive runtime dependency and changes no lockfile. It
 targets the CPython 3.13/3.14 standard-library boundary, with these
 incorporated or system components recorded for dependency inventory, notices,

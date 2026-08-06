@@ -2299,6 +2299,39 @@ class ShadowReviewTests(unittest.TestCase):
             )
             repository.close()
 
+    def test_completed_success_projects_validated_nondecision_model_advice(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository, case_id = self._repository(directory)
+            execute_shadow_review(
+                repository,
+                case_id,
+                _identity(),
+                _Runner(),
+                claimant=(9001, "11"),
+            )
+            advice = repository.get_review_model_advice(case_id)
+            self.assertEqual("available", advice["state"])
+            results = advice["results"]
+            self.assertIsInstance(results, list)
+            self.assertEqual(1, len(results))
+            recommendations = results[0]["recommendations"]
+            self.assertTrue(recommendations)
+            self.assertEqual(
+                {
+                    "candidate_id",
+                    "citations",
+                    "problems",
+                    "proposal_id",
+                    "reasons",
+                    "recommendation",
+                },
+                set(recommendations[0]),
+            )
+            self.assertNotIn("human_decision", advice)
+            repository.close()
+
     def test_pre_dispatch_failure_is_terminal_and_cannot_be_reevaluated(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository, case_id = self._repository(directory)

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add the first F16a production increment: an authenticated read-only
+  `review-serve` boundary for one exact-current ReviewCase, bounded evidence,
+  current-case admission history, and deterministic authenticated OpenAPI.
+  Opaque SQLite-backed owner sessions, Argon2id hash-file verification,
+  throttling, Host/Origin/CSRF/proxy checks, private caching, and restrictive
+  browser headers add no human-decision, automatic, apply, or target-write
+  authority. (#447)
+
 - Add `shadow-decision-preview` for one exact current ReviewCase. The command
   opens an existing report database read-only and no-create, compiles the exact
   admissible action catalogue, emits one canonical deterministic decision per

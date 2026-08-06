@@ -1,0 +1,584 @@
+"""FastAPI adapter for authenticated, read-only exact-current review cases."""
+
+from __future__ import annotations
+
+import html
+import os
+import re
+import stat
+import threading
+import time
+from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError
+from fastapi import Cookie, FastAPI, Header, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from starlette.types import Message, Receive, Scope, Send
+
+from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.review_web import (
+    InspectCurrentReviewCase,
+    OwnerSessionService,
+    ReviewWebError,
+    ReviewWebRepository,
+)
+
+
+_CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
+_COOKIE_NAME = "ml_session"
+
+
+class _LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    password: StrictStr = Field(min_length=1, max_length=1024)
+
+
+class _ClosedModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class _SeriesValue(_ClosedModel):
+    name: str
+    sequence: str | None
+
+
+class _TargetField(_ClosedModel):
+    destination: str
+    state: str
+    value: str | bool | list[str] | list[_SeriesValue] | None
+
+
+class _ProposedValue(_ClosedModel):
+    kind: str
+    value: str | bool | list[str] | list[_SeriesValue]
+
+
+class _ReviewField(_ClosedModel):
+    current: _TargetField
+    deterministic_disposition: str
+    destination: str
+    manual_required: bool
+    notices: list[str]
+    proposed_values: list[_ProposedValue]
+    provenance: list[str]
+    uncertainty: list[str]
+
+
+class _TargetIdentity(_ClosedModel):
+    connection: str
+    item: str
+    library: str
+
+
+class _ModelRecommendation(_ClosedModel):
+    candidate_id: str | None
+    citations: list[str]
+    problems: list[str]
+    proposal_id: str
+    reasons: list[str]
+    recommendation: str
+
+
+class _ModelAdviceResult(_ClosedModel):
+    recommendations: list[_ModelRecommendation]
+    review_request_id: str
+
+
+class _ModelAdvice(_ClosedModel):
+    results: list[_ModelAdviceResult]
+    state: str
+
+
+class _CaseDetailResponse(_ClosedModel):
+    current: bool
+    fields: list[_ReviewField]
+    model_advice: _ModelAdvice
+    review_case_id: str
+    schema_version: str
+    target: _TargetIdentity
+
+
+class _EvidenceItem(_ClosedModel):
+    fact: str
+    kind: str
+    reference: str
+    source: str
+
+
+class _EvidenceResponse(_ClosedModel):
+    items: list[_EvidenceItem]
+    next_cursor: str | None
+    review_case_id: str
+    schema_version: str
+
+
+class _HistoryItem(_ClosedModel):
+    checkpoint: int
+    kind: str
+    reason: str
+    transition_id: str
+
+
+class _HistoryResponse(_ClosedModel):
+    items: list[_HistoryItem]
+    next_cursor: str | None
+    review_case_id: str
+    schema_version: str
+
+
+class _SessionResponse(_ClosedModel):
+    actor: str
+    csrf_token: str
+    expires_at: int
+    schema_version: str
+
+
+class _ErrorCode(_ClosedModel):
+    code: str
+
+
+class _ErrorResponse(_ClosedModel):
+    error: _ErrorCode
+    schema_version: str
+
+
+class _BodyLimitMiddleware:
+    def __init__(
+        self,
+        app: Callable[[Scope, Receive, Send], Awaitable[None]],
+        maximum_bytes: int,
+    ) -> None:
+        self._app = app
+        self._maximum_bytes = maximum_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope.get("path") != "/api/v1/session/login":
+            await self._app(scope, receive, send)
+            return
+        declared = next(
+            (
+                value
+                for name, value in scope.get("headers", [])
+                if name.lower() == b"content-length"
+            ),
+            None,
+        )
+        if declared is not None:
+            try:
+                if int(declared) > self._maximum_bytes:
+                    await _oversized_body_response(scope, receive, send)
+                    return
+            except ValueError:
+                await _oversized_body_response(scope, receive, send)
+                return
+        messages: list[Message] = []
+        size = 0
+        while True:
+            message = await receive()
+            messages.append(message)
+            if message["type"] == "http.disconnect":
+                await self._app(scope, _replay(messages), send)
+                return
+            size += len(message.get("body", b""))
+            if size > self._maximum_bytes:
+                await _oversized_body_response(scope, receive, send)
+                return
+            if not message.get("more_body", False):
+                break
+        await self._app(scope, _replay(messages), send)
+
+
+def _replay(messages: list[Message]) -> Receive:
+    async def receive() -> Message:
+        if messages:
+            return messages.pop(0)
+        return {"type": "http.disconnect"}
+
+    return receive
+
+
+async def _oversized_body_response(
+    scope: Scope, receive: Receive, send: Send
+) -> None:
+    response = _error(413, "body_too_large")
+    _set_security_headers(response, hsts=True)
+    await response(scope, receive, send)
+
+
+def create_review_app(
+    repository: ReviewWebRepository,
+    configuration: ReviewWebConfiguration,
+    *,
+    clock: Callable[[], int] = lambda: int(time.time()),
+    close_repository: bool = False,
+) -> FastAPI:
+    serialized_repository = _SerializedReviewRepository(repository)
+    verifier = _owner_password_verifier(Path(configuration.owner_password_hash_file))
+    sessions = OwnerSessionService(
+        serialized_repository,
+        verifier,
+        clock,
+        configuration.session_lifetime_seconds,
+    )
+    cases = InspectCurrentReviewCase(serialized_repository)
+    origin = urlsplit(configuration.canonical_origin)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        yield
+        if close_repository:
+            repository.close()  # type: ignore[attr-defined]
+
+    app = FastAPI(
+        title="Mechanical Librarian Review API",
+        version="1.0.0",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
+    )
+    app.add_middleware(_BodyLimitMiddleware, maximum_bytes=2048)
+
+    @app.middleware("http")
+    async def trust_boundary(request: Request, call_next):
+        if request.url.path != "/health/live":
+            if not _request_matches_origin(request, configuration):
+                return _secured_error(400, "invalid_origin")
+            if request.method not in {"GET", "HEAD", "OPTIONS"} and request.headers.get("origin") != configuration.canonical_origin:
+                return _secured_error(403, "origin")
+        response = await call_next(request)
+        _set_security_headers(response, hsts=origin.scheme == "https")
+        return response
+
+    @app.get("/health/live", include_in_schema=False)
+    def liveness() -> PlainTextResponse:
+        return PlainTextResponse("ok\n")
+
+    @app.get("/login", include_in_schema=False)
+    def login_page() -> HTMLResponse:
+        return HTMLResponse(_LOGIN_HTML)
+
+    @app.post(
+        "/api/v1/session/login",
+        response_model=_SessionResponse,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 413, 422, 429, 503)
+        },
+    )
+    def login(payload: _LoginRequest, response: Response) -> _SessionResponse:
+        try:
+            tokens = sessions.login(payload.password)
+        except ReviewWebError as error:
+            status_code = {
+                "invalid_credentials": 401,
+                "persistence": 503,
+                "throttled": 429,
+            }.get(error.code, 500)
+            raise HTTPException(status_code, detail={"code": error.code}) from None
+        response.set_cookie(
+            _COOKIE_NAME,
+            tokens.session_token,
+            httponly=True,
+            secure=True,
+            samesite="strict",
+            max_age=configuration.session_lifetime_seconds,
+            path="/",
+        )
+        return _SessionResponse(
+            actor="owner",
+            csrf_token=tokens.csrf_token,
+            expires_at=tokens.expires_at,
+            schema_version="review-session-v1",
+        )
+
+    @app.post(
+        "/api/v1/session/logout",
+        status_code=204,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 422)
+        },
+    )
+    def logout(
+        response: Response,
+        ml_session: str | None = Cookie(default=None),
+        x_csrf_token: str | None = Header(default=None),
+    ) -> Response:
+        if ml_session is None or x_csrf_token is None:
+            raise HTTPException(403, detail={"code": "csrf"})
+        try:
+            sessions.logout(ml_session, x_csrf_token)
+        except ReviewWebError as error:
+            status = 403 if error.code == "csrf" else 401
+            raise HTTPException(status, detail={"code": error.code}) from None
+        response.delete_cookie(_COOKIE_NAME, path="/", secure=True, httponly=True, samesite="strict")
+        response.status_code = 204
+        return response
+
+    @app.get(
+        "/api/v1/review-cases/{review_case_id}",
+        response_model=_CaseDetailResponse,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 404, 409, 422)
+        },
+    )
+    def case_detail(
+        review_case_id: str,
+        ml_session: str | None = Cookie(default=None),
+    ) -> _CaseDetailResponse:
+        _require_session(sessions, ml_session)
+        _require_case_id(review_case_id)
+        return _CaseDetailResponse.model_validate(
+            _case_call(lambda: cases.run(review_case_id))
+        )
+
+    @app.get("/api/v1/openapi.json", include_in_schema=False)
+    def openapi_document(
+        ml_session: str | None = Cookie(default=None),
+    ) -> JSONResponse:
+        _require_session(sessions, ml_session)
+        return JSONResponse(app.openapi())
+
+    @app.get(
+        "/api/v1/review-cases/{review_case_id}/evidence",
+        response_model=_EvidenceResponse,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 404, 409, 422)
+        },
+    )
+    def case_evidence(
+        review_case_id: str,
+        ml_session: str | None = Cookie(default=None),
+    ) -> _EvidenceResponse:
+        _require_session(sessions, ml_session)
+        _require_case_id(review_case_id)
+        return _EvidenceResponse.model_validate(
+            _case_call(lambda: cases.evidence(review_case_id))
+        )
+
+    @app.get(
+        "/api/v1/review-cases/{review_case_id}/history",
+        response_model=_HistoryResponse,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 404, 409, 422)
+        },
+    )
+    def case_history(
+        review_case_id: str,
+        ml_session: str | None = Cookie(default=None),
+    ) -> _HistoryResponse:
+        _require_session(sessions, ml_session)
+        _require_case_id(review_case_id)
+        return _HistoryResponse.model_validate(
+            _case_call(lambda: cases.history(review_case_id))
+        )
+
+    @app.get("/review/{review_case_id}", include_in_schema=False)
+    def review_page(
+        review_case_id: str,
+        ml_session: str | None = Cookie(default=None),
+    ) -> HTMLResponse:
+        _require_session(sessions, ml_session)
+        _require_case_id(review_case_id)
+        return HTMLResponse(_review_html(review_case_id))
+
+    @app.get("/assets/review.css", include_in_schema=False)
+    def review_css() -> Response:
+        return Response(_REVIEW_CSS, media_type="text/css")
+
+    @app.get("/assets/review.js", include_in_schema=False)
+    def review_js() -> Response:
+        return Response(_REVIEW_JS, media_type="text/javascript")
+
+    @app.exception_handler(HTTPException)
+    async def http_error(_: Request, error: HTTPException) -> JSONResponse:
+        detail = error.detail
+        code = detail.get("code") if type(detail) is dict else "request"
+        return _error(error.status_code, str(code))
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(_: Request, __: RequestValidationError) -> JSONResponse:
+        return _error(422, "invalid")
+
+    return app
+
+
+def _owner_password_verifier(path: Path) -> Callable[[str], bool]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if not getattr(os, "O_NOFOLLOW", 0):
+        raise ReviewWebError("password_hash")
+    descriptor = os.open(path, flags)
+    try:
+        information = os.fstat(descriptor)
+        if not stat.S_ISREG(information.st_mode) or information.st_mode & 0o077:
+            raise ReviewWebError("password_hash")
+        payload = os.read(descriptor, 1025)
+    finally:
+        os.close(descriptor)
+    try:
+        encoded = payload.decode("utf-8", "strict").strip()
+        if not encoded or len(payload) > 1024 or "\n" in encoded or "\r" in encoded:
+            raise ValueError
+        if (
+            not encoded.startswith("$argon2id$")
+            or PasswordHasher().check_needs_rehash(encoded)
+        ):
+            raise ValueError
+    except (UnicodeError, ValueError, InvalidHashError) as error:
+        raise ReviewWebError("password_hash") from error
+
+    def verify(password: str) -> bool:
+        try:
+            return PasswordHasher().verify(encoded, password)
+        except (VerificationError, InvalidHashError):
+            return False
+
+    return verify
+
+
+class _SerializedReviewRepository:
+    """Serialize one cross-thread SQLite connection at the HTTP adapter edge."""
+
+    def __init__(self, repository: ReviewWebRepository) -> None:
+        self._repository = repository
+        self._lock = threading.RLock()
+
+    def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
+        with self._lock:
+            return self._repository.begin_login(now, window_seconds, maximum_failures)
+
+    def create_review_session(self, session_digest: str, csrf_digest: str, created_at: int, expires_at: int) -> None:
+        with self._lock:
+            self._repository.create_review_session(
+                session_digest, csrf_digest, created_at, expires_at
+            )
+
+    def authenticate_review_session(self, session_digest: str, now: int) -> tuple[str, str, int]:
+        with self._lock:
+            return self._repository.authenticate_review_session(session_digest, now)
+
+    def revoke_review_session(self, session_digest: str, now: int) -> None:
+        with self._lock:
+            self._repository.revoke_review_session(session_digest, now)
+
+    def get_review_case(self, review_case_id: str) -> str:
+        with self._lock:
+            return self._repository.get_review_case(review_case_id)
+
+    def get_review_case_report(self, review_case_id: str) -> str:
+        with self._lock:
+            return self._repository.get_review_case_report(review_case_id)
+
+    def get_review_model_advice(self, review_case_id: str) -> dict[str, object]:
+        with self._lock:
+            return self._repository.get_review_model_advice(review_case_id)
+
+    def get_review_case_history(self, review_case_id: str, limit: int) -> tuple[dict[str, object], ...]:
+        with self._lock:
+            return self._repository.get_review_case_history(review_case_id, limit)
+
+
+def _request_matches_origin(request: Request, configuration: ReviewWebConfiguration) -> bool:
+    host = request.headers.get("host", "")
+    scheme = request.url.scheme
+    forwarded_host = request.headers.get("x-forwarded-host")
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    peer = None if request.client is None else request.client.host
+    if peer in configuration.trusted_proxy_ips:
+        if forwarded_host is not None:
+            if "," in forwarded_host:
+                return False
+            host = forwarded_host
+        if forwarded_proto is not None:
+            if forwarded_proto not in {"http", "https"}:
+                return False
+            scheme = forwarded_proto
+    elif forwarded_host is not None or forwarded_proto is not None:
+        return False
+    expected = urlsplit(configuration.canonical_origin)
+    return scheme == expected.scheme and host == expected.netloc
+
+
+def _require_session(
+    sessions: OwnerSessionService,
+    session_token: str | None,
+    csrf_token: str | None = None,
+) -> str:
+    if session_token is None:
+        raise HTTPException(401, detail={"code": "unauthorized"})
+    try:
+        return sessions.authenticate(session_token, csrf_token)
+    except ReviewWebError as error:
+        status = 403 if error.code == "csrf" else 401
+        raise HTTPException(status, detail={"code": error.code}) from None
+
+
+def _require_case_id(value: str) -> None:
+    if _CASE_ID.fullmatch(value) is None:
+        raise HTTPException(404, detail={"code": "not_found"})
+
+
+def _case_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
+    try:
+        return call()
+    except ReviewWebError as error:
+        status = 409 if error.code == "stale" else 404
+        raise HTTPException(status, detail={"code": error.code}) from None
+
+
+def _error(status_code: int, code: str) -> JSONResponse:
+    return JSONResponse(
+        {"error": {"code": code}, "schema_version": "review-error-v1"},
+        status_code=status_code,
+    )
+
+
+def _secured_error(status_code: int, code: str) -> JSONResponse:
+    response = _error(status_code, code)
+    _set_security_headers(response, hsts=True)
+    return response
+
+
+def _set_security_headers(response: Response, *, hsts: bool) -> None:
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; script-src 'self'; style-src 'self'; "
+        "img-src 'self' data:; connect-src 'self'; form-action 'self'; "
+        "frame-ancestors 'none'; base-uri 'none'"
+    )
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    if hsts:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
+
+
+def _review_html(review_case_id: str) -> str:
+    return f"""<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Review case</title><link rel=\"stylesheet\" href=\"/assets/review.css\"></head><body><header><span>Library</span><strong>Needs attention</strong></header><main id=\"review\" data-review-case-id=\"{html.escape(review_case_id, quote=True)}\" tabindex=\"-1\"><p role=\"status\">Loading current case…</p></main><script src=\"/assets/review.js\" defer></script></body></html>"""
+
+
+_LOGIN_HTML = """<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Owner sign in</title><link rel=\"stylesheet\" href=\"/assets/review.css\"></head><body><main><h1>Owner sign in</h1><form id=\"login\"><label>Password <input name=\"password\" type=\"password\" autocomplete=\"current-password\" required></label><button>Sign in</button><p id=\"login-status\" role=\"alert\"></p></form></main><script src=\"/assets/review.js\" defer></script></body></html>"""
+_REVIEW_CSS = """*{box-sizing:border-box}body{margin:0;background:#f4f1ea;color:#171b20;font:16px/1.5 system-ui,sans-serif}header{display:flex;gap:1rem;padding:1rem;background:#17232b;color:#fff}header a{color:#fff}main{max-width:70rem;margin:auto;padding:1.25rem}.field{background:#fff;border:1px solid #c7c3ba;border-radius:.75rem;margin:1rem 0;padding:1rem}button,input{font:inherit;min-height:44px}input{display:block;width:min(28rem,100%);margin:.5rem 0;padding:.6rem}:focus-visible{outline:3px solid #156a85;outline-offset:3px}@media(max-width:390px){main{padding:.75rem}header{position:sticky;top:0}.field{border-radius:.5rem}}"""
+_REVIEW_JS = """const element=(name,text)=>{const value=document.createElement(name);value.textContent=text;return value;};
+const root=document.querySelector('#review');
+const login=document.querySelector('#login');
+if(login){login.addEventListener('submit',async event=>{event.preventDefault();const status=document.querySelector('#login-status');const password=new FormData(login).get('password');const response=await fetch('/api/v1/session/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password})});status.textContent=response.ok?'Signed in. Open a review-case link to continue.':'Sign in failed.';});}
+if(root){const id=encodeURIComponent(root.dataset.reviewCaseId);const load=async path=>{const response=await fetch(path);if(!response.ok)throw new Error();return response.json();};
+Promise.all([load(`/api/v1/review-cases/${id}`),load(`/api/v1/review-cases/${id}/evidence`),load(`/api/v1/review-cases/${id}/history`)]).then(([detail,evidence,history])=>{
+root.replaceChildren(element('h1','Current review case'));
+root.append(element('p',`Model advice: ${detail.model_advice.state.replaceAll('_',' ')}`));
+for(const result of detail.model_advice.results){const advice=document.createElement('section');advice.className='field';advice.append(element('h2','Model advice (not a human decision)'));for(const recommendation of result.recommendations){advice.append(element('h3',recommendation.proposal_id));advice.append(element('p',`Recommendation: ${recommendation.recommendation}`));advice.append(element('p',`Reasons: ${recommendation.reasons.join(', ')}`));advice.append(element('p',`Problems: ${recommendation.problems.length?recommendation.problems.join(', '):'none'}`));advice.append(element('p',`Citations: ${recommendation.citations.length?recommendation.citations.join(', '):'none'}`));}root.append(advice);}
+for(const field of detail.fields){const section=document.createElement('section');section.className='field';section.append(element('h2',field.destination));section.append(element('p',`Current (${field.current.state}): ${JSON.stringify(field.current.value)}`));section.append(element('p',`Deterministic disposition: ${field.deterministic_disposition}`));section.append(element('p',`Proposed: ${field.proposed_values.length?field.proposed_values.map(value=>JSON.stringify(value.value)).join(' · '):'none'}`));section.append(element('p',`Provenance: ${field.provenance.length?field.provenance.join(', '):'none'}`));section.append(element('p',`Notices: ${field.notices.length?field.notices.join(', '):'none'}`));section.append(element('p',`Uncertainty: ${field.uncertainty.length?field.uncertainty.join(', '):'none'}`));root.append(section);}
+const evidenceSection=document.createElement('section');evidenceSection.className='field';evidenceSection.append(element('h2','Evidence'));for(const item of evidence.items){evidenceSection.append(element('h3',`${item.kind} · ${item.source}`));evidenceSection.append(element('pre',item.fact));}if(!evidence.items.length)evidenceSection.append(element('p','No referenced evidence.'));root.append(evidenceSection);
+const historySection=document.createElement('section');historySection.className='field';historySection.append(element('h2','Current-case history'));for(const item of history.items)historySection.append(element('p',`${item.checkpoint}. ${item.kind}: ${item.reason}`));root.append(historySection);root.focus();
+}).catch(()=>{const title=element('h1','Case unavailable');const alert=element('p','The exact current case could not be loaded.');alert.setAttribute('role','alert');root.replaceChildren(title,alert);root.focus();});}"""
