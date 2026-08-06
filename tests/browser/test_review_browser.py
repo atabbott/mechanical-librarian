@@ -14,7 +14,7 @@ from pathlib import Path
 
 import uvicorn
 from argon2 import PasswordHasher
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Locator, Page, sync_playwright
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
@@ -198,6 +198,24 @@ def _capture_errors(page: Page, errors: list[str]) -> None:
     )
 
 
+def _contrast_ratio(locator: Locator) -> float:
+    return locator.evaluate(
+        """node => {
+          const channel = value => {
+            value /= 255;
+            return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
+          };
+          const luminance = color => {
+            const values = color.match(/\\d+/g).slice(0, 3).map(Number);
+            return .2126 * channel(values[0]) + .7152 * channel(values[1]) + .0722 * channel(values[2]);
+          };
+          const style = getComputedStyle(node);
+          const values = [luminance(style.color), luminance(style.backgroundColor)].sort((a, b) => b - a);
+          return (values[0] + .05) / (values[1] + .05);
+        }"""
+    )
+
+
 def _press_and_wait_for_navigation(page: Page, control) -> None:
     previous = page.url
     control.press("Enter")
@@ -248,6 +266,18 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         response.headers["content-security-policy"],
                     )
                     page.get_by_role("heading", name="Current review case").wait_for()
+                    current_field = page.locator(
+                        '.field-navigation a[href="#field-series"]'
+                    )
+                    self.assertEqual(
+                        current_field.get_attribute("aria-current"), "true"
+                    )
+                    first_field = page.locator(".field-navigation a").first
+                    first_field.click()
+                    self.assertEqual(
+                        first_field.get_attribute("aria-current"), "true"
+                    )
+                    self.assertEqual(current_field.get_attribute("aria-current"), None)
                     self.assertEqual(page.locator("img,script:not([src])").count(), 0)
                     self.assertEqual(
                         page.evaluate(
@@ -792,6 +822,11 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                                 )
                                 self.assertTrue(screenshot.startswith(b"\x89PNG\r\n\x1a\n"))
                                 self.assertGreater(len(screenshot), 1_000)
+                                if path.startswith("/review/") and selected_theme == "dark":
+                                    contrast = _contrast_ratio(
+                                        page.locator(".choices button").first
+                                    )
+                                    self.assertGreaterEqual(contrast, 4.5)
 
                             page.reload()
                             page.get_by_role(
@@ -807,6 +842,22 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                                 ),
                                 [0, 0],
                             )
+                    sibling = context.new_page()
+                    sibling.goto(f"{origin}/library")
+                    sibling.get_by_role(
+                        "heading", name="Review library"
+                    ).wait_for()
+                    sibling.close()
+                    with page.expect_navigation():
+                        page.get_by_role("button", name="Sign out").press("Enter")
+                    page.get_by_role(
+                        "heading", name="Review your library with confidence."
+                    ).wait_for()
+                    self.assertEqual(len(errors), 1, errors)
+                    self.assertIn("status of 403", errors[0])
+                    errors.clear()
+                    login_contrast = _contrast_ratio(page.locator(".primary-button"))
+                    self.assertGreaterEqual(login_contrast, 4.5)
                     context.close()
                 browser.close()
             self.assertEqual(errors, [])

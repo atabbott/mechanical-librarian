@@ -136,6 +136,7 @@ REVIEW_CSS = r"""
   --danger: #8c3434;
   --danger-soft: #f7e4e1;
   --focus: #146fba;
+  --on-accent: #fff;
   --shadow: 0 18px 52px rgb(30 43 38 / .12);
   --radius: 6px;
   --radius-md: 10px;
@@ -159,6 +160,7 @@ REVIEW_CSS = r"""
   --danger: #f39b9b;
   --danger-soft: #402527;
   --focus: #78bdf2;
+  --on-accent: #0f1512;
   --shadow: 0 18px 52px rgb(0 0 0 / .28);
   color-scheme: dark;
 }
@@ -277,7 +279,7 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; border: 0; }
 .choices legend { margin-bottom: 8px; font-size: .66rem; font-weight: 900; }
 .choices button { min-width: 0; padding: 10px; border: 1px solid var(--accent); border-radius: var(--radius-md); background: var(--surface-strong); cursor: pointer; font-size: .68rem; font-weight: 800; }
-.choices button:first-of-type { background: var(--accent); color: #fff; }
+.choices button:first-of-type { background: var(--accent); color: var(--on-accent); }
 .choices button.reject { border-color: var(--danger); color: var(--danger); }
 .choices button:hover { transform: translateY(-1px); box-shadow: 0 7px 18px rgb(0 0 0 / .08); }
 .choices button:disabled { opacity: .6; transform: none; }
@@ -306,7 +308,7 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .login-card .lede { color: var(--ink-soft); }
 .login-card label { display: block; margin-top: 24px; font-size: .68rem; font-weight: 800; }
 .login-card input { width: 100%; margin: 6px 0 12px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface-strong); color: var(--ink); }
-.primary-button { width: 100%; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent); color: #fff; cursor: pointer; font-weight: 800; }
+.primary-button { width: 100%; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent); color: var(--on-accent); cursor: pointer; font-weight: 800; }
 #login-status { min-height: 24px; margin: 9px 0 0; color: var(--danger); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -400,14 +402,34 @@ const csrfFromPage = () => {
   return token;
 };
 let pageCsrf = csrfFromPage();
+const refreshPageCsrf = async () => {
+  const response = await fetch(location.href, {cache: "no-store"});
+  if (!response.ok) {
+    const error = new Error();
+    error.loginRequired = response.status === 401;
+    throw error;
+  }
+  const detached = new DOMParser().parseFromString(await response.text(), "text/html");
+  const token = detached.body?.dataset.csrfToken;
+  detached.body?.removeAttribute('data-csrf-token');
+  if (!token || !/^[A-Za-z0-9_-]{32,128}$/.test(token)) throw new Error();
+  return token;
+};
 document.querySelector(".sign-out")?.addEventListener("click", async event => {
   const button = event.currentTarget;
   button.disabled = true;
   try {
-    const response = await fetch("/api/v1/session/logout", {method: "POST", headers: {"x-csrf-token": pageCsrf}});
+    const send = () => fetch("/api/v1/session/logout", {method: "POST", headers: {"x-csrf-token": pageCsrf}});
+    let response = await send();
+    if (response.status === 403) {
+      pageCsrf = await refreshPageCsrf();
+      response = await send();
+    }
+    if (response.status === 401) { location.assign("/login"); return; }
     if (!response.ok) throw new Error();
     location.assign("/login");
-  } catch {
+  } catch (error) {
+    if (error.loginRequired) { location.assign("/login"); return; }
     button.disabled = false;
     button.textContent = "Sign out failed";
   }
@@ -640,7 +662,10 @@ if (root) {
     const unresolved = detail.fields.filter(field => field.needs_attention);
     const position = element("div", null, "position"); position.append(element("strong", String(unresolved.length)), element("span", unresolved.length === 1 ? "field needs attention" : "fields need attention")); sidebar.append(position);
     const fieldNav = element("nav", null, "field-navigation"); fieldNav.setAttribute("aria-label", "Fields needing attention");
-    unresolved.forEach((field, index) => { const link = element("a"); link.href = `#field-${field.destination}`; if (index === 0) link.setAttribute("aria-current", "true"); link.append(element("span", "", "attention-dot"), element("span", field.destination), element("small", `${index + 1} of ${unresolved.length}`)); fieldNav.append(link); });
+    const requestedField = parameters.get("field");
+    const requestedIndex = unresolved.findIndex(field => field.destination === requestedField);
+    const initialFieldIndex = requestedIndex >= 0 ? requestedIndex : 0;
+    unresolved.forEach((field, index) => { const link = element("a"); link.href = `#field-${field.destination}`; if (index === initialFieldIndex) link.setAttribute("aria-current", "true"); link.addEventListener("click", () => { for (const item of fieldNav.querySelectorAll("a")) item.removeAttribute("aria-current"); link.setAttribute("aria-current", "true"); }); link.append(element("span", "", "attention-dot"), element("span", field.destination), element("small", `${index + 1} of ${unresolved.length}`)); fieldNav.append(link); });
     if (!unresolved.length) fieldNav.append(element("p", "All exact-current fields are resolved or automatic."));
     sidebar.append(fieldNav);
     const content = element("div", null, "detail-content");
