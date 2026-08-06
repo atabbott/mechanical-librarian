@@ -2109,6 +2109,9 @@ class ShadowReviewTests(unittest.TestCase):
             )
             self.assertEqual("qualification_only", result["status"])
             self.assertEqual(2, result["attempt_count"])
+            advice = repository.get_review_model_advice(case_id)
+            self.assertEqual("available", advice["state"])
+            self.assertEqual(1, len(advice["results"]))
             repository.close()
 
     def test_live_schema_rejection_survives_restart_as_bounded_diagnostic(
@@ -2330,6 +2333,89 @@ class ShadowReviewTests(unittest.TestCase):
                 set(recommendations[0]),
             )
             self.assertNotIn("human_decision", advice)
+            repository.close()
+
+    def test_model_advice_projects_only_the_latest_attempt_across_requests(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reports.sqlite"
+            repository, case_id = self._repository(directory)
+            execute_shadow_review(
+                repository,
+                case_id,
+                _identity(),
+                _Runner(),
+                claimant=(9001, "11"),
+            )
+            newer_identity = ReviewerProfileIdentity(
+                "c" * 64,
+                "codex-cli 0.146.0-alpha.3.1",
+                "b" * 64,
+                "bubblewrap-v1",
+                "gpt-5.6-sol",
+                "medium",
+                "shadow-review-prompt-v3",
+                "codex-shadow-profile-v2",
+                "shadow-review-packet-v5",
+                "shadow-review-result-v2",
+                "qualification-only-policy-v1",
+                120,
+                65_536,
+                536_870_912,
+                16,
+                131_072,
+            )
+            with self.assertRaises(ShadowReviewerError):
+                execute_shadow_review(
+                    repository,
+                    case_id,
+                    newer_identity,
+                    _Runner(fail="timeout"),
+                    claimant=(9002, "12"),
+                )
+            self.assertEqual(
+                {"results": [], "state": "unavailable"},
+                repository.get_review_model_advice(case_id),
+            )
+            repository.close()
+
+            reopened = open_repository(database, create=False)
+            self.assertEqual(
+                {"results": [], "state": "unavailable"},
+                reopened.get_review_model_advice(case_id),
+            )
+            reopened.close()
+
+    def test_new_pending_reevaluation_supersedes_older_failure_advice(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository, case_id = self._repository(directory)
+            with self.assertRaises(ShadowReviewerError):
+                execute_shadow_review(
+                    repository,
+                    case_id,
+                    _identity(),
+                    _Runner(fail="timeout"),
+                    claimant=(9001, "11"),
+                )
+            request_id = repository._connection.execute(
+                "SELECT review_request_id FROM shadow_review_requests"
+            ).fetchone()[0]
+            prior_attempt_id = repository.last_shadow_claim(request_id)[0]
+            repository.prepare_shadow_request(
+                request_id,
+                _identity().to_json(),
+                reevaluate=True,
+                claim_pid=9002,
+                claim_start_token="12",
+                expected_prior_attempt_id=prior_attempt_id,
+            )
+            self.assertEqual(
+                {"results": [], "state": "pending"},
+                repository.get_review_model_advice(case_id),
+            )
             repository.close()
 
     def test_pre_dispatch_failure_is_terminal_and_cannot_be_reevaluated(self) -> None:

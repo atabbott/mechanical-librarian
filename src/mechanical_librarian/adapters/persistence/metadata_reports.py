@@ -967,44 +967,41 @@ class SQLiteMetadataReportRepository:
 
     def get_review_model_advice(self, review_case_id: str) -> dict[str, object]:
         try:
-            rows = self._connection.execute(
+            row = self._connection.execute(
                 "SELECT r.review_request_id,r.request_document,"
                 "o.kind,o.result_document "
                 "FROM shadow_review_requests r "
-                "LEFT JOIN shadow_review_attempts a "
+                "JOIN shadow_review_attempts a "
                 "ON a.review_request_id=r.review_request_id "
                 "LEFT JOIN shadow_review_outcomes o ON o.attempt_id=a.attempt_id "
                 "WHERE r.review_case_id=? "
-                "ORDER BY r.review_request_id,a.attempt_number",
+                "ORDER BY a.rowid DESC LIMIT 1",
                 (review_case_id,),
-            ).fetchall()
-            report = self._source_report_for_review_case(review_case_id)
-            results: list[dict[str, object]] = []
-            for request_id, request_document, kind, result_document in rows:
-                if kind != "result":
-                    continue
+            ).fetchone()
+            if row is None:
+                return {"results": [], "state": "not_requested"}
+            request_id, request_document, kind, result_document = row
+            if kind == "result":
+                report = self._source_report_for_review_case(review_case_id)
                 request = ShadowReviewRequest.from_json(request_document, report)
                 result = ShadowReviewResult.from_json(result_document, request)
                 if result.review_request_id != request_id:
                     raise MetadataReportError("review model advice is invalid")
-                results.append(
-                    {
-                        "recommendations": [
-                            dict(value) for value in result.recommendations
-                        ],
-                        "review_request_id": result.review_request_id,
-                    }
-                )
-            states = {row[2] for row in rows}
-            if "result" in states:
-                state = "available"
-            elif "failure" in states:
-                state = "unavailable"
-            elif rows:
-                state = "pending"
-            else:
-                state = "not_requested"
-            return {"results": results, "state": state}
+                return {
+                    "results": [
+                        {
+                            "recommendations": [
+                                dict(value) for value in result.recommendations
+                            ],
+                            "review_request_id": result.review_request_id,
+                        }
+                    ],
+                    "state": "available",
+                }
+            return {
+                "results": [],
+                "state": "unavailable" if kind == "failure" else "pending",
+            }
         except (
             sqlite3.Error,
             ShadowReviewValueError,
