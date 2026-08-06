@@ -24,8 +24,11 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.review_web import (
+    CurrentReviewCaseSnapshot,
     InspectCurrentReviewCase,
     RecordHumanDecision,
+    ReviewAttentionSnapshot,
+    ReviewLibrarySnapshot,
     ReviewWebError,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -163,6 +166,21 @@ class _Repository:
     def get_review_model_advice(self, review_case_id: str) -> dict[str, object]:
         return self.advice
 
+    def read_current_review_case(
+        self, review_case_id: str, history_limit: int | None
+    ) -> CurrentReviewCaseSnapshot:
+        return CurrentReviewCaseSnapshot(
+            case_document=self.get_review_case(review_case_id),
+            report_document=self.get_review_case_report(review_case_id),
+            model_advice=self.get_review_model_advice(review_case_id),
+            decision_documents=self.get_review_case_decisions(review_case_id),
+            history=(
+                ()
+                if history_limit is None
+                else self.get_review_case_history(review_case_id, history_limit)
+            ),
+        )
+
     @staticmethod
     def _attention(case: ReviewCase) -> bool:
         return any(
@@ -218,6 +236,32 @@ class _Repository:
         rows = self._searched(search)
         return len(rows), sum(self._attention(case) for case, _ in rows)
 
+    def read_review_library(
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        attention: bool | None,
+    ) -> ReviewLibrarySnapshot:
+        rows = self.list_current_review_case_documents(
+            search, limit, offset, attention
+        )
+        total, attention_total = self.count_current_review_cases(search)
+        return ReviewLibrarySnapshot(
+            rows=tuple(
+                (
+                    case_document,
+                    report_document,
+                    self.get_review_case_decisions(
+                        ReviewCase.from_json(case_document).review_case_id
+                    ),
+                )
+                for case_document, report_document in rows
+            ),
+            total=total,
+            attention_total=attention_total,
+        )
+
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
     ) -> tuple[tuple[str, str, str], ...]:
@@ -237,6 +281,14 @@ class _Repository:
             for proposal in case.proposals
             if proposal["result"]["outcome"] == "unresolved_choice"
             or proposal["manual_required"] is True
+        )
+
+    def read_review_attention(
+        self, search: str | None, limit: int, offset: int
+    ) -> ReviewAttentionSnapshot:
+        return ReviewAttentionSnapshot(
+            rows=self.list_current_attention_documents(search, limit, offset),
+            total=self.count_current_attention_fields(search),
         )
 
 
@@ -957,6 +1009,230 @@ class ReviewWebTests(unittest.TestCase):
 
 
 class ReviewSessionPersistenceTests(unittest.TestCase):
+    def test_current_case_snapshot_cannot_mix_concurrent_supersession(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "application.sqlite3"
+            reader = open_repository(database)
+            report = _report()
+            reader.publish(report, lambda: True)
+            proposal_set = evaluate_report(report)
+            reader.publish_proposal(proposal_set)
+            case_id = json.loads(reader.admit_review_case(proposal_set))[
+                "review_case_id"
+            ]
+            newer = _report(title="New Title", file_identity="c")
+            pointer_written = threading.Event()
+            finished = threading.Event()
+            writer_errors: list[BaseException] = []
+            writer_path = (
+                database
+                if reader._binding is None
+                else reader._binding.alias_path
+            )
+
+            def supersede() -> None:
+                writer = None
+                try:
+                    connection = sqlite3.connect(
+                        writer_path,
+                        isolation_level=None,
+                    )
+                    connection.execute("PRAGMA foreign_keys=ON")
+                    connection.execute("PRAGMA busy_timeout=5000")
+                    writer = SQLiteMetadataReportRepository(connection)
+                    writer._connection.set_trace_callback(
+                        lambda statement: pointer_written.set()
+                        if statement.startswith("INSERT INTO current_metadata_reports")
+                        else None
+                    )
+                    writer.publish(
+                        newer,
+                        lambda: True,
+                        expected_current=report.report_id,
+                    )
+                except BaseException as error:
+                    writer_errors.append(error)
+                finally:
+                    if writer is not None:
+                        writer.close()
+                    finished.set()
+
+            original = reader.get_review_case
+            started = False
+
+            def interleave(review_case_id: str) -> str:
+                nonlocal started
+                document = original(review_case_id)
+                if not started:
+                    started = True
+                    threading.Thread(target=supersede, daemon=True).start()
+                    if not pointer_written.wait(5):
+                        self.fail(f"supersession did not reach its pointer: {writer_errors!r}")
+                return document
+
+            with patch.object(reader, "get_review_case", side_effect=interleave):
+                snapshot = reader.read_current_review_case(case_id, 50)
+            self.assertIs(json.loads(snapshot.case_document)["current"], True)
+            self.assertEqual(
+                MetadataReport.from_json(snapshot.report_document).report_id,
+                report.report_id,
+            )
+            self.assertTrue(finished.wait(5))
+            self.assertEqual(writer_errors, [])
+            self.assertIs(json.loads(reader.get_review_case(case_id))["current"], False)
+            reader.close()
+
+    def test_review_reads_hold_one_snapshot_across_concurrent_decision(self) -> None:
+        for surface in ("case", "library", "attention"):
+            with self.subTest(surface=surface), tempfile.TemporaryDirectory() as directory:
+                database = Path(directory) / "application.sqlite3"
+                reader = open_repository(database)
+                report = _report()
+                reader.publish(report, lambda: True)
+                proposal_set = evaluate_report(report)
+                reader.publish_proposal(proposal_set)
+                case_id = json.loads(reader.admit_review_case(proposal_set))[
+                    "review_case_id"
+                ]
+                case = ReviewCase.create_from_data(
+                    json.loads(reader.get_review_case(case_id))["case"]
+                )
+                proposal = next(
+                    value
+                    for value in case.proposals
+                    if value["result"]["outcome"] == "unresolved_choice"
+                )
+                decision = HumanDecision.create(
+                    case,
+                    proposal_id=proposal["proposal_id"],
+                    target_fingerprint=case.target_fingerprint,
+                    destination=proposal["destination"],
+                    actor="owner",
+                    outcome="keep_current",
+                    selected_value=None,
+                    idempotency_key=f"snapshot-{surface}-decision",
+                    occurred_at=1_000,
+                )
+                inserted = threading.Event()
+                finished = threading.Event()
+                writer_errors: list[BaseException] = []
+                writer_path = (
+                    database
+                    if reader._binding is None
+                    else reader._binding.alias_path
+                )
+
+                def write_decision() -> None:
+                    writer = None
+                    try:
+                        connection = sqlite3.connect(
+                            writer_path,
+                            isolation_level=None,
+                        )
+                        connection.execute("PRAGMA foreign_keys=ON")
+                        connection.execute("PRAGMA busy_timeout=5000")
+                        writer = SQLiteMetadataReportRepository(connection)
+                        writer._connection.set_trace_callback(
+                            lambda statement: inserted.set()
+                            if statement.startswith("INSERT INTO human_decisions")
+                            else None
+                        )
+                        writer.record_human_decision(decision)
+                    except BaseException as error:
+                        writer_errors.append(error)
+                    finally:
+                        if writer is not None:
+                            writer.close()
+                        finished.set()
+
+                started = False
+
+                def interleave(original, *args):
+                    nonlocal started
+                    result = original(*args)
+                    if not started:
+                        started = True
+                        threading.Thread(
+                            target=write_decision, daemon=True
+                        ).start()
+                        self.assertTrue(inserted.wait(5))
+                    return result
+
+                if surface == "case":
+                    original = reader.get_review_case
+                    patched = patch.object(
+                        reader,
+                        "get_review_case",
+                        side_effect=lambda *args: interleave(original, *args),
+                    )
+                elif surface == "library":
+                    original = reader.list_current_review_case_documents
+                    patched = patch.object(
+                        reader,
+                        "list_current_review_case_documents",
+                        side_effect=lambda *args: interleave(original, *args),
+                    )
+                else:
+                    original = reader.list_current_attention_documents
+                    patched = patch.object(
+                        reader,
+                        "list_current_attention_documents",
+                        side_effect=lambda *args: interleave(original, *args),
+                    )
+
+                with patched:
+                    if surface == "case":
+                        before = reader.read_current_review_case(case_id, 50)
+                        self.assertEqual(before.decision_documents, ())
+                        self.assertFalse(
+                            any(
+                                item.get("kind") == "human_decision_recorded"
+                                for item in before.history
+                            )
+                        )
+                    elif surface == "library":
+                        before = reader.read_review_library(None, 10, 0, None)
+                        self.assertEqual(before.attention_total, 1)
+                        self.assertEqual(before.rows[0][2], ())
+                    else:
+                        before = reader.read_review_attention(None, 10, 0)
+                        self.assertEqual(before.total, 1)
+                        self.assertEqual(len(before.rows), 1)
+
+                self.assertTrue(finished.wait(5))
+                self.assertEqual(writer_errors, [])
+                if surface == "case":
+                    after = reader.read_current_review_case(case_id, 50)
+                    self.assertEqual(len(after.decision_documents), 1)
+                    self.assertTrue(
+                        any(
+                            item.get("kind") == "human_decision_recorded"
+                            for item in after.history
+                        )
+                    )
+                elif surface == "library":
+                    after = reader.read_review_library(None, 10, 0, None)
+                    self.assertEqual(after.attention_total, 0)
+                    self.assertEqual(len(after.rows[0][2]), 1)
+                else:
+                    after = reader.read_review_attention(None, 10, 0)
+                    self.assertEqual(after.total, 0)
+                    self.assertEqual(after.rows, ())
+                reader.close()
+
+    def test_review_snapshot_failure_rolls_back_without_partial_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "application.sqlite3")
+            with patch.object(
+                repository,
+                "list_current_review_case_documents",
+                side_effect=RuntimeError("synthetic"),
+            ):
+                with self.assertRaises(MetadataReportError):
+                    repository.read_review_library(None, 10, 0, None)
+            self.assertFalse(repository._connection.in_transaction)
+            repository.close()
+
 
     def test_sqlite_logout_classification_is_atomic_across_connections(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

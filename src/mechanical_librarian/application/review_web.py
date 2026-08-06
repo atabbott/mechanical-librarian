@@ -33,6 +33,28 @@ class SessionTokens:
     expires_at: int
 
 
+@dataclass(frozen=True, slots=True)
+class CurrentReviewCaseSnapshot:
+    case_document: str
+    report_document: str
+    model_advice: dict[str, object]
+    decision_documents: tuple[str, ...]
+    history: tuple[dict[str, object], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewLibrarySnapshot:
+    rows: tuple[tuple[str, str, tuple[str, ...]], ...]
+    total: int
+    attention_total: int
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewAttentionSnapshot:
+    rows: tuple[tuple[str, str, str], ...]
+    total: int
+
+
 class ReviewWebRepository(Protocol):
     def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool: ...
     def create_review_session(
@@ -53,28 +75,19 @@ class ReviewWebRepository(Protocol):
     ) -> str: ...
     def review_case_exists(self, review_case_id: str) -> bool: ...
     def get_review_case(self, review_case_id: str) -> str: ...
-    def get_review_case_report(self, review_case_id: str) -> str: ...
-    def get_review_model_advice(
-        self, review_case_id: str
-    ) -> dict[str, object]: ...
-    def get_review_case_history(self, review_case_id: str, limit: int) -> tuple[dict[str, object], ...]: ...
-    def list_current_review_case_documents(
+    def read_current_review_case(
+        self, review_case_id: str, history_limit: int | None
+    ) -> CurrentReviewCaseSnapshot: ...
+    def read_review_library(
         self,
         search: str | None,
         limit: int,
         offset: int,
         attention: bool | None,
-    ) -> tuple[tuple[str, str], ...]: ...
-    def count_current_review_cases(
-        self, search: str | None
-    ) -> tuple[int, int]: ...
-    def list_current_attention_documents(
+    ) -> ReviewLibrarySnapshot: ...
+    def read_review_attention(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[tuple[str, str, str], ...]: ...
-    def count_current_attention_fields(self, search: str | None) -> int: ...
-    def get_review_case_decisions(
-        self, review_case_id: str
-    ) -> tuple[str, ...]: ...
+    ) -> ReviewAttentionSnapshot: ...
     def record_human_decision(self, decision: HumanDecision) -> str: ...
 
 
@@ -171,23 +184,23 @@ class InspectCurrentReviewCase:
     def __init__(self, repository: ReviewWebRepository) -> None:
         self._repository = repository
 
-    def run(self, review_case_id: str) -> dict[str, object]:
+    def _read(
+        self, review_case_id: str, history_limit: int | None = None
+    ) -> tuple[dict[str, object], MetadataReport, CurrentReviewCaseSnapshot]:
         try:
-            raw = json.loads(self._repository.get_review_case(review_case_id))
+            snapshot = self._repository.read_current_review_case(
+                review_case_id, history_limit
+            )
+            raw = json.loads(snapshot.case_document)
             if type(raw) is not dict or raw.get("current") is not True or type(raw.get("case")) is not dict:
                 raise ReviewWebError("stale")
             case = ReviewCase.create_from_data(raw["case"])
-            report = MetadataReport.from_json(
-                self._repository.get_review_case_report(review_case_id)
-            )
+            report = MetadataReport.from_json(snapshot.report_document)
             if report.report_id != case.report_id:
                 raise ReviewWebError("unavailable")
-            advice = self._repository.get_review_model_advice(review_case_id)
             decisions = {
                 decision.destination: decision
-                for document in self._repository.get_review_case_decisions(
-                    review_case_id
-                )
+                for document in snapshot.decision_documents
                 for decision in (HumanDecision.from_json(document),)
             }
         except ReviewWebError:
@@ -244,7 +257,7 @@ class InspectCurrentReviewCase:
         return {
             "current": True,
             "fields": fields,
-            "model_advice": advice,
+            "model_advice": snapshot.model_advice,
             "review_case_id": case.review_case_id,
             "schema_version": "review-case-detail-v1",
             "target": {
@@ -252,10 +265,14 @@ class InspectCurrentReviewCase:
                 "item": report.target.item,
                 "library": report.target.library,
             },
-        }
+        }, report, snapshot
+
+    def run(self, review_case_id: str) -> dict[str, object]:
+        detail, _, _ = self._read(review_case_id)
+        return detail
 
     def evidence(self, review_case_id: str, limit: int = 50) -> dict[str, object]:
-        detail = self.run(review_case_id)
+        detail, report, _ = self._read(review_case_id)
         fields = detail["fields"]
         assert type(fields) is list
         wanted = {
@@ -263,12 +280,6 @@ class InspectCurrentReviewCase:
             for field in fields
             for reference in field["provenance"]
         }
-        try:
-            report = MetadataReport.from_json(
-                self._repository.get_review_case_report(review_case_id)
-            )
-        except Exception as error:
-            raise ReviewWebError("unavailable") from error
         evidence = _evidence_by_reference(report)
         bounded = [
             evidence[reference]
@@ -283,13 +294,9 @@ class InspectCurrentReviewCase:
         }
 
     def history(self, review_case_id: str, limit: int = 50) -> dict[str, object]:
-        self.run(review_case_id)
-        try:
-            items = self._repository.get_review_case_history(review_case_id, limit)
-        except Exception as error:
-            raise ReviewWebError("unavailable") from error
+        _, _, snapshot = self._read(review_case_id, limit)
         return {
-            "items": list(items),
+            "items": list(snapshot.history),
             "next_cursor": None,
             "review_case_id": review_case_id,
             "schema_version": "review-case-history-v1",
@@ -388,29 +395,25 @@ class BrowseReviewLibrary:
             else lens == "needs_attention"
         )
         try:
-            rows = self._repository.list_current_review_case_documents(
+            snapshot = self._repository.read_review_library(
                 normalized, bounded_limit + 1, offset, attention
-            )
-            total, attention_total = self._repository.count_current_review_cases(
-                normalized
             )
             items = [
                 _library_item(
                     case_document,
                     report_document,
-                    self._repository.get_review_case_decisions(
-                        ReviewCase.from_json(case_document).review_case_id
-                    ),
+                    decision_documents,
                 )
-                for case_document, report_document in rows[:bounded_limit]
+                for case_document, report_document, decision_documents
+                in snapshot.rows[:bounded_limit]
             ]
         except Exception as error:
             raise ReviewWebError("unavailable") from error
         return {
             "counts": {
-                "all": total,
-                "needs_attention": attention_total,
-                "no_attention_needed": total - attention_total,
+                "all": snapshot.total,
+                "needs_attention": snapshot.attention_total,
+                "no_attention_needed": snapshot.total - snapshot.attention_total,
             },
             "items": items,
             "lens": lens,
@@ -418,7 +421,7 @@ class BrowseReviewLibrary:
                 _encode_cursor(
                     offset + bounded_limit, "library", lens, normalized
                 )
-                if len(rows) > bounded_limit
+                if len(snapshot.rows) > bounded_limit
                 else None
             ),
             "query": normalized,
@@ -436,15 +439,15 @@ class BrowseReviewLibrary:
         bounded_limit = _review_limit(limit)
         offset = _decode_cursor(cursor, "attention", "needs_attention", normalized)
         try:
-            rows = self._repository.list_current_attention_documents(
+            snapshot = self._repository.read_review_attention(
                 normalized, bounded_limit + 1, offset
             )
-            total = self._repository.count_current_attention_fields(normalized)
         except Exception as error:
             raise ReviewWebError("unavailable") from error
         items = [
             _attention_item(case_document, report_document, destination)
-            for case_document, report_document, destination in rows[:bounded_limit]
+            for case_document, report_document, destination
+            in snapshot.rows[:bounded_limit]
         ]
         return {
             "items": items,
@@ -455,12 +458,12 @@ class BrowseReviewLibrary:
                     "needs_attention",
                     normalized,
                 )
-                if len(rows) > bounded_limit
+                if len(snapshot.rows) > bounded_limit
                 else None
             ),
             "query": normalized,
             "schema_version": "review-attention-v1",
-            "total": total,
+            "total": snapshot.total,
         }
 
 def _digest(value: str) -> str:

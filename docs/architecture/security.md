@@ -100,7 +100,12 @@ The #448 library and attention responses join only exact-current report and
 case pointers. Pages contain at most 50 rows, cursors are bound to their lens
 and search, and the field queue admits only unresolved or explicitly manual
 destinations. Sibling identifiers cannot widen a query, and automatic-only
-cases expose no mutation control.
+cases expose no mutation control. Each case detail, evidence, bounded
+current-case history, Library page with its lens counts and decision summaries,
+and Attention page with its field count is read from one authoritative SQLite
+snapshot. Concurrent supersession and decision commits therefore appear wholly
+before or wholly after a response; a failed snapshot yields only the existing
+bounded unavailable response.
 
 The reachable assets are private case metadata and evidence plus session
 authority. Exact canonical HTTPS Host and state-changing Origin checks prevent

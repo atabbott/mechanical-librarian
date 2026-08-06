@@ -120,7 +120,11 @@ maximum 50-item pages, and query-bound cursors. Automatic-only cases remain
 inspectable in the library but never gain a human control. Decision persistence
 cannot create automatic authority, construct an apply plan, construct a target
 client, perform a write, reverse a decision, or widen one exact ordinary field
-into a bulk operation.
+into a bulk operation. Each detail, evidence, current-case history, Library, or
+Attention response is assembled from one database snapshot, including its
+decision summaries and counts. A concurrent supersession or decision is thus
+visible either throughout the response or not at all; snapshot failure returns
+the existing value-free unavailable response rather than partial data.
 
 The login request body is capped at 2 KiB at the ASGI boundary before JSON
 parsing. Five reserved attempts within five minutes close the login gate; the
