@@ -57,7 +57,8 @@ ProposalSet create, offline exact ProposalSet reopen, review-case admission,
 offline exact ReviewCase reopen, ChatGPT subscription auth, no-egress shadow
 preview, one qualification-only foreground request, offline inspect, and
 explicit reevaluation, authenticated exact-current ReviewCase inspection, and
-one individual immutable ordinary-field human decision through `review-serve`.
+one individual immutable ordinary-field human decision through the bundled
+`review-serve` API and browser round trip in pinned Playwright Chromium.
 It does not support
 durable batch attempts, resume, automatic retry, workers, schedulers, parallel
 execution, normal reviewer activation, automatic decisions, bulk or reversal,

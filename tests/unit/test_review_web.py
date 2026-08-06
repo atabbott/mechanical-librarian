@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import tempfile
 import unittest
@@ -81,6 +82,14 @@ class _Repository:
         if revoked is not None or expires <= now:
             raise RuntimeError
         return actor, csrf, expires
+
+    def rotate_review_session_csrf(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> None:
+        actor, _, expires, revoked = self.sessions[session_digest]
+        if revoked is not None or expires <= now:
+            raise RuntimeError
+        self.sessions[session_digest] = (actor, csrf_digest, expires, None)
 
     def revoke_review_session(self, session_digest: str, now: int) -> None:
         actor, csrf, expires, _ = self.sessions[session_digest]
@@ -342,6 +351,50 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(
             replay.json()["decision_id"], accepted.json()["decision_id"]
         )
+
+    def test_review_page_rotates_one_memory_only_csrf_token(self) -> None:
+        login = self._login()
+        page = self.client.get(f"/review/{self.case.review_case_id}")
+        self.assertEqual(page.status_code, 200, page.text)
+        match = re.search(r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', page.text)
+        self.assertIsNotNone(match)
+        assert match is not None
+        browser_csrf = match.group(1)
+        self.assertNotEqual(browser_csrf, login["csrf_token"])
+        script = self.client.get("/assets/review.js").text
+        self.assertIn("removeAttribute('data-csrf-token')", script)
+        self.assertNotIn("localStorage", script)
+        self.assertNotIn("sessionStorage", script)
+        field = self.client.get(
+            f"/api/v1/review-cases/{self.case.review_case_id}"
+        ).json()["fields"][0]
+        payload = {
+            "destination": field["destination"],
+            "outcome": "keep_current",
+            "proposal_id": field["proposal_id"],
+            "selected_value": None,
+            "target_fingerprint": field["target_fingerprint"],
+        }
+        stale = self.client.post(
+            f"/api/v1/review-cases/{self.case.review_case_id}/decisions",
+            headers={
+                **self.origin,
+                "X-CSRF-Token": login["csrf_token"],
+                "Idempotency-Key": "browser-decision-rotate-0001",
+            },
+            json=payload,
+        )
+        self.assertEqual(stale.status_code, 403)
+        accepted = self.client.post(
+            f"/api/v1/review-cases/{self.case.review_case_id}/decisions",
+            headers={
+                **self.origin,
+                "X-CSRF-Token": browser_csrf,
+                "Idempotency-Key": "browser-decision-rotate-0001",
+            },
+            json=payload,
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.text)
 
     def test_malformed_case_decision_body_is_bounded_before_validation(self) -> None:
         oversized = b'{' + b'"private":"' + b'x' * 9_000 + b'"}'
@@ -1001,9 +1054,18 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 reopened.authenticate_review_session("a" * 64, 150),
                 ("owner", "b" * 64, 200),
             )
+            self.assertIsNone(
+                reopened.rotate_review_session_csrf("a" * 64, "c" * 64, 150)
+            )
+            self.assertEqual(
+                reopened.authenticate_review_session("a" * 64, 150),
+                ("owner", "c" * 64, 200),
+            )
             reopened.revoke_review_session("a" * 64, 151)
             with self.assertRaises(Exception):
                 reopened.authenticate_review_session("a" * 64, 152)
+            with self.assertRaises(Exception):
+                reopened.rotate_review_session_csrf("a" * 64, "d" * 64, 152)
             reopened.close()
 
     def test_real_repository_serves_login_from_fastapi_worker_thread(self) -> None:

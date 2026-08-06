@@ -45,6 +45,9 @@ class ReviewWebRepository(Protocol):
     def authenticate_review_session(
         self, session_digest: str, now: int
     ) -> tuple[str, str, int]: ...
+    def rotate_review_session_csrf(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> None: ...
     def revoke_review_session(self, session_digest: str, now: int) -> None: ...
     def get_review_case(self, review_case_id: str) -> str: ...
     def get_review_case_report(self, review_case_id: str) -> str: ...
@@ -131,6 +134,20 @@ class OwnerSessionService:
         ):
             raise ReviewWebError("csrf")
         return actor
+
+    def issue_browser_csrf(self, session_token: str) -> str:
+        if not _bounded_token(session_token):
+            raise ReviewWebError("unauthorized")
+        csrf_token = self._token_factory(32)
+        if not 32 <= len(csrf_token) <= 128:
+            raise ReviewWebError("runtime")
+        try:
+            self._repository.rotate_review_session_csrf(
+                _digest(session_token), _digest(csrf_token), self._clock()
+            )
+        except Exception as error:
+            raise ReviewWebError("unauthorized") from error
+        return csrf_token
 
     def logout(self, session_token: str, csrf_token: str) -> None:
         self.authenticate(session_token, csrf_token)

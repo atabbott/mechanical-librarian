@@ -303,6 +303,16 @@ sanitized, and free of credentials or private library data. Real-browser
 qualification runs these privacy, storage, content-security, hostile-rendering,
 performance, and artifact checks in the primary supported browser.
 
+The delivered F16a detail page uses a bounded horizontally scrollable field
+attention-only strip inside a non-overflowing document. Each genuinely unresolved field has
+immediate, semantically named accept/keep/reject controls and no redundant save
+step. A server acknowledgement reloads authoritative detail/history, preserves
+the strip position, announces a non-obscuring status, and focuses the next
+unresolved field. A failure preserves the original choice and idempotency key,
+does not advance, and focuses an explicit retry. Automatic-only fields are
+collapsed read-only context outside the strip and never expose those controls;
+model advice follows the human-decision surface.
+
 Outcome #195 extends those budgets and checks across its cross-case summaries,
 history, bulk and reversal flows, and additional browser and viewport matrix.
 

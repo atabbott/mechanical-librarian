@@ -32,6 +32,7 @@ dependencies = [
 [dependency-groups]
 dev = [
   "hypothesis==6.156.6",
+  "playwright==1.61.0",
   "setuptools==83.0.0",
 ]
 

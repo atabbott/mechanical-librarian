@@ -1213,6 +1213,31 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             raise MetadataReportError("review session is unavailable") from error
 
+    def rotate_review_session_csrf(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> None:
+        try:
+            row = self._connection.execute(
+                "UPDATE review_sessions SET csrf_digest=? "
+                "WHERE session_digest=? AND revoked_at IS NULL AND expires_at>? "
+                "RETURNING actor,expires_at",
+                (csrf_digest, session_digest, now),
+            ).fetchone()
+            if (
+                row is None
+                or len(row) != 2
+                or row[0] != "owner"
+                or type(row[1]) is not int
+            ):
+                raise MetadataReportError("review session is unavailable")
+            self._connection.commit()
+        except MetadataReportError:
+            self._connection.rollback()
+            raise
+        except sqlite3.Error as error:
+            self._connection.rollback()
+            raise MetadataReportError("review session is unavailable") from error
+
     def revoke_review_session(self, session_digest: str, now: int) -> None:
         try:
             cursor = self._connection.execute(

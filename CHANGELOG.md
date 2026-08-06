@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Activate the complete F16a browser round trip. The authenticated owner can
+  choose `accept`, `keep_current`, or `reject` directly from an exact unresolved
+  field, receives only a server-acknowledged success message, and advances to
+  the next unresolved field. Failures preserve the choice and focus a retry;
+  automatic-only cases remain read-only. A fresh per-page CSRF token stays in
+  memory only, and pinned Playwright 1.61.0 Chromium qualifies desktop and
+  390-pixel layouts, keyboard/focus, hostile text, restrictive CSP, private
+  storage/cache, bounded assets/DOM, failure retry, restart, and a fresh browser
+  context without adding automatic, apply, target-write, bulk, or reversal
+  authority. (#450, #152)
+
 - Add the third F16a production increment: an authenticated client can record
   one immutable `accept`, `keep_current`, or `reject` decision for one
   exact-current ordinary field. The command is proposal-, target-, actor-,

@@ -34,12 +34,18 @@ The expected API surface includes:
 
 ## Review resources
 
-The delivered #447–#449 surface is intentionally smaller than the future
+The delivered #447–#450 surface is intentionally smaller than the future
 resource family below: authenticated `/api/v1` exact-current case detail,
 bounded evidence, bounded current-case admission history, session
 login/logout, an attention-first current-case library, and a separate exact
 field queue, plus one exact-version individual human decision. Library-wide
 activity/history, cross-case summaries, bulk and reversal remain #195.
+
+The bundled browser obtains a freshly rotated per-page CSRF token from its
+authenticated private detail document, removes it from the DOM at startup, and
+holds it only in page memory. It submits an exact server-presented decision and
+advances only after the typed acknowledgement. This presentation seam adds no
+API operation and no browser-side workflow authority.
 
 The generated contract is frozen at
 `docs/reference/review-openapi-v1.json`. Regenerate it from the same closed

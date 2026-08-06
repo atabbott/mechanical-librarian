@@ -68,6 +68,34 @@ multipart parser, identity provider, cache, session service, or second process
 is introduced. The licences are compatible with AGPL-3.0-or-later; release
 notice and SBOM generation remain separate release gates.
 
+F16a #450 adds one pinned development-only browser qualification dependency and
+its locked Python closure. None is imported by the runtime package or included
+as application authority.
+
+| Package | Version | Relationship | SPDX licence | Product authority |
+| --- | --- | --- | --- | --- |
+| Playwright | 1.61.0 | direct development only | Apache-2.0 | drives disposable same-origin browser qualification only |
+| greenlet | 3.5.4 | transitive development only | MIT | Playwright synchronous test scheduling only |
+| pyee | 13.0.1 | transitive development only | MIT | Playwright test event dispatch only |
+
+The pinned Playwright release supports Python 3.13/3.14 and binds Chromium
+149.0.7827.55 (browser revision 1228). The public gate downloads that browser
+before running the exact installed-artifact suite. Before any launch, the
+repository verifier hashes the complete sorted headless-shell payload with the
+`playwright-browser-tree-v1` framing and requires
+`8165f22c947b69d93b32288b8d00acde78f11e287da8084906c632c90b55781c`
+on Linux x86-64 or
+`ad7a45dccec74e1ceec66d023122a03d2c0351d25c169dfe18c9c4aec49a48b3`
+on macOS arm64. A changed, incomplete, symlinked, extra-file, or unsupported
+platform payload fails before browser execution. Tests use synthetic owner
+credentials, hostile strings, disposable owner-only databases, loopback HTTPS,
+and no production service. Playwright receives no target/provider credential,
+production path, target client, apply port, or publication authority. Browser
+binaries remain development cache content and are not application packages or
+published artifacts. All three Python-package licences are compatible with
+AGPL-3.0-or-later distribution; the browser's release inventory remains a
+qualification input and future release-SBOM concern, not runtime content.
+
 F06 adds no direct or transitive runtime dependency and changes no lockfile. It
 targets the CPython 3.13/3.14 standard-library boundary, with these
 incorporated or system components recorded for dependency inventory, notices,
