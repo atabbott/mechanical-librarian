@@ -502,7 +502,20 @@ class ReviewWebTests(unittest.TestCase):
             rich_reference,
             cover_reference,
         }
-        detail = {"fields": [{"provenance": sorted(references)}]}
+        detail = {
+            "fields": [
+                {"provenance": sorted(references.difference({rich_reference}))}
+            ],
+            "model_advice": {
+                "results": [
+                    {
+                        "recommendations": [
+                            {"citations": [rich_reference]}
+                        ]
+                    }
+                ]
+            },
+        }
         report = SimpleNamespace(to_data=lambda: data)
         cases = InspectCurrentReviewCase(Mock())
         with patch.object(cases, "_read", return_value=(detail, report, ())):
