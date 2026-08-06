@@ -512,8 +512,8 @@ const workRow = item => {
   const copy = element("span", null, "work-copy");
   copy.append(element("strong", item.title), element("small", `${item.library} · ${item.item}`));
   const state = element("span", null, "work-state");
-  const automatic = item.attention_state === "no_attention_needed";
-  state.append(element("span", automatic ? "Automatically handled" : `${item.attention_count} need attention`, `badge${automatic ? " automatic" : ""}`));
+  const noAttention = item.attention_state === "no_attention_needed";
+  state.append(element("span", noAttention ? "No attention needed" : `${item.attention_count} need attention`, `badge${noAttention ? " automatic" : ""}`));
   state.append(element("small", item.dispositions.map(friendly).join(" · ") || "Current"));
   link.append(mark, copy, state);
   return link;
@@ -526,7 +526,7 @@ if (libraryRoot) {
   load(`/api/v1/library?${parameters}`).then(data => {
     const top = heading("Authenticated review", "Review library", "Attention-first, exact-current review cases. Automatic results remain visible without asking you to approve them.");
     const counts = element("div", null, "count-cluster");
-    for (const [label, value] of [["Attention", data.counts.needs_attention], ["All cases", data.counts.all], ["Automatic", data.counts.no_attention_needed]]) {
+    for (const [label, value] of [["Attention", data.counts.needs_attention], ["All cases", data.counts.all], ["No attention", data.counts.no_attention_needed]]) {
       const metric = element("span"); metric.append(element("strong", String(value)), element("small", label)); counts.append(metric);
     }
     top.append(counts);
@@ -534,7 +534,7 @@ if (libraryRoot) {
     tools.append(searchForm(data.query, lens));
     const lenses = element("nav", null, "lenses");
     lenses.setAttribute("aria-label", "Library lenses");
-    for (const [value, label] of [["needs_attention", "Needs attention"], ["all", "All review cases"], ["no_attention_needed", "Automatic only"]]) {
+    for (const [value, label] of [["needs_attention", "Needs attention"], ["all", "All review cases"], ["no_attention_needed", "No attention needed"]]) {
       const link = element("a", `${label} (${data.counts[value]})`);
       const target = new URLSearchParams(); target.set("lens", value); if (data.query) target.set("q", data.query);
       link.href = `/library?${target}`;

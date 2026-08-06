@@ -77,6 +77,7 @@ class _Repository:
         self.revoke_failure = False
         self.revoke_result = "revoked"
         self.rotate_failure = False
+        self.rotate_result = "rotated"
         self.existence_failure = False
         self.case_current = True
 
@@ -99,13 +100,16 @@ class _Repository:
 
     def rotate_review_session_csrf(
         self, session_digest: str, csrf_digest: str, now: int
-    ) -> None:
+    ) -> str:
         if self.rotate_failure:
             raise RuntimeError
+        if self.rotate_result != "rotated":
+            return self.rotate_result
         actor, _, expires, revoked = self.sessions[session_digest]
         if revoked is not None or expires <= now:
-            raise RuntimeError
+            return "unauthorized"
         self.sessions[session_digest] = (actor, csrf_digest, expires, None)
+        return "rotated"
 
     def revoke_review_session(
         self, session_digest: str, csrf_digest: str, now: int
@@ -753,6 +757,8 @@ class ReviewWebTests(unittest.TestCase):
         self.assertNotEqual(browser_csrf, login["csrf_token"])
         script = self.client.get("/assets/review.js").text
         self.assertIn("removeAttribute('data-csrf-token')", script)
+        self.assertIn("No attention needed", script)
+        self.assertNotIn("Automatically handled", script)
         self.assertNotIn("localStorage", script)
         self.assertNotIn("sessionStorage", script)
         field = self.client.get(
@@ -800,6 +806,22 @@ class ReviewWebTests(unittest.TestCase):
             self.assertEqual(unavailable.status_code, 503, path)
             self.assertEqual(
                 unavailable.json()["error"]["code"], "persistence", path
+            )
+
+    def test_authenticated_page_preserves_expired_rotation_as_unauthorized(
+        self,
+    ) -> None:
+        self._login()
+        self.repository.rotate_result = "unauthorized"
+        for path in (
+            "/library",
+            "/attention",
+            f"/review/{self.case.review_case_id}",
+        ):
+            denied = self.client.get(path)
+            self.assertEqual(denied.status_code, 401, path)
+            self.assertEqual(
+                denied.json()["error"]["code"], "unauthorized", path
             )
 
     def test_malformed_case_decision_body_is_bounded_before_validation(self) -> None:
@@ -1877,8 +1899,9 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 reopened.authenticate_review_session("a" * 64, 150),
                 ("owner", "b" * 64, 200),
             )
-            self.assertIsNone(
-                reopened.rotate_review_session_csrf("a" * 64, "c" * 64, 150)
+            self.assertEqual(
+                reopened.rotate_review_session_csrf("a" * 64, "c" * 64, 150),
+                "rotated",
             )
             self.assertEqual(
                 reopened.authenticate_review_session("a" * 64, 150),
@@ -1907,8 +1930,10 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             )
             with self.assertRaises(Exception):
                 reopened.authenticate_review_session("a" * 64, 152)
-            with self.assertRaises(Exception):
-                reopened.rotate_review_session_csrf("a" * 64, "d" * 64, 152)
+            self.assertEqual(
+                reopened.rotate_review_session_csrf("a" * 64, "d" * 64, 152),
+                "unauthorized",
+            )
             reopened.close()
 
     def test_real_repository_serves_login_from_fastapi_worker_thread(self) -> None:

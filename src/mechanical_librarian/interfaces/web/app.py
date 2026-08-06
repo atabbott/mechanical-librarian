@@ -734,7 +734,7 @@ class _SerializedReviewRepository:
 
     def rotate_review_session_csrf(
         self, session_digest: str, csrf_digest: str, now: int
-    ) -> None:
+    ) -> str:
         with self._lock:
             return self._repository.rotate_review_session_csrf(
                 session_digest, csrf_digest, now
