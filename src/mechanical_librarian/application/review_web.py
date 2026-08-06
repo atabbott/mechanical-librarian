@@ -48,7 +48,10 @@ class ReviewWebRepository(Protocol):
     def rotate_review_session_csrf(
         self, session_digest: str, csrf_digest: str, now: int
     ) -> None: ...
-    def revoke_review_session(self, session_digest: str, now: int) -> None: ...
+    def revoke_review_session(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> str: ...
+    def review_case_exists(self, review_case_id: str) -> bool: ...
     def get_review_case(self, review_case_id: str) -> str: ...
     def get_review_case_report(self, review_case_id: str) -> str: ...
     def get_review_model_advice(
@@ -150,13 +153,18 @@ class OwnerSessionService:
         return csrf_token
 
     def logout(self, session_token: str, csrf_token: str) -> None:
-        self.authenticate(session_token, csrf_token)
+        if not _bounded_token(session_token):
+            raise ReviewWebError("unauthorized")
+        if not _bounded_token(csrf_token):
+            raise ReviewWebError("csrf")
         try:
-            self._repository.revoke_review_session(
-                _digest(session_token), self._clock()
+            outcome = self._repository.revoke_review_session(
+                _digest(session_token), _digest(csrf_token), self._clock()
             )
         except Exception as error:
             raise ReviewWebError("persistence") from error
+        if outcome != "revoked":
+            raise ReviewWebError(outcome if outcome in {"unauthorized", "csrf"} else "persistence")
 
 
 class InspectCurrentReviewCase:
@@ -312,7 +320,17 @@ class RecordHumanDecision:
         idempotency_key: str,
     ) -> dict[str, object]:
         try:
-            raw = json.loads(self._repository.get_review_case(review_case_id))
+            try:
+                case_document = self._repository.get_review_case(review_case_id)
+            except Exception as error:
+                try:
+                    exists = self._repository.review_case_exists(review_case_id)
+                except Exception as persistence_error:
+                    raise ReviewWebError("persistence") from persistence_error
+                raise ReviewWebError(
+                    "persistence" if exists else "not_found"
+                ) from error
+            raw = json.loads(case_document)
             if (
                 type(raw) is not dict
                 or raw.get("current") is not True

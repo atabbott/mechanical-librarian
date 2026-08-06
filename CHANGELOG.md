@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Align the authenticated review API contract with runtime behavior. Protected
+  operations now declare the owner API-key cookie and required mutation
+  headers; absent decision cases return not-found, and logout distinguishes
+  invalid sessions, CSRF mismatch, and revocation outages without clearing a
+  still-active cookie. The deterministic generated reference carries the same
+  private, value-free contract. (#460)
+
 - Project exact-current model advice from only the latest persisted
   reevaluation attempt. A newer pending attempt is no longer hidden by an
   older failure, and a newer failure cannot resurface stale successful advice;

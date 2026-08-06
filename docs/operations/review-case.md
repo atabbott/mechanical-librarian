@@ -72,6 +72,10 @@ explicit `accept`, `keep_current`, or `reject` outcome, a 16–128 character
 `Idempotency-Key`, the session CSRF token, and an exact proposed value for
 `accept`. Same-key/same-payload retries return the original acknowledgement;
 conflicts and stale state fail without a partial decision or event.
+The generated OpenAPI marks the owner session cookie and required mutation
+headers explicitly. Decision attempts for absent case IDs return `404`, while
+invalid sessions return `401`, CSRF mismatches return `403`, and persistence
+outages return `503`. Logout clears the cookie only after revocation succeeds.
 Authenticated `/library` provides bounded attention-first, all, and
 no-attention-needed lenses; `/attention` contains only exact unresolved/manual
 fields and links to the exact field on detail. Both support bounded search,

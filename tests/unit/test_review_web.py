@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 import tempfile
+import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
@@ -65,6 +66,9 @@ class _Repository:
         self.failures: list[int] = []
         self.sessions: dict[str, tuple[str, str, int, int | None]] = {}
         self.decisions: dict[str, str] = {}
+        self.revoke_failure = False
+        self.revoke_result = "revoked"
+        self.existence_failure = False
 
     def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
         self.failures = [value for value in self.failures if value >= now - window_seconds]
@@ -91,9 +95,28 @@ class _Repository:
             raise RuntimeError
         self.sessions[session_digest] = (actor, csrf_digest, expires, None)
 
-    def revoke_review_session(self, session_digest: str, now: int) -> None:
-        actor, csrf, expires, _ = self.sessions[session_digest]
+    def revoke_review_session(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> str:
+        if self.revoke_failure:
+            raise RuntimeError
+        if self.revoke_result != "revoked":
+            return self.revoke_result
+        session = self.sessions.get(session_digest)
+        if session is None:
+            return "unauthorized"
+        actor, csrf, expires, revoked = session
+        if revoked is not None or expires <= now:
+            return "unauthorized"
+        if csrf != csrf_digest:
+            return "csrf"
         self.sessions[session_digest] = (actor, csrf, expires, now)
+        return "revoked"
+
+    def review_case_exists(self, review_case_id: str) -> bool:
+        if self.existence_failure:
+            raise RuntimeError
+        return review_case_id == self.case.review_case_id
 
     def get_review_case(self, review_case_id: str) -> str:
         if review_case_id != self.case.review_case_id:
@@ -260,6 +283,31 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(denied.json()["error"]["code"], "unauthorized")
         self.assertEqual(denied.headers["cache-control"], "no-store, private")
 
+    def test_trust_boundary_failures_match_declared_api_statuses(self) -> None:
+        bad_host = self.client.get(
+            f"/api/v1/review-cases/{self.case.review_case_id}",
+            headers={"Host": "elsewhere.invalid"},
+        )
+        self.assertEqual(bad_host.status_code, 400)
+        self.assertEqual(bad_host.json()["error"]["code"], "invalid_origin")
+        bad_origin = self.client.post(
+            "/api/v1/session/login",
+            headers={"Origin": "https://elsewhere.invalid"},
+            json={"password": "correct horse"},
+        )
+        self.assertEqual(bad_origin.status_code, 403)
+        self.assertEqual(bad_origin.json()["error"]["code"], "origin")
+
+    def test_decision_authentication_precedes_required_input_validation(self) -> None:
+        self.client.cookies.set("ml_session", "malformed")
+        denied = self.client.post(
+            f"/api/v1/review-cases/{self.case.review_case_id}/decisions",
+            headers=self.origin,
+            json={},
+        )
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(denied.json()["error"]["code"], "unauthorized")
+
     def test_login_case_evidence_history_and_logout_round_trip(self) -> None:
         login = self._login()
         cookie = self.client.cookies.get("ml_session")
@@ -284,6 +332,11 @@ class ReviewWebTests(unittest.TestCase):
         self.assertIn("Exact evaluator candidate", evidence.json()["items"][0]["fact"])
         self.assertEqual(history.json()["items"][0]["kind"], "admitted")
         self.assertIn("default-src 'none'", detail.headers["content-security-policy"])
+        missing = self.client.post(
+            "/api/v1/session/logout",
+            headers=self.origin,
+        )
+        self.assertEqual(missing.status_code, 422)
         wrong = self.client.post(
             "/api/v1/session/logout",
             headers={**self.origin, "X-CSRF-Token": "x" * 32},
@@ -296,6 +349,84 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(logout.status_code, 204)
         denied = self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}")
         self.assertEqual(denied.status_code, 401)
+
+    def test_logout_persistence_failure_keeps_the_session_active(self) -> None:
+        login = self._login()
+        self.repository.revoke_failure = True
+        failed = self.client.post(
+            "/api/v1/session/logout",
+            headers={**self.origin, "X-CSRF-Token": login["csrf_token"]},
+        )
+        self.assertEqual(failed.status_code, 503)
+        self.assertEqual(failed.json()["error"]["code"], "persistence")
+        self.assertIsNotNone(self.client.cookies.get("ml_session"))
+        detail = self.client.get(
+            f"/api/v1/review-cases/{self.case.review_case_id}"
+        )
+        self.assertEqual(detail.status_code, 200)
+
+    def test_logout_concurrent_revocation_is_unauthorized_not_an_outage(self) -> None:
+        login = self._login()
+        self.repository.revoke_result = "unauthorized"
+        failed = self.client.post(
+            "/api/v1/session/logout",
+            headers={**self.origin, "X-CSRF-Token": login["csrf_token"]},
+        )
+        self.assertEqual(failed.status_code, 401)
+        self.assertEqual(failed.json()["error"]["code"], "unauthorized")
+        self.assertNotIn("set-cookie", failed.headers)
+
+    def test_logout_maps_expired_and_malformed_sessions_to_unauthorized(self) -> None:
+        login = self._login()
+        self.now += 601
+        expired = self.client.post(
+            "/api/v1/session/logout",
+            headers=self.origin,
+        )
+        self.assertEqual(expired.status_code, 401)
+        self.assertEqual(expired.json()["error"]["code"], "unauthorized")
+        self.assertNotIn("set-cookie", expired.headers)
+
+        self.client.cookies.clear()
+        self.client.cookies.set("ml_session", "malformed")
+        malformed = self.client.post(
+            "/api/v1/session/logout",
+            headers=self.origin,
+        )
+        self.assertEqual(malformed.status_code, 401)
+        self.assertEqual(malformed.json()["error"]["code"], "unauthorized")
+        self.assertNotIn("set-cookie", malformed.headers)
+
+    def test_absent_decision_case_is_not_a_persistence_outage(self) -> None:
+        login = self._login()
+        detail = self.client.get(
+            f"/api/v1/review-cases/{self.case.review_case_id}"
+        ).json()
+        field = detail["fields"][0]
+        payload = {
+            "destination": field["destination"],
+            "outcome": "accept",
+            "proposal_id": field["proposal_id"],
+            "selected_value": field["proposed_values"][0],
+            "target_fingerprint": field["target_fingerprint"],
+        }
+        url = "/api/v1/review-cases/review_case_" + "f" * 64 + "/decisions"
+        headers = {
+            **self.origin,
+            "X-CSRF-Token": login["csrf_token"],
+            "Idempotency-Key": "decision-request-absent",
+        }
+        absent = self.client.post(url, headers=headers, json=payload)
+        self.assertEqual(absent.status_code, 404)
+        self.assertEqual(absent.json()["error"]["code"], "not_found")
+        self.assertFalse(self.repository.decisions)
+
+        self.repository.existence_failure = True
+        unavailable = self.client.post(url, headers=headers, json=payload)
+        self.assertEqual(unavailable.status_code, 503)
+        self.assertEqual(
+            unavailable.json()["error"]["code"], "persistence"
+        )
 
     def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
         self,
@@ -317,7 +448,7 @@ class ReviewWebTests(unittest.TestCase):
             headers={**self.origin, "Idempotency-Key": "decision-request-0001"},
             json=payload,
         )
-        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(denied.status_code, 422)
         accepted = self.client.post(
             f"/api/v1/review-cases/{self.case.review_case_id}/decisions",
             headers={
@@ -485,6 +616,71 @@ class ReviewWebTests(unittest.TestCase):
             "/api/v1/review-cases/{review_case_id}/decisions"
         ]["post"]
         self.assertIn("404", decision_operation["responses"])
+        self.assertEqual(
+            expected["components"]["securitySchemes"]["OwnerSession"],
+            {"in": "cookie", "name": "ml_session", "type": "apiKey"},
+        )
+        self.assertEqual(
+            decision_operation["security"], [{"OwnerSession": []}]
+        )
+        protected_operations = {
+            (method, path)
+            for path, path_item in expected["paths"].items()
+            for method, operation in path_item.items()
+            if operation.get("security") == [{"OwnerSession": []}]
+        }
+        self.assertEqual(
+            protected_operations,
+            {
+                ("get", "/api/v1/attention"),
+                ("get", "/api/v1/library"),
+                ("get", "/api/v1/review-cases/{review_case_id}"),
+                ("get", "/api/v1/review-cases/{review_case_id}/evidence"),
+                ("get", "/api/v1/review-cases/{review_case_id}/history"),
+                ("post", "/api/v1/review-cases/{review_case_id}/decisions"),
+                ("post", "/api/v1/session/logout"),
+            },
+        )
+        response_statuses = {
+            (method, path): set(operation["responses"])
+            for path, path_item in expected["paths"].items()
+            for method, operation in path_item.items()
+        }
+        self.assertEqual(
+            response_statuses[("post", "/api/v1/session/login")],
+            {"200", "400", "401", "403", "413", "422", "429", "503"},
+        )
+        self.assertEqual(
+            response_statuses[("post", "/api/v1/session/logout")],
+            {"204", "400", "401", "403", "422", "503"},
+        )
+        self.assertEqual(
+            response_statuses[
+                ("post", "/api/v1/review-cases/{review_case_id}/decisions")
+            ],
+            {"200", "400", "401", "403", "404", "409", "413", "422", "503"},
+        )
+        for path in (
+            "/api/v1/review-cases/{review_case_id}",
+            "/api/v1/review-cases/{review_case_id}/evidence",
+            "/api/v1/review-cases/{review_case_id}/history",
+        ):
+            self.assertEqual(
+                response_statuses[("get", path)],
+                {"200", "400", "401", "404", "409", "422"},
+            )
+        for path in ("/api/v1/library", "/api/v1/attention"):
+            self.assertEqual(
+                response_statuses[("get", path)],
+                {"200", "400", "401", "422", "503"},
+            )
+        headers = {
+            value["name"]: value
+            for value in decision_operation["parameters"]
+            if value["in"] == "header"
+        }
+        self.assertTrue(headers["x-csrf-token"]["required"])
+        self.assertTrue(headers["idempotency-key"]["required"])
         invalid = self.client.post(
             "/api/v1/session/login",
             headers=self.origin,
@@ -751,6 +947,48 @@ class ReviewWebTests(unittest.TestCase):
 
 
 class ReviewSessionPersistenceTests(unittest.TestCase):
+
+    def test_sqlite_logout_classification_is_atomic_across_connections(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "application.sqlite3"
+            first = open_repository(database, cross_thread=True)
+            second = open_repository(database, cross_thread=True)
+            first.create_review_session("a" * 64, "c" * 64, 100, 200)
+            competing_started = threading.Event()
+            competing_outcomes: list[str] = []
+            competing_errors: list[BaseException] = []
+
+            def competing_logout() -> None:
+                competing_started.set()
+                try:
+                    competing_outcomes.append(
+                        second.revoke_review_session(
+                            "a" * 64, "c" * 64, 151
+                        )
+                    )
+                except BaseException as error:
+                    competing_errors.append(error)
+
+            competing = threading.Thread(target=competing_logout)
+
+            def interleave(statement: str) -> None:
+                if statement.startswith("SELECT 1 FROM review_sessions"):
+                    competing.start()
+                    self.assertTrue(competing_started.wait(timeout=1))
+
+            first._connection.set_trace_callback(interleave)
+            self.assertEqual(
+                first.revoke_review_session("a" * 64, "d" * 64, 151),
+                "csrf",
+            )
+            first._connection.set_trace_callback(None)
+            competing.join(timeout=2)
+            self.assertFalse(competing.is_alive())
+            self.assertFalse(competing_errors)
+            self.assertEqual(competing_outcomes, ["revoked"])
+            first.close()
+            second.close()
+
     def test_pre_decision_application_schema_is_rejected_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "application.sqlite3"
@@ -1061,7 +1299,27 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 reopened.authenticate_review_session("a" * 64, 150),
                 ("owner", "c" * 64, 200),
             )
-            reopened.revoke_review_session("a" * 64, 151)
+            self.assertEqual(
+                reopened.revoke_review_session("a" * 64, "d" * 64, 151),
+                "csrf",
+            )
+            self.assertEqual(
+                reopened.authenticate_review_session("a" * 64, 151),
+                ("owner", "c" * 64, 200),
+            )
+            self.assertEqual(
+                reopened.revoke_review_session("a" * 64, "c" * 64, 151),
+                "revoked",
+            )
+            self.assertEqual(
+                reopened.revoke_review_session("a" * 64, "c" * 64, 151),
+                "unauthorized",
+            )
+            reopened.create_review_session("e" * 64, "f" * 64, 100, 200)
+            self.assertEqual(
+                reopened.revoke_review_session("e" * 64, "f" * 64, 200),
+                "unauthorized",
+            )
             with self.assertRaises(Exception):
                 reopened.authenticate_review_session("a" * 64, 152)
             with self.assertRaises(Exception):

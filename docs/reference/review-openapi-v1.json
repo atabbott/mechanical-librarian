@@ -1052,6 +1052,13 @@
         "title": "_TargetIdentity",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "OwnerSession": {
+        "in": "cookie",
+        "name": "ml_session",
+        "type": "apiKey"
+      }
     }
   },
   "info": {
@@ -1109,22 +1116,6 @@
               ],
               "title": "Cursor"
             }
-          },
-          {
-            "in": "cookie",
-            "name": "ml_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Ml Session"
-            }
           }
         ],
         "responses": {
@@ -1179,6 +1170,11 @@
             "description": "Service Unavailable"
           }
         },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
         "summary": "Attention"
       }
     },
@@ -1242,22 +1238,6 @@
               ],
               "title": "Cursor"
             }
-          },
-          {
-            "in": "cookie",
-            "name": "ml_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Ml Session"
-            }
           }
         ],
         "responses": {
@@ -1312,6 +1292,11 @@
             "description": "Service Unavailable"
           }
         },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
         "summary": "Library"
       }
     },
@@ -1327,22 +1312,6 @@
               "title": "Review Case Id",
               "type": "string"
             }
-          },
-          {
-            "in": "cookie",
-            "name": "ml_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Ml Session"
-            }
           }
         ],
         "responses": {
@@ -1355,6 +1324,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
           },
           "401": {
             "content": {
@@ -1397,6 +1376,11 @@
             "description": "Unprocessable Content"
           }
         },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
         "summary": "Case Detail"
       }
     },
@@ -1416,51 +1400,21 @@
           {
             "in": "header",
             "name": "x-csrf-token",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Csrf-Token"
+              "title": "X-Csrf-Token",
+              "type": "string"
             }
           },
           {
             "in": "header",
             "name": "idempotency-key",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 128,
-                  "minLength": 16,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "ml_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Ml Session"
+              "maxLength": 128,
+              "minLength": 16,
+              "title": "Idempotency-Key",
+              "type": "string"
             }
           }
         ],
@@ -1484,6 +1438,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
           },
           "401": {
             "content": {
@@ -1556,6 +1520,11 @@
             "description": "Service Unavailable"
           }
         },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
         "summary": "Record Decision"
       }
     },
@@ -1571,22 +1540,6 @@
               "title": "Review Case Id",
               "type": "string"
             }
-          },
-          {
-            "in": "cookie",
-            "name": "ml_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Ml Session"
-            }
           }
         ],
         "responses": {
@@ -1599,6 +1552,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
           },
           "401": {
             "content": {
@@ -1641,6 +1604,11 @@
             "description": "Unprocessable Content"
           }
         },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
         "summary": "Case Evidence"
       }
     },
@@ -1656,22 +1624,6 @@
               "title": "Review Case Id",
               "type": "string"
             }
-          },
-          {
-            "in": "cookie",
-            "name": "ml_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Ml Session"
-            }
           }
         ],
         "responses": {
@@ -1684,6 +1636,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
           },
           "401": {
             "content": {
@@ -1726,6 +1688,11 @@
             "description": "Unprocessable Content"
           }
         },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
         "summary": "Case History"
       }
     },
@@ -1753,6 +1720,16 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
           "401": {
             "content": {
               "application/json": {
@@ -1762,6 +1739,16 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
           },
           "413": {
             "content": {
@@ -1814,39 +1801,26 @@
           {
             "in": "header",
             "name": "x-csrf-token",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Csrf-Token"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "ml_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Ml Session"
+              "title": "X-Csrf-Token",
+              "type": "string"
             }
           }
         ],
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
           },
           "401": {
             "content": {
@@ -1877,8 +1851,23 @@
               }
             },
             "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
         "summary": "Logout"
       }
     }

@@ -16,9 +16,20 @@ from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
-from fastapi import Cookie, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import (
+    Cookie,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    Security,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.security import APIKeyCookie
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from starlette.types import Message, Receive, Scope, Send
 
@@ -345,6 +356,19 @@ def create_review_app(
         openapi_url=None,
         lifespan=lifespan,
     )
+    session_cookie = APIKeyCookie(
+        name=_COOKIE_NAME,
+        scheme_name="OwnerSession",
+        auto_error=False,
+    )
+
+    def authenticated_session_cookie(
+        ml_session: str | None = Security(session_cookie),
+    ) -> str:
+        _require_session(sessions, ml_session)
+        assert ml_session is not None
+        return ml_session
+
     app.add_middleware(
         _BodyLimitMiddleware,
         maximum_bytes=2048,
@@ -375,7 +399,7 @@ def create_review_app(
         response_model=_SessionResponse,
         responses={
             status: {"model": _ErrorResponse}
-            for status in (401, 413, 422, 429, 503)
+            for status in (400, 401, 403, 413, 422, 429, 503)
         },
     )
     def login(payload: _LoginRequest, response: Response) -> _SessionResponse:
@@ -408,20 +432,23 @@ def create_review_app(
         "/api/v1/session/logout",
         status_code=204,
         responses={
-            status: {"model": _ErrorResponse} for status in (401, 403, 422)
+            status: {"model": _ErrorResponse}
+            for status in (400, 401, 403, 422, 503)
         },
     )
     def logout(
         response: Response,
-        ml_session: str | None = Cookie(default=None),
-        x_csrf_token: str | None = Header(default=None),
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
     ) -> Response:
-        if ml_session is None or x_csrf_token is None:
-            raise HTTPException(403, detail={"code": "csrf"})
         try:
             sessions.logout(ml_session, x_csrf_token)
         except ReviewWebError as error:
-            status = 403 if error.code == "csrf" else 401
+            status = {
+                "csrf": 403,
+                "persistence": 503,
+                "unauthorized": 401,
+            }.get(error.code, 503)
             raise HTTPException(status, detail={"code": error.code}) from None
         response.delete_cookie(_COOKIE_NAME, path="/", secure=True, httponly=True, samesite="strict")
         response.status_code = 204
@@ -432,12 +459,12 @@ def create_review_app(
         response_model=_CaseDetailResponse,
         responses={
             status: {"model": _ErrorResponse}
-            for status in (401, 404, 409, 422)
+            for status in (400, 401, 404, 409, 422)
         },
     )
     def case_detail(
         review_case_id: str,
-        ml_session: str | None = Cookie(default=None),
+        ml_session: str | None = Security(session_cookie),
     ) -> _CaseDetailResponse:
         _require_session(sessions, ml_session)
         _require_case_id(review_case_id)
@@ -450,24 +477,20 @@ def create_review_app(
         response_model=_DecisionAcknowledgement,
         responses={
             status: {"model": _ErrorResponse}
-            for status in (401, 403, 404, 409, 413, 422, 503)
+            for status in (400, 401, 403, 404, 409, 413, 422, 503)
         },
     )
     def record_decision(
         review_case_id: str,
         payload: _DecisionRequest,
-        ml_session: str | None = Cookie(default=None),
-        x_csrf_token: str | None = Header(default=None),
-        idempotency_key: str | None = Header(
-            default=None, min_length=16, max_length=128
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+        idempotency_key: str = Header(
+            min_length=16, max_length=128
         ),
     ) -> _DecisionAcknowledgement:
-        if x_csrf_token is None:
-            raise HTTPException(403, detail={"code": "csrf"})
         actor = _require_session(sessions, ml_session, x_csrf_token)
         _require_case_id(review_case_id)
-        if idempotency_key is None:
-            raise HTTPException(422, detail={"code": "invalid"})
         return _DecisionAcknowledgement.model_validate(
             _decision_call(
                 lambda: decisions.run(
@@ -489,7 +512,7 @@ def create_review_app(
 
     @app.get("/api/v1/openapi.json", include_in_schema=False)
     def openapi_document(
-        ml_session: str | None = Cookie(default=None),
+        ml_session: str | None = Security(session_cookie),
     ) -> JSONResponse:
         _require_session(sessions, ml_session)
         return JSONResponse(app.openapi())
@@ -507,7 +530,7 @@ def create_review_app(
         q: str | None = Query(default=None, max_length=128),
         limit: int = Query(default=25, ge=1, le=50),
         cursor: str | None = Query(default=None, max_length=128),
-        ml_session: str | None = Cookie(default=None),
+        ml_session: str | None = Security(session_cookie),
     ) -> _LibraryResponse:
         _require_session(sessions, ml_session)
         return _LibraryResponse.model_validate(
@@ -533,7 +556,7 @@ def create_review_app(
         q: str | None = Query(default=None, max_length=128),
         limit: int = Query(default=25, ge=1, le=50),
         cursor: str | None = Query(default=None, max_length=128),
-        ml_session: str | None = Cookie(default=None),
+        ml_session: str | None = Security(session_cookie),
     ) -> _AttentionResponse:
         _require_session(sessions, ml_session)
         return _AttentionResponse.model_validate(
@@ -551,12 +574,12 @@ def create_review_app(
         response_model=_EvidenceResponse,
         responses={
             status: {"model": _ErrorResponse}
-            for status in (401, 404, 409, 422)
+            for status in (400, 401, 404, 409, 422)
         },
     )
     def case_evidence(
         review_case_id: str,
-        ml_session: str | None = Cookie(default=None),
+        ml_session: str | None = Security(session_cookie),
     ) -> _EvidenceResponse:
         _require_session(sessions, ml_session)
         _require_case_id(review_case_id)
@@ -569,12 +592,12 @@ def create_review_app(
         response_model=_HistoryResponse,
         responses={
             status: {"model": _ErrorResponse}
-            for status in (401, 404, 409, 422)
+            for status in (400, 401, 404, 409, 422)
         },
     )
     def case_history(
         review_case_id: str,
-        ml_session: str | None = Cookie(default=None),
+        ml_session: str | None = Security(session_cookie),
     ) -> _HistoryResponse:
         _require_session(sessions, ml_session)
         _require_case_id(review_case_id)
@@ -695,13 +718,21 @@ class _SerializedReviewRepository:
                 session_digest, csrf_digest, now
             )
 
-    def revoke_review_session(self, session_digest: str, now: int) -> None:
+    def revoke_review_session(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> str:
         with self._lock:
-            self._repository.revoke_review_session(session_digest, now)
+            return self._repository.revoke_review_session(
+                session_digest, csrf_digest, now
+            )
 
     def get_review_case(self, review_case_id: str) -> str:
         with self._lock:
             return self._repository.get_review_case(review_case_id)
+
+    def review_case_exists(self, review_case_id: str) -> bool:
+        with self._lock:
+            return self._repository.review_case_exists(review_case_id)
 
     def get_review_case_report(self, review_case_id: str) -> str:
         with self._lock:
@@ -822,6 +853,7 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
             "idempotency_conflict": 409,
             "invalid": 422,
             "invalid_selection": 422,
+            "not_found": 404,
             "unsupported": 422,
             "persistence": 503,
         }.get(error.code, 503)
