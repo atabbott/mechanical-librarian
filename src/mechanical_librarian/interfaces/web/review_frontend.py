@@ -324,7 +324,8 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 @media (max-width: 700px) {
   .topbar { min-height: 56px; padding: 7px 10px; }
   .brand-mark { width: 36px; height: 36px; }
-  .brand strong, .brand small, .private-pill, .sign-out { display: none; }
+  .brand strong, .brand small, .private-pill { display: none; }
+  .sign-out { display: inline-flex; padding: 0 9px; }
   .theme-toggle { min-width: 44px; padding: 0 9px; }
   .theme-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .workspace-navigation { top: 56px; }
