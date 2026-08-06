@@ -202,6 +202,7 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .workspace-context { margin-left: auto; color: var(--ink-soft); font-size: .61rem; }
 
 .prototype-shell { width: 100%; max-width: 1540px; margin: auto; padding: 22px clamp(12px, 2.4vw, 30px) 70px; }
+.library-page:focus-visible, .attention-page:focus-visible, .detail-page:focus-visible { outline: none; }
 .page-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 18px; margin-bottom: 16px; }
 .page-heading h1 { margin-bottom: 6px; }
 .page-heading p { max-width: 66ch; margin-bottom: 0; color: var(--ink-soft); }
@@ -531,7 +532,7 @@ if (libraryRoot) {
     preview.append(book, element("p", "Current review cases", "eyebrow"), element("h2", data.items.length ? "Choose a work to review its exact-current fields." : "This view is clear."), element("p", data.items.length ? "Each decision is recorded as an immutable human outcome. This workspace never writes to your target library." : "Try another lens or search term to inspect other bounded cases."));
     workspace.append(list, preview);
     libraryRoot.replaceChildren(top, tools, workspace);
-    libraryRoot.focus();
+    libraryRoot.focus({preventScroll: true});
   }).catch(() => failPage(libraryRoot));
 }
 
@@ -559,7 +560,7 @@ if (attentionRoot) {
     list.append(pagination);
     const preview = element("aside", null, "workspace-preview"); const icon = element("span", "!", "work-mark preview-book"); icon.setAttribute("aria-hidden", "true");
     preview.append(icon, element("p", "Decision boundary", "eyebrow"), element("h2", data.items.length ? "Open a field to compare current and proposed outcomes." : "Nothing needs your attention."), element("p", "Automatic decisions are never created here. Human choices are durable, explicit, and limited to the current case."));
-    workspace.append(list, preview); attentionRoot.replaceChildren(top, tools, workspace); attentionRoot.focus();
+    workspace.append(list, preview); attentionRoot.replaceChildren(top, tools, workspace); attentionRoot.focus({preventScroll: true});
   }).catch(() => failPage(attentionRoot));
 }
 
@@ -678,7 +679,7 @@ if (root) {
     historyDetails.append(historyInner); content.append(historyDetails);
     shell.append(sidebar, content); root.replaceChildren(shell);
     const stripPosition = Number.parseInt(parameters.get("strip") || "0", 10); if (Number.isSafeInteger(stripPosition) && stripPosition >= 0) strip.scrollLeft = stripPosition;
-    const selected = parameters.get("field"); const target = (selected ? document.querySelector(`#field-${CSS.escape(selected)}`) : null) || root; target.focus();
+    const selected = parameters.get("field"); const target = (selected ? document.querySelector(`#field-${CSS.escape(selected)}`) : null) || root; target.focus(target === root ? {preventScroll: true} : undefined);
   }).catch(error => {
     if (error.status === 401) { location.assign("/login"); return; }
     const box = element("section", null, "error-state"); const alert = element("p", "The exact current case could not be loaded. Return to the library and reopen the current case."); alert.setAttribute("role", "alert"); const link = element("a", "Return to library", "recovery"); link.href = "/library"; box.append(element("p", "Exact-current protection", "eyebrow"), element("h1", "Case unavailable"), alert, link); root.replaceChildren(box); root.focus();
