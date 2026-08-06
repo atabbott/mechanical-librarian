@@ -297,13 +297,25 @@ class InspectCurrentReviewCase:
         evidence = _evidence_by_reference(report)
         if wanted.difference(evidence):
             raise ReviewWebError("not_found")
+        reference_set_digest = hashlib.sha256(
+            json.dumps(
+                sorted(wanted),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
         ordered = [
             evidence[reference]
             for reference in sorted(wanted)
             if reference in evidence
         ]
         bounded_limit = min(max(limit, 1), 50)
-        offset = _decode_cursor(cursor, "evidence", review_case_id, None)
+        offset = _decode_cursor(
+            cursor,
+            "evidence",
+            review_case_id,
+            reference_set_digest,
+        )
         bounded = ordered[offset : offset + bounded_limit]
         return {
             "items": bounded,
@@ -312,7 +324,7 @@ class InspectCurrentReviewCase:
                     offset + bounded_limit,
                     "evidence",
                     review_case_id,
-                    None,
+                    reference_set_digest,
                 )
                 if offset + bounded_limit < len(ordered)
                 else None

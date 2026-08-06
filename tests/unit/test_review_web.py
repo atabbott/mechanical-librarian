@@ -530,6 +530,20 @@ class ReviewWebTests(unittest.TestCase):
                     "review_case_" + "d" * 64,
                     cursor=first["next_cursor"],
                 )
+            changed_detail = {
+                **detail,
+                "model_advice": {"results": []},
+            }
+            with patch.object(
+                cases,
+                "_read",
+                return_value=(changed_detail, report, ()),
+            ):
+                with self.assertRaises(ReviewWebError):
+                    cases.evidence(
+                        "review_case_" + "c" * 64,
+                        cursor=first["next_cursor"],
+                    )
         reopened_cases = InspectCurrentReviewCase(Mock())
         with patch.object(
             reopened_cases,
