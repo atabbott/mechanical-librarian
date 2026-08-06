@@ -52,12 +52,41 @@ success. Earlier schemas are rejected under the clean-state policy.
 
 ## Authenticated exact-current inspection
 
-With an exact-current application database and explicit `review` configuration:
+With an exact-current application database and explicit `review` configuration,
+the supported serving boundary terminates TLS directly in `review-serve`:
 
 ```sh
 mechanical-librarian review-serve --config config.json \
-  --database reports.sqlite --host 127.0.0.1 --port 8080
+  --database reports.sqlite --host 127.0.0.1 --port 8443
 ```
+
+The configured `canonical_origin` must name that exact external HTTPS origin,
+including a non-default port. Configure both `tls_certificate_file` and
+`tls_private_key_file` as absolute paths to one matching identity, and make
+the certificate owner-controlled and the private key owner-only regular files
+(`chmod 644` and `chmod 600`, respectively). Missing, linked, writable-by-other,
+unreadable, malformed, or mismatched inputs fail before the database or network
+listener opens. There is no supported HTTP fallback. Forwarded proxy identity
+is not accepted by Uvicorn; application proxy trust remains an explicit,
+bounded allow-list and should normally stay empty for direct TLS.
+
+For an isolated development qualification only, a synthetic one-day identity
+can be created and then referenced from the two configuration fields:
+
+```sh
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout review-test.key -out review-test.crt -days 1 \
+  -subj '/CN=127.0.0.1' -addext 'subjectAltName=IP:127.0.0.1'
+chmod 644 review-test.crt
+chmod 600 review-test.key
+curl --cacert review-test.crt https://127.0.0.1:8443/health/live
+```
+
+This synthetic command is not production certificate management. Operators
+remain responsible for obtaining, rotating, and securely mounting a certificate
+whose names cover the canonical origin; the application neither issues nor
+renews certificates. Container health probes must use the same HTTPS liveness
+URL and trust the mounted certificate rather than downgrading the endpoint.
 
 Only `/health/live` is anonymous operational data. The login surface verifies
 the owner-only Argon2id hash file, applies a durable bounded throttle, and

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add one supported canonical-HTTPS path for `review-serve`. Explicit
+  certificate and private-key configuration is validated as a matching,
+  owner-controlled descriptor-bound identity with an owner-only key before
+  database or listener startup;
+  the server has no plaintext escape hatch and retains the existing canonical
+  Host/Origin, secure-cookie, HSTS, and proxy-distrust boundary. (#459)
+
 - Align the authenticated review API contract with runtime behavior. Protected
   operations now declare the owner API-key cookie and required mutation
   headers; absent decision cases return not-found, and logout distinguishes

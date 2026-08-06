@@ -62,6 +62,7 @@ from mechanical_librarian.application.batch import BatchError, BatchSelection, b
 from mechanical_librarian.application.batch_run import ForegroundBatchRun
 from mechanical_librarian.application.catalogue import CatalogueError, RefreshCurrentCatalogue
 from mechanical_librarian.application.configuration import (
+    ConfigurationError,
     MediaMountConfiguration,
     ProviderConnectionConfiguration,
 )
@@ -137,6 +138,9 @@ from mechanical_librarian.infrastructure.security.credentials import (
     read_secret,
     target_client,
     target_client_token,
+)
+from mechanical_librarian.infrastructure.security.review_tls import (
+    open_review_tls_identity,
 )
 from mechanical_librarian.interfaces.cli import main as cli_main
 from mechanical_librarian.interfaces.web import create_review_app
@@ -970,23 +974,29 @@ def run_review_server(
     configuration = load_configuration_file(config_path)
     if configuration.review is None:
         raise ReviewCaseError("configuration")
-    repository = open_repository(database_path, create=False, cross_thread=True)
-    try:
-        app = create_review_app(
-            repository, configuration.review, close_repository=True
-        )
-    except Exception:
-        repository.close()
-        raise
-    uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        proxy_headers=False,
-        server_header=False,
-        date_header=False,
-        access_log=False,
-    )
+    review = configuration.review
+    if review.tls_certificate_file is None or review.tls_private_key_file is None:
+        raise ConfigurationError("review TLS configuration is unavailable")
+    with open_review_tls_identity(
+        review.tls_certificate_file, review.tls_private_key_file
+    ) as tls:
+        repository = open_repository(database_path, create=False, cross_thread=True)
+        try:
+            app = create_review_app(repository, review, close_repository=True)
+            uvicorn.run(
+                app,
+                host=host,
+                port=port,
+                proxy_headers=False,
+                server_header=False,
+                date_header=False,
+                access_log=False,
+                ssl_certfile=tls.certificate_file,
+                ssl_keyfile=tls.private_key_file,
+            )
+        except Exception:
+            repository.close()
+            raise
 
 
 def main(argv: Sequence[str] | None = None) -> int:

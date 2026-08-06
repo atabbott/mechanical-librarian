@@ -486,6 +486,36 @@
           "title": "Session Lifetime Seconds",
           "type": "integer"
         },
+        "tls_certificate_file": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tls Certificate File"
+        },
+        "tls_private_key_file": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tls Private Key File"
+        },
         "trusted_proxy_ips": {
           "default": [],
           "items": {

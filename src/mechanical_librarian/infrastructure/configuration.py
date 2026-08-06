@@ -172,6 +172,8 @@ class LimitsInput(_Closed):
 class ReviewInput(_Closed):
     canonical_origin: Annotated[StrictStr, Field(min_length=8, max_length=512)]
     owner_password_hash_file: BoundedAbsolutePath
+    tls_certificate_file: BoundedAbsolutePath | None = None
+    tls_private_key_file: BoundedAbsolutePath | None = None
     session_lifetime_seconds: Annotated[
         StrictInt, Field(ge=300, le=86_400)
     ] = 3600
@@ -212,6 +214,8 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
             else ReviewWebConfiguration(
                 canonical_origin=value.review.canonical_origin,
                 owner_password_hash_file=value.review.owner_password_hash_file,
+                tls_certificate_file=value.review.tls_certificate_file,
+                tls_private_key_file=value.review.tls_private_key_file,
                 session_lifetime_seconds=value.review.session_lifetime_seconds,
                 trusted_proxy_ips=tuple(sorted(value.review.trusted_proxy_ips)),
             ),

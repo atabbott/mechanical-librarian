@@ -61,6 +61,16 @@ sabotage is outside the supported threat model.
 
 ## Authenticated review surface
 
+The supported network path terminates TLS directly in `review-serve`. Its
+certificate and private-key paths are explicit schema fields, must be supplied
+together as bounded owner-controlled regular no-follow files with an owner-only
+private key, and are opened and validated as one matching identity before the
+application database or listener is opened. The retained descriptors prevent
+path replacement from changing the
+served identity after validation. No environment substitution, plaintext mode,
+TLS-disable flag, ambient proxy-header handling, certificate issuance, or
+certificate renewal authority is present.
+
 The #447 review server adds one private owner-facing HTTP entry point and no
 target-service client. An unauthenticated network client can reach only bounded
 liveness, the login form/assets, and the fixed login failure envelope. Review

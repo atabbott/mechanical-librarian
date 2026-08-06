@@ -67,6 +67,8 @@ uv run --frozen python scripts/generate_configuration_schema.py
   "review": {
     "canonical_origin": "https://review.example.invalid",
     "owner_password_hash_file": "/run/secrets/review-owner.argon2",
+    "tls_certificate_file": "/run/secrets/review-tls.crt",
+    "tls_private_key_file": "/run/secrets/review-tls.key",
     "session_lifetime_seconds": 3600,
     "trusted_proxy_ips": []
   }
@@ -125,11 +127,17 @@ ranking policy:
 Optional `review` configuration is required by `review-serve` and ignored by
 report-only commands. `canonical_origin` is one exact HTTPS origin. The owner
 hash file is an absolute, owner-only regular no-follow file containing one
-Argon2id PHC string. Session lifetime is 300–86,400 seconds. Proxy forwarding
-is disabled unless the direct peer is one of at most 16 explicitly listed
-`trusted_proxy_ips`; forwarded Host or scheme headers from any other peer fail
-closed. No password, raw session token, or CSRF token is stored in
-configuration or the application database.
+Argon2id PHC string. `tls_certificate_file` and `tls_private_key_file` are an
+all-or-nothing pair of absolute, owner-controlled regular no-follow files; the
+private key must be owner-only. The server validates that they contain one
+matching TLS identity before it opens the application database and retains the
+validated file descriptors for the
+server's lifetime. `review-serve` has no plaintext or TLS-disable mode. Session
+lifetime is 300–86,400 seconds. Proxy forwarding is disabled unless the direct
+peer is one of at most 16 explicitly listed `trusted_proxy_ips`; forwarded Host
+or scheme headers from any other peer fail closed. No password, private-key
+contents, raw session token, or CSRF token is stored in configuration or the
+application database.
 
 There are no provider defaults, inheritance, overrides, weights, priorities,
 configurable fallback rules, environment substitutions, or undocumented
