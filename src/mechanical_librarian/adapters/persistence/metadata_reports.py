@@ -148,6 +148,46 @@ _REVIEW_LOGIN_FAILURES_SQL = (
     "failure_id TEXT PRIMARY KEY NOT NULL CHECK(length(failure_id)=64 AND failure_id NOT GLOB '*[^0-9a-f]*'), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0))"
 )
+_CURRENT_REVIEW_FROM_SQL = (
+    "FROM current_review_case_lineages c "
+    "JOIN review_cases rc ON rc.review_case_id=c.review_case_id "
+    "JOIN metadata_reports mr ON mr.report_id=rc.report_id "
+    "JOIN current_metadata_report_lineages ml "
+    "ON ml.connection_name=c.connection_name "
+    "AND ml.library_name=c.library_name AND ml.item_id=c.item_id "
+    "AND ml.report_id=rc.report_id "
+    "JOIN current_metadata_reports mf "
+    "ON mf.connection_name=c.connection_name "
+    "AND mf.library_name=c.library_name AND mf.item_id=c.item_id "
+    "AND mf.file_identity=json_extract(rc.document,'$.file_identity') "
+    "AND mf.report_id=rc.report_id"
+)
+_REVIEW_MANUAL_BIBLIOGRAPHIC_SQL = (
+    "EXISTS (SELECT 1 FROM json_each(rc.document,'$.results') manual_result "
+    "WHERE json_extract(manual_result.value,'$.destination') "
+    "IN ('title','subtitle','series') "
+    "AND json_array_length(json_extract(manual_result.value,'$.reasons'))=1 "
+    "AND json_extract(manual_result.value,'$.reasons[0]')="
+    "'no_safe_bibliographic_combination')"
+)
+_REVIEW_FIELD_ATTENTION_SQL = (
+    "(json_extract(result.value,'$.outcome')='unresolved_choice' "
+    "OR (json_extract(result.value,'$.destination') "
+    "IN ('title','subtitle','series') AND "
+    + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
+    + "))"
+)
+_REVIEW_ATTENTION_SQL = (
+    "EXISTS (SELECT 1 FROM json_each(rc.document,'$.results') result WHERE "
+    + _REVIEW_FIELD_ATTENTION_SQL
+    + ")"
+)
+_REVIEW_SEARCH_SQL = (
+    " AND (? IS NULL OR "
+    "lower(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) "
+    "LIKE ? ESCAPE '\\' OR lower(c.item_id) LIKE ? ESCAPE '\\' "
+    "OR lower(c.library_name) LIKE ? ESCAPE '\\')"
+)
 _SHADOW_REQUESTS_SQL = (
     "CREATE TABLE shadow_review_requests ("
     "review_request_id TEXT PRIMARY KEY NOT NULL CHECK(review_request_id GLOB 'review_request_[0-9a-f]*' AND length(review_request_id)=79), "
@@ -936,6 +976,131 @@ class SQLiteMetadataReportRepository:
             ValueError,
         ) as error:
             raise MetadataReportError("review model advice is unavailable") from error
+
+    def list_current_review_case_documents(
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        attention: bool | None,
+    ) -> tuple[tuple[str, str], ...]:
+        try:
+            query, pattern = _review_search_pattern(search)
+            condition = _REVIEW_ATTENTION_SQL
+            if attention is False:
+                condition = f"NOT ({condition})"
+            elif attention is None:
+                condition = "1"
+            rows = self._connection.execute(
+                "SELECT rc.document,mr.document "
+                + _CURRENT_REVIEW_FROM_SQL
+                + " WHERE "
+                + condition
+                + _REVIEW_SEARCH_SQL
+                + " ORDER BY CASE WHEN "
+                + _REVIEW_ATTENTION_SQL
+                + " THEN 0 ELSE 1 END,"
+                "lower(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')),"
+                "c.library_name,c.item_id,rc.review_case_id LIMIT ? OFFSET ?",
+                (query, pattern, pattern, pattern, limit, offset),
+            ).fetchall()
+            return tuple(_validate_review_browse_row(row) for row in rows)
+        except (
+            sqlite3.Error,
+            MetadataReportError,
+            ReviewCaseValueError,
+            ReportValueError,
+            TypeError,
+            ValueError,
+        ) as error:
+            raise MetadataReportError("review library is unavailable") from error
+
+    def count_current_review_cases(
+        self, search: str | None
+    ) -> tuple[int, int]:
+        try:
+            query, pattern = _review_search_pattern(search)
+            row = self._connection.execute(
+                "SELECT count(*),COALESCE(sum(CASE WHEN "
+                + _REVIEW_ATTENTION_SQL
+                + " THEN 1 ELSE 0 END),0) "
+                + _CURRENT_REVIEW_FROM_SQL
+                + " WHERE 1"
+                + _REVIEW_SEARCH_SQL,
+                (query, pattern, pattern, pattern),
+            ).fetchone()
+            if (
+                row is None
+                or len(row) != 2
+                or any(type(value) is not int or value < 0 for value in row)
+                or row[1] > row[0]
+            ):
+                raise MetadataReportError("review library count is invalid")
+            return row
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            raise MetadataReportError("review library is unavailable") from error
+
+    def list_current_attention_documents(
+        self, search: str | None, limit: int, offset: int
+    ) -> tuple[tuple[str, str, str], ...]:
+        try:
+            query, pattern = _review_search_pattern(search)
+            rows = self._connection.execute(
+                "SELECT rc.document,mr.document,"
+                "json_extract(result.value,'$.destination') "
+                + _CURRENT_REVIEW_FROM_SQL
+                + ",json_each(rc.document,'$.results') result "
+                "WHERE "
+                + _REVIEW_FIELD_ATTENTION_SQL
+                + _REVIEW_SEARCH_SQL
+                + " ORDER BY "
+                "lower(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')),"
+                "c.library_name,c.item_id,"
+                "json_extract(result.value,'$.destination'),rc.review_case_id "
+                "LIMIT ? OFFSET ?",
+                (query, pattern, pattern, pattern, limit, offset),
+            ).fetchall()
+            values = []
+            for row in rows:
+                case_document, report_document = _validate_review_browse_row(
+                    row[:2]
+                )
+                if type(row[2]) is not str:
+                    raise MetadataReportError("review attention field is invalid")
+                values.append((case_document, report_document, row[2]))
+            return tuple(values)
+        except (
+            sqlite3.Error,
+            MetadataReportError,
+            ReviewCaseValueError,
+            ReportValueError,
+            TypeError,
+            ValueError,
+        ) as error:
+            raise MetadataReportError("review attention is unavailable") from error
+
+    def count_current_attention_fields(self, search: str | None) -> int:
+        try:
+            query, pattern = _review_search_pattern(search)
+            row = self._connection.execute(
+                "SELECT count(*) "
+                + _CURRENT_REVIEW_FROM_SQL
+                + ",json_each(rc.document,'$.results') result "
+                "WHERE "
+                + _REVIEW_FIELD_ATTENTION_SQL
+                + _REVIEW_SEARCH_SQL,
+                (query, pattern, pattern, pattern),
+            ).fetchone()
+            if (
+                row is None
+                or len(row) != 1
+                or type(row[0]) is not int
+                or row[0] < 0
+            ):
+                raise MetadataReportError("review attention count is invalid")
+            return row[0]
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            raise MetadataReportError("review attention is unavailable") from error
 
     def begin_login(
         self, now: int, window_seconds: int, maximum_failures: int
@@ -2344,6 +2509,47 @@ def _canonical_json(value: object) -> str:
 
 def _admission_json(status: str, review_case_id: str | None) -> str:
     return ReviewAdmissionResult(status, review_case_id).to_json()
+
+
+def _review_search_pattern(search: str | None) -> tuple[str | None, str]:
+    if search is None:
+        return None, "%"
+    if (
+        type(search) is not str
+        or not search
+        or len(search) > 128
+        or search.strip() != search
+    ):
+        raise MetadataReportError("review search is invalid")
+    escaped = (
+        search.casefold()
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    return search, f"%{escaped}%"
+
+
+def _validate_review_browse_row(row: object) -> tuple[str, str]:
+    if (
+        type(row) not in {tuple, sqlite3.Row}
+        or len(row) != 2  # type: ignore[arg-type]
+        or type(row[0]) is not str  # type: ignore[index]
+        or type(row[1]) is not str  # type: ignore[index]
+    ):
+        raise MetadataReportError("review browse row is invalid")
+    case = ReviewCase.from_json(row[0])  # type: ignore[index]
+    report = MetadataReport.from_json(row[1])  # type: ignore[index]
+    if (
+        case.report_id != report.report_id
+        or case.target != report.target.to_data()
+        or case.target_fingerprint != report.target.fingerprint
+        or case.file_identity != report.file.identity
+        or tuple(value.to_data() for value in evaluate_report(report).results)
+        != case.results
+    ):
+        raise MetadataReportError("review browse row disagrees")
+    return case.to_json(), report.to_json()
 
 
 def _shadow_attempt_id(review_request_id: str, attempt_number: int) -> str:

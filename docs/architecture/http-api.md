@@ -34,12 +34,12 @@ The expected API surface includes:
 
 ## Review resources
 
-The delivered #447 surface is intentionally smaller than the future resource
-family below: authenticated `/api/v1` exact-current case detail, bounded
-evidence, bounded current-case admission history, session login/logout, and
-OpenAPI. Library and field queues arrive in #448. Individual decision mutation
-arrives in #449. Library-wide activity/history, cross-case summaries, bulk and
-reversal remain #195.
+The delivered #447–#448 surface is intentionally smaller than the future
+resource family below: authenticated `/api/v1` exact-current case detail,
+bounded evidence, bounded current-case admission history, session
+login/logout, an attention-first current-case library, and a separate exact
+field queue. Individual decision mutation arrives in #449. Library-wide
+activity/history, cross-case summaries, bulk and reversal remain #195.
 
 The generated contract is frozen at
 `docs/reference/review-openapi-v1.json`. Regenerate it from the same closed
@@ -70,6 +70,15 @@ List responses never embed the complete evidence store, unrestricted source
 rows, full-size covers, or a whole-library review payload. Stable sort keys and
 cursor semantics keep confirmed siblings adjacent without treating title
 similarity as identity.
+
+The implemented library accepts the explicit `all`, `needs_attention`, and
+`no_attention_needed` lenses plus a bounded title/library/item search. It
+returns at most 50 works. The separate attention response returns at most 50
+exact-current fields whose deterministic result remains unresolved or
+explicitly requires manual comparison. Its cursor is bound to the query and
+lens, and a queue link identifies both the exact case and destination. Policy
+resolved, ineligible, rejected, disproven, and no-op fields never inflate the
+queue or its counts.
 
 Representations expose AI recommendation, deterministic disposition, human
 decision, stale state, and apply readiness as separate fields. An omitted

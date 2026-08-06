@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
+import base64
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
@@ -47,6 +48,20 @@ class ReviewWebRepository(Protocol):
         self, review_case_id: str
     ) -> dict[str, object]: ...
     def get_review_case_history(self, review_case_id: str, limit: int) -> tuple[dict[str, object], ...]: ...
+    def list_current_review_case_documents(
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        attention: bool | None,
+    ) -> tuple[tuple[str, str], ...]: ...
+    def count_current_review_cases(
+        self, search: str | None
+    ) -> tuple[int, int]: ...
+    def list_current_attention_documents(
+        self, search: str | None, limit: int, offset: int
+    ) -> tuple[tuple[str, str, str], ...]: ...
+    def count_current_attention_fields(self, search: str | None) -> int: ...
 
 
 class OwnerSessionService:
@@ -165,6 +180,7 @@ class InspectCurrentReviewCase:
                     "deterministic_disposition": result["outcome"],
                     "destination": destination,
                     "manual_required": proposal["manual_required"],
+                    "needs_attention": _needs_attention(proposal),
                     "notices": reasons,
                     "proposed_values": [
                         alternative["value"] for alternative in alternatives
@@ -178,6 +194,7 @@ class InspectCurrentReviewCase:
                     ),
                 }
             )
+        fields.sort(key=lambda value: not value["needs_attention"])
         return {
             "current": True,
             "fields": fields,
@@ -233,6 +250,98 @@ class InspectCurrentReviewCase:
         }
 
 
+class BrowseReviewLibrary:
+    def __init__(self, repository: ReviewWebRepository) -> None:
+        self._repository = repository
+
+    def library(
+        self,
+        *,
+        lens: str,
+        search: str | None,
+        limit: int,
+        cursor: str | None,
+    ) -> dict[str, object]:
+        normalized = _review_search(search)
+        if lens not in {"all", "needs_attention", "no_attention_needed"}:
+            raise ReviewWebError("request")
+        bounded_limit = _review_limit(limit)
+        offset = _decode_cursor(cursor, "library", lens, normalized)
+        attention = (
+            None
+            if lens == "all"
+            else lens == "needs_attention"
+        )
+        try:
+            rows = self._repository.list_current_review_case_documents(
+                normalized, bounded_limit + 1, offset, attention
+            )
+            total, attention_total = self._repository.count_current_review_cases(
+                normalized
+            )
+        except Exception as error:
+            raise ReviewWebError("unavailable") from error
+        items = [
+            _library_item(case_document, report_document)
+            for case_document, report_document in rows[:bounded_limit]
+        ]
+        return {
+            "counts": {
+                "all": total,
+                "needs_attention": attention_total,
+                "no_attention_needed": total - attention_total,
+            },
+            "items": items,
+            "lens": lens,
+            "next_cursor": (
+                _encode_cursor(
+                    offset + bounded_limit, "library", lens, normalized
+                )
+                if len(rows) > bounded_limit
+                else None
+            ),
+            "query": normalized,
+            "schema_version": "review-library-v1",
+        }
+
+    def attention(
+        self,
+        *,
+        search: str | None,
+        limit: int,
+        cursor: str | None,
+    ) -> dict[str, object]:
+        normalized = _review_search(search)
+        bounded_limit = _review_limit(limit)
+        offset = _decode_cursor(cursor, "attention", "needs_attention", normalized)
+        try:
+            rows = self._repository.list_current_attention_documents(
+                normalized, bounded_limit + 1, offset
+            )
+            total = self._repository.count_current_attention_fields(normalized)
+        except Exception as error:
+            raise ReviewWebError("unavailable") from error
+        items = [
+            _attention_item(case_document, report_document, destination)
+            for case_document, report_document, destination in rows[:bounded_limit]
+        ]
+        return {
+            "items": items,
+            "next_cursor": (
+                _encode_cursor(
+                    offset + bounded_limit,
+                    "attention",
+                    "needs_attention",
+                    normalized,
+                )
+                if len(rows) > bounded_limit
+                else None
+            ),
+            "query": normalized,
+            "schema_version": "review-attention-v1",
+            "total": total,
+        }
+
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -277,3 +386,161 @@ def _evidence_by_reference(
     for fact in data["covers"]:
         add("cover", fact)
     return values
+
+
+def _review_search(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    normalized = " ".join(value.split())
+    if len(normalized) > 128:
+        raise ReviewWebError("request")
+    return normalized
+
+
+def _review_limit(value: int) -> int:
+    if type(value) is not int or isinstance(value, bool) or not 1 <= value <= 50:
+        raise ReviewWebError("request")
+    return value
+
+
+def _cursor_binding(kind: str, lens: str, search: str | None) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            [kind, lens, search],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+
+
+def _encode_cursor(
+    offset: int, kind: str, lens: str, search: str | None
+) -> str:
+    payload = json.dumps(
+        [offset, _cursor_binding(kind, lens, search)],
+        separators=(",", ":"),
+    ).encode("ascii")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(
+    cursor: str | None, kind: str, lens: str, search: str | None
+) -> int:
+    if cursor is None:
+        return 0
+    try:
+        if (
+            type(cursor) is not str
+            or not 1 <= len(cursor) <= 128
+            or cursor.strip() != cursor
+        ):
+            raise ValueError
+        padding = "=" * (-len(cursor) % 4)
+        raw = json.loads(
+            base64.b64decode(
+                cursor + padding, altchars=b"-_", validate=True
+            ).decode("ascii")
+        )
+        if (
+            type(raw) is not list
+            or len(raw) != 2
+            or type(raw[0]) is not int
+            or isinstance(raw[0], bool)
+            or not 0 <= raw[0] <= 100_000
+            or raw[1] != _cursor_binding(kind, lens, search)
+        ):
+            raise ValueError
+        return raw[0]
+    except (UnicodeError, ValueError, json.JSONDecodeError) as error:
+        raise ReviewWebError("request") from error
+
+
+def _case_and_report(
+    case_document: str, report_document: str
+) -> tuple[ReviewCase, MetadataReport]:
+    try:
+        case = ReviewCase.from_json(case_document)
+        report = MetadataReport.from_json(report_document)
+        if (
+            case.report_id != report.report_id
+            or case.target != report.target.to_data()
+            or case.target_fingerprint != report.target.fingerprint
+            or case.file_identity != report.file.identity
+        ):
+            raise ValueError
+        return case, report
+    except Exception as error:
+        raise ReviewWebError("unavailable") from error
+
+
+def _needs_attention(proposal: dict[str, object]) -> bool:
+    result = proposal["result"]
+    assert type(result) is dict
+    reasons = result["reasons"]
+    assert type(reasons) is list
+    return (
+        result["outcome"] == "unresolved_choice"
+        or proposal["manual_required"] is True
+        or "no_safe_bibliographic_combination" in reasons
+    )
+
+
+def _library_item(
+    case_document: str, report_document: str
+) -> dict[str, object]:
+    case, report = _case_and_report(case_document, report_document)
+    attention = [value for value in case.proposals if _needs_attention(value)]
+    outcomes = sorted(
+        {
+            value["result"]["outcome"]  # type: ignore[index]
+            for value in case.proposals
+        }
+    )
+    return {
+        "attention_count": len(attention),
+        "attention_state": (
+            "needs_attention" if attention else "no_attention_needed"
+        ),
+        "detail_url": f"/review/{case.review_case_id}",
+        "dispositions": outcomes,
+        "item": report.target.item,
+        "library": report.target.library,
+        "review_case_id": case.review_case_id,
+        "title": report.target.current_title or "Untitled",
+    }
+
+
+def _attention_item(
+    case_document: str,
+    report_document: str,
+    destination: str,
+) -> dict[str, object]:
+    case, report = _case_and_report(case_document, report_document)
+    proposal = next(
+        (
+            value
+            for value in case.proposals
+            if value["destination"] == destination
+        ),
+        None,
+    )
+    if proposal is None or not _needs_attention(proposal):
+        raise ReviewWebError("unavailable")
+    result = proposal["result"]
+    assert type(result) is dict
+    return {
+        "destination": destination,
+        "detail_url": f"/review/{case.review_case_id}?field={destination}",
+        "item": report.target.item,
+        "library": report.target.library,
+        "notices": result["reasons"],
+        "provenance": sorted(
+            {
+                reference
+                for alternative in result["alternatives"]  # type: ignore[union-attr]
+                for reference in alternative["evidence_references"]
+            }
+        ),
+        "review_case_id": case.review_case_id,
+        "title": report.target.current_title or "Untitled",
+    }

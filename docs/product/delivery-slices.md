@@ -533,7 +533,7 @@ and all library-wide or cross-case history remain deferred to #195.
 | Increment | Issue | Demonstrable result | Planning state |
 | --- | --- | --- | --- |
 | Exact-current case inspection | #447 | An authenticated owner opens one exact-current case, bounded evidence, and current-case history through the read-only API/browser boundary. | Delivered. |
-| Attention-first library and field queue | #448 | The owner browses every current work and a separate queue containing only unresolved human-attention fields. | Ordered after #447. |
+| Attention-first library and field queue | #448 | The owner browses every current work and a separate queue containing only unresolved human-attention fields. | Delivered by #448. |
 | Immutable exact-version decision | #449 | One exact field decision is persisted idempotently and reproduced after restart without automatic, apply, or write authority. | Ordered after #448. |
 | Browser activation | #450 | The complete decision-first round trip passes the first-release browser and installed-artifact gates. | Activation; ordered after #449 and alone closes #152. |
 

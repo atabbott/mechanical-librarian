@@ -65,8 +65,13 @@ All review responses are private/no-store and enforce the canonical HTTPS Host
 and Origin, restrictive CSP, secure HttpOnly SameSite cookies, CSRF on logout,
 and explicit proxy trust. The `/api/v1` surface exposes exact-current case
 detail, bounded evidence, current-case admission history, and authenticated
-OpenAPI. It is read-only: it cannot create a human or automatic decision,
-construct an apply plan, or construct a target client.
+OpenAPI. Authenticated `/library` provides bounded attention-first, all, and
+no-attention-needed lenses; `/attention` contains only exact unresolved/manual
+fields and links to the exact field on detail. Both support bounded search,
+maximum 50-item pages, and query-bound cursors. Automatic-only cases remain
+inspectable in the library but never gain a human control. The surface is
+read-only: it cannot create a human or automatic decision, construct an apply
+plan, or construct a target client.
 
 The login request body is capped at 2 KiB at the ASGI boundary before JSON
 parsing. Five reserved attempts within five minutes close the login gate; the
