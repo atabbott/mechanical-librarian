@@ -511,7 +511,7 @@ UI/API, migration, compatibility, tag, release, and deployment.
 
 ## Delivery checkpoint 0.10.0: review admission and qualification-only shadow advice
 
-This in-progress checkpoint owns the later exact-current ReviewCase admission
+This completed checkpoint owns the exact-current ReviewCase admission
 and isolated qualification-only shadow-advice surfaces. It does not grant human
 or AI decision, approval, apply, target/media write, or normal activation
 authority.
@@ -519,8 +519,23 @@ authority.
 | Outcome | Issue | Demonstrable result | Planning state |
 | --- | --- | --- | --- |
 | F10b Production review admission | #240 | One qualifying exact-current ProposalSet becomes an immutable undecided ReviewCase, or records typed no-case retirement, without a decision or write. | Delivered. |
-| F11 Isolated AI shadow recommendation | #147 | One exact current ReviewCase can be previewed, requested, inspected, or explicitly reevaluated through an isolated qualification-only path with no normal activation authority. | Qualification-only path delivered; broader F11 qualification remains planned. |
-| F19 Deterministic shadow decision preview | #384 | One exact current ReviewCase produces a canonical provider-independent read-only decision preview with exact catalogue closure and safe manual abstention. | Candidate passed exposed development; fresh qualification remains required before delivery. |
+| F11 Isolated AI shadow recommendation | #147 | One exact current ReviewCase can be previewed, requested, inspected, or explicitly reevaluated through an isolated qualification-only path with no normal activation authority. | Terminal non-activation delivered; model-review qualification failed and no reviewer was activated. |
+| F19 Deterministic shadow decision preview | #384 | One exact current ReviewCase produces a canonical provider-independent read-only decision preview with exact catalogue closure and safe manual abstention. | Delivered by #442; remains read-only, non-persisted, and provider independent. |
+
+## Delivery checkpoint 0.11.0: authenticated human-exception review
+
+F16a #152 is delivered through four ordered production increments. The closed
+design record #446 locks variant M at `026e338` as directional evidence, not
+production code or a pixel contract. Variant I remains lineage only. F16a owns
+bounded current-case history; the prototype's separate library activity view
+and all library-wide or cross-case history remain deferred to #195.
+
+| Increment | Issue | Demonstrable result | Planning state |
+| --- | --- | --- | --- |
+| Exact-current case inspection | #447 | An authenticated owner opens one exact-current case, bounded evidence, and current-case history through the read-only API/browser boundary. | Delivered. |
+| Attention-first library and field queue | #448 | The owner browses every current work and a separate queue containing only unresolved human-attention fields. | Ordered after #447. |
+| Immutable exact-version decision | #449 | One exact field decision is persisted idempotently and reproduced after restart without automatic, apply, or write authority. | Ordered after #448. |
+| Browser activation | #450 | The complete decision-first round trip passes the first-release browser and installed-artifact gates. | Activation; ordered after #449 and alone closes #152. |
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
@@ -536,7 +551,7 @@ recreated.
 | --- | --- | --- | --- |
 | F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | Retained planned designation. |
 | F15a Supported container operation | #151 | The supported single container starts safely, runs the report and review product, survives current-schema restart, and exposes bounded redacted health, diagnostics, support, backup, and recovery evidence. | Consolidated container plus diagnostics/recovery outcome with a retained planned designation. |
-| F16a Authenticated browser review and decision | #152 | An authenticated owner finds one current case, inspects bounded evidence, makes one individual field decision, and observes immutable server-authoritative history after refresh or restart. The individual round trip passes the first-release responsive, keyboard/focus, accessibility, private caching/storage, content-security, hostile-rendering, performance, synthetic-artifact, and primary-supported-browser baseline. | Consolidated API, browser, one-human-decision, and first-release browser-baseline outcome with a retained planned designation. |
+| F16a Authenticated browser review and decision | #152 | An authenticated owner finds one current case, inspects bounded evidence, makes one individual field decision, and observes immutable server-authoritative current-case history after refresh or restart. The individual round trip passes the first-release responsive, keyboard/focus, accessibility, private caching/storage, content-security, hostile-rendering, performance, synthetic-artifact, and primary-supported-browser baseline. | Active 0.11.0 delivery through #447 → #448 → #449 → #450; cross-case history remains #195. |
 | F13 Guarded fake-service apply | #149 | A current human-approved field change from F16a is planned, backed up, idempotently applied to a fake service, read back, verified, audited, and safely failed or rolled back. | Retained planned designation; requires an applicable current human decision from F16a. |
 | F14 Audiobookshelf canary apply | #150 | After F13, the same gates perform one bounded mutation against a disposable qualified Audiobookshelf instance and prove before/request/after evidence. | Retained planned designation; depends on completed F13 qualification. |
 | F17 Continuous pre-release operation | #153 | The useful Audiobookshelf path runs repeatedly under persisted scheduling and reconciliation, survives representative failures and restarts, and remains observable and recoverable without widening authority. | Retained planned designation; excludes CWA, release production/publication, and older-schema migration. |

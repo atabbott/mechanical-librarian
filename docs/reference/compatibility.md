@@ -15,6 +15,9 @@ The current installed contract is intentionally narrow:
   `shadow-review-failure-v2`, and the exact-current append-only
   qualification-only shadow request/attempt/dispatch/outcome schema with
   required `shadow-review-execution-provenance-v1` outcomes;
+- `review-session-v1`, `review-case-detail-v1`, bounded evidence/current-case
+  history projections, and the exact-current opaque-session/login-throttle
+  tables; older application databases without those exact tables are rejected;
 - canonical `reviewer-qualification-profile-v1` with exact
   `shadow-review-prompt-v3`, `codex-shadow-profile-v2`,
   `gpt-5.6-sol`/`medium`, and pinned Codex CLI/Bubblewrap identities; shadow
@@ -51,7 +54,8 @@ exact/current report reopen, report-bound cover-preview reopen, exact-current
 ProposalSet create, offline exact ProposalSet reopen, review-case admission,
 offline exact ReviewCase reopen, ChatGPT subscription auth, no-egress shadow
 preview, one qualification-only foreground request, offline inspect, and
-explicit reevaluation. It does not support
+explicit reevaluation, and authenticated read-only exact-current ReviewCase
+inspection through `review-serve`. It does not support
 durable batch attempts, resume, automatic retry, workers, schedulers, parallel
 execution, normal reviewer activation, review decisions, or apply.
 

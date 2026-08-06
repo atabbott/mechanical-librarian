@@ -462,6 +462,48 @@
         }
       ],
       "title": "ProviderInput"
+    },
+    "ReviewInput": {
+      "additionalProperties": false,
+      "properties": {
+        "canonical_origin": {
+          "maxLength": 512,
+          "minLength": 8,
+          "title": "Canonical Origin",
+          "type": "string"
+        },
+        "owner_password_hash_file": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Owner Password Hash File",
+          "type": "string"
+        },
+        "session_lifetime_seconds": {
+          "default": 3600,
+          "maximum": 86400,
+          "minimum": 300,
+          "title": "Session Lifetime Seconds",
+          "type": "integer"
+        },
+        "trusted_proxy_ips": {
+          "default": [],
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Trusted Proxy Ips",
+          "type": "array"
+        }
+      },
+      "required": [
+        "canonical_origin",
+        "owner_password_hash_file"
+      ],
+      "title": "ReviewInput",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -508,6 +550,17 @@
       "maxItems": 32,
       "title": "Providers",
       "type": "array"
+    },
+    "review": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ReviewInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "schema_version": {
       "const": "config-v5",

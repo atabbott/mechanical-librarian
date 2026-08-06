@@ -144,9 +144,12 @@ F09g #238/#243. F09g is the 0.3.0 checkpoint exit. Completing this internal
 checkpoint does not publish a release.
 
 The remaining 1.0 outcome set is F08 #144, F15a #151, F16a #152, F13 #149,
-F14 #150, and F17 #153. F10b #240 is delivered and F11 #147 remains open under
-the 0.10 checkpoint. The retained 1.0 `F` IDs are planned designations rather
-than `Ready` status. F09o #70 has moved into milestone 0.9.0 with #344 as its
+F14 #150, and F17 #153. F10b #240 is delivered; F11 #147 ended in terminal
+non-activation after failed model-review qualification; and F19 #384 was
+delivered by #442 as a provider-independent, read-only, non-persisted preview.
+F16a is the 0.11.0 checkpoint through #447 → #448 → #449 → #450. The retained
+1.0 `F` IDs are planned designations rather than `Ready` status. F09o #70 has
+moved into milestone 0.9.0 with #344 as its
 pre-activation evidence-report increment. Open Library #210 is the completed
 0.8.0 F09l slice tracker, while the other deferred provider outcomes remain
 outside this checkpoint. Closed WP parents, provider trackers, and constituent
@@ -337,6 +340,9 @@ the guarded apply path.
 ## M6: Review experience
 
 - Implement the DUX-derived, snapshot-aware review-case and decision contract.
+- Use locked variant M at `026e338` as directional evidence. Variant I is
+  lineage rather than the selected production direction, and prototype code or
+  pixels are not production contracts.
 - Deliver the authenticated target-level queue, decision-first detail,
   progressive evidence, sibling navigation, and one guarded individual decision
   through F16a #152.
@@ -344,10 +350,12 @@ the guarded apply path.
   keyboard/focus, accessibility, private caching/storage, content-security,
   hostile-rendering, performance, synthetic-artifact, and primary-supported-
   browser baseline.
-- Keep cross-case summaries and history, bulk decisions, reversal, additional
+- Keep the prototype library activity view, cross-case summaries and history,
+  bulk decisions, reversal, additional
   browser and viewport coverage, and extended accessibility, responsive,
   privacy, content-security, performance, and synthetic-artifact budgets
   deferred together under #195.
+- Limit F16a history to the bounded current case.
 
 Exit: occasional individual review is efficient, persistent, server-
 authoritative, and qualified against the first-release browser baseline.

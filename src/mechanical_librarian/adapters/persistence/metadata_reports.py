@@ -136,6 +136,18 @@ _REVIEW_TRANSITIONS_SQL = (
     "CHECK ((kind IN ('admitted','no_case') AND from_review_case_id IS NULL) OR (kind IN ('superseded','retired') AND from_review_case_id IS NOT NULL)), "
     "UNIQUE(connection_name,library_name,item_id,checkpoint) )"
 )
+_REVIEW_SESSIONS_SQL = (
+    "CREATE TABLE review_sessions ("
+    "session_digest TEXT PRIMARY KEY NOT NULL CHECK(length(session_digest)=64 AND session_digest NOT GLOB '*[^0-9a-f]*'), "
+    "csrf_digest TEXT NOT NULL CHECK(length(csrf_digest)=64 AND csrf_digest NOT GLOB '*[^0-9a-f]*'), "
+    "actor TEXT NOT NULL CHECK(actor='owner'), created_at INTEGER NOT NULL CHECK(created_at>=0), "
+    "expires_at INTEGER NOT NULL CHECK(expires_at>created_at), revoked_at INTEGER CHECK(revoked_at IS NULL OR revoked_at>=created_at))"
+)
+_REVIEW_LOGIN_FAILURES_SQL = (
+    "CREATE TABLE review_login_failures ("
+    "failure_id TEXT PRIMARY KEY NOT NULL CHECK(length(failure_id)=64 AND failure_id NOT GLOB '*[^0-9a-f]*'), "
+    "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0))"
+)
 _SHADOW_REQUESTS_SQL = (
     "CREATE TABLE shadow_review_requests ("
     "review_request_id TEXT PRIMARY KEY NOT NULL CHECK(review_request_id GLOB 'review_request_[0-9a-f]*' AND length(review_request_id)=79), "
@@ -870,6 +882,175 @@ class SQLiteMetadataReportRepository:
             return _canonical_json({"case": case.to_data(), "current": current == (case.review_case_id,) and source_current == (case.report_id,) and file_current == (case.report_id,), "schema_version": "review-case-get-v1"})
         except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
             raise MetadataReportError("review case is unavailable") from error
+
+    def get_review_case_report(self, review_case_id: str) -> str:
+        try:
+            return self._source_report_for_review_case(review_case_id).to_json()
+        except (sqlite3.Error, ReviewCaseValueError, ReportValueError) as error:
+            raise MetadataReportError("review case evidence is unavailable") from error
+
+    def get_review_model_advice(self, review_case_id: str) -> dict[str, object]:
+        try:
+            rows = self._connection.execute(
+                "SELECT r.review_request_id,r.request_document,"
+                "o.kind,o.result_document "
+                "FROM shadow_review_requests r "
+                "LEFT JOIN shadow_review_attempts a "
+                "ON a.review_request_id=r.review_request_id "
+                "LEFT JOIN shadow_review_outcomes o ON o.attempt_id=a.attempt_id "
+                "WHERE r.review_case_id=? "
+                "ORDER BY r.review_request_id,a.attempt_number",
+                (review_case_id,),
+            ).fetchall()
+            report = self._source_report_for_review_case(review_case_id)
+            results: list[dict[str, object]] = []
+            for request_id, request_document, kind, result_document in rows:
+                if kind != "result":
+                    continue
+                request = ShadowReviewRequest.from_json(request_document, report)
+                result = ShadowReviewResult.from_json(result_document, request)
+                if result.review_request_id != request_id:
+                    raise MetadataReportError("review model advice is invalid")
+                results.append(
+                    {
+                        "recommendations": [
+                            dict(value) for value in result.recommendations
+                        ],
+                        "review_request_id": result.review_request_id,
+                    }
+                )
+            states = {row[2] for row in rows}
+            if "result" in states:
+                state = "available"
+            elif "failure" in states:
+                state = "unavailable"
+            elif rows:
+                state = "pending"
+            else:
+                state = "not_requested"
+            return {"results": results, "state": state}
+        except (
+            sqlite3.Error,
+            ShadowReviewValueError,
+            TypeError,
+            ValueError,
+        ) as error:
+            raise MetadataReportError("review model advice is unavailable") from error
+
+    def begin_login(
+        self, now: int, window_seconds: int, maximum_failures: int
+    ) -> bool:
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            self._connection.execute(
+                "DELETE FROM review_login_failures WHERE occurred_at<?",
+                (now - window_seconds,),
+            )
+            self._connection.execute(
+                "DELETE FROM review_sessions WHERE expires_at<=?", (now,)
+            )
+            count = self._connection.execute(
+                "SELECT count(*) FROM review_login_failures"
+            ).fetchone()
+            if count is None:
+                raise MetadataReportError("review login is unavailable")
+            permitted = count[0] < maximum_failures
+            if permitted:
+                identity = hashlib.sha256(
+                    f"review-login-attempt-v1:{now}:{secrets.token_hex(16)}".encode()
+                ).hexdigest()
+                self._connection.execute(
+                    "INSERT INTO review_login_failures(failure_id,occurred_at) "
+                    "VALUES(?,?)",
+                    (identity, now),
+                )
+            self._connection.commit()
+            return permitted
+        except MetadataReportError:
+            self._connection.rollback()
+            raise
+        except sqlite3.Error as error:
+            self._connection.rollback()
+            raise MetadataReportError("review login is unavailable") from error
+
+    def create_review_session(
+        self,
+        session_digest: str,
+        csrf_digest: str,
+        created_at: int,
+        expires_at: int,
+    ) -> None:
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            self._connection.execute(
+                "INSERT INTO review_sessions(session_digest,csrf_digest,actor,created_at,expires_at) VALUES(?,?,'owner',?,?)",
+                (session_digest, csrf_digest, created_at, expires_at),
+            )
+            self._connection.execute("DELETE FROM review_login_failures")
+            self._connection.commit()
+        except sqlite3.Error as error:
+            self._connection.rollback()
+            raise MetadataReportError("review session is unavailable") from error
+
+    def authenticate_review_session(
+        self, session_digest: str, now: int
+    ) -> tuple[str, str, int]:
+        try:
+            row = self._connection.execute(
+                "SELECT actor,csrf_digest,expires_at FROM review_sessions WHERE session_digest=? AND revoked_at IS NULL AND expires_at>?",
+                (session_digest, now),
+            ).fetchone()
+            if (
+                row is None
+                or len(row) != 3
+                or row[0] != "owner"
+                or type(row[1]) is not str
+                or type(row[2]) is not int
+            ):
+                raise MetadataReportError("review session is unavailable")
+            return row
+        except sqlite3.Error as error:
+            raise MetadataReportError("review session is unavailable") from error
+
+    def revoke_review_session(self, session_digest: str, now: int) -> None:
+        try:
+            cursor = self._connection.execute(
+                "UPDATE review_sessions SET revoked_at=? WHERE session_digest=? AND revoked_at IS NULL AND expires_at>?",
+                (now, session_digest, now),
+            )
+            if cursor.rowcount != 1:
+                raise MetadataReportError("review session is unavailable")
+            self._connection.commit()
+        except MetadataReportError:
+            self._connection.rollback()
+            raise
+        except sqlite3.Error as error:
+            self._connection.rollback()
+            raise MetadataReportError("review session is unavailable") from error
+
+    def get_review_case_history(
+        self, review_case_id: str, limit: int
+    ) -> tuple[dict[str, object], ...]:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise MetadataReportError("review history is unavailable")
+        try:
+            rows = self._connection.execute(
+                "SELECT transition_id,checkpoint,kind,reason,from_review_case_id,to_review_case_id "
+                "FROM review_case_transitions WHERE from_review_case_id=? OR to_review_case_id=? "
+                "ORDER BY checkpoint DESC,transition_id DESC LIMIT ?",
+                (review_case_id, review_case_id, limit),
+            ).fetchall()
+            return tuple(
+                {
+                    "checkpoint": row[1],
+                    "kind": row[2],
+                    "reason": row[3],
+                    "transition_id": row[0],
+                }
+                for row in rows
+            )
+        except sqlite3.Error as error:
+            raise MetadataReportError("review history is unavailable") from error
 
     def preview_shadow_packet(self, review_case_id: str) -> ShadowReviewPacket:
         """Project the exact provider-independent packet without durable state."""
@@ -1736,7 +1917,7 @@ def open_shadow_preview_repository(path: Path) -> SQLiteShadowPreviewRepository:
             os.close(descriptor)
 
 
-def open_repository(path: Path, *, create: bool = True, expected_identity: tuple[int, int] | None = None) -> SQLiteMetadataReportRepository:
+def open_repository(path: Path, *, create: bool = True, expected_identity: tuple[int, int] | None = None, cross_thread: bool = False) -> SQLiteMetadataReportRepository:
     created = False
     descriptor = -1
     created_identity: tuple[int, int] | None = None
@@ -1788,6 +1969,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             database_path,
             database_descriptor,
             binding.require_current if binding is not None else None,
+            cross_thread=cross_thread,
         )
         if binding is not None:
             binding.require_current()
@@ -1807,6 +1989,8 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_REVIEW_CASES_SQL)
             connection.execute(_REVIEW_POINTERS_SQL)
             connection.execute(_REVIEW_TRANSITIONS_SQL)
+            connection.execute(_REVIEW_SESSIONS_SQL)
+            connection.execute(_REVIEW_LOGIN_FAILURES_SQL)
             connection.execute(_SHADOW_REQUESTS_SQL)
             connection.execute(_SHADOW_ATTEMPTS_SQL)
             connection.execute(_SHADOW_DISPATCHES_SQL)
@@ -1884,6 +2068,8 @@ def _connect_bound(
     path: Path,
     descriptor: int,
     preconnect: Callable[[], None] | None = None,
+    *,
+    cross_thread: bool = False,
 ) -> sqlite3.Connection:
     absolute = str(path.absolute())
     uri = f"file:{quote(absolute, safe='/')}?mode=rw"
@@ -1891,7 +2077,12 @@ def _connect_bound(
     _reject_database_sidecars(path)
     if preconnect is not None:
         preconnect()
-    connection = sqlite3.connect(uri, uri=True, isolation_level=None)
+    connection = sqlite3.connect(
+        uri,
+        uri=True,
+        isolation_level=None,
+        check_same_thread=not cross_thread,
+    )
     try:
         _validate_connection_binding(connection, path, descriptor, before)
         return connection
@@ -2103,6 +2294,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_review_cases_1", None),
         ("index", "sqlite_autoindex_review_case_transitions_1", None),
         ("index", "sqlite_autoindex_review_case_transitions_2", None),
+        ("index", "sqlite_autoindex_review_login_failures_1", None),
+        ("index", "sqlite_autoindex_review_sessions_1", None),
         ("index", "sqlite_autoindex_shadow_review_attempts_1", None),
         ("index", "sqlite_autoindex_shadow_review_attempts_2", None),
         ("index", "sqlite_autoindex_shadow_review_dispatches_1", None),
@@ -2116,6 +2309,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
         ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
         ("table", "review_cases", _REVIEW_CASES_SQL),
+        ("table", "review_login_failures", _REVIEW_LOGIN_FAILURES_SQL),
+        ("table", "review_sessions", _REVIEW_SESSIONS_SQL),
         ("table", "shadow_review_attempts", _SHADOW_ATTEMPTS_SQL),
         ("table", "shadow_review_dispatches", _SHADOW_DISPATCHES_SQL),
         ("table", "shadow_review_outcomes", _SHADOW_OUTCOMES_SQL),

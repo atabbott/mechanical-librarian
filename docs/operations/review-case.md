@@ -48,3 +48,27 @@ mechanical-librarian review-case-get --database reports.sqlite \
 Get returns the immutable case and derived currentness without writing it.
 Both commands validate the complete canonical typed result before printing
 success. Earlier schemas are rejected under the clean-state policy.
+
+## Authenticated exact-current inspection
+
+With an exact-current application database and explicit `review` configuration:
+
+```sh
+mechanical-librarian review-serve --config config.json \
+  --database reports.sqlite --host 127.0.0.1 --port 8080
+```
+
+Only `/health/live` is anonymous operational data. The login surface verifies
+the owner-only Argon2id hash file, applies a durable bounded throttle, and
+creates an opaque server-side session whose token is stored only as a digest.
+All review responses are private/no-store and enforce the canonical HTTPS Host
+and Origin, restrictive CSP, secure HttpOnly SameSite cookies, CSRF on logout,
+and explicit proxy trust. The `/api/v1` surface exposes exact-current case
+detail, bounded evidence, current-case admission history, and authenticated
+OpenAPI. It is read-only: it cannot create a human or automatic decision,
+construct an apply plan, or construct a target client.
+
+The login request body is capped at 2 KiB at the ASGI boundary before JSON
+parsing. Five reserved attempts within five minutes close the login gate; the
+reservation is recorded before Argon2 work so concurrent requests cannot
+outpace the bound. A successful owner login clears the failure window.

@@ -9,6 +9,10 @@ target-shaped decision surface backed by server-authoritative state.
 This document is the product contract for that experience. It incorporates the
 validated behavior from the retired prototype baseline, while rejecting the
 prototype's static-file delivery and browser-local workflow authority.
+Locked variant M at `026e338` is directional interaction evidence. Its separate
+library activity view is not an F16a surface: F16a exposes only bounded
+current-case history, while library-wide and cross-case activity/history remain
+deferred to #195. Variant I is retained only as design lineage.
 
 ## Governing outcomes
 

@@ -1,0 +1,967 @@
+{
+  "components": {
+    "schemas": {
+      "_CaseDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "title": "Current",
+            "type": "boolean"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/_ReviewField"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "model_advice": {
+            "$ref": "#/components/schemas/_ModelAdvice"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/_TargetIdentity"
+          }
+        },
+        "required": [
+          "current",
+          "fields",
+          "model_advice",
+          "review_case_id",
+          "schema_version",
+          "target"
+        ],
+        "title": "_CaseDetailResponse",
+        "type": "object"
+      },
+      "_ErrorCode": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "_ErrorCode",
+        "type": "object"
+      },
+      "_ErrorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/_ErrorCode"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "schema_version"
+        ],
+        "title": "_ErrorResponse",
+        "type": "object"
+      },
+      "_EvidenceItem": {
+        "additionalProperties": false,
+        "properties": {
+          "fact": {
+            "title": "Fact",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fact",
+          "kind",
+          "reference",
+          "source"
+        ],
+        "title": "_EvidenceItem",
+        "type": "object"
+      },
+      "_EvidenceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/_EvidenceItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "review_case_id",
+          "schema_version"
+        ],
+        "title": "_EvidenceResponse",
+        "type": "object"
+      },
+      "_HistoryItem": {
+        "additionalProperties": false,
+        "properties": {
+          "checkpoint": {
+            "title": "Checkpoint",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "transition_id": {
+            "title": "Transition Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "checkpoint",
+          "kind",
+          "reason",
+          "transition_id"
+        ],
+        "title": "_HistoryItem",
+        "type": "object"
+      },
+      "_HistoryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/_HistoryItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "review_case_id",
+          "schema_version"
+        ],
+        "title": "_HistoryResponse",
+        "type": "object"
+      },
+      "_LoginRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "password": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "password"
+        ],
+        "title": "_LoginRequest",
+        "type": "object"
+      },
+      "_ModelAdvice": {
+        "additionalProperties": false,
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/_ModelAdviceResult"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "results",
+          "state"
+        ],
+        "title": "_ModelAdvice",
+        "type": "object"
+      },
+      "_ModelAdviceResult": {
+        "additionalProperties": false,
+        "properties": {
+          "recommendations": {
+            "items": {
+              "$ref": "#/components/schemas/_ModelRecommendation"
+            },
+            "title": "Recommendations",
+            "type": "array"
+          },
+          "review_request_id": {
+            "title": "Review Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recommendations",
+          "review_request_id"
+        ],
+        "title": "_ModelAdviceResult",
+        "type": "object"
+      },
+      "_ModelRecommendation": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
+          "citations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "problems": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "recommendation": {
+            "title": "Recommendation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "citations",
+          "problems",
+          "proposal_id",
+          "reasons",
+          "recommendation"
+        ],
+        "title": "_ModelRecommendation",
+        "type": "object"
+      },
+      "_ProposedValue": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "items": {
+                  "$ref": "#/components/schemas/_SeriesValue"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "title": "_ProposedValue",
+        "type": "object"
+      },
+      "_ReviewField": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/_TargetField"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "deterministic_disposition": {
+            "title": "Deterministic Disposition",
+            "type": "string"
+          },
+          "manual_required": {
+            "title": "Manual Required",
+            "type": "boolean"
+          },
+          "notices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notices",
+            "type": "array"
+          },
+          "proposed_values": {
+            "items": {
+              "$ref": "#/components/schemas/_ProposedValue"
+            },
+            "title": "Proposed Values",
+            "type": "array"
+          },
+          "provenance": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Provenance",
+            "type": "array"
+          },
+          "uncertainty": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Uncertainty",
+            "type": "array"
+          }
+        },
+        "required": [
+          "current",
+          "deterministic_disposition",
+          "destination",
+          "manual_required",
+          "notices",
+          "proposed_values",
+          "provenance",
+          "uncertainty"
+        ],
+        "title": "_ReviewField",
+        "type": "object"
+      },
+      "_SeriesValue": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          }
+        },
+        "required": [
+          "name",
+          "sequence"
+        ],
+        "title": "_SeriesValue",
+        "type": "object"
+      },
+      "_SessionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "csrf_token": {
+            "title": "Csrf Token",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "integer"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor",
+          "csrf_token",
+          "expires_at",
+          "schema_version"
+        ],
+        "title": "_SessionResponse",
+        "type": "object"
+      },
+      "_TargetField": {
+        "additionalProperties": false,
+        "properties": {
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "items": {
+                  "$ref": "#/components/schemas/_SeriesValue"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "destination",
+          "state",
+          "value"
+        ],
+        "title": "_TargetField",
+        "type": "object"
+      },
+      "_TargetIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "title": "Connection",
+            "type": "string"
+          },
+          "item": {
+            "title": "Item",
+            "type": "string"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connection",
+          "item",
+          "library"
+        ],
+        "title": "_TargetIdentity",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Mechanical Librarian Review API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/review-cases/{review_case_id}": {
+      "get": {
+        "operationId": "case_detail_api_v1_review_cases__review_case_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_case_id",
+            "required": true,
+            "schema": {
+              "title": "Review Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ml_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ml Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_CaseDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "summary": "Case Detail"
+      }
+    },
+    "/api/v1/review-cases/{review_case_id}/evidence": {
+      "get": {
+        "operationId": "case_evidence_api_v1_review_cases__review_case_id__evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_case_id",
+            "required": true,
+            "schema": {
+              "title": "Review Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ml_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ml Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_EvidenceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "summary": "Case Evidence"
+      }
+    },
+    "/api/v1/review-cases/{review_case_id}/history": {
+      "get": {
+        "operationId": "case_history_api_v1_review_cases__review_case_id__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_case_id",
+            "required": true,
+            "schema": {
+              "title": "Review Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ml_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ml Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_HistoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "summary": "Case History"
+      }
+    },
+    "/api/v1/session/login": {
+      "post": {
+        "operationId": "login_api_v1_session_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Login"
+      }
+    },
+    "/api/v1/session/logout": {
+      "post": {
+        "operationId": "logout_api_v1_session_logout_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ml_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ml Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "summary": "Logout"
+      }
+    }
+  }
+}

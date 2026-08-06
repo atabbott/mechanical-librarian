@@ -59,6 +59,30 @@ Ordinary typed in-process collaborators are trusted to honor their interfaces;
 arbitrary descriptor, subclass, traceback, or interpreter-control-flow
 sabotage is outside the supported threat model.
 
+## Authenticated review surface
+
+The #447 review server adds one private owner-facing HTTP entry point and no
+target-service client. An unauthenticated network client can reach only bounded
+liveness, the login form/assets, and the fixed login failure envelope. Review
+case, evidence, current-case history, and OpenAPI data require an unexpired
+opaque session. The password is verified against one owner-only regular
+no-follow Argon2id hash file; the database stores only SHA-256 digests of fresh
+high-entropy session and CSRF tokens. Expired session rows are removed during
+login, logout records revocation, and failed logins use a durable five-attempt
+per five-minute global throttle without retaining client addresses.
+
+The reachable assets are private case metadata and evidence plus session
+authority. Exact canonical HTTPS Host and state-changing Origin checks prevent
+cross-origin use; secure HttpOnly SameSite cookies and per-session CSRF protect
+browser mutation. Forwarded Host or scheme is rejected unless the direct peer
+is explicitly configured, and Uvicorn ambient proxy handling remains disabled.
+Every response is private/no-store with a restrictive CSP, frame denial,
+no-referrer, no-sniff, and HSTS. Validation and runtime errors use fixed
+value-free codes, so passwords, tokens, paths, hostile metadata, and internal
+exceptions do not enter responses. The interface calls read-only application
+queries and has no automatic-decision, human-decision, apply-plan, target
+client, media-write, or target-write constructor.
+
 ## Credentials and egress
 
 Secret material is read only in infrastructure and represented nowhere in the
