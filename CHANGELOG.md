@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Read each authenticated exact-current case, Library page, and Attention page
+  from one authoritative SQLite snapshot. Concurrent supersession or human
+  decision recording can no longer mix stale currentness, evidence, history,
+  decision summaries, rows, or counts within one response; snapshot failures
+  remain bounded unavailable responses without partial projections. (#457)
+
 - Add one supported canonical-HTTPS path for `review-serve`. Explicit
   certificate and private-key configuration is validated as a matching,
   owner-controlled descriptor-bound identity with an owner-only key before

@@ -36,9 +36,12 @@ from starlette.types import Message, Receive, Scope, Send
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
+    CurrentReviewCaseSnapshot,
     InspectCurrentReviewCase,
     OwnerSessionService,
     RecordHumanDecision,
+    ReviewAttentionSnapshot,
+    ReviewLibrarySnapshot,
     ReviewWebError,
     ReviewWebRepository,
 )
@@ -730,57 +733,35 @@ class _SerializedReviewRepository:
         with self._lock:
             return self._repository.get_review_case(review_case_id)
 
-    def review_case_exists(self, review_case_id: str) -> bool:
+    def read_current_review_case(
+        self, review_case_id: str, history_limit: int | None
+    ) -> CurrentReviewCaseSnapshot:
         with self._lock:
-            return self._repository.review_case_exists(review_case_id)
+            return self._repository.read_current_review_case(
+                review_case_id, history_limit
+            )
 
-    def get_review_case_report(self, review_case_id: str) -> str:
-        with self._lock:
-            return self._repository.get_review_case_report(review_case_id)
-
-    def get_review_model_advice(self, review_case_id: str) -> dict[str, object]:
-        with self._lock:
-            return self._repository.get_review_model_advice(review_case_id)
-
-    def get_review_case_history(self, review_case_id: str, limit: int) -> tuple[dict[str, object], ...]:
-        with self._lock:
-            return self._repository.get_review_case_history(review_case_id, limit)
-
-    def list_current_review_case_documents(
+    def read_review_library(
         self,
         search: str | None,
         limit: int,
         offset: int,
         attention: bool | None,
-    ) -> tuple[tuple[str, str], ...]:
+    ) -> ReviewLibrarySnapshot:
         with self._lock:
-            return self._repository.list_current_review_case_documents(
+            return self._repository.read_review_library(
                 search, limit, offset, attention
             )
 
-    def count_current_review_cases(
-        self, search: str | None
-    ) -> tuple[int, int]:
-        with self._lock:
-            return self._repository.count_current_review_cases(search)
-
-    def list_current_attention_documents(
+    def read_review_attention(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[tuple[str, str, str], ...]:
+    ) -> ReviewAttentionSnapshot:
         with self._lock:
-            return self._repository.list_current_attention_documents(
-                search, limit, offset
-            )
+            return self._repository.read_review_attention(search, limit, offset)
 
-    def count_current_attention_fields(self, search: str | None) -> int:
+    def review_case_exists(self, review_case_id: str) -> bool:
         with self._lock:
-            return self._repository.count_current_attention_fields(search)
-
-    def get_review_case_decisions(
-        self, review_case_id: str
-    ) -> tuple[str, ...]:
-        with self._lock:
-            return self._repository.get_review_case_decisions(review_case_id)
+            return self._repository.review_case_exists(review_case_id)
 
     def record_human_decision(self, decision: HumanDecision) -> str:
         with self._lock:

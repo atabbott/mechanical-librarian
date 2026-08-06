@@ -10,13 +10,20 @@ import sqlite3
 import stat
 import sys
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 from urllib.parse import quote
 
 from mechanical_librarian.application.failure_diagnostics import (
     reviewer_diagnostic_is_admissible,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_web import (
+    CurrentReviewCaseSnapshot,
+    ReviewAttentionSnapshot,
+    ReviewLibrarySnapshot,
+)
 from mechanical_librarian.application.shadow_reviews import (
     ReviewerExecutionProvenance,
 )
@@ -639,6 +646,26 @@ class SQLiteMetadataReportRepository:
         self._binding = binding
         self.identity = identity
 
+    @contextmanager
+    def _consistent_review_read(self) -> Iterator[None]:
+        """Keep one review projection on one authoritative SQLite snapshot."""
+        try:
+            if self._binding is not None:
+                self._binding.require_current()
+            self._connection.execute("BEGIN")
+            yield
+            self._connection.execute("COMMIT")
+            if self._binding is not None:
+                self._binding.require_current()
+        except MetadataReportError:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
+        except Exception as error:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise MetadataReportError("review snapshot is unavailable") from error
+
     def publish(self, report: MetadataReport, currentness: Callable[[], bool], expected_current: str | None = None) -> str:
         if type(report) is not MetadataReport or not callable(currentness):
             raise MetadataReportError("report publication failed")
@@ -1023,6 +1050,68 @@ class SQLiteMetadataReportRepository:
             ValueError,
         ) as error:
             raise MetadataReportError("review model advice is unavailable") from error
+
+    def read_current_review_case(
+        self, review_case_id: str, history_limit: int | None
+    ) -> CurrentReviewCaseSnapshot:
+        if history_limit is not None and (
+            type(history_limit) is not int or not 1 <= history_limit <= 100
+        ):
+            raise MetadataReportError("review case snapshot is unavailable")
+        with self._consistent_review_read():
+            snapshot = CurrentReviewCaseSnapshot(
+                case_document=self.get_review_case(review_case_id),
+                report_document=self.get_review_case_report(review_case_id),
+                model_advice=self.get_review_model_advice(review_case_id),
+                decision_documents=self.get_review_case_decisions(review_case_id),
+                history=(
+                    ()
+                    if history_limit is None
+                    else self.get_review_case_history(review_case_id, history_limit)
+                ),
+            )
+        return snapshot
+
+    def read_review_library(
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        attention: bool | None,
+    ) -> ReviewLibrarySnapshot:
+        with self._consistent_review_read():
+            rows = self.list_current_review_case_documents(
+                search, limit, offset, attention
+            )
+            projected = tuple(
+                (
+                    case_document,
+                    report_document,
+                    self.get_review_case_decisions(
+                        ReviewCase.from_json(case_document).review_case_id
+                    ),
+                )
+                for case_document, report_document in rows
+            )
+            total, attention_total = self.count_current_review_cases(search)
+            snapshot = ReviewLibrarySnapshot(
+                rows=projected,
+                total=total,
+                attention_total=attention_total,
+            )
+        return snapshot
+
+    def read_review_attention(
+        self, search: str | None, limit: int, offset: int
+    ) -> ReviewAttentionSnapshot:
+        with self._consistent_review_read():
+            snapshot = ReviewAttentionSnapshot(
+                rows=self.list_current_attention_documents(
+                    search, limit, offset
+                ),
+                total=self.count_current_attention_fields(search),
+            )
+        return snapshot
 
     def list_current_review_case_documents(
         self,
