@@ -86,6 +86,15 @@ lens, and a queue link identifies both the exact case and destination. Policy
 resolved, ineligible, rejected, disproven, and no-op fields never inflate the
 queue or its counts.
 
+The current-case evidence resource exposes every reference used by that exact
+case through deterministic, case-bound cursor pages of at most 50 items. Cover
+references are keyed by their serialized `source_id`; provider-backed claims
+and rich evidence carry their enclosing provider and candidate identities.
+Only the already-persisted bounded projection is returned—there is no provider
+call, raw credential, unrestricted source dump, or library-wide evidence
+browser. The bundled detail page loads additional pages only on an explicit
+“Load more evidence” action and renders every value as text.
+
 Representations expose AI recommendation, deterministic disposition, human
 decision, stale state, and apply readiness as separate fields. An omitted
 human decision must not be inferred from an AI or source recommendation.

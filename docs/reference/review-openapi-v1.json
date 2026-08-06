@@ -355,6 +355,17 @@
       "_EvidenceItem": {
         "additionalProperties": false,
         "properties": {
+          "candidate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate"
+          },
           "fact": {
             "title": "Fact",
             "type": "string"
@@ -362,6 +373,17 @@
           "kind": {
             "title": "Kind",
             "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
           },
           "reference": {
             "title": "Reference",
@@ -373,8 +395,10 @@
           }
         },
         "required": [
+          "candidate",
           "fact",
           "kind",
+          "provider",
           "reference",
           "source"
         ],
@@ -1539,6 +1563,35 @@
             "schema": {
               "title": "Review Case Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],

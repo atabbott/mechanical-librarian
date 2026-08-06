@@ -385,6 +385,11 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(evidence.status_code, 200)
         self.assertEqual(evidence.json()["items"][0]["source"], "local")
         self.assertIn("Exact evaluator candidate", evidence.json()["items"][0]["fact"])
+        invalid_cursor = self.client.get(
+            f"/api/v1/review-cases/{self.case.review_case_id}/evidence?cursor=bad"
+        )
+        self.assertEqual(invalid_cursor.status_code, 400)
+        self.assertEqual(invalid_cursor.json()["error"]["code"], "request")
         self.assertEqual(history.json()["items"][0]["kind"], "admitted")
         self.assertIn("default-src 'none'", detail.headers["content-security-policy"])
         missing = self.client.post(
@@ -404,6 +409,145 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(logout.status_code, 204)
         denied = self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}")
         self.assertEqual(denied.status_code, 401)
+
+    def test_complete_evidence_projection_is_page_bounded_and_case_bound(self) -> None:
+        local = [
+            {
+                "kind": "title",
+                "observed": f"hostile </pre><script>{index}</script>",
+                "reference": f"local_{index:064x}",
+            }
+            for index in range(55)
+        ]
+        provider_evidence = {
+            "kind": "edition_statement",
+            "scope": "edition",
+            "source_ordinal": 0,
+            "value": "Second edition",
+        }
+        rich_reference = "evidence_" + hashlib.sha256(
+            json.dumps(
+                {
+                    "candidate": "candidate-1",
+                    "evidence": provider_evidence,
+                    "provider": "catalogue",
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        provider_claim_reference = "provider_" + "a" * 64
+        sibling_claim_reference = "provider_" + "d" * 64
+        identifier_reference = "provider_identifier_" + "e" * 64
+        cover_reference = "provider_cover_" + "b" * 64
+        data = {
+            "local": {"claims": local},
+            "providers": [
+                {
+                    "provider": "catalogue",
+                    "candidates": [
+                        {
+                            "identity": "candidate-1",
+                            "claims": [
+                                {
+                                    "kind": "publisher",
+                                    "reference": provider_claim_reference,
+                                    "value": "Example Press",
+                                }
+                            ],
+                            "evidence": [provider_evidence],
+                        }
+                    ],
+                },
+                {
+                    "provider": "other_catalogue",
+                    "candidates": [
+                        {
+                            "identity": "candidate-2",
+                            "claims": [
+                                {
+                                    "kind": "title",
+                                    "reference": sibling_claim_reference,
+                                    "value": "Sibling candidate",
+                                }
+                            ],
+                            "evidence": [],
+                        }
+                    ],
+                },
+            ],
+            "identifier_evidence": [
+                {
+                    "candidate_identity": "candidate-2",
+                    "kind": "identifier_relation",
+                    "provider": "other_catalogue",
+                    "reference": identifier_reference,
+                }
+            ],
+            "covers": [
+                {
+                    "kind": "provider",
+                    "provenance": {"provider": "catalogue"},
+                    "source_id": cover_reference,
+                    "state": "retrieved",
+                }
+            ],
+        }
+        references = {
+            *(item["reference"] for item in local),
+            provider_claim_reference,
+            sibling_claim_reference,
+            identifier_reference,
+            rich_reference,
+            cover_reference,
+        }
+        detail = {"fields": [{"provenance": sorted(references)}]}
+        report = SimpleNamespace(to_data=lambda: data)
+        cases = InspectCurrentReviewCase(Mock())
+        with patch.object(cases, "_read", return_value=(detail, report, ())):
+            first = cases.evidence("review_case_" + "c" * 64, limit=50)
+            second = cases.evidence(
+                "review_case_" + "c" * 64,
+                limit=50,
+                cursor=first["next_cursor"],
+            )
+            with self.assertRaises(ReviewWebError):
+                cases.evidence(
+                    "review_case_" + "d" * 64,
+                    cursor=first["next_cursor"],
+                )
+        reopened_cases = InspectCurrentReviewCase(Mock())
+        with patch.object(
+            reopened_cases,
+            "_read",
+            return_value=(detail, report, ()),
+        ):
+            reopened = reopened_cases.evidence(
+                "review_case_" + "c" * 64,
+                limit=50,
+            )
+
+        self.assertEqual(first["next_cursor"], reopened["next_cursor"])
+        self.assertEqual(len(first["items"]), 50)
+        self.assertEqual(len(second["items"]), 10)
+        self.assertIsNone(second["next_cursor"])
+        items = first["items"] + second["items"]
+        self.assertEqual({item["reference"] for item in items}, references)
+        rich = next(item for item in items if item["reference"] == rich_reference)
+        self.assertEqual(rich["provider"], "catalogue")
+        self.assertEqual(rich["candidate"], "candidate-1")
+        cover = next(item for item in items if item["reference"] == cover_reference)
+        self.assertEqual(cover["source"], "cover")
+        self.assertEqual(cover["provider"], "catalogue")
+        identifier = next(
+            item for item in items if item["reference"] == identifier_reference
+        )
+        self.assertEqual(identifier["source"], "identifier")
+        self.assertEqual(identifier["provider"], "other_catalogue")
+        self.assertEqual(identifier["candidate"], "candidate-2")
+        hostile = next(item for item in items if item["source"] == "local")
+        self.assertIn("</pre><script>", hostile["fact"])
 
     def test_logout_persistence_failure_keeps_the_session_active(self) -> None:
         login = self._login()
@@ -777,6 +921,8 @@ class ReviewWebTests(unittest.TestCase):
     def test_browser_asset_loads_all_read_models_without_html_injection(self) -> None:
         script = self.client.get("/assets/review.js").text
         self.assertIn("/evidence", script)
+        self.assertIn("Load more evidence", script)
+        self.assertIn("encodeURIComponent(cursor)", script)
         self.assertIn("/history", script)
         self.assertIn("textContent", script)
         self.assertNotIn("innerHTML", script)

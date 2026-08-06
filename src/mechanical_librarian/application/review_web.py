@@ -271,7 +271,12 @@ class InspectCurrentReviewCase:
         detail, _, _ = self._read(review_case_id)
         return detail
 
-    def evidence(self, review_case_id: str, limit: int = 50) -> dict[str, object]:
+    def evidence(
+        self,
+        review_case_id: str,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> dict[str, object]:
         detail, report, _ = self._read(review_case_id)
         fields = detail["fields"]
         assert type(fields) is list
@@ -281,16 +286,30 @@ class InspectCurrentReviewCase:
             for reference in field["provenance"]
         }
         evidence = _evidence_by_reference(report)
-        bounded = [
+        if wanted.difference(evidence):
+            raise ReviewWebError("not_found")
+        ordered = [
             evidence[reference]
             for reference in sorted(wanted)
             if reference in evidence
-        ][:limit]
+        ]
+        bounded_limit = min(max(limit, 1), 50)
+        offset = _decode_cursor(cursor, "evidence", review_case_id, None)
+        bounded = ordered[offset : offset + bounded_limit]
         return {
             "items": bounded,
-            "next_cursor": None,
+            "next_cursor": (
+                _encode_cursor(
+                    offset + bounded_limit,
+                    "evidence",
+                    review_case_id,
+                    None,
+                )
+                if offset + bounded_limit < len(ordered)
+                else None
+            ),
             "review_case_id": review_case_id,
-            "schema_version": "review-case-evidence-v1",
+            "schema_version": "review-case-evidence-v2",
         }
 
     def history(self, review_case_id: str, limit: int = 50) -> dict[str, object]:
@@ -490,19 +509,28 @@ def _bounded_token(value: object) -> bool:
 
 def _evidence_by_reference(
     report: MetadataReport,
-) -> dict[str, dict[str, str]]:
+) -> dict[str, dict[str, str | None]]:
     data = report.to_data()
-    values: dict[str, dict[str, str]] = {}
+    values: dict[str, dict[str, str | None]] = {}
 
-    def add(source: str, fact: object) -> None:
-        if type(fact) is not dict or type(fact.get("reference")) is not str:
+    def add(
+        source: str,
+        fact: object,
+        *,
+        reference_key: str = "reference",
+        provider: str | None = None,
+        candidate: str | None = None,
+    ) -> None:
+        if type(fact) is not dict or type(fact.get(reference_key)) is not str:
             return
-        reference = fact["reference"]
+        reference = fact[reference_key]
         values[reference] = {
+            "candidate": candidate,
             "fact": json.dumps(
                 fact, ensure_ascii=False, separators=(",", ":"), sort_keys=True
             ),
             "kind": str(fact.get("kind", "evidence")),
+            "provider": provider,
             "reference": reference,
             "source": source,
         }
@@ -513,16 +541,71 @@ def _evidence_by_reference(
         add("local", fact)
     for provider in data["providers"]:
         assert type(provider) is dict
+        provider_name = provider["provider"]
+        assert type(provider_name) is str
         for candidate in provider["candidates"]:
             assert type(candidate) is dict
+            candidate_identity = candidate["identity"]
+            assert type(candidate_identity) is str
             for fact in candidate["claims"]:
-                add("provider_claim", fact)
+                add(
+                    "provider_claim",
+                    fact,
+                    provider=provider_name,
+                    candidate=candidate_identity,
+                )
             for fact in candidate["evidence"]:
-                add("provider_evidence", fact)
+                assert type(fact) is dict
+                reference = "evidence_" + hashlib.sha256(
+                    json.dumps(
+                        {
+                            "candidate": candidate_identity,
+                            "evidence": fact,
+                            "provider": provider_name,
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ).encode("utf-8")
+                ).hexdigest()
+                rich_fact = dict(fact)
+                rich_fact["reference"] = reference
+                add(
+                    "provider_evidence",
+                    rich_fact,
+                    provider=provider_name,
+                    candidate=candidate_identity,
+                )
     for fact in data["identifier_evidence"]:
-        add("identifier", fact)
+        assert type(fact) is dict
+        add(
+            "identifier",
+            fact,
+            provider=(
+                fact.get("provider")
+                if type(fact.get("provider")) is str
+                else None
+            ),
+            candidate=(
+                fact.get("candidate_identity")
+                if type(fact.get("candidate_identity")) is str
+                else None
+            ),
+        )
     for fact in data["covers"]:
-        add("cover", fact)
+        assert type(fact) is dict
+        provenance = fact.get("provenance")
+        add(
+            "cover",
+            fact,
+            reference_key="source_id",
+            provider=(
+                provenance.get("provider")
+                if type(provenance) is dict
+                and type(provenance.get("provider")) is str
+                else None
+            ),
+        )
     return values
 
 
