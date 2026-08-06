@@ -141,6 +141,31 @@ class ReviewTLSIdentityTests(unittest.TestCase):
             with self.assertRaises(ssl.SSLError):
                 create_ssl_context(str(certificate), str(encrypted), **arguments)
 
+    def test_encrypted_envelopes_fail_before_ssl_parsing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            certificate, private_key = synthetic_tls_identity(root)
+            encrypted = (
+                _encrypted_private_key(
+                    private_key,
+                    root / ("empty.key" if password == "" else "protected.key"),
+                    password,
+                )
+                for password in ("", "synthetic-test-password")
+            )
+            with patch(
+                "mechanical_librarian.infrastructure.security.review_tls.ssl.SSLContext"
+            ) as context:
+                for candidate in encrypted:
+                    with self.subTest(candidate=candidate), self.assertRaises(
+                        ConfigurationError
+                    ):
+                        with open_review_tls_identity(
+                            str(certificate), str(candidate)
+                        ):
+                            self.fail("encrypted key reached SSL parsing")
+            context.assert_not_called()
+
 
 class ReviewProtocolTests(unittest.TestCase):
     def setUp(self) -> None:
