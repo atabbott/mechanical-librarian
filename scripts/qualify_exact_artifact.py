@@ -35,7 +35,10 @@ _MAX_WHEEL_MEMBER_BYTES = 16_777_216
 _MAX_INSTALLED_BYTES = 134_217_728
 _MAX_METADATA_BYTES = 1_048_576
 _MAX_COMMAND_STREAM_BYTES = 1_048_576
-_COMMAND_TIMEOUT_SECONDS = 180
+# The installed-wheel suite intentionally exercises the complete repository.
+# Keep its subprocess deadline below the 15-minute workflow ceiling while
+# allowing slower hosted runners enough headroom as the suite grows.
+_COMMAND_TIMEOUT_SECONDS = 300
 _CANONICAL_TEST_ARGS = (
     "-m",
     "unittest",
