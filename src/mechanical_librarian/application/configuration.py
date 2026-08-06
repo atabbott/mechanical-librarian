@@ -41,6 +41,8 @@ class ReviewWebConfiguration:
     owner_password_hash_file: str
     session_lifetime_seconds: int = 3600
     trusted_proxy_ips: tuple[str, ...] = ()
+    tls_certificate_file: str | None = None
+    tls_private_key_file: str | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -63,6 +65,12 @@ class ReviewWebConfiguration:
         if origin.scheme != "https":
             raise ConfigurationError("review canonical origin is invalid")
         _absolute_path(self.owner_password_hash_file, "owner password hash file")
+        if (self.tls_certificate_file is None) != (self.tls_private_key_file is None):
+            raise ConfigurationError("review TLS configuration is invalid")
+        if self.tls_certificate_file is not None:
+            _absolute_path(self.tls_certificate_file, "TLS certificate file")
+            assert self.tls_private_key_file is not None
+            _absolute_path(self.tls_private_key_file, "TLS private key file")
         if (
             type(self.session_lifetime_seconds) is not int
             or not 300 <= self.session_lifetime_seconds <= 86_400

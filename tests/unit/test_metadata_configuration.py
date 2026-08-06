@@ -45,6 +45,54 @@ def _source(root: Path) -> dict[str, object]:
 
 
 class MetadataConfigurationTests(unittest.TestCase):
+    def test_review_tls_paths_are_explicit_absolute_and_paired(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = _source(root)
+            source["review"] = {
+                "canonical_origin": "https://review.example.invalid",
+                "owner_password_hash_file": str(root / "owner.hash"),
+                "tls_certificate_file": str(root / "review.crt"),
+                "tls_private_key_file": str(root / "review.key"),
+            }
+            path = root / "config.json"
+            path.write_text(json.dumps(source), encoding="utf-8")
+            review = load_configuration_file(path).review
+            assert review is not None
+            self.assertEqual(
+                review.tls_certificate_file, str(root / "review.crt")
+            )
+            self.assertEqual(
+                review.tls_private_key_file, str(root / "review.key")
+            )
+            properties = json.loads(configuration_schema_json())["$defs"][
+                "ReviewInput"
+            ]["properties"]
+            for field in ("tls_certificate_file", "tls_private_key_file"):
+                absolute = next(
+                    choice
+                    for choice in properties[field]["anyOf"]
+                    if choice.get("type") == "string"
+                )
+                self.assertEqual(absolute["pattern"], "^/")
+
+            for index, fields in enumerate(
+                (
+                    {"tls_private_key_file": None},
+                    {"tls_certificate_file": None},
+                    {"tls_certificate_file": "relative.crt"},
+                    {"tls_private_key_file": "relative.key"},
+                )
+            ):
+                invalid = _source(root)
+                invalid["review"] = {**source["review"], **fields}
+                candidate = root / f"invalid-review-{index}.json"
+                candidate.write_text(json.dumps(invalid), encoding="utf-8")
+                with self.subTest(index=index), self.assertRaises(
+                    ConfigurationError
+                ):
+                    load_configuration_file(candidate)
+
     def test_multiple_named_scopes_and_provider_order_are_explicit_and_canonical(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

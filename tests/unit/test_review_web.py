@@ -903,10 +903,17 @@ class ReviewWebTests(unittest.TestCase):
         )
 
     def test_composition_opens_the_single_database_for_worker_threads(self) -> None:
+        from tests.support.tls import synthetic_tls_identity
+
         repository = Mock()
+        certificate, private_key = synthetic_tls_identity(
+            Path(self.temporary.name)
+        )
         configuration = ReviewWebConfiguration(
             canonical_origin="https://review.test",
             owner_password_hash_file=str(self.hash_path),
+            tls_certificate_file=str(certificate),
+            tls_private_key_file=str(private_key),
         )
         with (
             patch(

@@ -61,6 +61,21 @@ sabotage is outside the supported threat model.
 
 ## Authenticated review surface
 
+The supported network path terminates TLS directly in `review-serve`. Its
+certificate and private-key paths are explicit schema fields, must be supplied
+together as bounded owner-controlled regular no-follow files with an owner-only
+unencrypted private key, and are opened and validated noninteractively as one
+matching identity before the application database or listener is opened. The
+immutable anonymous snapshot descriptors prevent path replacement or in-place
+mutation from changing the served identity after validation. The direct H11
+edge admits at most 100 connections, limits incomplete events to 16 KiB, and
+closes incomplete headers after 10 seconds. TLS 1.2 is confined to ECDHE AEAD
+ciphers while TLS 1.3 retains the runtime suites. No environment substitution,
+plaintext mode, TLS-disable flag, ambient proxy-header handling, certificate
+issuance, or certificate renewal authority is present. Both the preflight and
+Uvicorn load use an explicit non-passphrase rejection value, so neither load
+can fall back to OpenSSL's interactive password channel.
+
 The #447 review server adds one private owner-facing HTTP entry point and no
 target-service client. An unauthenticated network client can reach only bounded
 liveness, the login form/assets, and the fixed login failure envelope. Review
