@@ -25,20 +25,29 @@ Require exact HTTPS Host and Origin, per-session CSRF, private/no-store caching,
 restrictive browser headers, and explicit direct-peer proxy trust. Only bounded
 liveness and the login resources are anonymous.
 
-The exact-current schema adds only session and login-throttle tables. There is
-no migration or compatibility reader. The surface exposes case detail, bounded
-evidence, and bounded current-case history. It cannot create a decision,
-automatic authority, apply plan, target client, or write. Variant M guides
-hierarchy and interaction outcomes without supplying code or exact pixels. Its
-library activity view is deferred with cross-case history to #195.
+The exact-current schema adds session, login-throttle, immutable human-decision,
+and append-only decision-event tables. There is no migration or compatibility
+reader. The surface exposes case detail, bounded evidence, bounded current-case
+history, and one exact-version individual human decision. A detail-page request
+atomically rotates the session's CSRF digest and embeds the fresh raw token only
+long enough for the same-origin script to move it into page memory; refresh and
+new contexts therefore need no browser storage. If another detail page rotates
+that digest, the focused retry obtains one fresh private page token before
+resubmitting the unchanged idempotent request. The surface cannot create
+automatic authority, an apply plan, a target client, or a target/media write.
+Variant M guides hierarchy and interaction outcomes without supplying code or
+exact pixels. Its library activity view is deferred with cross-case history to
+#195.
 
 ## Consequences
 
 The supported runtime gains one HTTP port and pinned ASGI/password dependencies,
 which require security, licence, lockfile, OpenAPI, installed-artifact, and
-browser qualification. The small same-origin client stays replaceable because
+browser qualification. Pinned Playwright Chromium is a development-only proof
+dependency and is not shipped in the runtime artifact. The small same-origin
+client stays replaceable because
 the versioned application/API boundary owns the behavior. React/Vite remains a
 future option only if a concrete later interaction or performance constraint
 earns that cost. Password recovery, public signup, OIDC, multi-user/RBAC,
-websockets, background work, decision mutation, apply, and target writes remain
-unsupported.
+websockets, background work, automatic decisions, bulk/reversal, apply, and
+target writes remain unsupported.

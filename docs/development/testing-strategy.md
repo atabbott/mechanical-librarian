@@ -26,6 +26,16 @@ report and ProposalSet creation, concurrent admission, replay, restart-backed
 get, successor/historical projection, and nonactionable retirement against a
 disposable loopback target and synthetic EPUB.
 
+The public gate first installs the Chromium revision bound to pinned Playwright
+1.61.0 and verifies its repository-bound complete payload digest before launch.
+The installed-artifact suite then starts only disposable HTTPS review
+servers with synthetic credentials and databases. Its browser cohort exercises
+the complete three-action decision round trip at the primary desktop viewport,
+the failure/retry and hostile-text path at 390 pixels, automatic-only detail,
+private storage/cache and CSP, bounded DOM/assets, keyboard/focus, interaction
+latency, restart, and a fresh authenticated browser context. Browser downloads
+and test artifacts are not packaged or published.
+
 The suite covers:
 
 - closed reports, canonical serialization, stable claim/report references,

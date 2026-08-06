@@ -1,0 +1,505 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import socket
+import subprocess
+import tempfile
+import threading
+import time
+import unittest
+from contextlib import contextmanager
+from pathlib import Path
+
+import uvicorn
+from argon2 import PasswordHasher
+from playwright.sync_api import Page, sync_playwright
+
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope
+from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.interfaces.web import create_review_app
+from tests.unit.test_bibliographic_bundles import (
+    _bibliographic_report,
+    _source as _bibliographic_source,
+)
+from tests.unit.test_proposal_set import (
+    _claim as _proposal_claim,
+    _provider as _proposal_provider,
+    _report as _proposal_report,
+)
+from tests.unit.test_review_case_persistence import _report as _simple_report
+from scripts.verify_playwright_browser import verify_playwright_browser
+
+
+_PASSWORD = "synthetic browser password"
+
+
+def _unused_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def _certificate(root: Path) -> tuple[Path, Path]:
+    certificate = root / "browser-test.crt"
+    key = root / "browser-test.key"
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(key),
+            "-out",
+            str(certificate),
+            "-days",
+            "1",
+            "-subj",
+            "/CN=127.0.0.1",
+            "-addext",
+            "subjectAltName=IP:127.0.0.1",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return certificate, key
+
+
+def _manual_report():
+    return _bibliographic_report(
+        current_title="Mistborn Secret History",
+        providers=(
+            _bibliographic_source(
+                "catalogue",
+                "edition-1",
+                titles=(),
+                series="Mistborn",
+            ),
+        ),
+    )
+
+
+def _hostile_report():
+    return _simple_report(
+        title='<img src="https://invalid.test/private" onerror="alert(1)">'
+    )
+
+
+def _automatic_report():
+    providers = tuple(
+        _proposal_provider(
+            name,
+            f"{name}-edition",
+            (
+                _proposal_claim(
+                    name,
+                    f"{name}-edition",
+                    ClaimKind.TITLE,
+                    "Qualified automatic title",
+                    scope=ClaimScope.WORK,
+                ),
+            ),
+            authority=authority,
+        )
+        for name, authority in (
+            ("hardcover_primary", "hardcover"),
+            ("open_library_primary", "open_library"),
+        )
+    )
+    return _proposal_report(providers=providers)
+
+
+@contextmanager
+def _server(
+    *,
+    database: Path,
+    hash_path: Path,
+    certificate: Path,
+    key: Path,
+    port: int,
+    report=None,
+):
+    repository = open_repository(
+        database,
+        create=report is not None,
+        cross_thread=True,
+    )
+    case_id: str | None = None
+    if report is not None:
+        repository.publish(report, lambda: True)
+        proposal_set = evaluate_report(report)
+        repository.publish_proposal(proposal_set)
+        case_id = json.loads(repository.admit_review_case(proposal_set))[
+            "review_case_id"
+        ]
+    origin = f"https://127.0.0.1:{port}"
+    app = create_review_app(
+        repository,
+        ReviewWebConfiguration(
+            canonical_origin=origin,
+            owner_password_hash_file=str(hash_path),
+        ),
+        clock=lambda: 1_000,
+        close_repository=True,
+    )
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=port,
+            log_level="error",
+            access_log=False,
+            ssl_certfile=str(certificate),
+            ssl_keyfile=str(key),
+            timeout_keep_alive=1,
+        )
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and thread.is_alive() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if not server.started:
+        server.should_exit = True
+        thread.join(timeout=5)
+        raise RuntimeError("synthetic review server did not start")
+    try:
+        yield origin, case_id
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+        if thread.is_alive():
+            server.force_exit = True
+            thread.join(timeout=5)
+        if thread.is_alive():
+            raise RuntimeError("synthetic review server did not stop")
+
+
+def _login(page: Page, origin: str) -> None:
+    page.goto(f"{origin}/login")
+    page.get_by_label("Password").fill(_PASSWORD)
+    page.get_by_role("button", name="Sign in").click()
+    page.wait_for_url(f"{origin}/library")
+
+
+def _capture_errors(page: Page, errors: list[str]) -> None:
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on(
+        "console",
+        lambda message: errors.append(message.text)
+        if message.type == "error"
+        else None,
+    )
+
+
+def _press_and_wait_for_navigation(page: Page, control) -> None:
+    previous = page.url
+    control.press("Enter")
+    page.wait_for_function(
+        "previous => location.href !== previous", arg=previous
+    )
+    page.locator(".toast").wait_for()
+
+
+class ReviewBrowserQualificationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        verify_playwright_browser()
+
+    def test_desktop_round_trip_is_explicit_responsive_and_durable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.chmod(root, 0o700)
+            hash_path = root / "owner.hash"
+            hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+            os.chmod(hash_path, 0o600)
+            certificate, key = _certificate(root)
+            database = root / "application.sqlite3"
+            port = _unused_port()
+            errors: list[str] = []
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                context = browser.new_context(
+                    ignore_https_errors=True,
+                    viewport={"width": 1280, "height": 900},
+                )
+                page = context.new_page()
+                _capture_errors(page, errors)
+                with _server(
+                    database=database,
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    report=_manual_report(),
+                ) as (origin, case_id):
+                    assert case_id is not None
+                    _login(page, origin)
+                    response = page.goto(f"{origin}/review/{case_id}?field=series")
+                    self.assertIsNotNone(response)
+                    self.assertIn(
+                        "default-src 'none'",
+                        response.headers["content-security-policy"],
+                    )
+                    page.get_by_role("heading", name="Current review case").wait_for()
+                    self.assertEqual(page.locator("img,script:not([src])").count(), 0)
+                    self.assertEqual(
+                        page.evaluate(
+                            "() => [Object.keys(localStorage).length, Object.keys(sessionStorage).length, document.cookie]"
+                        ),
+                        [0, 0, ""],
+                    )
+                    self.assertFalse(
+                        page.locator("#review").evaluate(
+                            "node => node.hasAttribute('data-csrf-token')"
+                        )
+                    )
+                    self.assertLess(page.locator("body *").count(), 500)
+                    self.assertLess(
+                        len(page.request.get(f"{origin}/assets/review.js").body()),
+                        40_000,
+                    )
+                    strip = page.locator(".field-strip")
+                    self.assertEqual(strip.locator(":scope > .field").count(), 3)
+                    self.assertEqual(strip.locator("details").count(), 0)
+                    self.assertTrue(
+                        page.get_by_text("Model advice: not requested").evaluate(
+                            "(advice, strip) => Boolean(strip.compareDocumentPosition(advice) & Node.DOCUMENT_POSITION_FOLLOWING)",
+                            strip.element_handle(),
+                        )
+                    )
+                    sibling = context.new_page()
+                    sibling.goto(f"{origin}/review/{case_id}")
+                    sibling.get_by_role(
+                        "heading", name="Current review case"
+                    ).wait_for()
+                    sibling.close()
+                    previous = page.url
+                    page.get_by_role(
+                        "button", name=re.compile(r"^Accept proposed value")
+                    ).first.press("Enter")
+                    retry = page.get_by_role("button", name="Try again")
+                    retry.wait_for()
+                    page.wait_for_timeout(50)
+                    self.assertEqual(page.url, previous)
+                    self.assertTrue(
+                        retry.evaluate("node => node === document.activeElement")
+                    )
+                    self.assertEqual(len(errors), 1, errors)
+                    self.assertIn("status of 403", errors[0])
+                    errors.clear()
+                    started = time.monotonic()
+                    _press_and_wait_for_navigation(
+                        page,
+                        retry,
+                    )
+                    self.assertLess(time.monotonic() - started, 5)
+                    accepted_url = page.url
+                    page.go_back()
+                    page.get_by_role(
+                        "heading", name="Current review case"
+                    ).wait_for()
+                    self.assertEqual(page.locator(".decision-recorded").count(), 1)
+                    self.assertEqual(page.locator(".choices").count(), 2)
+                    page.go_forward()
+                    page.wait_for_url(accepted_url)
+                    page.get_by_role(
+                        "heading", name="Current review case"
+                    ).wait_for()
+                    focused = page.locator(":focus").get_attribute("id")
+                    self.assertIsNotNone(focused)
+                    self.assertTrue(focused.startswith("field-"), focused)
+                    _press_and_wait_for_navigation(
+                        page,
+                        page.locator(f"#{focused}").get_by_role(
+                            "button", name="Keep current value"
+                        ),
+                    )
+                    focused = page.locator(":focus").get_attribute("id")
+                    self.assertIsNotNone(focused)
+                    _press_and_wait_for_navigation(
+                        page,
+                        page.locator(f"#{focused}").get_by_role(
+                            "button", name="Reject proposed change"
+                        ),
+                    )
+                    self.assertEqual(page.locator(".choices").count(), 0)
+                    self.assertEqual(page.locator(".decision-recorded").count(), 3)
+                    decided_url = page.url
+                    context.close()
+                with _server(
+                    database=database,
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                ) as (origin, _):
+                    fresh = browser.new_context(
+                        ignore_https_errors=True,
+                        viewport={"width": 1280, "height": 900},
+                    )
+                    reopened = fresh.new_page()
+                    _capture_errors(reopened, errors)
+                    _login(reopened, origin)
+                    reopened.goto(decided_url)
+                    reopened.get_by_role(
+                        "heading", name="Current review case"
+                    ).wait_for()
+                    self.assertEqual(reopened.locator(".decision-recorded").count(), 3)
+                    self.assertEqual(reopened.locator(".choices").count(), 0)
+                    fresh.close()
+                browser.close()
+            self.assertEqual(errors, [])
+
+    def test_compact_failure_retry_and_automatic_only_detail(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.chmod(root, 0o700)
+            hash_path = root / "owner.hash"
+            hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+            os.chmod(hash_path, 0o600)
+            certificate, key = _certificate(root)
+            port = _unused_port()
+            errors: list[str] = []
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                context = browser.new_context(
+                    ignore_https_errors=True,
+                    viewport={"width": 390, "height": 844},
+                )
+                page = context.new_page()
+                _capture_errors(page, errors)
+                with _server(
+                    database=root / "manual.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    report=_hostile_report(),
+                ) as (origin, case_id):
+                    assert case_id is not None
+                    _login(page, origin)
+                    page.goto(
+                        f"{origin}/review/{case_id}?decided=subtitle&field=unknown%5B"
+                    )
+                    page.get_by_role("heading", name="Current review case").wait_for()
+                    self.assertEqual(page.locator(".toast").count(), 0)
+                    self.assertTrue(
+                        page.locator("#review").evaluate(
+                            "node => node === document.activeElement"
+                        )
+                    )
+                    self.assertEqual(page.locator("img").count(), 0)
+                    self.assertIn("<img", page.locator("body").inner_text())
+                    self.assertLessEqual(
+                        page.evaluate("() => document.documentElement.scrollWidth"),
+                        390,
+                    )
+                    page.route(
+                        "**/decisions",
+                        lambda route: route.fulfill(
+                            status=401,
+                            content_type="application/json",
+                            body='{"error":{"code":"authentication_required"}}',
+                        ),
+                    )
+                    page.get_by_role("button", name="Keep current value").first.press(
+                        "Enter"
+                    )
+                    sign_in = page.get_by_role("link", name="Sign in again")
+                    sign_in.wait_for()
+                    page.wait_for_timeout(50)
+                    self.assertTrue(
+                        sign_in.evaluate("node => node === document.activeElement")
+                    )
+                    self.assertIn(
+                        "Your choice is unchanged", page.get_by_role("alert").inner_text()
+                    )
+                    self.assertEqual(len(errors), 1, errors)
+                    self.assertIn("status of 401", errors[0])
+                    errors.clear()
+                    page.unroute("**/decisions")
+                    page.reload()
+                    page.get_by_role("heading", name="Current review case").wait_for()
+                    failures = 0
+                    network_statuses: list[int] = []
+
+                    def fail_once(route) -> None:
+                        nonlocal failures
+                        failures += 1
+                        if failures == 1:
+                            route.fulfill(
+                                status=503,
+                                content_type="application/json",
+                                body='{"error":{"code":"persistence"}}',
+                            )
+                        else:
+                            response = route.fetch()
+                            network_statuses.append(response.status)
+                            route.fulfill(response=response)
+
+                    page.route("**/decisions", fail_once)
+                    page.get_by_role("button", name="Reject proposed change").first.press(
+                        "Enter"
+                    )
+                    retry = page.get_by_role("button", name="Try again")
+                    retry.wait_for()
+                    page.wait_for_timeout(50)
+                    self.assertEqual(len(errors), 1, errors)
+                    self.assertIn("status of 503", errors[0])
+                    errors.clear()
+                    self.assertTrue(retry.evaluate("node => node === document.activeElement"))
+                    self.assertIn("Your choice is unchanged", page.get_by_role("alert").inner_text())
+                    previous = page.url
+                    retry.click()
+                    page.wait_for_timeout(1_000)
+                    self.assertNotEqual(
+                        page.url,
+                        previous,
+                        f"statuses={network_statuses}\n{page.locator('body').inner_text()}",
+                    )
+                    page.locator(".toast").wait_for()
+                    self.assertEqual(failures, 2)
+                    context.close()
+
+                automatic_context = browser.new_context(
+                    ignore_https_errors=True,
+                    viewport={"width": 390, "height": 844},
+                )
+                automatic = automatic_context.new_page()
+                _capture_errors(automatic, errors)
+                with _server(
+                    database=root / "automatic.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    report=_automatic_report(),
+                ) as (origin, case_id):
+                    assert case_id is not None
+                    _login(automatic, origin)
+                    automatic.goto(f"{origin}/review/{case_id}")
+                    automatic.get_by_role("heading", name="Current review case").wait_for()
+                    self.assertEqual(automatic.locator(".choices").count(), 0)
+                    self.assertEqual(
+                        automatic.get_by_text("No human decision recorded.").count(), 0
+                    )
+                    self.assertLessEqual(
+                        automatic.evaluate(
+                            "() => document.documentElement.scrollWidth"
+                        ),
+                        390,
+                    )
+                    automatic_context.close()
+                browser.close()
+            self.assertEqual(errors, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -92,6 +92,22 @@ decision and audit event commit atomically and are append-only. The interface
 has no automatic-decision, apply-plan, target client, media-write,
 target-write, bulk, or reversal constructor.
 
+The #450 browser activation rotates the stored CSRF digest when an authenticated
+detail page is served. The raw replacement token is emitted only in that
+private/no-store HTML response, removed from the DOM when the bounded script
+starts, and retained only in page memory. It is never placed in a cookie,
+`localStorage`, `sessionStorage`, URL, log, trace, or durable artifact. A
+rotated-away token fails, and each decision still requires the exact Origin,
+session, case, proposal, target fingerprint, destination, action, selected
+value, and idempotency key. Browser success follows the typed server
+acknowledgement; a failed or ambiguous response neither advances nor displays
+success and retries the same request identity. If another authenticated detail
+page rotated the sole session digest, the focused retry first fetches a fresh
+private/no-store detail token into memory and then resubmits; the failed attempt
+itself remains non-mutating and never advances. An expired session instead
+offers a focused sign-in link and does not retry a decision without fresh
+authentication.
+
 ## Credentials and egress
 
 Secret material is read only in infrastructure and represented nowhere in the
