@@ -12,6 +12,12 @@ import html
 
 def _shell(*, title: str, active: str, main: str, csrf_token: str | None) -> str:
     csrf = "" if csrf_token is None else html.escape(csrf_token, quote=True)
+    brand_open = (
+        '<span class="brand">'
+        if active == "login"
+        else '<a class="brand" href="/library" aria-label="Mechanical Librarian review library">'
+    )
+    brand_close = "</span>" if active == "login" else "</a>"
     return f"""<!doctype html>
 <html lang="en" data-theme="light">
 <head>
@@ -23,10 +29,10 @@ def _shell(*, title: str, active: str, main: str, csrf_token: str | None) -> str
 <body data-csrf-token="{csrf}">
   <a class="skip-link" href="#workspace">Skip to review workspace</a>
   <header class="topbar">
-    <a class="brand" href="/library" aria-label="Mechanical Librarian review library">
+    {brand_open}
       <span class="brand-mark" aria-hidden="true">ML</span>
       <span><strong>Mechanical Librarian</strong><small>Private review workspace</small></span>
-    </a>
+    {brand_close}
     <div class="topbar-actions">
       <span class="private-pill"><span aria-hidden="true">●</span> Owner session</span>
       <button class="theme-toggle" type="button" aria-pressed="false">
@@ -662,10 +668,21 @@ if (root) {
     const unresolved = detail.fields.filter(field => field.needs_attention);
     const position = element("div", null, "position"); position.append(element("strong", String(unresolved.length)), element("span", unresolved.length === 1 ? "field needs attention" : "fields need attention")); sidebar.append(position);
     const fieldNav = element("nav", null, "field-navigation"); fieldNav.setAttribute("aria-label", "Fields needing attention");
-    const requestedField = parameters.get("field");
+    const fieldFromHash = () => {
+      if (!location.hash.startsWith("#field-")) return null;
+      try { return decodeURIComponent(location.hash.slice(7)); } catch { return null; }
+    };
+    const requestedField = fieldFromHash() || parameters.get("field");
     const requestedIndex = unresolved.findIndex(field => field.destination === requestedField);
     const initialFieldIndex = requestedIndex >= 0 ? requestedIndex : 0;
-    unresolved.forEach((field, index) => { const link = element("a"); link.href = `#field-${field.destination}`; if (index === initialFieldIndex) link.setAttribute("aria-current", "true"); link.addEventListener("click", () => { for (const item of fieldNav.querySelectorAll("a")) item.removeAttribute("aria-current"); link.setAttribute("aria-current", "true"); }); link.append(element("span", "", "attention-dot"), element("span", field.destination), element("small", `${index + 1} of ${unresolved.length}`)); fieldNav.append(link); });
+    const selectField = (destination, focus = false) => {
+      const selectedLink = [...fieldNav.querySelectorAll("a")].find(link => link.dataset.destination === destination);
+      if (!selectedLink) return;
+      for (const item of fieldNav.querySelectorAll("a")) item.removeAttribute("aria-current");
+      selectedLink.setAttribute("aria-current", "true");
+      if (focus) document.querySelector(`#field-${CSS.escape(destination)}`)?.focus();
+    };
+    unresolved.forEach((field, index) => { const link = element("a"); link.href = `#field-${field.destination}`; link.dataset.destination = field.destination; if (index === initialFieldIndex) link.setAttribute("aria-current", "true"); link.addEventListener("click", () => selectField(field.destination)); link.append(element("span", "", "attention-dot"), element("span", field.destination), element("small", `${index + 1} of ${unresolved.length}`)); fieldNav.append(link); });
     if (!unresolved.length) fieldNav.append(element("p", "All exact-current fields are resolved or automatic."));
     sidebar.append(fieldNav);
     const content = element("div", null, "detail-content");
@@ -689,7 +706,14 @@ if (root) {
     if (strip.childElementCount) content.append(strip); else content.append(element("section", "No exact-current field needs a human choice.", "empty-state"));
     if (resolved.length) {
       const context = element("details", null, "automatic-context"); context.append(element("summary", `Resolved and automatic context (${resolved.length})`)); const inner = element("div", null, "details-inner");
-      for (const field of resolved) { const row = element("section", null, "resolved-field"); row.append(element("h3", field.destination), element("p", `${friendly(field.deterministic_disposition)} · Current: ${format(field.current.value)}`)); if (field.human_decision) row.append(element("p", `Human decision: ${friendly(field.human_decision.outcome)} by ${field.human_decision.actor}.`, "decision-recorded")); inner.append(row); }
+      for (const field of resolved) {
+        const row = element("section", null, "resolved-field");
+        const usesProposed = field.deterministic_disposition === "use_proposed_value" && field.proposed_values.length;
+        const outcomeValue = field.human_decision?.outcome === "accept" ? field.human_decision.selected_value : usesProposed ? field.proposed_values.map(value => value.value) : field.current.value;
+        row.append(element("h3", field.destination), element("p", `${friendly(field.deterministic_disposition)} · Current: ${format(field.current.value)} · Outcome value: ${format(outcomeValue)}`));
+        if (field.human_decision) row.append(element("p", `Human decision: ${friendly(field.human_decision.outcome)} by ${field.human_decision.actor}.`, "decision-recorded"));
+        inner.append(row);
+      }
       context.append(inner); content.append(context);
     }
     const advice = element("details", null, "model-advice"); advice.append(element("summary", `Model advice: ${friendly(detail.model_advice.state)}`)); const adviceInner = element("div", null, "details-inner"); adviceInner.append(element("p", "Model advice is contextual only and is not a human decision."));
@@ -698,14 +722,15 @@ if (root) {
     const ledger = element("details", null, "ledger"); ledger.open = true; ledger.append(element("summary", `Evidence and source ledger (${evidence.items.length}${evidence.next_cursor ? "+" : ""})`)); const ledgerInner = element("div", null, "details-inner"); const evidenceItems = element("div", null, "ledger-items"); ledgerInner.append(evidenceItems);
     const appendEvidence = items => { for (const item of items) { const card = element("section", null, "evidence-item"); const identity = [item.source, item.provider, item.candidate].filter(Boolean).join(" · "); card.append(element("h3", `${friendly(item.kind)} · ${identity}`), element("pre", item.fact)); evidenceItems.append(card); } };
     appendEvidence(evidence.items); if (!evidence.items.length) evidenceItems.append(element("p", "No referenced evidence."));
-    if (evidence.next_cursor) { const more = element("button", "Load more evidence", "secondary-button"); more.type = "button"; let cursor = evidence.next_cursor; const status = element("p", ""); status.setAttribute("role", "status"); more.addEventListener("click", async () => { more.disabled = true; status.textContent = "Loading more evidence…"; try { const page = await load(`/api/v1/review-cases/${id}/evidence?limit=50&cursor=${encodeURIComponent(cursor)}`); appendEvidence(page.items); cursor = page.next_cursor; if (cursor) { more.disabled = false; status.textContent = `Loaded ${page.items.length} more evidence item(s).`; } else { more.remove(); status.textContent = "All referenced evidence is shown."; } } catch { more.disabled = false; status.setAttribute("role", "alert"); status.textContent = "More evidence could not be loaded. Try again."; } }); ledgerInner.append(more, status); }
+    if (evidence.next_cursor) { const more = element("button", "Load more evidence", "secondary-button"); more.type = "button"; let cursor = evidence.next_cursor; const status = element("p", ""); status.setAttribute("role", "status"); more.addEventListener("click", async () => { more.disabled = true; status.setAttribute("role", "status"); status.textContent = "Loading more evidence…"; try { const page = await load(`/api/v1/review-cases/${id}/evidence?limit=50&cursor=${encodeURIComponent(cursor)}`); appendEvidence(page.items); cursor = page.next_cursor; if (cursor) { more.disabled = false; status.textContent = `Loaded ${page.items.length} more evidence item(s).`; } else { more.remove(); status.textContent = "All referenced evidence is shown."; } } catch { more.disabled = false; status.setAttribute("role", "alert"); status.textContent = "More evidence could not be loaded. Try again."; } }); ledgerInner.append(more, status); }
     ledger.append(ledgerInner); content.append(ledger);
     const historyDetails = element("details", null, "history"); historyDetails.append(element("summary", `Current-case history (${history.items.length})`)); const historyInner = element("div", null, "details-inner");
     history.items.forEach((item, index) => { const row = element("div", null, "history-row"); const text = item.kind==='human_decision_recorded' ? `${item.occurred_at}. ${item.destination}: ${item.outcome} by ${item.actor}` : `${item.checkpoint}. ${friendly(item.kind)}: ${item.reason}`; row.append(element("span", String(index + 1)), element("span", text)); historyInner.append(row); });
     historyDetails.append(historyInner); content.append(historyDetails);
     shell.append(sidebar, content); root.replaceChildren(shell);
     const stripPosition = Number.parseInt(parameters.get("strip") || "0", 10); if (Number.isSafeInteger(stripPosition) && stripPosition >= 0) strip.scrollLeft = stripPosition;
-    const selected = parameters.get("field"); const target = (selected ? document.querySelector(`#field-${CSS.escape(selected)}`) : null) || root; target.focus(target === root ? {preventScroll: true} : undefined);
+    addEventListener("hashchange", () => selectField(fieldFromHash(), true));
+    const selected = fieldFromHash() || parameters.get("field"); const target = (selected ? document.querySelector(`#field-${CSS.escape(selected)}`) : null) || root; target.focus(target === root ? {preventScroll: true} : undefined);
   }).catch(error => {
     if (error.status === 401) { location.assign("/login"); return; }
     const box = element("section", null, "error-state"); const alert = element("p", "The exact current case could not be loaded. Return to the library and reopen the current case."); alert.setAttribute("role", "alert"); const link = element("a", "Return to library", "recovery"); link.href = "/library"; box.append(element("p", "Exact-current protection", "eyebrow"), element("h1", "Case unavailable"), alert, link); root.replaceChildren(box); root.focus();

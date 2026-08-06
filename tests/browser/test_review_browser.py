@@ -183,6 +183,12 @@ def _server(
 
 def _login(page: Page, origin: str) -> None:
     page.goto(f"{origin}/login")
+    brand = page.locator(".brand")
+    brand.wait_for()
+    assert brand.evaluate("node => node.tagName") == "SPAN"
+    assert page.get_by_role(
+        "link", name="Mechanical Librarian review library"
+    ).count() == 0
     page.get_by_label("Password").fill(_PASSWORD)
     page.get_by_role("button", name="Sign in").click()
     page.wait_for_url(f"{origin}/library")
@@ -278,6 +284,30 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         first_field.get_attribute("aria-current"), "true"
                     )
                     self.assertEqual(current_field.get_attribute("aria-current"), None)
+                    current_field.click()
+                    page.go_back()
+                    self.assertEqual(
+                        first_field.get_attribute("aria-current"), "true"
+                    )
+                    self.assertTrue(
+                        page.locator(first_field.get_attribute("href")).evaluate(
+                            "node => node === document.activeElement"
+                        )
+                    )
+                    page.go_forward()
+                    self.assertEqual(
+                        current_field.get_attribute("aria-current"), "true"
+                    )
+                    page.reload()
+                    page.get_by_role(
+                        "heading", name="Current review case"
+                    ).wait_for()
+                    current_field = page.locator(
+                        '.field-navigation a[href="#field-series"]'
+                    )
+                    self.assertEqual(
+                        current_field.get_attribute("aria-current"), "true"
+                    )
                     self.assertEqual(page.locator("img,script:not([src])").count(), 0)
                     self.assertEqual(
                         page.evaluate(
@@ -336,6 +366,12 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         "heading", name="Current review case"
                     ).wait_for()
                     self.assertEqual(page.locator(".decision-recorded").count(), 1)
+                    resolved_decision = page.locator(".resolved-field").filter(
+                        has=page.locator(".decision-recorded")
+                    )
+                    self.assertIn(
+                        "Outcome value:", resolved_decision.text_content() or ""
+                    )
                     self.assertEqual(page.locator(".choices").count(), 2)
                     page.go_forward()
                     page.wait_for_url(accepted_url)
@@ -580,8 +616,19 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertNotIn("lens=", page.url)
                     page.set_viewport_size({"width": 390, "height": 844})
 
+                    evidence_failures = 0
+
                     def evidence_pages(route) -> None:
+                        nonlocal evidence_failures
                         second_page = "cursor=" in route.request.url
+                        if second_page and evidence_failures == 0:
+                            evidence_failures += 1
+                            route.fulfill(
+                                status=503,
+                                content_type="application/json",
+                                body='{"error":{"code":"persistence"}}',
+                            )
+                            return
                         start = 50 if second_page else 0
                         count = 8 if second_page else 50
                         items = [
@@ -627,7 +674,19 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     )
                     self.assertEqual(page.locator("section pre").count(), 50)
                     page.get_by_role("button", name="Load more evidence").click()
+                    evidence_status = page.locator(
+                        ".ledger .details-inner > p[role]"
+                    )
+                    page.get_by_text(
+                        "More evidence could not be loaded. Try again."
+                    ).wait_for()
+                    self.assertEqual(evidence_status.get_attribute("role"), "alert")
+                    self.assertEqual(len(errors), 1, errors)
+                    self.assertIn("status of 503", errors[0])
+                    errors.clear()
+                    page.get_by_role("button", name="Load more evidence").click()
                     page.get_by_text("All referenced evidence is shown.").wait_for()
+                    self.assertEqual(evidence_status.get_attribute("role"), "status")
                     self.assertEqual(page.locator("section pre").count(), 58)
                     self.assertEqual(
                         page.get_by_role("button", name="Load more evidence").count(),

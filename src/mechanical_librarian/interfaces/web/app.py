@@ -374,6 +374,17 @@ def create_review_app(
         assert ml_session is not None
         return ml_session
 
+    def browser_csrf(session_token: str) -> str:
+        try:
+            return sessions.issue_browser_csrf(session_token)
+        except ReviewWebError as error:
+            status_code = {"unauthorized": 401, "persistence": 503}.get(
+                error.code, 503
+            )
+            raise HTTPException(
+                status_code, detail={"code": error.code}
+            ) from None
+
     app.add_middleware(
         _BodyLimitMiddleware,
         maximum_bytes=2048,
@@ -624,13 +635,11 @@ def create_review_app(
         ml_session: str | None = Cookie(default=None),
     ) -> HTMLResponse:
         _require_case_id(review_case_id)
-        if ml_session is None:
-            raise HTTPException(401, detail={"code": "unauthorized"})
-        try:
-            browser_csrf = sessions.issue_browser_csrf(ml_session)
-        except ReviewWebError as error:
-            raise HTTPException(401, detail={"code": error.code}) from None
-        return HTMLResponse(review_frontend.review_html(review_case_id, browser_csrf))
+        _require_session(sessions, ml_session)
+        assert ml_session is not None
+        return HTMLResponse(
+            review_frontend.review_html(review_case_id, browser_csrf(ml_session))
+        )
 
     @app.get("/library", include_in_schema=False)
     def library_page(
@@ -638,11 +647,7 @@ def create_review_app(
     ) -> HTMLResponse:
         _require_session(sessions, ml_session)
         assert ml_session is not None
-        try:
-            browser_csrf = sessions.issue_browser_csrf(ml_session)
-        except ReviewWebError as error:
-            raise HTTPException(401, detail={"code": error.code}) from None
-        return HTMLResponse(review_frontend.library_html(browser_csrf))
+        return HTMLResponse(review_frontend.library_html(browser_csrf(ml_session)))
 
     @app.get("/attention", include_in_schema=False)
     def attention_page(
@@ -650,11 +655,7 @@ def create_review_app(
     ) -> HTMLResponse:
         _require_session(sessions, ml_session)
         assert ml_session is not None
-        try:
-            browser_csrf = sessions.issue_browser_csrf(ml_session)
-        except ReviewWebError as error:
-            raise HTTPException(401, detail={"code": error.code}) from None
-        return HTMLResponse(review_frontend.attention_html(browser_csrf))
+        return HTMLResponse(review_frontend.attention_html(browser_csrf(ml_session)))
 
     @app.get("/assets/review.css", include_in_schema=False)
     def review_css() -> Response:

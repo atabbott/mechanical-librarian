@@ -163,7 +163,7 @@ class OwnerSessionService:
                 _digest(session_token), _digest(csrf_token), self._clock()
             )
         except Exception as error:
-            raise ReviewWebError("unauthorized") from error
+            raise ReviewWebError("persistence") from error
         return csrf_token
 
     def logout(self, session_token: str, csrf_token: str) -> None:

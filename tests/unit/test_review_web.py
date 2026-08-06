@@ -76,6 +76,7 @@ class _Repository:
         self.decisions: dict[str, str] = {}
         self.revoke_failure = False
         self.revoke_result = "revoked"
+        self.rotate_failure = False
         self.existence_failure = False
         self.case_current = True
 
@@ -99,6 +100,8 @@ class _Repository:
     def rotate_review_session_csrf(
         self, session_digest: str, csrf_digest: str, now: int
     ) -> None:
+        if self.rotate_failure:
+            raise RuntimeError
         actor, _, expires, revoked = self.sessions[session_digest]
         if revoked is not None or expires <= now:
             raise RuntimeError
@@ -782,6 +785,22 @@ class ReviewWebTests(unittest.TestCase):
             json=payload,
         )
         self.assertEqual(accepted.status_code, 200, accepted.text)
+
+    def test_authenticated_page_preserves_csrf_rotation_persistence_failure(
+        self,
+    ) -> None:
+        self._login()
+        self.repository.rotate_failure = True
+        for path in (
+            "/library",
+            "/attention",
+            f"/review/{self.case.review_case_id}",
+        ):
+            unavailable = self.client.get(path)
+            self.assertEqual(unavailable.status_code, 503, path)
+            self.assertEqual(
+                unavailable.json()["error"]["code"], "persistence", path
+            )
 
     def test_malformed_case_decision_body_is_bounded_before_validation(self) -> None:
         oversized = b'{' + b'"private":"' + b'x' * 9_000 + b'"}'
