@@ -71,6 +71,11 @@ a supported configuration or environment input. There is no supported HTTP
 fallback. Forwarded proxy identity
 is not accepted by Uvicorn; application proxy trust remains an explicit,
 bounded allow-list and should normally stay empty for direct TLS.
+The direct edge permits at most 100 live HTTP connections, closes incomplete
+request headers after 10 seconds, caps an incomplete H11 event at 16 KiB, and
+uses only ECDHE AEAD cipher suites for TLS 1.2 (with the runtime's TLS 1.3
+suites). Rotate certificate files by replacing them and restarting the process;
+an active process continues serving its validated anonymous snapshot.
 
 For an isolated development qualification only, a synthetic one-day identity
 can be created and then referenced from the two configuration fields:

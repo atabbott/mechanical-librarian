@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import ssl
 import stat
+import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,41 +30,49 @@ def open_review_tls_identity(
     certificate_value: str | None, private_key_value: str | None
 ) -> Iterator[ReviewTLSIdentity]:
     """Open, validate, and retain one exact certificate/key pair."""
-    descriptors: list[int] = []
+    snapshots = []
     try:
         if certificate_value is None or private_key_value is None:
             raise ConfigurationError("review TLS configuration is unavailable")
-        certificate = _open_tls_file(
+        certificate = _read_tls_file(
             certificate_value, _MAX_CERTIFICATE_BYTES, private=False
         )
-        descriptors.append(certificate)
-        private_key = _open_tls_file(
+        private_key = _read_tls_file(
             private_key_value, _MAX_PRIVATE_KEY_BYTES, private=True
         )
-        descriptors.append(private_key)
+        for payload in (certificate, private_key):
+            snapshot = tempfile.TemporaryFile()
+            os.fchmod(snapshot.fileno(), 0o600)
+            snapshot.write(payload)
+            snapshot.flush()
+            snapshot.seek(0)
+            snapshots.append(snapshot)
         prefix = "/proc/self/fd" if Path("/proc/self/fd").is_dir() else "/dev/fd"
         identity = ReviewTLSIdentity(
-            f"{prefix}/{certificate}", f"{prefix}/{private_key}"
+            f"{prefix}/{snapshots[0].fileno()}",
+            f"{prefix}/{snapshots[1].fileno()}",
         )
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(
-            identity.certificate_file, identity.private_key_file, password=""
+            identity.certificate_file,
+            identity.private_key_file,
+            password=REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
         )
-        os.lseek(certificate, 0, os.SEEK_SET)
-        os.lseek(private_key, 0, os.SEEK_SET)
+        snapshots[0].seek(0)
+        snapshots[1].seek(0)
         yield identity
     except ConfigurationError:
         raise
     except (OSError, ssl.SSLError, ValueError):
         raise ConfigurationError("review TLS configuration is unavailable") from None
     finally:
-        for descriptor in reversed(descriptors):
-            os.close(descriptor)
+        for snapshot in reversed(snapshots):
+            snapshot.close()
 
 
-def _open_tls_file(
+def _read_tls_file(
     path_value: str, maximum: int, *, private: bool
-) -> int:
+) -> bytes:
     path = Path(path_value)
     if not path.is_absolute() or path.name in {"", ".", ".."}:
         raise ConfigurationError("review TLS configuration is unavailable")
@@ -86,20 +95,32 @@ def _open_tls_file(
     finally:
         os.close(parent)
     try:
-        information = os.fstat(descriptor)
-    except OSError:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.geteuid()
+            or before.st_nlink != 1
+            or before.st_mode & (0o077 if private else 0o022)
+            or not 1 <= before.st_size <= maximum
+        ):
+            raise ConfigurationError("review TLS configuration is unavailable")
+        payload = os.read(descriptor, before.st_size + 1)
+        after = os.fstat(descriptor)
+        if len(payload) != before.st_size or (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            raise ConfigurationError("review TLS configuration is unavailable")
+        return payload
+    finally:
         os.close(descriptor)
-        raise
-    if (
-        not stat.S_ISREG(information.st_mode)
-        or information.st_uid != os.geteuid()
-        or information.st_nlink != 1
-        or information.st_mode & (0o077 if private else 0o022)
-        or not 1 <= information.st_size <= maximum
-    ):
-        os.close(descriptor)
-        raise ConfigurationError("review TLS configuration is unavailable")
-    return descriptor
 
 
 __all__ = [

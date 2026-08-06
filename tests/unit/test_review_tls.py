@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import socket
@@ -14,7 +15,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import httpx
-from uvicorn.config import create_ssl_context
+from uvicorn.config import Config, create_ssl_context
+from uvicorn.server import ServerState
 from argon2 import PasswordHasher
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
@@ -26,6 +28,12 @@ from mechanical_librarian.bootstrap.composition import run_review_server
 from mechanical_librarian.infrastructure.security.review_tls import (
     REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
     open_review_tls_identity,
+)
+from mechanical_librarian.infrastructure.security.review_protocol import (
+    BoundedReviewH11Protocol,
+    MAX_REVIEW_CONNECTIONS,
+    REVIEW_HEADER_TIMEOUT_SECONDS,
+    REVIEW_TLS_CIPHERS,
 )
 from tests.support.tls import synthetic_tls_identity
 
@@ -125,6 +133,52 @@ class ReviewTLSIdentityTests(unittest.TestCase):
             )
             with self.assertRaises(ssl.SSLError):
                 create_ssl_context(str(certificate), str(encrypted), **arguments)
+
+
+class ReviewProtocolTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.loop = asyncio.new_event_loop()
+
+        async def app(scope, receive, send):
+            return None
+
+        self.config = Config(app, log_config=None)
+        self.config.load()
+
+    def tearDown(self) -> None:
+        self.loop.close()
+
+    def _protocol(self, state: ServerState | None = None):
+        protocol = BoundedReviewH11Protocol(
+            self.config, state or ServerState(), {}, _loop=self.loop
+        )
+        transport = Mock()
+        transport.get_extra_info.side_effect = lambda name: {
+            "sockname": ("127.0.0.1", 8443),
+            "peername": ("127.0.0.1", 50000),
+            "sslcontext": object(),
+        }.get(name)
+        transport.is_closing.return_value = False
+        return protocol, transport
+
+    def test_incomplete_headers_are_closed_on_the_fixed_timeout(self) -> None:
+        protocol, transport = self._protocol()
+        protocol.connection_made(transport)
+        self.assertEqual(REVIEW_HEADER_TIMEOUT_SECONDS, 10.0)
+        protocol.data_received(b"GET /login HTTP/1.1\r\nHost:")
+        self.assertIsNotNone(protocol._review_header_timeout)
+        protocol._expire_review_header()
+        transport.close.assert_called_once_with()
+        protocol.connection_lost(None)
+
+    def test_excess_connections_are_closed_before_request_processing(self) -> None:
+        state = ServerState()
+        state.connections.update(Mock() for _ in range(MAX_REVIEW_CONNECTIONS))
+        protocol, transport = self._protocol(state)
+        protocol.connection_made(transport)
+        transport.close.assert_called_once_with()
+        self.assertIsNone(protocol._review_header_timeout)
+        protocol.connection_lost(None)
 
 
 class ReviewServerTLSCompositionTests(unittest.TestCase):
@@ -258,8 +312,37 @@ class ReviewServerTLSCompositionTests(unittest.TestCase):
                     REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
                 )
                 self.assertFalse(arguments["proxy_headers"])
+                self.assertIs(arguments["http"], BoundedReviewH11Protocol)
+                self.assertEqual(
+                    arguments["limit_concurrency"], MAX_REVIEW_CONNECTIONS
+                )
+                self.assertEqual(arguments["backlog"], MAX_REVIEW_CONNECTIONS)
+                self.assertEqual(
+                    arguments["h11_max_incomplete_event_size"], 16_384
+                )
+                self.assertEqual(arguments["ssl_ciphers"], REVIEW_TLS_CIPHERS)
                 self.assertEqual(arguments["host"], "127.0.0.1")
                 self.assertEqual(arguments["port"], 8443)
+                certificate.write_text("replaced certificate", encoding="ascii")
+                private_key.write_text("replaced private key", encoding="ascii")
+                context = create_ssl_context(
+                    arguments["ssl_certfile"],
+                    arguments["ssl_keyfile"],
+                    password=arguments["ssl_keyfile_password"],
+                    ssl_version=ssl.PROTOCOL_TLS_SERVER,
+                    cert_reqs=ssl.CERT_NONE,
+                    ca_certs=None,
+                    ciphers=arguments["ssl_ciphers"],
+                )
+                tls12 = [
+                    cipher["name"]
+                    for cipher in context.get_ciphers()
+                    if cipher["protocol"] == "TLSv1.2"
+                ]
+                self.assertTrue(tls12)
+                self.assertTrue(
+                    all("GCM" in name or "CHACHA20" in name for name in tls12)
+                )
 
             with (
                 patch(

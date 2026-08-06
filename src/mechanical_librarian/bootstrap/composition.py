@@ -143,6 +143,11 @@ from mechanical_librarian.infrastructure.security.review_tls import (
     REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
     open_review_tls_identity,
 )
+from mechanical_librarian.infrastructure.security.review_protocol import (
+    BoundedReviewH11Protocol,
+    MAX_REVIEW_CONNECTIONS,
+    REVIEW_TLS_CIPHERS,
+)
 from mechanical_librarian.interfaces.cli import main as cli_main
 from mechanical_librarian.interfaces.web import create_review_app
 
@@ -992,9 +997,14 @@ def run_review_server(
                 server_header=False,
                 date_header=False,
                 access_log=False,
+                http=BoundedReviewH11Protocol,
+                limit_concurrency=MAX_REVIEW_CONNECTIONS,
+                backlog=MAX_REVIEW_CONNECTIONS,
+                h11_max_incomplete_event_size=16_384,
                 ssl_certfile=tls.certificate_file,
                 ssl_keyfile=tls.private_key_file,
                 ssl_keyfile_password=REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
+                ssl_ciphers=REVIEW_TLS_CIPHERS,
             )
         except Exception:
             repository.close()

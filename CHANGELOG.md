@@ -6,7 +6,9 @@
   certificate and private-key configuration is validated as a matching,
   owner-controlled descriptor-bound identity with an owner-only key before
   database or listener startup;
-  the server has no plaintext escape hatch and retains the existing canonical
+  immutable anonymous snapshots, AEAD TLS policy, and bounded connection/header
+  handling prevent post-validation identity drift and unbounded edge reads.
+  The server has no plaintext escape hatch and retains the existing canonical
   Host/Origin, secure-cookie, HSTS, and proxy-distrust boundary. (#459)
 
 - Align the authenticated review API contract with runtime behavior. Protected
