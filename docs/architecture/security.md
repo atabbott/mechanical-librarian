@@ -85,9 +85,12 @@ is explicitly configured, and Uvicorn ambient proxy handling remains disabled.
 Every response is private/no-store with a restrictive CSP, frame denial,
 no-referrer, no-sniff, and HSTS. Validation and runtime errors use fixed
 value-free codes, so passwords, tokens, paths, hostile metadata, and internal
-exceptions do not enter responses. The interface calls read-only application
-queries and has no automatic-decision, human-decision, apply-plan, target
-client, media-write, or target-write constructor.
+exceptions do not enter responses. The one #449 mutation accepts only a
+server-presented exact ordinary-field proposal under owner session, CSRF,
+Origin, target-fingerprint, case-currentness, and idempotency checks. Its
+decision and audit event commit atomically and are append-only. The interface
+has no automatic-decision, apply-plan, target client, media-write,
+target-write, bulk, or reversal constructor.
 
 ## Credentials and egress
 

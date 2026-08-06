@@ -147,6 +147,179 @@
         "title": "_CaseDetailResponse",
         "type": "object"
       },
+      "_DecisionAcknowledgement": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "selected_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_fingerprint": {
+            "title": "Target Fingerprint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor",
+          "decision_id",
+          "destination",
+          "occurred_at",
+          "outcome",
+          "proposal_id",
+          "review_case_id",
+          "selected_value",
+          "target_fingerprint",
+          "schema_version"
+        ],
+        "title": "_DecisionAcknowledgement",
+        "type": "object"
+      },
+      "_DecisionProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "selected_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_fingerprint": {
+            "title": "Target Fingerprint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor",
+          "decision_id",
+          "destination",
+          "occurred_at",
+          "outcome",
+          "proposal_id",
+          "review_case_id",
+          "selected_value",
+          "target_fingerprint"
+        ],
+        "title": "_DecisionProjection",
+        "type": "object"
+      },
+      "_DecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "destination": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Destination",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "accept",
+              "keep_current",
+              "reject"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "proposal_id": {
+            "pattern": "^review_proposal_[0-9a-f]{64}$",
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "selected_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Target Fingerprint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "destination",
+          "outcome",
+          "proposal_id",
+          "target_fingerprint"
+        ],
+        "title": "_DecisionRequest",
+        "type": "object"
+      },
       "_ErrorCode": {
         "additionalProperties": false,
         "properties": {
@@ -247,33 +420,66 @@
         "title": "_EvidenceResponse",
         "type": "object"
       },
-      "_HistoryItem": {
+      "_HistoryDecisionItem": {
         "additionalProperties": false,
         "properties": {
-          "checkpoint": {
-            "title": "Checkpoint",
-            "type": "integer"
+          "actor": {
+            "const": "owner",
+            "title": "Actor",
+            "type": "string"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
           },
           "kind": {
+            "const": "human_decision_recorded",
             "title": "Kind",
             "type": "string"
           },
-          "reason": {
-            "title": "Reason",
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "outcome": {
+            "enum": [
+              "accept",
+              "keep_current",
+              "reject"
+            ],
+            "title": "Outcome",
             "type": "string"
           },
-          "transition_id": {
-            "title": "Transition Id",
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "human-decision-event-v1",
+            "title": "Schema Version",
             "type": "string"
           }
         },
         "required": [
-          "checkpoint",
+          "actor",
+          "decision_id",
+          "destination",
+          "event_id",
           "kind",
-          "reason",
-          "transition_id"
+          "occurred_at",
+          "outcome",
+          "review_case_id",
+          "schema_version"
         ],
-        "title": "_HistoryItem",
+        "title": "_HistoryDecisionItem",
         "type": "object"
       },
       "_HistoryResponse": {
@@ -281,7 +487,14 @@
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/_HistoryItem"
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/_HistoryTransitionItem"
+                },
+                {
+                  "$ref": "#/components/schemas/_HistoryDecisionItem"
+                }
+              ]
             },
             "title": "Items",
             "type": "array"
@@ -313,6 +526,35 @@
           "schema_version"
         ],
         "title": "_HistoryResponse",
+        "type": "object"
+      },
+      "_HistoryTransitionItem": {
+        "additionalProperties": false,
+        "properties": {
+          "checkpoint": {
+            "title": "Checkpoint",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "transition_id": {
+            "title": "Transition Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "checkpoint",
+          "kind",
+          "reason",
+          "transition_id"
+        ],
+        "title": "_HistoryTransitionItem",
         "type": "object"
       },
       "_LibraryResponse": {
@@ -613,6 +855,16 @@
             "title": "Deterministic Disposition",
             "type": "string"
           },
+          "human_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_DecisionProjection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "manual_required": {
             "title": "Manual Required",
             "type": "boolean"
@@ -628,6 +880,10 @@
             "title": "Notices",
             "type": "array"
           },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
           "proposed_values": {
             "items": {
               "$ref": "#/components/schemas/_ProposedValue"
@@ -642,6 +898,10 @@
             "title": "Provenance",
             "type": "array"
           },
+          "target_fingerprint": {
+            "title": "Target Fingerprint",
+            "type": "string"
+          },
           "uncertainty": {
             "items": {
               "type": "string"
@@ -654,11 +914,14 @@
           "current",
           "deterministic_disposition",
           "destination",
+          "human_decision",
           "manual_required",
           "needs_attention",
           "notices",
           "proposed_values",
           "provenance",
+          "proposal_id",
+          "target_fingerprint",
           "uncertainty"
         ],
         "title": "_ReviewField",
@@ -1135,6 +1398,155 @@
           }
         },
         "summary": "Case Detail"
+      }
+    },
+    "/api/v1/review-cases/{review_case_id}/decisions": {
+      "post": {
+        "operationId": "record_decision_api_v1_review_cases__review_case_id__decisions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_case_id",
+            "required": true,
+            "schema": {
+              "title": "Review Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 16,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ml_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ml Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_DecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_DecisionAcknowledgement"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Record Decision"
       }
     },
     "/api/v1/review-cases/{review_case_id}/evidence": {

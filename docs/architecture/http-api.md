@@ -34,11 +34,11 @@ The expected API surface includes:
 
 ## Review resources
 
-The delivered #447–#448 surface is intentionally smaller than the future
+The delivered #447–#449 surface is intentionally smaller than the future
 resource family below: authenticated `/api/v1` exact-current case detail,
 bounded evidence, bounded current-case admission history, session
 login/logout, an attention-first current-case library, and a separate exact
-field queue. Individual decision mutation arrives in #449. Library-wide
+field queue, plus one exact-version individual human decision. Library-wide
 activity/history, cross-case summaries, bulk and reversal remain #195.
 
 The generated contract is frozen at
@@ -93,6 +93,13 @@ An individual decision mutation supplies:
 - explicit field, cover, and series selections;
 - action and optional bounded notes; and
 - an idempotency key.
+
+The implemented #449 operation is
+`POST /api/v1/review-cases/{review_case_id}/decisions`. It accepts only
+`accept`, `keep_current`, or `reject`; `accept` binds one exact value already
+presented by the server. The acknowledgement and current-case audit event are
+committed in one exact-current transaction. The operation has no automatic,
+apply, target-client, target-write, bulk, or reversal authority.
 
 The server validates selections, target applicability, stale state, capability,
 and the permitted state transition. Clients post an action, not an arbitrary
