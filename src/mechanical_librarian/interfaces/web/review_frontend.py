@@ -34,7 +34,7 @@ def _shell(*, title: str, active: str, main: str, csrf_token: str | None) -> str
       <span><strong>Mechanical Librarian</strong><small>Private review workspace</small></span>
     {brand_close}
     <div class="topbar-actions">
-      <span class="private-pill"><span aria-hidden="true">●</span> Owner session</span>
+      {'' if csrf_token is None else '<span class="private-pill"><span aria-hidden="true">●</span> Owner session</span>'}
       <button class="theme-toggle" type="button" aria-pressed="false">
         <span aria-hidden="true">◐</span><span class="theme-label">Dark mode</span>
       </button>
@@ -675,6 +675,11 @@ if (root) {
     const requestedField = fieldFromHash() || parameters.get("field");
     const requestedIndex = unresolved.findIndex(field => field.destination === requestedField);
     const initialFieldIndex = requestedIndex >= 0 ? requestedIndex : 0;
+    const fallbackField = unresolved[initialFieldIndex]?.destination || null;
+    const activeField = () => {
+      const fragmentField = fieldFromHash();
+      return unresolved.some(field => field.destination === fragmentField) ? fragmentField : fallbackField;
+    };
     const selectField = (destination, focus = false) => {
       const selectedLink = [...fieldNav.querySelectorAll("a")].find(link => link.dataset.destination === destination);
       if (!selectedLink) return;
@@ -729,8 +734,8 @@ if (root) {
     historyDetails.append(historyInner); content.append(historyDetails);
     shell.append(sidebar, content); root.replaceChildren(shell);
     const stripPosition = Number.parseInt(parameters.get("strip") || "0", 10); if (Number.isSafeInteger(stripPosition) && stripPosition >= 0) strip.scrollLeft = stripPosition;
-    addEventListener("hashchange", () => selectField(fieldFromHash(), true));
-    const selected = fieldFromHash() || parameters.get("field"); const target = (selected ? document.querySelector(`#field-${CSS.escape(selected)}`) : null) || root; target.focus(target === root ? {preventScroll: true} : undefined);
+    addEventListener("hashchange", () => selectField(activeField(), true));
+    const selected = activeField(); const target = (selected ? document.querySelector(`#field-${CSS.escape(selected)}`) : null) || root; target.focus(target === root ? {preventScroll: true} : undefined);
   }).catch(error => {
     if (error.status === 401) { location.assign("/login"); return; }
     const box = element("section", null, "error-state"); const alert = element("p", "The exact current case could not be loaded. Return to the library and reopen the current case."); alert.setAttribute("role", "alert"); const link = element("a", "Return to library", "recovery"); link.href = "/library"; box.append(element("p", "Exact-current protection", "eyebrow"), element("h1", "Case unavailable"), alert, link); root.replaceChildren(box); root.focus();

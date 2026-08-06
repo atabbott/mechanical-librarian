@@ -284,6 +284,19 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         first_field.get_attribute("aria-current"), "true"
                     )
                     self.assertEqual(current_field.get_attribute("aria-current"), None)
+                    page.go_back()
+                    self.assertEqual(
+                        current_field.get_attribute("aria-current"), "true"
+                    )
+                    self.assertTrue(
+                        page.locator("#field-series").evaluate(
+                            "node => node === document.activeElement"
+                        )
+                    )
+                    page.go_forward()
+                    self.assertEqual(
+                        first_field.get_attribute("aria-current"), "true"
+                    )
                     current_field.click()
                     page.go_back()
                     self.assertEqual(
@@ -668,7 +681,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     page.get_by_role("heading", name="Current review case").wait_for()
                     self.assertEqual(page.locator(".toast").count(), 0)
                     self.assertTrue(
-                        page.locator("#review").evaluate(
+                        page.locator(".field").first.evaluate(
                             "node => node === document.activeElement"
                         )
                     )
