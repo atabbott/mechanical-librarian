@@ -44,6 +44,28 @@ def _unused_port() -> int:
         return int(listener.getsockname()[1])
 
 
+def _encrypted_private_key(
+    source: Path, destination: Path, password: str
+) -> Path:
+    subprocess.run(
+        [
+            "openssl",
+            "pkey",
+            "-in",
+            str(source),
+            "-aes256",
+            "-passout",
+            "pass:" + password,
+            "-out",
+            str(destination),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    os.chmod(destination, 0o600)
+    return destination
+
+
 class ReviewTLSIdentityTests(unittest.TestCase):
     def test_matching_owner_only_identity_is_descriptor_bound_and_reopenable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -67,23 +89,19 @@ class ReviewTLSIdentityTests(unittest.TestCase):
             exposed = root / "exposed.key"
             exposed.write_bytes(private_key.read_bytes())
             os.chmod(exposed, 0o644)
-            encrypted = root / "encrypted.key"
-            subprocess.run(
-                [
-                    "openssl",
-                    "pkey",
-                    "-in",
-                    str(private_key),
-                    "-aes256",
-                    "-passout",
-                    "pass:synthetic-test-password",
-                    "-out",
-                    str(encrypted),
-                ],
-                check=True,
-                capture_output=True,
+            encrypted = _encrypted_private_key(
+                private_key,
+                root / "encrypted.key",
+                "synthetic-test-password",
             )
-            os.chmod(encrypted, 0o600)
+            empty_encrypted = _encrypted_private_key(
+                private_key, root / "empty-encrypted.key", ""
+            )
+            self.assertTrue(
+                empty_encrypted.read_bytes().startswith(
+                    b"-----BEGIN ENCRYPTED PRIVATE KEY-----"
+                )
+            )
             for candidate_certificate, candidate_key in (
                 (None, str(private_key)),
                 (str(certificate), None),
@@ -91,6 +109,7 @@ class ReviewTLSIdentityTests(unittest.TestCase):
                 (str(certificate), str(linked)),
                 (str(certificate), str(exposed)),
                 (str(certificate), str(encrypted)),
+                (str(certificate), str(empty_encrypted)),
             ):
                 with self.subTest(key=candidate_key), self.assertRaises(
                     ConfigurationError
@@ -104,23 +123,11 @@ class ReviewTLSIdentityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             certificate, private_key = synthetic_tls_identity(root)
-            encrypted = root / "encrypted.key"
-            subprocess.run(
-                [
-                    "openssl",
-                    "pkey",
-                    "-in",
-                    str(private_key),
-                    "-aes256",
-                    "-passout",
-                    "pass:synthetic-test-password",
-                    "-out",
-                    str(encrypted),
-                ],
-                check=True,
-                capture_output=True,
+            encrypted = _encrypted_private_key(
+                private_key,
+                root / "encrypted.key",
+                "synthetic-test-password",
             )
-            os.chmod(encrypted, 0o600)
             arguments = {
                 "password": REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
                 "ssl_version": ssl.PROTOCOL_TLS_SERVER,
@@ -133,6 +140,31 @@ class ReviewTLSIdentityTests(unittest.TestCase):
             )
             with self.assertRaises(ssl.SSLError):
                 create_ssl_context(str(certificate), str(encrypted), **arguments)
+
+    def test_encrypted_envelopes_fail_before_ssl_parsing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            certificate, private_key = synthetic_tls_identity(root)
+            encrypted = (
+                _encrypted_private_key(
+                    private_key,
+                    root / ("empty.key" if password == "" else "protected.key"),
+                    password,
+                )
+                for password in ("", "synthetic-test-password")
+            )
+            with patch(
+                "mechanical_librarian.infrastructure.security.review_tls.ssl.SSLContext"
+            ) as context:
+                for candidate in encrypted:
+                    with self.subTest(candidate=candidate), self.assertRaises(
+                        ConfigurationError
+                    ):
+                        with open_review_tls_identity(
+                            str(certificate), str(candidate)
+                        ):
+                            self.fail("encrypted key reached SSL parsing")
+            context.assert_not_called()
 
 
 class ReviewProtocolTests(unittest.TestCase):
@@ -382,23 +414,14 @@ class ReviewServerTLSCompositionTests(unittest.TestCase):
             os.chmod(certificate, 0o600)
             os.chmod(private_key, 0o600)
             valid_certificate, valid_key = synthetic_tls_identity(root, "valid")
-            encrypted_key = root / "encrypted.key"
-            subprocess.run(
-                [
-                    "openssl",
-                    "pkey",
-                    "-in",
-                    str(valid_key),
-                    "-aes256",
-                    "-passout",
-                    "pass:synthetic-test-password",
-                    "-out",
-                    str(encrypted_key),
-                ],
-                check=True,
-                capture_output=True,
+            encrypted_key = _encrypted_private_key(
+                valid_key,
+                root / "encrypted.key",
+                "synthetic-test-password",
             )
-            os.chmod(encrypted_key, 0o600)
+            empty_encrypted_key = _encrypted_private_key(
+                valid_key, root / "empty-encrypted.key", ""
+            )
             configurations = (
                 ReviewWebConfiguration(
                     canonical_origin="https://review.test",
@@ -415,6 +438,12 @@ class ReviewServerTLSCompositionTests(unittest.TestCase):
                     owner_password_hash_file=str(root / "owner.hash"),
                     tls_certificate_file=str(valid_certificate),
                     tls_private_key_file=str(encrypted_key),
+                ),
+                ReviewWebConfiguration(
+                    canonical_origin="https://review.test",
+                    owner_password_hash_file=str(root / "owner.hash"),
+                    tls_certificate_file=str(valid_certificate),
+                    tls_private_key_file=str(empty_encrypted_key),
                 ),
             )
             for review in configurations:

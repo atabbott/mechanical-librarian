@@ -129,9 +129,11 @@ report-only commands. `canonical_origin` is one exact HTTPS origin. The owner
 hash file is an absolute, owner-only regular no-follow file containing one
 Argon2id PHC string. `tls_certificate_file` and `tls_private_key_file` are an
 all-or-nothing pair of absolute, owner-controlled regular no-follow files; the
-private key must be owner-only and unencrypted. Encrypted keys are rejected
-non-interactively; there is no passphrase input or environment source. The
-server snapshots and validates one matching TLS identity before it opens the
+private key must be owner-only and use an unencrypted PKCS#8, RSA, or EC PEM
+envelope. Encrypted and non-PEM key envelopes are rejected before SSL parsing,
+including encryption with an empty passphrase. There is no passphrase input or
+environment source. The server snapshots and validates one matching TLS
+identity before it opens the
 application database and retains only immutable anonymous snapshot descriptors
 for the server's lifetime. `review-serve` has no plaintext or TLS-disable mode.
 Session lifetime is 300–86,400 seconds. Proxy forwarding is disabled unless the

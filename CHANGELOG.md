@@ -8,6 +8,8 @@
   database or listener startup;
   immutable anonymous snapshots, AEAD TLS policy, and bounded connection/header
   handling prevent post-validation identity drift and unbounded edge reads.
+  Explicit unencrypted PEM-envelope classification rejects even
+  empty-passphrase encrypted keys before SSL parsing.
   The server has no plaintext escape hatch and retains the existing canonical
   Host/Origin, secure-cookie, HSTS, and proxy-distrust boundary. (#459)
 

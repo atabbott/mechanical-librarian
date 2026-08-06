@@ -67,9 +67,10 @@ the certificate owner-controlled and the private key owner-only regular files
 (`chmod 644` and `chmod 600`, respectively). Missing, linked, writable-by-other,
 unreadable, encrypted, malformed, or mismatched inputs fail noninteractively
 before the database or network listener opens. Private-key passphrases are not
-a supported configuration or environment input. There is no supported HTTP
-fallback. Forwarded proxy identity
-is not accepted by Uvicorn; application proxy trust remains an explicit,
+a supported configuration or environment input; empty-passphrase encryption
+is still encrypted and is rejected by the PEM-envelope boundary. There is no
+supported HTTP fallback. Forwarded proxy identity is not accepted by Uvicorn;
+application proxy trust remains an explicit,
 bounded allow-list and should normally stay empty for direct TLS.
 The direct edge permits at most 100 live HTTP connections, closes incomplete
 request headers after 10 seconds, caps an incomplete H11 event at 16 KiB, and
