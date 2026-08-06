@@ -71,6 +71,14 @@ high-entropy session and CSRF tokens. Expired session rows are removed during
 login, logout records revocation, and failed logins use a durable five-attempt
 per five-minute global throttle without retaining client addresses.
 
+The generated API contract declares that opaque owner session as an API-key
+cookie on every protected operation and marks mutation CSRF and idempotency
+headers as required. Runtime failures retain separate, value-free meanings:
+invalid or expired sessions are unauthorized, CSRF mismatches are forbidden,
+absent case identifiers are not found, and repository outages are unavailable.
+Logout deletes the cookie only after durable revocation succeeds, so an outage
+cannot be presented as a completed logout.
+
 The #448 library and attention responses join only exact-current report and
 case pointers. Pages contain at most 50 rows, cursors are bound to their lens
 and search, and the field queue admits only unresolved or explicitly manual

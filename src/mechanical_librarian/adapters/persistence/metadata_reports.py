@@ -915,6 +915,20 @@ class SQLiteMetadataReportRepository:
         except (sqlite3.Error, ProposalValueError, ReportValueError, ReviewCaseValueError) as error:
             self._connection.rollback(); raise MetadataReportError("review admission failed") from error
 
+    def review_case_exists(self, review_case_id: str) -> bool:
+        try:
+            return (
+                self._connection.execute(
+                    "SELECT 1 FROM review_cases WHERE review_case_id=?",
+                    (review_case_id,),
+                ).fetchone()
+                is not None
+            )
+        except sqlite3.Error as error:
+            raise MetadataReportError(
+                "review case availability is unavailable"
+            ) from error
+
     def get_review_case(self, review_case_id: str) -> str:
         try:
             row = self._connection.execute("SELECT review_case_id,proposal_set_id,report_id,document FROM review_cases WHERE review_case_id=?", (review_case_id,)).fetchone()
@@ -1235,18 +1249,24 @@ class SQLiteMetadataReportRepository:
             self._connection.rollback()
             raise MetadataReportError("review session is unavailable") from error
 
-    def revoke_review_session(self, session_digest: str, now: int) -> None:
+    def revoke_review_session(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> str:
         try:
+            self._connection.execute("BEGIN IMMEDIATE")
             cursor = self._connection.execute(
-                "UPDATE review_sessions SET revoked_at=? WHERE session_digest=? AND revoked_at IS NULL AND expires_at>?",
-                (now, session_digest, now),
+                "UPDATE review_sessions SET revoked_at=? WHERE session_digest=? AND csrf_digest=? AND revoked_at IS NULL AND expires_at>?",
+                (now, session_digest, csrf_digest, now),
             )
             if cursor.rowcount != 1:
-                raise MetadataReportError("review session is unavailable")
+                active = self._connection.execute(
+                    "SELECT 1 FROM review_sessions WHERE session_digest=? AND revoked_at IS NULL AND expires_at>?",
+                    (session_digest, now),
+                ).fetchone()
+                self._connection.rollback()
+                return "csrf" if active is not None else "unauthorized"
             self._connection.commit()
-        except MetadataReportError:
-            self._connection.rollback()
-            raise
+            return "revoked"
         except sqlite3.Error as error:
             self._connection.rollback()
             raise MetadataReportError("review session is unavailable") from error

@@ -230,6 +230,8 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             admitted = json.loads(repository.admit_review_case(proposal))
             opened = json.loads(repository.get_review_case(admitted["review_case_id"]))
             self.assertEqual("admitted", admitted["status"])
+            self.assertTrue(repository.review_case_exists(admitted["review_case_id"]))
+            self.assertFalse(repository.review_case_exists("review_case_" + "f" * 64))
             self.assertTrue(opened["current"])
             self.assertEqual(16, len(opened["case"]["results"]))
             repository.close()
