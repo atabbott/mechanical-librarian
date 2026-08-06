@@ -285,16 +285,37 @@ class InspectCurrentReviewCase:
             for field in fields
             for reference in field["provenance"]
         }
+        model_advice = detail["model_advice"]
+        assert type(model_advice) is dict
+        for result in model_advice["results"]:
+            assert type(result) is dict
+            for recommendation in result["recommendations"]:
+                assert type(recommendation) is dict
+                citations = recommendation["citations"]
+                assert type(citations) is list
+                wanted.update(citations)
         evidence = _evidence_by_reference(report)
         if wanted.difference(evidence):
             raise ReviewWebError("not_found")
+        reference_set_digest = hashlib.sha256(
+            json.dumps(
+                sorted(wanted),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
         ordered = [
             evidence[reference]
             for reference in sorted(wanted)
             if reference in evidence
         ]
         bounded_limit = min(max(limit, 1), 50)
-        offset = _decode_cursor(cursor, "evidence", review_case_id, None)
+        offset = _decode_cursor(
+            cursor,
+            "evidence",
+            review_case_id,
+            reference_set_digest,
+        )
         bounded = ordered[offset : offset + bounded_limit]
         return {
             "items": bounded,
@@ -303,7 +324,7 @@ class InspectCurrentReviewCase:
                     offset + bounded_limit,
                     "evidence",
                     review_case_id,
-                    None,
+                    reference_set_digest,
                 )
                 if offset + bounded_limit < len(ordered)
                 else None
