@@ -223,9 +223,9 @@ _REVIEW_ATTENTION_SQL = (
 )
 _REVIEW_SEARCH_SQL = (
     " AND (? IS NULL OR "
-    "lower(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) "
-    "LIKE ? ESCAPE '\\' OR lower(c.item_id) LIKE ? ESCAPE '\\' "
-    "OR lower(c.library_name) LIKE ? ESCAPE '\\')"
+    "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) "
+    "LIKE ? ESCAPE '\\' OR ml_casefold(c.item_id) LIKE ? ESCAPE '\\' "
+    "OR ml_casefold(c.library_name) LIKE ? ESCAPE '\\')"
 )
 _SHADOW_REQUESTS_SQL = (
     "CREATE TABLE shadow_review_requests ("
@@ -1136,7 +1136,7 @@ class SQLiteMetadataReportRepository:
                 + " ORDER BY CASE WHEN "
                 + _REVIEW_ATTENTION_SQL
                 + " THEN 0 ELSE 1 END,"
-                "lower(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')),"
+                "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')),"
                 "c.library_name,c.item_id,rc.review_case_id LIMIT ? OFFSET ?",
                 (query, pattern, pattern, pattern, limit, offset),
             ).fetchall()
@@ -1190,7 +1190,7 @@ class SQLiteMetadataReportRepository:
                 + _REVIEW_FIELD_ATTENTION_SQL
                 + _REVIEW_SEARCH_SQL
                 + " ORDER BY "
-                "lower(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')),"
+                "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')),"
                 "c.library_name,c.item_id,"
                 "json_extract(result.value,'$.destination'),rc.review_case_id "
                 "LIMIT ? OFFSET ?",
@@ -2483,6 +2483,12 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             binding.require_current if binding is not None else None,
             cross_thread=cross_thread,
         )
+        connection.create_function(
+            "ml_casefold",
+            1,
+            _review_casefold,
+            deterministic=True,
+        )
         if binding is not None:
             binding.require_current()
         connection.execute("PRAGMA foreign_keys=ON")
@@ -2892,6 +2898,12 @@ def _review_search_pattern(search: str | None) -> tuple[str | None, str]:
         .replace("_", "\\_")
     )
     return search, f"%{escaped}%"
+
+
+def _review_casefold(value: object) -> str:
+    if type(value) is not str:
+        raise ValueError("review search value is invalid")
+    return value.casefold()
 
 
 def _validate_review_browse_row(row: object) -> tuple[str, str]:

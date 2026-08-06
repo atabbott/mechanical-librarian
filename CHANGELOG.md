@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Preserve the selected Library lens when searching and keep Attention search
+  on its own route. Title, library, and item matching now applies one
+  locale-independent Unicode casefold contract on both sides of the bounded
+  SQLite query, while escaped wildcard behavior remains literal. Cursor
+  encoding rejects an out-of-range next offset before an unusable link can be
+  emitted. (#461)
+
 - Make every evidence reference in an authenticated exact-current case
   reachable through deterministic, case-bound pages of at most 50 items.
   Cover `source_id` references and provider/candidate identity now survive the
