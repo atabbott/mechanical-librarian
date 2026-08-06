@@ -359,12 +359,18 @@ class BrowseReviewLibrary:
             total, attention_total = self._repository.count_current_review_cases(
                 normalized
             )
+            items = [
+                _library_item(
+                    case_document,
+                    report_document,
+                    self._repository.get_review_case_decisions(
+                        ReviewCase.from_json(case_document).review_case_id
+                    ),
+                )
+                for case_document, report_document in rows[:bounded_limit]
+            ]
         except Exception as error:
             raise ReviewWebError("unavailable") from error
-        items = [
-            _library_item(case_document, report_document)
-            for case_document, report_document in rows[:bounded_limit]
-        ]
         return {
             "counts": {
                 "all": total,
@@ -580,10 +586,21 @@ def _needs_attention(proposal: dict[str, object]) -> bool:
 
 
 def _library_item(
-    case_document: str, report_document: str
+    case_document: str,
+    report_document: str,
+    decision_documents: tuple[str, ...],
 ) -> dict[str, object]:
     case, report = _case_and_report(case_document, report_document)
-    attention = [value for value in case.proposals if _needs_attention(value)]
+    decisions = set()
+    for document in decision_documents:
+        decision = HumanDecision.from_json(document)
+        decision.validate_for(case)
+        decisions.add(decision.destination)
+    attention = [
+        value
+        for value in case.proposals
+        if value["destination"] not in decisions and _needs_attention(value)
+    ]
     outcomes = sorted(
         {
             value["result"]["outcome"]  # type: ignore[index]

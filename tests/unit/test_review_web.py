@@ -343,6 +343,23 @@ class ReviewWebTests(unittest.TestCase):
             replay.json()["decision_id"], accepted.json()["decision_id"]
         )
 
+    def test_malformed_case_decision_body_is_bounded_before_validation(self) -> None:
+        oversized = b'{' + b'"private":"' + b'x' * 9_000 + b'"}'
+        declared = self.client.post(
+            "/api/v1/review-cases/not-a-case/decisions",
+            headers={**self.origin, "Content-Type": "application/json"},
+            content=oversized,
+        )
+        self.assertEqual(declared.status_code, 413)
+        self.assertNotIn(b"private", declared.content)
+        streamed = self.client.post(
+            "/api/v1/review-cases/not-a-case/decisions",
+            headers={**self.origin, "Content-Type": "application/json"},
+            content=(chunk for chunk in (oversized[:4_500], oversized[4_500:])),
+        )
+        self.assertEqual(streamed.status_code, 413)
+        self.assertNotIn(b"private", streamed.content)
+
     def test_origin_host_proxy_expiry_and_throttle_fail_closed(self) -> None:
         invalid_origin = self.client.post(
             "/api/v1/session/login",
@@ -411,6 +428,10 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertNotIn(str(self.hash_path).encode(), first.content)
         self.assertNotIn(b"correct horse", first.content)
+        decision_operation = expected["paths"][
+            "/api/v1/review-cases/{review_case_id}/decisions"
+        ]["post"]
+        self.assertIn("404", decision_operation["responses"])
         invalid = self.client.post(
             "/api/v1/session/login",
             headers=self.origin,
@@ -455,6 +476,8 @@ class ReviewWebTests(unittest.TestCase):
         self.assertIn("/history", script)
         self.assertIn("textContent", script)
         self.assertNotIn("innerHTML", script)
+        self.assertIn("item.kind==='human_decision_recorded'", script)
+        self.assertIn("${item.destination}: ${item.outcome} by ${item.actor}", script)
 
     def test_attention_first_library_lenses_queue_and_cursor_binding(self) -> None:
         providers = tuple(
@@ -776,6 +799,26 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                         "SELECT count(*) FROM human_decision_events"
                     ).fetchone(),
                     (1,),
+                )
+                library = client.get(
+                    "/api/v1/library?lens=no_attention_needed"
+                )
+                self.assertEqual(library.status_code, 200, library.text)
+                self.assertEqual(
+                    library.json()["counts"],
+                    {
+                        "all": 1,
+                        "needs_attention": 0,
+                        "no_attention_needed": 1,
+                    },
+                )
+                self.assertEqual(len(library.json()["items"]), 1)
+                self.assertEqual(
+                    library.json()["items"][0]["attention_state"],
+                    "no_attention_needed",
+                )
+                self.assertEqual(
+                    library.json()["items"][0]["attention_count"], 0
                 )
                 client.cookies.clear()
                 second_login = client.post(

@@ -253,7 +253,7 @@ class _BodyLimitMiddleware:
         is_login = path == "/api/v1/session/login"
         is_decision = bool(
             re.fullmatch(
-                r"/api/v1/review-cases/review_case_[0-9a-f]{64}/decisions",
+                r"/api/v1/review-cases/[^/]+/decisions",
                 path,
             )
         )
@@ -450,7 +450,7 @@ def create_review_app(
         response_model=_DecisionAcknowledgement,
         responses={
             status: {"model": _ErrorResponse}
-            for status in (401, 403, 409, 413, 422, 503)
+            for status in (401, 403, 404, 409, 413, 422, 503)
         },
     )
     def record_decision(
@@ -866,5 +866,5 @@ root.append(element('p',`Model advice: ${detail.model_advice.state.replaceAll('_
 for(const result of detail.model_advice.results){const advice=document.createElement('section');advice.className='field';advice.append(element('h2','Model advice (not a human decision)'));for(const recommendation of result.recommendations){advice.append(element('h3',recommendation.proposal_id));advice.append(element('p',`Recommendation: ${recommendation.recommendation}`));advice.append(element('p',`Reasons: ${recommendation.reasons.join(', ')}`));advice.append(element('p',`Problems: ${recommendation.problems.length?recommendation.problems.join(', '):'none'}`));advice.append(element('p',`Citations: ${recommendation.citations.length?recommendation.citations.join(', '):'none'}`));}root.append(advice);}
 for(const field of detail.fields){const section=document.createElement(field.needs_attention?'section':'details');section.className='field';section.id=`field-${field.destination}`;section.tabIndex=-1;section.append(element(field.needs_attention?'h2':'summary',field.destination));section.append(element('p',`Current (${field.current.state}): ${JSON.stringify(field.current.value)}`));section.append(element('p',`Deterministic disposition: ${field.deterministic_disposition}`));section.append(element('p',`Proposed: ${field.proposed_values.length?field.proposed_values.map(value=>JSON.stringify(value.value)).join(' · '):'none'}`));section.append(element('p',`Provenance: ${field.provenance.length?field.provenance.join(', '):'none'}`));section.append(element('p',`Notices: ${field.notices.length?field.notices.join(', '):'none'}`));section.append(element('p',`Uncertainty: ${field.uncertainty.length?field.uncertainty.join(', '):'none'}`));root.append(section);}
 const evidenceSection=document.createElement('section');evidenceSection.className='field';evidenceSection.append(element('h2','Evidence'));for(const item of evidence.items){evidenceSection.append(element('h3',`${item.kind} · ${item.source}`));evidenceSection.append(element('pre',item.fact));}if(!evidence.items.length)evidenceSection.append(element('p','No referenced evidence.'));root.append(evidenceSection);
-const historySection=document.createElement('section');historySection.className='field';historySection.append(element('h2','Current-case history'));for(const item of history.items)historySection.append(element('p',`${item.checkpoint}. ${item.kind}: ${item.reason}`));root.append(historySection);const selected=new URLSearchParams(location.search).get('field');const target=selected?document.querySelector(`#field-${CSS.escape(selected)}`):root;target.focus();
+const historySection=document.createElement('section');historySection.className='field';historySection.append(element('h2','Current-case history'));for(const item of history.items){const text=item.kind==='human_decision_recorded'?`${item.occurred_at}. ${item.destination}: ${item.outcome} by ${item.actor}`:`${item.checkpoint}. ${item.kind}: ${item.reason}`;historySection.append(element('p',text));}root.append(historySection);const selected=new URLSearchParams(location.search).get('field');const target=selected?document.querySelector(`#field-${CSS.escape(selected)}`):root;target.focus();
 }).catch(()=>{const title=element('h1','Case unavailable');const alert=element('p','The exact current case could not be loaded.');alert.setAttribute('role','alert');root.replaceChildren(title,alert);root.focus();});}"""
