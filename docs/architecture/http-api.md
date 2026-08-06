@@ -124,6 +124,13 @@ presented by the server. The acknowledgement and current-case audit event are
 committed in one exact-current transaction. The operation has no automatic,
 apply, target-client, target-write, bulk, or reversal authority.
 
+If the same idempotency key and exact payload already committed, its immutable
+acknowledgement is returned before current-case supersession is considered.
+The lookup uses only the stored key digest and canonical decision document;
+the raw key is not persisted. Reusing the key for a changed payload remains an
+explicit conflict, and an absent replay continues through the ordinary
+exact-current validation and atomic commit path.
+
 The server validates selections, target applicability, stale state, capability,
 and the permitted state transition. Clients post an action, not an arbitrary
 desired lifecycle state.

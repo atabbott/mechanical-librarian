@@ -88,6 +88,7 @@ class ReviewWebRepository(Protocol):
     def read_review_attention(
         self, search: str | None, limit: int, offset: int
     ) -> ReviewAttentionSnapshot: ...
+    def find_human_decision(self, idempotency_digest: str) -> str | None: ...
     def record_human_decision(self, decision: HumanDecision) -> str: ...
 
 
@@ -367,6 +368,36 @@ class RecordHumanDecision:
         idempotency_key: str,
     ) -> dict[str, object]:
         try:
+            idempotency_digest = HumanDecision.idempotency_digest_for(
+                idempotency_key
+            )
+            try:
+                replay_document = self._repository.find_human_decision(
+                    idempotency_digest
+                )
+                replay = (
+                    None
+                    if replay_document is None
+                    else HumanDecision.from_json(replay_document)
+                )
+            except Exception as error:
+                raise ReviewWebError("persistence") from error
+            if replay is not None:
+                if not replay.matches_request(
+                    review_case_id=review_case_id,
+                    proposal_id=proposal_id,
+                    target_fingerprint=target_fingerprint,
+                    destination=destination,
+                    actor=actor,
+                    outcome=outcome,
+                    selected_value=selected_value,
+                    idempotency_key=idempotency_key,
+                ):
+                    raise ReviewWebError("idempotency_conflict")
+                return {
+                    **_decision_projection(replay),
+                    "schema_version": "human-decision-ack-v1",
+                }
             try:
                 case_document = self._repository.get_review_case(review_case_id)
             except Exception as error:

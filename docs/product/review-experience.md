@@ -304,13 +304,21 @@ qualification runs these privacy, storage, content-security, hostile-rendering,
 performance, and artifact checks in the primary supported browser.
 
 The delivered F16a detail page uses a bounded horizontally scrollable field
-attention-only strip inside a non-overflowing document. Each genuinely unresolved field has
-immediate, semantically named accept/keep/reject controls and no redundant save
-step. A server acknowledgement reloads authoritative detail/history, preserves
-the strip position, announces a non-obscuring status, and focuses the next
-unresolved field. A failure preserves the original choice and idempotency key,
-does not advance, and focuses an explicit retry. Automatic-only fields are
-collapsed read-only context outside the strip and never expose those controls;
+attention-only strip inside a non-overflowing document. Each genuinely
+unresolved field has immediate, semantically named accept/keep/reject controls
+and no redundant save step. A server acknowledgement reloads authoritative
+detail/history, preserves the strip position, announces a non-obscuring status,
+and focuses the next unresolved field. A failure preserves the original choice
+and idempotency key,
+does not advance, and focuses an explicit retry. A current-case conflict reloads
+authoritative detail/history instead of re-enabling stale controls, while a
+superseded case routes back to the authoritative Library. If a response is lost
+or cannot be validated, the browser makes one bounded reconciliation attempt
+with the exact same request and idempotency key; any unsuccessful second result
+reloads authoritative state or requires sign in without describing the decision
+as unrecorded.
+Automatic-only fields are collapsed read-only context outside the strip and
+never expose those controls;
 model advice follows the human-decision surface. Its visible state and bounded
 result are derived only from the latest persisted reevaluation attempt; older
 attempts remain immutable history but cannot override or resurface as current

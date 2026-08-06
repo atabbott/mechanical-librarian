@@ -77,6 +77,7 @@ class _Repository:
         self.revoke_failure = False
         self.revoke_result = "revoked"
         self.existence_failure = False
+        self.case_current = True
 
     def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
         self.failures = [value for value in self.failures if value >= now - window_seconds]
@@ -132,7 +133,7 @@ class _Repository:
         return json.dumps(
             {
                 "case": self.case.to_data(),
-                "current": True,
+                "current": self.case_current,
                 "schema_version": "review-case-get-v1",
             },
             ensure_ascii=False,
@@ -152,6 +153,17 @@ class _Repository:
 
     def get_review_case_decisions(self, review_case_id: str) -> tuple[str, ...]:
         return tuple(self.decisions.values())
+
+    def find_human_decision(self, idempotency_digest: str) -> str | None:
+        return next(
+            (
+                document
+                for document in self.decisions.values()
+                if HumanDecision.from_json(document).idempotency_digest
+                == idempotency_digest
+            ),
+            None,
+        )
 
     def record_human_decision(self, decision: HumanDecision) -> str:
         existing = self.decisions.get(decision.destination)
@@ -696,6 +708,7 @@ class ReviewWebTests(unittest.TestCase):
             refreshed["fields"][0]["human_decision"]["decision_id"],
             accepted.json()["decision_id"],
         )
+        self.repository.case_current = False
         self.now += 1
         replay = self.client.post(
             f"/api/v1/review-cases/{self.case.review_case_id}/decisions",
@@ -710,6 +723,21 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(
             replay.json()["decision_id"], accepted.json()["decision_id"]
         )
+        conflict_payload = {**payload, "outcome": "reject", "selected_value": None}
+        conflict = self.client.post(
+            f"/api/v1/review-cases/{self.case.review_case_id}/decisions",
+            headers={
+                **self.origin,
+                "X-CSRF-Token": login["csrf_token"],
+                "Idempotency-Key": "decision-request-0001",
+            },
+            json=conflict_payload,
+        )
+        self.assertEqual(conflict.status_code, 409, conflict.text)
+        self.assertEqual(
+            conflict.json()["error"]["code"], "idempotency_conflict"
+        )
+        self.assertEqual(len(self.repository.decisions), 1)
 
     def test_review_page_rotates_one_memory_only_csrf_token(self) -> None:
         login = self._login()
@@ -1699,6 +1727,15 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 ).decision_id,
                 decision.decision_id,
             )
+            self.assertEqual(
+                HumanDecision.from_json(
+                    repository.find_human_decision(
+                        decision.idempotency_digest
+                    )
+                    or ""
+                ).decision_id,
+                decision.decision_id,
+            )
             retry = HumanDecision.create(
                 case,
                 proposal_id=proposal["proposal_id"],
@@ -1759,10 +1796,51 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                     HumanDecision.from_json(documents[0]).decision_id,
                     decision.decision_id,
                 )
+                self.assertEqual(
+                    HumanDecision.from_json(
+                        reopened.find_human_decision(
+                            decision.idempotency_digest
+                        )
+                        or ""
+                    ).decision_id,
+                    decision.decision_id,
+                )
                 detail = InspectCurrentReviewCase(reopened).run(case_id)
                 self.assertFalse(detail["fields"][0]["needs_attention"])
                 newer = _report(content_digest="c", file_identity="d")
                 reopened.publish(newer, lambda: True)
+                replayed = RecordHumanDecision(reopened, lambda: 2_000).run(
+                    case_id,
+                    proposal_id=proposal["proposal_id"],
+                    target_fingerprint=case.target_fingerprint,
+                    destination=proposal["destination"],
+                    actor="owner",
+                    outcome="accept",
+                    selected_value=selected,
+                    idempotency_key="sqlite-decision-0001",
+                )
+                self.assertEqual(replayed["decision_id"], decision.decision_id)
+                self.assertEqual(
+                    reopened._connection.execute(
+                        "SELECT (SELECT count(*) FROM human_decisions),"
+                        "(SELECT count(*) FROM human_decision_events)"
+                    ).fetchone(),
+                    (1, 1),
+                )
+                with self.assertRaises(ReviewWebError) as replay_conflict:
+                    RecordHumanDecision(reopened, lambda: 2_001).run(
+                        case_id,
+                        proposal_id=proposal["proposal_id"],
+                        target_fingerprint=case.target_fingerprint,
+                        destination=proposal["destination"],
+                        actor="owner",
+                        outcome="reject",
+                        selected_value=None,
+                        idempotency_key="sqlite-decision-0001",
+                    )
+                self.assertEqual(
+                    replay_conflict.exception.code, "idempotency_conflict"
+                )
                 with self.assertRaises(HumanDecisionError) as stale:
                     reopened.record_human_decision(duplicate)
                 self.assertEqual(stale.exception.code, "stale")

@@ -357,6 +357,143 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                 browser.close()
             self.assertEqual(errors, [])
 
+    def test_decision_response_loss_and_conflict_reload_authoritative_state(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.chmod(root, 0o700)
+            hash_path = root / "owner.hash"
+            hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+            os.chmod(hash_path, 0o600)
+            certificate, key = _certificate(root)
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+
+                loss_errors: list[str] = []
+                loss_context = browser.new_context(
+                    ignore_https_errors=True,
+                    viewport={"width": 390, "height": 844},
+                )
+                loss_page = loss_context.new_page()
+                _capture_errors(loss_page, loss_errors)
+                with _server(
+                    database=root / "response-loss.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=_unused_port(),
+                    report=_manual_report(),
+                ) as (origin, case_id):
+                    assert case_id is not None
+                    _login(loss_page, origin)
+                    loss_page.goto(f"{origin}/review/{case_id}")
+                    loss_page.get_by_role(
+                        "heading", name="Current review case"
+                    ).wait_for()
+                    attempts = 0
+                    keys: list[str] = []
+                    statuses: list[int] = []
+
+                    def lose_first_response(route) -> None:
+                        nonlocal attempts
+                        attempts += 1
+                        keys.append(route.request.headers["idempotency-key"])
+                        response = route.fetch()
+                        statuses.append(response.status)
+                        if attempts == 1:
+                            route.abort("connectionreset")
+                        else:
+                            route.fulfill(
+                                status=503,
+                                content_type="application/json",
+                                body='{"error":{"code":"persistence"}}',
+                            )
+
+                    loss_page.route("**/decisions", lose_first_response)
+                    with loss_page.expect_navigation():
+                        loss_page.get_by_role(
+                            "button", name="Keep current value"
+                        ).first.press("Enter")
+                    loss_page.get_by_text(
+                        "Human decision: keep current by owner."
+                    ).wait_for(state="attached")
+                    self.assertEqual(attempts, 2)
+                    self.assertEqual(statuses, [200, 200])
+                    self.assertEqual(len(set(keys)), 1)
+                    self.assertEqual(loss_page.locator(".decision-recorded").count(), 1)
+                    self.assertEqual(loss_page.get_by_role("button", name="Try again").count(), 0)
+                    self.assertEqual(len(loss_errors), 2, loss_errors)
+                    loss_context.close()
+
+                conflict_errors: list[str] = []
+                conflict_context = browser.new_context(
+                    ignore_https_errors=True,
+                    viewport={"width": 390, "height": 844},
+                )
+                conflict_page = conflict_context.new_page()
+                _capture_errors(conflict_page, conflict_errors)
+                with _server(
+                    database=root / "conflict.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=_unused_port(),
+                    report=_manual_report(),
+                ) as (origin, case_id):
+                    assert case_id is not None
+                    _login(conflict_page, origin)
+                    conflict_page.goto(f"{origin}/review/{case_id}")
+                    conflict_page.get_by_role(
+                        "heading", name="Current review case"
+                    ).wait_for()
+                    conflicts = 0
+
+                    def commit_then_conflict(route) -> None:
+                        nonlocal conflicts
+                        conflicts += 1
+                        response = route.fetch()
+                        self.assertEqual(response.status, 200)
+                        route.fulfill(
+                            status=409,
+                            content_type="application/json",
+                            body='{"error":{"code":"already_decided"}}',
+                        )
+
+                    conflict_page.route("**/decisions", commit_then_conflict)
+                    with conflict_page.expect_navigation():
+                        conflict_page.get_by_role(
+                            "button", name="Keep current value"
+                        ).first.press("Enter")
+                    conflict_page.get_by_text(
+                        "Human decision: keep current by owner."
+                    ).wait_for(state="attached")
+                    self.assertEqual(conflicts, 1)
+                    self.assertEqual(conflict_page.locator(".decision-recorded").count(), 1)
+                    self.assertEqual(conflict_page.locator(".choices").count(), 2)
+                    self.assertEqual(conflict_page.get_by_role("button", name="Try again").count(), 0)
+                    conflict_page.unroute("**/decisions")
+                    conflict_page.route(
+                        "**/decisions",
+                        lambda route: route.fulfill(
+                            status=409,
+                            content_type="application/json",
+                            body='{"error":{"code":"stale"}}',
+                        ),
+                    )
+                    with conflict_page.expect_navigation():
+                        conflict_page.get_by_role(
+                            "button", name="Keep current value"
+                        ).first.press("Enter")
+                    conflict_page.get_by_role(
+                        "heading", name="Review library"
+                    ).wait_for()
+                    self.assertIn("/library", conflict_page.url)
+                    self.assertEqual(len(conflict_errors), 2, conflict_errors)
+                    conflict_context.close()
+
+                browser.close()
+
     def test_compact_failure_retry_and_automatic_only_detail(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

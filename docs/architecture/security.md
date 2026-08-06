@@ -131,8 +131,12 @@ rotated-away token fails, and each decision still requires the exact Origin,
 session, case, proposal, target fingerprint, destination, action, selected
 value, and idempotency key. Browser success follows the typed server
 acknowledgement; a failed or ambiguous response neither advances nor displays
-success and retries the same request identity. If another authenticated detail
-page rotated the sole session digest, the focused retry first fetches a fresh
+success. Response loss or an invalid acknowledgement gets one automatic retry
+with the exact same payload and idempotency key. Any unsuccessful second result
+then reloads authoritative detail/history or requires sign in. A current-case
+409 reloads that state, while a stale 409 routes to the authoritative Library;
+neither re-enables obsolete controls. If another authenticated detail page
+rotated the sole session digest, the focused retry first fetches a fresh
 private/no-store detail token into memory and then resubmits; the failed attempt
 itself remains non-mutating and never advances. An expired session instead
 offers a focused sign-in link and does not retry a decision without fresh
