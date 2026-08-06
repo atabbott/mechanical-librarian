@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Make every evidence reference in an authenticated exact-current case
+  reachable through deterministic, case-bound pages of at most 50 items.
+  Cover `source_id` references and provider/candidate identity now survive the
+  hostile-safe projection, while the browser progressively loads the bounded
+  ledger without provider access or new decision/write authority. (#458)
+
 - Read each authenticated exact-current case, Library page, and Attention page
   from one authoritative SQLite snapshot. Concurrent supersession or human
   decision recording can no longer mix stale currentness, evidence, history,

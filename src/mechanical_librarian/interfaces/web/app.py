@@ -139,8 +139,10 @@ class _CaseDetailResponse(_ClosedModel):
 
 
 class _EvidenceItem(_ClosedModel):
+    candidate: str | None
     fact: str
     kind: str
+    provider: str | None
     reference: str
     source: str
 
@@ -582,12 +584,20 @@ def create_review_app(
     )
     def case_evidence(
         review_case_id: str,
+        limit: int = Query(default=50, ge=1, le=50),
+        cursor: str | None = Query(default=None, max_length=128),
         ml_session: str | None = Security(session_cookie),
     ) -> _EvidenceResponse:
         _require_session(sessions, ml_session)
         _require_case_id(review_case_id)
         return _EvidenceResponse.model_validate(
-            _case_call(lambda: cases.evidence(review_case_id))
+            _case_call(
+                lambda: cases.evidence(
+                    review_case_id,
+                    limit=limit,
+                    cursor=cursor,
+                )
+            )
         )
 
     @app.get(
@@ -812,7 +822,7 @@ def _case_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
     try:
         return call()
     except ReviewWebError as error:
-        status = 409 if error.code == "stale" else 404
+        status = {"request": 400, "stale": 409}.get(error.code, 404)
         raise HTTPException(status, detail={"code": error.code}) from None
 
 
@@ -895,6 +905,6 @@ Promise.all([load(`/api/v1/review-cases/${id}`),load(`/api/v1/review-cases/${id}
 currentDetail=detail;root.replaceChildren(element('h1','Current review case'));const parameters=new URLSearchParams(location.search);const announced=parameters.get('decided');const acknowledged=detail.fields.find(field=>field.destination===announced&&field.human_decision);if(acknowledged){const toast=element('p',`Decision recorded for ${acknowledged.destination}.`);toast.className='toast';toast.setAttribute('role','status');root.append(toast);}
 const adviceStatus=element('p',`Model advice: ${detail.model_advice.state.replaceAll('_',' ')}`);const adviceSections=[];for(const result of detail.model_advice.results){const advice=document.createElement('section');advice.className='field';advice.append(element('h2','Model advice (not a human decision)'));for(const recommendation of result.recommendations){advice.append(element('h3',recommendation.proposal_id));advice.append(element('p',`Recommendation: ${recommendation.recommendation}`));advice.append(element('p',`Reasons: ${recommendation.reasons.join(', ')}`));advice.append(element('p',`Problems: ${recommendation.problems.length?recommendation.problems.join(', '):'none'}`));advice.append(element('p',`Citations: ${recommendation.citations.length?recommendation.citations.join(', '):'none'}`));}adviceSections.push(advice);}
 const fieldStrip=document.createElement('div');fieldStrip.className='field-strip';fieldStrip.setAttribute('aria-label','Fields needing attention');const resolvedFields=document.createElement('div');for(const field of detail.fields){const section=document.createElement(field.needs_attention?'section':'details');section.className='field';section.id=`field-${field.destination}`;section.tabIndex=-1;section.append(element(field.needs_attention?'h2':'summary',field.destination));section.append(element('p',`Current (${field.current.state}): ${JSON.stringify(field.current.value)}`));section.append(element('p',`Deterministic disposition: ${field.deterministic_disposition}`));section.append(element('p',`Proposed: ${field.proposed_values.length?field.proposed_values.map(value=>JSON.stringify(value.value)).join(' · '):'none'}`));section.append(element('p',`Provenance: ${field.provenance.length?field.provenance.join(', '):'none'}`));section.append(element('p',`Notices: ${field.notices.length?field.notices.join(', '):'none'}`));section.append(element('p',`Uncertainty: ${field.uncertainty.length?field.uncertainty.join(', '):'none'}`));if(field.needs_attention){const choices=document.createElement('fieldset');choices.className='choices';choices.append(element('legend',`Choose one decision for ${field.destination}`));for(const [index,value] of field.proposed_values.entries())choices.append(choiceButton(field,field.proposed_values.length===1?'Accept proposed value':`Accept proposed value ${index+1}`,'accept',value));choices.append(choiceButton(field,'Keep current value','keep_current',null),choiceButton(field,'Reject proposed change','reject',null));section.append(choices);const status=element('p','No human decision recorded.');status.className='decision-status';status.setAttribute('aria-live','polite');section.append(status);fieldStrip.append(section);}else{if(field.human_decision){const recorded=element('p',`Human decision: ${field.human_decision.outcome.replaceAll('_',' ')} by ${field.human_decision.actor}.`);recorded.className='decision-recorded';section.append(recorded);}resolvedFields.append(section);}}if(fieldStrip.childElementCount)root.append(fieldStrip);else root.append(element('p','No exact-current field needs a human choice.'));if(resolvedFields.childElementCount){const context=document.createElement('section');context.append(element('h2','Resolved and automatic field context'),resolvedFields);root.append(context);}root.append(adviceStatus,...adviceSections);
-const evidenceSection=document.createElement('section');evidenceSection.className='field';evidenceSection.append(element('h2','Evidence'));for(const item of evidence.items){evidenceSection.append(element('h3',`${item.kind} · ${item.source}`));evidenceSection.append(element('pre',item.fact));}if(!evidence.items.length)evidenceSection.append(element('p','No referenced evidence.'));root.append(evidenceSection);
+const evidenceSection=document.createElement('section');evidenceSection.className='field';evidenceSection.append(element('h2','Evidence'));const evidenceItems=document.createElement('div');evidenceSection.append(evidenceItems);const appendEvidence=(items)=>{for(const item of items){const identity=[item.source,item.provider,item.candidate].filter(Boolean).join(' · ');evidenceItems.append(element('h3',`${item.kind} · ${identity}`),element('pre',item.fact));}};appendEvidence(evidence.items);if(!evidence.items.length)evidenceItems.append(element('p','No referenced evidence.'));if(evidence.next_cursor){const more=element('button','Load more evidence');more.type='button';let cursor=evidence.next_cursor;const status=element('p','');status.setAttribute('role','status');const loadMore=async()=>{more.disabled=true;status.setAttribute('role','status');status.textContent='Loading more evidence…';try{const page=await load(`/api/v1/review-cases/${id}/evidence?limit=50&cursor=${encodeURIComponent(cursor)}`);appendEvidence(page.items);cursor=page.next_cursor;if(cursor){more.disabled=false;status.textContent=`Loaded ${page.items.length} more evidence item(s).`;}else{more.remove();status.textContent='All referenced evidence is shown.';}}catch{more.disabled=false;status.setAttribute('role','alert');status.textContent='More evidence could not be loaded. Try again.';}};more.addEventListener('click',loadMore);evidenceSection.append(more,status);}root.append(evidenceSection);
 const historySection=document.createElement('section');historySection.className='field';historySection.append(element('h2','Current-case history'));for(const item of history.items){const text=item.kind==='human_decision_recorded'?`${item.occurred_at}. ${item.destination}: ${item.outcome} by ${item.actor}`:`${item.checkpoint}. ${item.kind}: ${item.reason}`;historySection.append(element('p',text));}root.append(historySection);const stripPosition=Number.parseInt(parameters.get('strip')||'0',10);if(Number.isSafeInteger(stripPosition)&&stripPosition>=0)fieldStrip.scrollLeft=stripPosition;const selected=parameters.get('field');const target=(selected?document.querySelector(`#field-${CSS.escape(selected)}`):null)||root;target.focus();
 }).catch(()=>{const title=element('h1','Case unavailable');const alert=element('p','The exact current case could not be loaded.');alert.setAttribute('role','alert');root.replaceChildren(title,alert);root.focus();});}"""

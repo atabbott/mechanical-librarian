@@ -385,6 +385,42 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                 ) as (origin, case_id):
                     assert case_id is not None
                     _login(page, origin)
+
+                    def evidence_pages(route) -> None:
+                        second_page = "cursor=" in route.request.url
+                        start = 50 if second_page else 0
+                        count = 8 if second_page else 50
+                        items = [
+                            {
+                                "candidate": "candidate-1",
+                                "fact": json.dumps(
+                                    {
+                                        "observed": (
+                                            f"hostile <img src=x> evidence {index}"
+                                        )
+                                    }
+                                ),
+                                "kind": "title",
+                                "provider": "catalogue",
+                                "reference": f"local_{index:064x}",
+                                "source": "provider_claim",
+                            }
+                            for index in range(start, start + count)
+                        ]
+                        route.fulfill(
+                            status=200,
+                            content_type="application/json",
+                            body=json.dumps(
+                                {
+                                    "items": items,
+                                    "next_cursor": None if second_page else "page2",
+                                    "review_case_id": case_id,
+                                    "schema_version": "review-case-evidence-v2",
+                                }
+                            ),
+                        )
+
+                    page.route("**/evidence*", evidence_pages)
                     page.goto(
                         f"{origin}/review/{case_id}?decided=subtitle&field=unknown%5B"
                     )
@@ -394,6 +430,14 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         page.locator("#review").evaluate(
                             "node => node === document.activeElement"
                         )
+                    )
+                    self.assertEqual(page.locator("section pre").count(), 50)
+                    page.get_by_role("button", name="Load more evidence").click()
+                    page.get_by_text("All referenced evidence is shown.").wait_for()
+                    self.assertEqual(page.locator("section pre").count(), 58)
+                    self.assertEqual(
+                        page.get_by_role("button", name="Load more evidence").count(),
+                        0,
                     )
                     self.assertEqual(page.locator("img").count(), 0)
                     self.assertIn("<img", page.locator("body").inner_text())
