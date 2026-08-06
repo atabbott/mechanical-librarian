@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add the third F16a production increment: an authenticated client can record
+  one immutable `accept`, `keep_current`, or `reject` decision for one
+  exact-current ordinary field. The command is proposal-, target-, actor-,
+  CSRF-, and idempotency-bound; SQLite publishes the decision and current-case
+  audit event atomically, replays the original acknowledgement, and rejects
+  stale, conflicting, unsupported, or already-decided attempts. Decisions
+  survive restart and exact-current reopen and remove only their exact field
+  from attention, without automatic, apply, target-write, bulk, or reversal
+  authority. (#449)
+
 - Add the second F16a production increment: authenticated bounded library
   lenses and a separate exact-field attention queue. The default view places
   genuine unresolved human-attention work first while deterministic

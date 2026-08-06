@@ -1,4 +1,4 @@
-"""FastAPI adapter for authenticated, read-only exact-current review cases."""
+"""FastAPI adapter for exact-current review and one human decision command."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
@@ -26,9 +27,11 @@ from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     InspectCurrentReviewCase,
     OwnerSessionService,
+    RecordHumanDecision,
     ReviewWebError,
     ReviewWebRepository,
 )
+from mechanical_librarian.domain.human_decision import HumanDecision
 
 
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
@@ -60,15 +63,30 @@ class _ProposedValue(_ClosedModel):
     value: str | bool | list[str] | list[_SeriesValue]
 
 
+class _DecisionProjection(_ClosedModel):
+    actor: str
+    decision_id: str
+    destination: str
+    occurred_at: int
+    outcome: str
+    proposal_id: str
+    review_case_id: str
+    selected_value: _ProposedValue | None
+    target_fingerprint: str
+
+
 class _ReviewField(_ClosedModel):
     current: _TargetField
     deterministic_disposition: str
     destination: str
+    human_decision: _DecisionProjection | None
     manual_required: bool
     needs_attention: bool
     notices: list[str]
     proposed_values: list[_ProposedValue]
     provenance: list[str]
+    proposal_id: str
+    target_fingerprint: str
     uncertainty: list[str]
 
 
@@ -120,15 +138,27 @@ class _EvidenceResponse(_ClosedModel):
     schema_version: str
 
 
-class _HistoryItem(_ClosedModel):
+class _HistoryTransitionItem(_ClosedModel):
     checkpoint: int
     kind: str
     reason: str
     transition_id: str
 
 
+class _HistoryDecisionItem(_ClosedModel):
+    actor: Literal["owner"]
+    decision_id: str
+    destination: str
+    event_id: str
+    kind: Literal["human_decision_recorded"]
+    occurred_at: int
+    outcome: Literal["accept", "keep_current", "reject"]
+    review_case_id: str
+    schema_version: Literal["human-decision-event-v1"]
+
+
 class _HistoryResponse(_ClosedModel):
-    items: list[_HistoryItem]
+    items: list[_HistoryTransitionItem | _HistoryDecisionItem]
     next_cursor: str | None
     review_case_id: str
     schema_version: str
@@ -195,19 +225,42 @@ class _AttentionResponse(_ClosedModel):
     total: int
 
 
+class _DecisionRequest(_ClosedModel):
+    destination: StrictStr = Field(min_length=1, max_length=64)
+    outcome: Literal["accept", "keep_current", "reject"]
+    proposal_id: StrictStr = Field(pattern=r"^review_proposal_[0-9a-f]{64}$")
+    selected_value: _ProposedValue | None = None
+    target_fingerprint: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class _DecisionAcknowledgement(_DecisionProjection):
+    schema_version: str
+
+
 class _BodyLimitMiddleware:
     def __init__(
         self,
         app: Callable[[Scope, Receive, Send], Awaitable[None]],
         maximum_bytes: int,
+        decision_maximum_bytes: int,
     ) -> None:
         self._app = app
         self._maximum_bytes = maximum_bytes
+        self._decision_maximum_bytes = decision_maximum_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope.get("path") != "/api/v1/session/login":
+        path = scope.get("path", "")
+        is_login = path == "/api/v1/session/login"
+        is_decision = bool(
+            re.fullmatch(
+                r"/api/v1/review-cases/[^/]+/decisions",
+                path,
+            )
+        )
+        if scope["type"] != "http" or not (is_login or is_decision):
             await self._app(scope, receive, send)
             return
+        maximum = self._maximum_bytes if is_login else self._decision_maximum_bytes
         declared = next(
             (
                 value
@@ -218,7 +271,7 @@ class _BodyLimitMiddleware:
         )
         if declared is not None:
             try:
-                if int(declared) > self._maximum_bytes:
+                if int(declared) > maximum:
                     await _oversized_body_response(scope, receive, send)
                     return
             except ValueError:
@@ -233,7 +286,7 @@ class _BodyLimitMiddleware:
                 await self._app(scope, _replay(messages), send)
                 return
             size += len(message.get("body", b""))
-            if size > self._maximum_bytes:
+            if size > maximum:
                 await _oversized_body_response(scope, receive, send)
                 return
             if not message.get("more_body", False):
@@ -274,6 +327,7 @@ def create_review_app(
         configuration.session_lifetime_seconds,
     )
     cases = InspectCurrentReviewCase(serialized_repository)
+    decisions = RecordHumanDecision(serialized_repository, clock)
     browse = BrowseReviewLibrary(serialized_repository)
     origin = urlsplit(configuration.canonical_origin)
 
@@ -291,7 +345,11 @@ def create_review_app(
         openapi_url=None,
         lifespan=lifespan,
     )
-    app.add_middleware(_BodyLimitMiddleware, maximum_bytes=2048)
+    app.add_middleware(
+        _BodyLimitMiddleware,
+        maximum_bytes=2048,
+        decision_maximum_bytes=8192,
+    )
 
     @app.middleware("http")
     async def trust_boundary(request: Request, call_next):
@@ -385,6 +443,48 @@ def create_review_app(
         _require_case_id(review_case_id)
         return _CaseDetailResponse.model_validate(
             _case_call(lambda: cases.run(review_case_id))
+        )
+
+    @app.post(
+        "/api/v1/review-cases/{review_case_id}/decisions",
+        response_model=_DecisionAcknowledgement,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 404, 409, 413, 422, 503)
+        },
+    )
+    def record_decision(
+        review_case_id: str,
+        payload: _DecisionRequest,
+        ml_session: str | None = Cookie(default=None),
+        x_csrf_token: str | None = Header(default=None),
+        idempotency_key: str | None = Header(
+            default=None, min_length=16, max_length=128
+        ),
+    ) -> _DecisionAcknowledgement:
+        if x_csrf_token is None:
+            raise HTTPException(403, detail={"code": "csrf"})
+        actor = _require_session(sessions, ml_session, x_csrf_token)
+        _require_case_id(review_case_id)
+        if idempotency_key is None:
+            raise HTTPException(422, detail={"code": "invalid"})
+        return _DecisionAcknowledgement.model_validate(
+            _decision_call(
+                lambda: decisions.run(
+                    review_case_id,
+                    proposal_id=payload.proposal_id,
+                    target_fingerprint=payload.target_fingerprint,
+                    destination=payload.destination,
+                    actor=actor,
+                    outcome=payload.outcome,
+                    selected_value=(
+                        None
+                        if payload.selected_value is None
+                        else payload.selected_value.model_dump(mode="json")
+                    ),
+                    idempotency_key=idempotency_key,
+                )
+            )
         )
 
     @app.get("/api/v1/openapi.json", include_in_schema=False)
@@ -630,6 +730,16 @@ class _SerializedReviewRepository:
         with self._lock:
             return self._repository.count_current_attention_fields(search)
 
+    def get_review_case_decisions(
+        self, review_case_id: str
+    ) -> tuple[str, ...]:
+        with self._lock:
+            return self._repository.get_review_case_decisions(review_case_id)
+
+    def record_human_decision(self, decision: HumanDecision) -> str:
+        with self._lock:
+            return self._repository.record_human_decision(decision)
+
 
 def _request_matches_origin(request: Request, configuration: ReviewWebConfiguration) -> bool:
     host = request.headers.get("host", "")
@@ -687,6 +797,22 @@ def _query_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
         raise HTTPException(status, detail={"code": error.code}) from None
 
 
+def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
+    try:
+        return call()
+    except ReviewWebError as error:
+        status = {
+            "stale": 409,
+            "already_decided": 409,
+            "idempotency_conflict": 409,
+            "invalid": 422,
+            "invalid_selection": 422,
+            "unsupported": 422,
+            "persistence": 503,
+        }.get(error.code, 503)
+        raise HTTPException(status, detail={"code": error.code}) from None
+
+
 def _error(status_code: int, code: str) -> JSONResponse:
     return JSONResponse(
         {"error": {"code": code}, "schema_version": "review-error-v1"},
@@ -740,5 +866,5 @@ root.append(element('p',`Model advice: ${detail.model_advice.state.replaceAll('_
 for(const result of detail.model_advice.results){const advice=document.createElement('section');advice.className='field';advice.append(element('h2','Model advice (not a human decision)'));for(const recommendation of result.recommendations){advice.append(element('h3',recommendation.proposal_id));advice.append(element('p',`Recommendation: ${recommendation.recommendation}`));advice.append(element('p',`Reasons: ${recommendation.reasons.join(', ')}`));advice.append(element('p',`Problems: ${recommendation.problems.length?recommendation.problems.join(', '):'none'}`));advice.append(element('p',`Citations: ${recommendation.citations.length?recommendation.citations.join(', '):'none'}`));}root.append(advice);}
 for(const field of detail.fields){const section=document.createElement(field.needs_attention?'section':'details');section.className='field';section.id=`field-${field.destination}`;section.tabIndex=-1;section.append(element(field.needs_attention?'h2':'summary',field.destination));section.append(element('p',`Current (${field.current.state}): ${JSON.stringify(field.current.value)}`));section.append(element('p',`Deterministic disposition: ${field.deterministic_disposition}`));section.append(element('p',`Proposed: ${field.proposed_values.length?field.proposed_values.map(value=>JSON.stringify(value.value)).join(' · '):'none'}`));section.append(element('p',`Provenance: ${field.provenance.length?field.provenance.join(', '):'none'}`));section.append(element('p',`Notices: ${field.notices.length?field.notices.join(', '):'none'}`));section.append(element('p',`Uncertainty: ${field.uncertainty.length?field.uncertainty.join(', '):'none'}`));root.append(section);}
 const evidenceSection=document.createElement('section');evidenceSection.className='field';evidenceSection.append(element('h2','Evidence'));for(const item of evidence.items){evidenceSection.append(element('h3',`${item.kind} · ${item.source}`));evidenceSection.append(element('pre',item.fact));}if(!evidence.items.length)evidenceSection.append(element('p','No referenced evidence.'));root.append(evidenceSection);
-const historySection=document.createElement('section');historySection.className='field';historySection.append(element('h2','Current-case history'));for(const item of history.items)historySection.append(element('p',`${item.checkpoint}. ${item.kind}: ${item.reason}`));root.append(historySection);const selected=new URLSearchParams(location.search).get('field');const target=selected?document.querySelector(`#field-${CSS.escape(selected)}`):root;target.focus();
+const historySection=document.createElement('section');historySection.className='field';historySection.append(element('h2','Current-case history'));for(const item of history.items){const text=item.kind==='human_decision_recorded'?`${item.occurred_at}. ${item.destination}: ${item.outcome} by ${item.actor}`:`${item.checkpoint}. ${item.kind}: ${item.reason}`;historySection.append(element('p',text));}root.append(historySection);const selected=new URLSearchParams(location.search).get('field');const target=selected?document.querySelector(`#field-${CSS.escape(selected)}`):root;target.focus();
 }).catch(()=>{const title=element('h1','Case unavailable');const alert=element('p','The exact current case could not be loaded.');alert.setAttribute('role','alert');root.replaceChildren(title,alert);root.focus();});}"""

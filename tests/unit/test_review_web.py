@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -17,6 +18,12 @@ from fastapi.testclient import TestClient
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.review_web import (
+    InspectCurrentReviewCase,
+    RecordHumanDecision,
+    ReviewWebError,
+)
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.interfaces.cli import main as cli_main
 from mechanical_librarian.bootstrap.composition import run_review_server
 from mechanical_librarian.domain.proposal_set import evaluate_report
@@ -28,6 +35,10 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.human_decision import (
+    HumanDecision,
+    HumanDecisionError,
+)
 from mechanical_librarian.interfaces.web import create_review_app
 from tests.unit.test_review_case_persistence import _report
 from tests.unit.test_proposal_set import (
@@ -52,6 +63,7 @@ class _Repository:
         }
         self.failures: list[int] = []
         self.sessions: dict[str, tuple[str, str, int, int | None]] = {}
+        self.decisions: dict[str, str] = {}
 
     def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
         self.failures = [value for value in self.failures if value >= now - window_seconds]
@@ -97,6 +109,16 @@ class _Repository:
                 "transition_id": "review_transition_" + "a" * 64,
             },
         )
+
+    def get_review_case_decisions(self, review_case_id: str) -> tuple[str, ...]:
+        return tuple(self.decisions.values())
+
+    def record_human_decision(self, decision: HumanDecision) -> str:
+        existing = self.decisions.get(decision.destination)
+        if existing is not None:
+            return existing
+        self.decisions[decision.destination] = decision.to_json()
+        return decision.to_json()
 
     def get_review_case_report(self, review_case_id: str) -> str:
         if review_case_id != self.case.review_case_id:
@@ -266,6 +288,78 @@ class ReviewWebTests(unittest.TestCase):
         denied = self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}")
         self.assertEqual(denied.status_code, 401)
 
+    def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
+        self,
+    ) -> None:
+        login = self._login()
+        detail = self.client.get(
+            f"/api/v1/review-cases/{self.case.review_case_id}"
+        ).json()
+        field = detail["fields"][0]
+        payload = {
+            "destination": field["destination"],
+            "outcome": "accept",
+            "proposal_id": field["proposal_id"],
+            "selected_value": field["proposed_values"][0],
+            "target_fingerprint": field["target_fingerprint"],
+        }
+        denied = self.client.post(
+            f"/api/v1/review-cases/{self.case.review_case_id}/decisions",
+            headers={**self.origin, "Idempotency-Key": "decision-request-0001"},
+            json=payload,
+        )
+        self.assertEqual(denied.status_code, 403)
+        accepted = self.client.post(
+            f"/api/v1/review-cases/{self.case.review_case_id}/decisions",
+            headers={
+                **self.origin,
+                "X-CSRF-Token": login["csrf_token"],
+                "Idempotency-Key": "decision-request-0001",
+            },
+            json=payload,
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        self.assertEqual(accepted.json()["outcome"], "accept")
+        refreshed = self.client.get(
+            f"/api/v1/review-cases/{self.case.review_case_id}"
+        ).json()
+        self.assertFalse(refreshed["fields"][0]["needs_attention"])
+        self.assertEqual(
+            refreshed["fields"][0]["human_decision"]["decision_id"],
+            accepted.json()["decision_id"],
+        )
+        self.now += 1
+        replay = self.client.post(
+            f"/api/v1/review-cases/{self.case.review_case_id}/decisions",
+            headers={
+                **self.origin,
+                "X-CSRF-Token": login["csrf_token"],
+                "Idempotency-Key": "decision-request-0001",
+            },
+            json=payload,
+        )
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(
+            replay.json()["decision_id"], accepted.json()["decision_id"]
+        )
+
+    def test_malformed_case_decision_body_is_bounded_before_validation(self) -> None:
+        oversized = b'{' + b'"private":"' + b'x' * 9_000 + b'"}'
+        declared = self.client.post(
+            "/api/v1/review-cases/not-a-case/decisions",
+            headers={**self.origin, "Content-Type": "application/json"},
+            content=oversized,
+        )
+        self.assertEqual(declared.status_code, 413)
+        self.assertNotIn(b"private", declared.content)
+        streamed = self.client.post(
+            "/api/v1/review-cases/not-a-case/decisions",
+            headers={**self.origin, "Content-Type": "application/json"},
+            content=(chunk for chunk in (oversized[:4_500], oversized[4_500:])),
+        )
+        self.assertEqual(streamed.status_code, 413)
+        self.assertNotIn(b"private", streamed.content)
+
     def test_origin_host_proxy_expiry_and_throttle_fail_closed(self) -> None:
         invalid_origin = self.client.post(
             "/api/v1/session/login",
@@ -334,6 +428,10 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertNotIn(str(self.hash_path).encode(), first.content)
         self.assertNotIn(b"correct horse", first.content)
+        decision_operation = expected["paths"][
+            "/api/v1/review-cases/{review_case_id}/decisions"
+        ]["post"]
+        self.assertIn("404", decision_operation["responses"])
         invalid = self.client.post(
             "/api/v1/session/login",
             headers=self.origin,
@@ -378,6 +476,8 @@ class ReviewWebTests(unittest.TestCase):
         self.assertIn("/history", script)
         self.assertIn("textContent", script)
         self.assertNotIn("innerHTML", script)
+        self.assertIn("item.kind==='human_decision_recorded'", script)
+        self.assertIn("${item.destination}: ${item.outcome} by ${item.actor}", script)
 
     def test_attention_first_library_lenses_queue_and_cursor_binding(self) -> None:
         providers = tuple(
@@ -598,6 +698,298 @@ class ReviewWebTests(unittest.TestCase):
 
 
 class ReviewSessionPersistenceTests(unittest.TestCase):
+    def test_pre_decision_application_schema_is_rejected_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "application.sqlite3"
+            repository = open_repository(database)
+            repository.close()
+            connection = sqlite3.connect(database)
+            try:
+                connection.execute("DROP TRIGGER human_decision_events_no_delete")
+                connection.execute("DROP TRIGGER human_decision_events_no_update")
+                connection.execute("DROP TRIGGER human_decisions_no_delete")
+                connection.execute("DROP TRIGGER human_decisions_no_update")
+                connection.execute("DROP TABLE human_decision_events")
+                connection.execute("DROP TABLE human_decisions")
+                connection.commit()
+            finally:
+                connection.close()
+            before = database.read_bytes()
+            with self.assertRaises(MetadataReportError):
+                open_repository(database, create=False)
+            self.assertEqual(database.read_bytes(), before)
+
+    def test_concurrent_http_decisions_publish_exactly_one_fact_and_event(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "application.sqlite3"
+            hash_path = root / "owner.hash"
+            hash_path.write_text(
+                PasswordHasher().hash("correct horse"), encoding="utf-8"
+            )
+            os.chmod(hash_path, 0o600)
+            repository = open_repository(database, cross_thread=True)
+            report = _report()
+            repository.publish(report, lambda: True)
+            proposal_set = evaluate_report(report)
+            repository.publish_proposal(proposal_set)
+            case_id = json.loads(repository.admit_review_case(proposal_set))[
+                "review_case_id"
+            ]
+            client = TestClient(
+                create_review_app(
+                    repository,
+                    ReviewWebConfiguration(
+                        canonical_origin="https://review.test",
+                        owner_password_hash_file=str(hash_path),
+                    ),
+                    clock=lambda: 1_000,
+                ),
+                base_url="https://review.test",
+            )
+            try:
+                login = client.post(
+                    "/api/v1/session/login",
+                    headers={"Origin": "https://review.test"},
+                    json={"password": "correct horse"},
+                ).json()
+                field = client.get(
+                    f"/api/v1/review-cases/{case_id}"
+                ).json()["fields"][0]
+                base_payload = {
+                    "destination": field["destination"],
+                    "proposal_id": field["proposal_id"],
+                    "selected_value": None,
+                    "target_fingerprint": field["target_fingerprint"],
+                }
+
+                def submit(value: tuple[str, str]) -> int:
+                    outcome, key = value
+                    return client.post(
+                        f"/api/v1/review-cases/{case_id}/decisions",
+                        headers={
+                            "Origin": "https://review.test",
+                            "X-CSRF-Token": login["csrf_token"],
+                            "Idempotency-Key": key,
+                        },
+                        json={**base_payload, "outcome": outcome},
+                    ).status_code
+
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    statuses = sorted(
+                        executor.map(
+                            submit,
+                            (
+                                ("keep_current", "concurrent-decision-0001"),
+                                ("reject", "concurrent-decision-0002"),
+                            ),
+                        )
+                    )
+                self.assertEqual(statuses, [200, 409])
+                self.assertEqual(
+                    repository._connection.execute(
+                        "SELECT count(*) FROM human_decisions"
+                    ).fetchone(),
+                    (1,),
+                )
+                self.assertEqual(
+                    repository._connection.execute(
+                        "SELECT count(*) FROM human_decision_events"
+                    ).fetchone(),
+                    (1,),
+                )
+                library = client.get(
+                    "/api/v1/library?lens=no_attention_needed"
+                )
+                self.assertEqual(library.status_code, 200, library.text)
+                self.assertEqual(
+                    library.json()["counts"],
+                    {
+                        "all": 1,
+                        "needs_attention": 0,
+                        "no_attention_needed": 1,
+                    },
+                )
+                self.assertEqual(len(library.json()["items"]), 1)
+                self.assertEqual(
+                    library.json()["items"][0]["attention_state"],
+                    "no_attention_needed",
+                )
+                self.assertEqual(
+                    library.json()["items"][0]["attention_count"], 0
+                )
+                client.cookies.clear()
+                second_login = client.post(
+                    "/api/v1/session/login",
+                    headers={"Origin": "https://review.test"},
+                    json={"password": "correct horse"},
+                )
+                self.assertEqual(second_login.status_code, 200)
+                second_context = client.get(
+                    f"/api/v1/review-cases/{case_id}"
+                ).json()
+                self.assertIsNotNone(
+                    second_context["fields"][0]["human_decision"]
+                )
+            finally:
+                client.close()
+                repository.close()
+
+    def test_decision_event_failure_rolls_back_acknowledgement_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "application.sqlite3")
+            report = _report()
+            repository.publish(report, lambda: True)
+            proposal_set = evaluate_report(report)
+            repository.publish_proposal(proposal_set)
+            case_id = json.loads(repository.admit_review_case(proposal_set))[
+                "review_case_id"
+            ]
+            case = ReviewCase.create_from_data(
+                json.loads(repository.get_review_case(case_id))["case"]
+            )
+            proposal = next(
+                value
+                for value in case.proposals
+                if value["result"]["outcome"] == "unresolved_choice"
+            )
+            decision = HumanDecision.create(
+                case,
+                proposal_id=proposal["proposal_id"],
+                target_fingerprint=case.target_fingerprint,
+                destination=proposal["destination"],
+                actor="owner",
+                outcome="keep_current",
+                selected_value=None,
+                idempotency_key="rollback-decision-0001",
+                occurred_at=1_000,
+            )
+            repository._connection.execute(
+                "CREATE TEMP TRIGGER synthetic_event_failure "
+                "BEFORE INSERT ON human_decision_events "
+                "BEGIN SELECT RAISE(ABORT,'synthetic'); END"
+            )
+            with self.assertRaises(MetadataReportError):
+                repository.record_human_decision(decision)
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT count(*) FROM human_decisions"
+                ).fetchone(),
+                (0,),
+            )
+            repository.close()
+
+    def test_sqlite_human_decision_is_atomic_idempotent_and_reopens_exactly(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "application.sqlite3"
+            repository = open_repository(database)
+            report = _report()
+            repository.publish(report, lambda: True)
+            proposal_set = evaluate_report(report)
+            repository.publish_proposal(proposal_set)
+            case_id = json.loads(repository.admit_review_case(proposal_set))[
+                "review_case_id"
+            ]
+            case = ReviewCase.create_from_data(
+                json.loads(repository.get_review_case(case_id))["case"]
+            )
+            proposal = next(
+                value
+                for value in case.proposals
+                if value["result"]["outcome"] == "unresolved_choice"
+            )
+            selected = proposal["result"]["alternatives"][0]["value"]
+            decision = HumanDecision.create(
+                case,
+                proposal_id=proposal["proposal_id"],
+                target_fingerprint=case.target_fingerprint,
+                destination=proposal["destination"],
+                actor="owner",
+                outcome="accept",
+                selected_value=selected,
+                idempotency_key="sqlite-decision-0001",
+                occurred_at=1_000,
+            )
+            self.assertEqual(
+                HumanDecision.from_json(
+                    repository.record_human_decision(decision)
+                ).decision_id,
+                decision.decision_id,
+            )
+            retry = HumanDecision.create(
+                case,
+                proposal_id=proposal["proposal_id"],
+                target_fingerprint=case.target_fingerprint,
+                destination=proposal["destination"],
+                actor="owner",
+                outcome="accept",
+                selected_value=selected,
+                idempotency_key="sqlite-decision-0001",
+                occurred_at=1_001,
+            )
+            self.assertEqual(
+                HumanDecision.from_json(
+                    repository.record_human_decision(retry)
+                ).decision_id,
+                decision.decision_id,
+            )
+            conflict = HumanDecision.create(
+                case,
+                proposal_id=proposal["proposal_id"],
+                target_fingerprint=case.target_fingerprint,
+                destination=proposal["destination"],
+                actor="owner",
+                outcome="reject",
+                selected_value=None,
+                idempotency_key="sqlite-decision-0001",
+                occurred_at=1_002,
+            )
+            with self.assertRaises(HumanDecisionError) as raised:
+                repository.record_human_decision(conflict)
+            self.assertEqual(raised.exception.code, "idempotency_conflict")
+            duplicate = HumanDecision.create(
+                case,
+                proposal_id=proposal["proposal_id"],
+                target_fingerprint=case.target_fingerprint,
+                destination=proposal["destination"],
+                actor="owner",
+                outcome="keep_current",
+                selected_value=None,
+                idempotency_key="sqlite-decision-0002",
+                occurred_at=1_003,
+            )
+            with self.assertRaises(HumanDecisionError) as already:
+                repository.record_human_decision(duplicate)
+            self.assertEqual(already.exception.code, "already_decided")
+            self.assertEqual(repository.count_current_attention_fields(None), 0)
+            self.assertEqual(
+                repository.get_review_case_history(case_id, 10)[0]["kind"],
+                "human_decision_recorded",
+            )
+            repository.close()
+
+            reopened = open_repository(database, create=False)
+            try:
+                documents = reopened.get_review_case_decisions(case_id)
+                self.assertEqual(len(documents), 1)
+                self.assertEqual(
+                    HumanDecision.from_json(documents[0]).decision_id,
+                    decision.decision_id,
+                )
+                detail = InspectCurrentReviewCase(reopened).run(case_id)
+                self.assertFalse(detail["fields"][0]["needs_attention"])
+                newer = _report(content_digest="c", file_identity="d")
+                reopened.publish(newer, lambda: True)
+                with self.assertRaises(HumanDecisionError) as stale:
+                    reopened.record_human_decision(duplicate)
+                self.assertEqual(stale.exception.code, "stale")
+            finally:
+                reopened.close()
+
     def test_session_survives_exact_current_reopen_and_prior_schema_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "application.sqlite3"

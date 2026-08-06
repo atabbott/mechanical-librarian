@@ -38,7 +38,8 @@ pointer that loses currentness returns `stale`.
 Lineage checkpoints retain an attributable fixed-system audit transition. A
 newer report makes an earlier case historical without rewriting it. Use a
 clean rebuild and regenerate supported reports/ProposalSets for an older
-database; there is no migration, decision, apply, or write command.
+database; admission itself performs no decision, apply, or write, and no
+migration command exists.
 
 ```sh
 mechanical-librarian review-case-get --database reports.sqlite \
@@ -62,16 +63,23 @@ Only `/health/live` is anonymous operational data. The login surface verifies
 the owner-only Argon2id hash file, applies a durable bounded throttle, and
 creates an opaque server-side session whose token is stored only as a digest.
 All review responses are private/no-store and enforce the canonical HTTPS Host
-and Origin, restrictive CSP, secure HttpOnly SameSite cookies, CSRF on logout,
-and explicit proxy trust. The `/api/v1` surface exposes exact-current case
-detail, bounded evidence, current-case admission history, and authenticated
-OpenAPI. Authenticated `/library` provides bounded attention-first, all, and
+and Origin, restrictive CSP, secure HttpOnly SameSite cookies, CSRF on logout
+and decisions, and explicit proxy trust. The `/api/v1` surface exposes
+exact-current case detail, bounded evidence, current-case admission and decision
+history, one individual field-decision operation, and authenticated OpenAPI.
+The mutation requires the displayed proposal ID and target fingerprint, an
+explicit `accept`, `keep_current`, or `reject` outcome, a 16–128 character
+`Idempotency-Key`, the session CSRF token, and an exact proposed value for
+`accept`. Same-key/same-payload retries return the original acknowledgement;
+conflicts and stale state fail without a partial decision or event.
+Authenticated `/library` provides bounded attention-first, all, and
 no-attention-needed lenses; `/attention` contains only exact unresolved/manual
 fields and links to the exact field on detail. Both support bounded search,
 maximum 50-item pages, and query-bound cursors. Automatic-only cases remain
-inspectable in the library but never gain a human control. The surface is
-read-only: it cannot create a human or automatic decision, construct an apply
-plan, or construct a target client.
+inspectable in the library but never gain a human control. Decision persistence
+cannot create automatic authority, construct an apply plan, construct a target
+client, perform a write, reverse a decision, or widen one exact ordinary field
+into a bulk operation.
 
 The login request body is capped at 2 KiB at the ASGI boundary before JSON
 parsing. Five reserved attempts within five minutes close the login gate; the

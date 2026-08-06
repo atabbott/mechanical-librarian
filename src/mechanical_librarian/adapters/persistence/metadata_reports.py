@@ -27,6 +27,10 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureDiagnostic,
     FailureStage,
 )
+from mechanical_librarian.domain.human_decision import (
+    HumanDecision,
+    HumanDecisionError,
+)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     REPORT_SCHEMA,
@@ -148,6 +152,32 @@ _REVIEW_LOGIN_FAILURES_SQL = (
     "failure_id TEXT PRIMARY KEY NOT NULL CHECK(length(failure_id)=64 AND failure_id NOT GLOB '*[^0-9a-f]*'), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0))"
 )
+_HUMAN_DECISIONS_SQL = (
+    "CREATE TABLE human_decisions ("
+    "decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79), "
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "proposal_id TEXT NOT NULL CHECK(proposal_id GLOB 'review_proposal_[0-9a-f]*' AND length(proposal_id)=80), "
+    "target_fingerprint TEXT NOT NULL CHECK(length(target_fingerprint)=64 AND target_fingerprint NOT GLOB '*[^0-9a-f]*'), "
+    "destination TEXT NOT NULL CHECK(length(destination) BETWEEN 1 AND 64), "
+    "actor TEXT NOT NULL CHECK(actor='owner'), "
+    "outcome TEXT NOT NULL CHECK(outcome IN ('accept','keep_current','reject')), "
+    "selected_value_document TEXT NOT NULL CHECK(typeof(selected_value_document)='text' AND length(CAST(selected_value_document AS BLOB)) BETWEEN 4 AND 32768), "
+    "idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64 AND idempotency_digest NOT GLOB '*[^0-9a-f]*'), "
+    "request_digest TEXT NOT NULL CHECK(length(request_digest)=64 AND request_digest NOT GLOB '*[^0-9a-f]*'), "
+    "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536), "
+    "UNIQUE(review_case_id,destination))"
+)
+_HUMAN_DECISION_EVENTS_SQL = (
+    "CREATE TABLE human_decision_events ("
+    "event_id TEXT PRIMARY KEY NOT NULL CHECK(event_id GLOB 'human_decision_event_[0-9a-f]*' AND length(event_id)=85), "
+    "decision_id TEXT NOT NULL UNIQUE REFERENCES human_decisions(decision_id), "
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "destination TEXT NOT NULL CHECK(length(destination) BETWEEN 1 AND 64), "
+    "actor TEXT NOT NULL CHECK(actor='owner'), kind TEXT NOT NULL CHECK(kind='human_decision_recorded'), "
+    "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536))"
+)
 _CURRENT_REVIEW_FROM_SQL = (
     "FROM current_review_case_lineages c "
     "JOIN review_cases rc ON rc.review_case_id=c.review_case_id "
@@ -175,7 +205,9 @@ _REVIEW_FIELD_ATTENTION_SQL = (
     "OR (json_extract(result.value,'$.destination') "
     "IN ('title','subtitle','series') AND "
     + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
-    + "))"
+    + ")) AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
+    "WHERE decision.review_case_id=rc.review_case_id "
+    "AND decision.destination=json_extract(result.value,'$.destination'))"
 )
 _REVIEW_ATTENTION_SQL = (
     "EXISTS (SELECT 1 FROM json_each(rc.document,'$.results') result WHERE "
@@ -254,6 +286,10 @@ _REVIEW_NO_UPDATE_SQL = "CREATE TRIGGER review_cases_no_update BEFORE UPDATE ON 
 _REVIEW_NO_DELETE_SQL = "CREATE TRIGGER review_cases_no_delete BEFORE DELETE ON review_cases BEGIN SELECT RAISE(ABORT, 'review cases are append-only'); END"
 _REVIEW_TRANSITION_NO_UPDATE_SQL = "CREATE TRIGGER review_case_transitions_no_update BEFORE UPDATE ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'review transitions are append-only'); END"
 _REVIEW_TRANSITION_NO_DELETE_SQL = "CREATE TRIGGER review_case_transitions_no_delete BEFORE DELETE ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'review transitions are append-only'); END"
+_HUMAN_DECISION_NO_UPDATE_SQL = "CREATE TRIGGER human_decisions_no_update BEFORE UPDATE ON human_decisions BEGIN SELECT RAISE(ABORT, 'human decisions are append-only'); END"
+_HUMAN_DECISION_NO_DELETE_SQL = "CREATE TRIGGER human_decisions_no_delete BEFORE DELETE ON human_decisions BEGIN SELECT RAISE(ABORT, 'human decisions are append-only'); END"
+_HUMAN_DECISION_EVENT_NO_UPDATE_SQL = "CREATE TRIGGER human_decision_events_no_update BEFORE UPDATE ON human_decision_events BEGIN SELECT RAISE(ABORT, 'human decision events are append-only'); END"
+_HUMAN_DECISION_EVENT_NO_DELETE_SQL = "CREATE TRIGGER human_decision_events_no_delete BEFORE DELETE ON human_decision_events BEGIN SELECT RAISE(ABORT, 'human decision events are append-only'); END"
 _SHADOW_REQUEST_NO_UPDATE_SQL = "CREATE TRIGGER shadow_review_requests_no_update BEFORE UPDATE ON shadow_review_requests BEGIN SELECT RAISE(ABORT, 'shadow review requests are append-only'); END"
 _SHADOW_REQUEST_NO_DELETE_SQL = "CREATE TRIGGER shadow_review_requests_no_delete BEFORE DELETE ON shadow_review_requests BEGIN SELECT RAISE(ABORT, 'shadow review requests are append-only'); END"
 _SHADOW_ATTEMPT_NO_UPDATE_SQL = "CREATE TRIGGER shadow_review_attempts_no_update BEFORE UPDATE ON shadow_review_attempts BEGIN SELECT RAISE(ABORT, 'shadow review attempts are append-only'); END"
@@ -1193,28 +1229,208 @@ class SQLiteMetadataReportRepository:
             self._connection.rollback()
             raise MetadataReportError("review session is unavailable") from error
 
+    def get_review_case_decisions(
+        self, review_case_id: str
+    ) -> tuple[str, ...]:
+        try:
+            envelope = json.loads(self.get_review_case(review_case_id))
+            if type(envelope) is not dict or type(envelope.get("case")) is not dict:
+                raise MetadataReportError("human decision is unavailable")
+            case = ReviewCase.create_from_data(envelope["case"])
+            rows = self._connection.execute(
+                "SELECT decision_id,proposal_id,target_fingerprint,destination,"
+                "actor,outcome,selected_value_document,idempotency_digest,"
+                "request_digest,occurred_at,document "
+                "FROM human_decisions WHERE review_case_id=? "
+                "ORDER BY occurred_at,decision_id",
+                (review_case_id,),
+            ).fetchall()
+            documents = []
+            for row in rows:
+                decision = HumanDecision.from_json(row[10])
+                decision.validate_for(case)
+                if (
+                    decision.decision_id,
+                    decision.proposal_id,
+                    decision.target_fingerprint,
+                    decision.destination,
+                    decision.actor,
+                    decision.outcome,
+                    _canonical_json(decision.selected_value),
+                    decision.idempotency_digest,
+                    decision.request_digest,
+                    decision.occurred_at,
+                ) != row[:10]:
+                    raise MetadataReportError("human decision is invalid")
+                documents.append(decision.to_json())
+            return tuple(documents)
+        except (sqlite3.Error, HumanDecisionError, TypeError) as error:
+            raise MetadataReportError("human decision is unavailable") from error
+
+    def record_human_decision(self, decision: HumanDecision) -> str:
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            replay = self._connection.execute(
+                "SELECT request_digest,document FROM human_decisions "
+                "WHERE idempotency_digest=?",
+                (decision.idempotency_digest,),
+            ).fetchone()
+            if replay is not None:
+                if replay[0] != decision.request_digest:
+                    raise HumanDecisionError("idempotency_conflict")
+                try:
+                    stored = HumanDecision.from_json(replay[1])
+                except HumanDecisionError as error:
+                    raise MetadataReportError(
+                        "human decision persistence failed"
+                    ) from error
+                if (
+                    stored.idempotency_digest != decision.idempotency_digest
+                    or stored.request_digest != replay[0]
+                ):
+                    raise MetadataReportError("human decision persistence failed")
+                self._connection.commit()
+                return stored.to_json()
+            case_envelope = json.loads(self.get_review_case(decision.review_case_id))
+            if (
+                type(case_envelope) is not dict
+                or case_envelope.get("current") is not True
+                or type(case_envelope.get("case")) is not dict
+            ):
+                raise HumanDecisionError("stale")
+            case = ReviewCase.create_from_data(case_envelope["case"])
+            decision.validate_for(case)
+            existing = self._connection.execute(
+                "SELECT 1 FROM human_decisions "
+                "WHERE review_case_id=? AND destination=?",
+                (decision.review_case_id, decision.destination),
+            ).fetchone()
+            if existing is not None:
+                raise HumanDecisionError("already_decided")
+            selected = _canonical_json(decision.selected_value)
+            self._connection.execute(
+                "INSERT INTO human_decisions("
+                "decision_id,review_case_id,proposal_id,target_fingerprint,"
+                "destination,actor,outcome,selected_value_document,"
+                "idempotency_digest,request_digest,occurred_at,document) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    decision.decision_id,
+                    decision.review_case_id,
+                    decision.proposal_id,
+                    decision.target_fingerprint,
+                    decision.destination,
+                    decision.actor,
+                    decision.outcome,
+                    selected,
+                    decision.idempotency_digest,
+                    decision.request_digest,
+                    decision.occurred_at,
+                    decision.to_json(),
+                ),
+            )
+            event_id = "human_decision_event_" + hashlib.sha256(
+                ("human-decision-event-v1:" + decision.decision_id).encode("utf-8")
+            ).hexdigest()
+            event_document = _canonical_json(
+                {
+                    "actor": decision.actor,
+                    "decision_id": decision.decision_id,
+                    "destination": decision.destination,
+                    "event_id": event_id,
+                    "kind": "human_decision_recorded",
+                    "occurred_at": decision.occurred_at,
+                    "outcome": decision.outcome,
+                    "review_case_id": decision.review_case_id,
+                    "schema_version": "human-decision-event-v1",
+                }
+            )
+            self._connection.execute(
+                "INSERT INTO human_decision_events("
+                "event_id,decision_id,review_case_id,destination,actor,kind,"
+                "occurred_at,document) VALUES(?,?,?,?,?,'human_decision_recorded',?,?)",
+                (
+                    event_id,
+                    decision.decision_id,
+                    decision.review_case_id,
+                    decision.destination,
+                    decision.actor,
+                    decision.occurred_at,
+                    event_document,
+                ),
+            )
+            if self._binding is not None:
+                self._binding.require_current()
+            self._connection.commit()
+            return decision.to_json()
+        except HumanDecisionError:
+            self._connection.rollback()
+            raise
+        except MetadataReportError:
+            self._connection.rollback()
+            raise
+        except (
+            sqlite3.Error,
+            ReviewCaseValueError,
+            TypeError,
+            ValueError,
+        ) as error:
+            self._connection.rollback()
+            raise MetadataReportError("human decision persistence failed") from error
+
     def get_review_case_history(
         self, review_case_id: str, limit: int
     ) -> tuple[dict[str, object], ...]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise MetadataReportError("review history is unavailable")
         try:
-            rows = self._connection.execute(
+            transition_rows = self._connection.execute(
                 "SELECT transition_id,checkpoint,kind,reason,from_review_case_id,to_review_case_id "
                 "FROM review_case_transitions WHERE from_review_case_id=? OR to_review_case_id=? "
                 "ORDER BY checkpoint DESC,transition_id DESC LIMIT ?",
                 (review_case_id, review_case_id, limit),
             ).fetchall()
-            return tuple(
+            event_rows = self._connection.execute(
+                "SELECT event_id,decision_id,review_case_id,destination,actor,"
+                "kind,occurred_at,document FROM human_decision_events "
+                "WHERE review_case_id=? ORDER BY occurred_at DESC,event_id DESC LIMIT ?",
+                (review_case_id, limit),
+            ).fetchall()
+            transitions = [
                 {
                     "checkpoint": row[1],
                     "kind": row[2],
                     "reason": row[3],
                     "transition_id": row[0],
                 }
-                for row in rows
-            )
-        except sqlite3.Error as error:
+                for row in transition_rows
+            ]
+            events = []
+            for row in event_rows:
+                value = json.loads(row[7])
+                if type(value) is not dict or set(value) != {
+                    "actor",
+                    "decision_id",
+                    "destination",
+                    "event_id",
+                    "kind",
+                    "occurred_at",
+                    "outcome",
+                    "review_case_id",
+                    "schema_version",
+                } or value["schema_version"] != "human-decision-event-v1" or (
+                    value["event_id"],
+                    value["decision_id"],
+                    value["review_case_id"],
+                    value["destination"],
+                    value["actor"],
+                    value["kind"],
+                    value["occurred_at"],
+                ) != row[:7]:
+                    raise MetadataReportError("review history is invalid")
+                events.append(value)
+            return tuple((events + transitions)[:limit])
+        except (sqlite3.Error, TypeError, ValueError, json.JSONDecodeError) as error:
             raise MetadataReportError("review history is unavailable") from error
 
     def preview_shadow_packet(self, review_case_id: str) -> ShadowReviewPacket:
@@ -2156,6 +2372,8 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_REVIEW_TRANSITIONS_SQL)
             connection.execute(_REVIEW_SESSIONS_SQL)
             connection.execute(_REVIEW_LOGIN_FAILURES_SQL)
+            connection.execute(_HUMAN_DECISIONS_SQL)
+            connection.execute(_HUMAN_DECISION_EVENTS_SQL)
             connection.execute(_SHADOW_REQUESTS_SQL)
             connection.execute(_SHADOW_ATTEMPTS_SQL)
             connection.execute(_SHADOW_DISPATCHES_SQL)
@@ -2169,6 +2387,10 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_REVIEW_NO_DELETE_SQL)
             connection.execute(_REVIEW_TRANSITION_NO_UPDATE_SQL)
             connection.execute(_REVIEW_TRANSITION_NO_DELETE_SQL)
+            connection.execute(_HUMAN_DECISION_NO_UPDATE_SQL)
+            connection.execute(_HUMAN_DECISION_NO_DELETE_SQL)
+            connection.execute(_HUMAN_DECISION_EVENT_NO_UPDATE_SQL)
+            connection.execute(_HUMAN_DECISION_EVENT_NO_DELETE_SQL)
             connection.execute(_SHADOW_REQUEST_NO_UPDATE_SQL)
             connection.execute(_SHADOW_REQUEST_NO_DELETE_SQL)
             connection.execute(_SHADOW_ATTEMPT_NO_UPDATE_SQL)
@@ -2453,6 +2675,11 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
         ("index", "metadata_report_cover_references_artifact_id", _COVER_ARTIFACT_INDEX_SQL),
         ("index", "metadata_report_cover_references_preview_digest", _COVER_PREVIEW_INDEX_SQL),
+        ("index", "sqlite_autoindex_human_decision_events_1", None),
+        ("index", "sqlite_autoindex_human_decision_events_2", None),
+        ("index", "sqlite_autoindex_human_decisions_1", None),
+        ("index", "sqlite_autoindex_human_decisions_2", None),
+        ("index", "sqlite_autoindex_human_decisions_3", None),
         ("index", "sqlite_autoindex_metadata_reports_1", None),
         ("index", "sqlite_autoindex_metadata_reports_2", None),
         ("index", "sqlite_autoindex_proposal_sets_1", None),
@@ -2469,6 +2696,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "current_metadata_reports", _CURRENT_SQL),
         ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
         ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
+        ("table", "human_decision_events", _HUMAN_DECISION_EVENTS_SQL),
+        ("table", "human_decisions", _HUMAN_DECISIONS_SQL),
         ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
         ("table", "metadata_reports", _REPORTS_SQL),
         ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
@@ -2484,6 +2713,10 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("trigger", "metadata_report_cover_references_no_update", _COVER_NO_UPDATE_SQL),
         ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL),
         ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL),
+        ("trigger", "human_decision_events_no_delete", _HUMAN_DECISION_EVENT_NO_DELETE_SQL),
+        ("trigger", "human_decision_events_no_update", _HUMAN_DECISION_EVENT_NO_UPDATE_SQL),
+        ("trigger", "human_decisions_no_delete", _HUMAN_DECISION_NO_DELETE_SQL),
+        ("trigger", "human_decisions_no_update", _HUMAN_DECISION_NO_UPDATE_SQL),
         ("trigger", "proposal_sets_no_delete", _PROPOSAL_NO_DELETE_SQL),
         ("trigger", "proposal_sets_no_update", _PROPOSAL_NO_UPDATE_SQL),
         ("trigger", "review_case_transitions_no_delete", _REVIEW_TRANSITION_NO_DELETE_SQL),

@@ -45,6 +45,13 @@ A new target fingerprint or materially changed proposal set supersedes an
 unresolved case rather than mutating it in place. Historical cases and
 decisions remain immutable.
 
+The #449 service records one exact ordinary-field `accept`, `keep_current`, or
+`reject` fact. It binds the current case, target fingerprint, field proposal,
+owner actor, selected value where applicable, and idempotency key. The decision
+and its current-case audit event are append-only and atomic; an acknowledged
+decision removes only that exact field from current attention. Browser decision
+controls and advancement remain the #450 activation increment.
+
 The same external item value in two configured libraries is not assumed to be
 the same target. Titles and authors affect sorting and discovery, never target
 identity.

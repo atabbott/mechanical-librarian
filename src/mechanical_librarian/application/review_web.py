@@ -1,4 +1,4 @@
-"""Authenticated, read-only current review-case application boundary."""
+"""Authenticated current-case queries and one exact human decision command."""
 
 from __future__ import annotations
 
@@ -10,6 +10,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from mechanical_librarian.domain.human_decision import (
+    HumanDecision,
+    HumanDecisionError,
+)
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.review_case import ReviewCase
 
@@ -62,6 +66,10 @@ class ReviewWebRepository(Protocol):
         self, search: str | None, limit: int, offset: int
     ) -> tuple[tuple[str, str, str], ...]: ...
     def count_current_attention_fields(self, search: str | None) -> int: ...
+    def get_review_case_decisions(
+        self, review_case_id: str
+    ) -> tuple[str, ...]: ...
+    def record_human_decision(self, decision: HumanDecision) -> str: ...
 
 
 class OwnerSessionService:
@@ -150,6 +158,13 @@ class InspectCurrentReviewCase:
             if report.report_id != case.report_id:
                 raise ReviewWebError("unavailable")
             advice = self._repository.get_review_model_advice(review_case_id)
+            decisions = {
+                decision.destination: decision
+                for document in self._repository.get_review_case_decisions(
+                    review_case_id
+                )
+                for decision in (HumanDecision.from_json(document),)
+            }
         except ReviewWebError:
             raise
         except Exception as error:
@@ -174,18 +189,24 @@ class InspectCurrentReviewCase:
             )
             reasons = result["reasons"]
             assert type(reasons) is list
+            decision = decisions.get(destination)
             fields.append(
                 {
                     "current": target_fields[destination],
                     "deterministic_disposition": result["outcome"],
                     "destination": destination,
                     "manual_required": proposal["manual_required"],
-                    "needs_attention": _needs_attention(proposal),
+                    "human_decision": (
+                        None if decision is None else _decision_projection(decision)
+                    ),
+                    "needs_attention": decision is None and _needs_attention(proposal),
                     "notices": reasons,
                     "proposed_values": [
                         alternative["value"] for alternative in alternatives
                     ],
                     "provenance": references,
+                    "proposal_id": proposal["proposal_id"],
+                    "target_fingerprint": case.target_fingerprint,
                     "uncertainty": (
                         reasons
                         if result["outcome"] == "unresolved_choice"
@@ -250,6 +271,65 @@ class InspectCurrentReviewCase:
         }
 
 
+class RecordHumanDecision:
+    """Record one explicit owner decision without granting apply authority."""
+
+    def __init__(
+        self,
+        repository: ReviewWebRepository,
+        clock: Callable[[], int],
+    ) -> None:
+        self._repository = repository
+        self._clock = clock
+
+    def run(
+        self,
+        review_case_id: str,
+        *,
+        proposal_id: str,
+        target_fingerprint: str,
+        destination: str,
+        actor: str,
+        outcome: str,
+        selected_value: dict[str, object] | None,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        try:
+            raw = json.loads(self._repository.get_review_case(review_case_id))
+            if (
+                type(raw) is not dict
+                or raw.get("current") is not True
+                or type(raw.get("case")) is not dict
+            ):
+                raise ReviewWebError("stale")
+            case = ReviewCase.create_from_data(raw["case"])
+            decision = HumanDecision.create(
+                case,
+                proposal_id=proposal_id,
+                target_fingerprint=target_fingerprint,
+                destination=destination,
+                actor=actor,
+                outcome=outcome,
+                selected_value=selected_value,
+                idempotency_key=idempotency_key,
+                occurred_at=self._clock(),
+            )
+            stored = HumanDecision.from_json(
+                self._repository.record_human_decision(decision)
+            )
+            if stored.request_digest != decision.request_digest:
+                raise ReviewWebError("persistence")
+            return {
+                **_decision_projection(stored),
+                "schema_version": "human-decision-ack-v1",
+            }
+        except ReviewWebError:
+            raise
+        except HumanDecisionError as error:
+            raise ReviewWebError(error.code) from None
+        except Exception as error:
+            raise ReviewWebError("persistence") from error
+
 class BrowseReviewLibrary:
     def __init__(self, repository: ReviewWebRepository) -> None:
         self._repository = repository
@@ -279,12 +359,18 @@ class BrowseReviewLibrary:
             total, attention_total = self._repository.count_current_review_cases(
                 normalized
             )
+            items = [
+                _library_item(
+                    case_document,
+                    report_document,
+                    self._repository.get_review_case_decisions(
+                        ReviewCase.from_json(case_document).review_case_id
+                    ),
+                )
+                for case_document, report_document in rows[:bounded_limit]
+            ]
         except Exception as error:
             raise ReviewWebError("unavailable") from error
-        items = [
-            _library_item(case_document, report_document)
-            for case_document, report_document in rows[:bounded_limit]
-        ]
         return {
             "counts": {
                 "all": total,
@@ -344,6 +430,20 @@ class BrowseReviewLibrary:
 
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _decision_projection(decision: HumanDecision) -> dict[str, object]:
+    return {
+        "actor": decision.actor,
+        "decision_id": decision.decision_id,
+        "destination": decision.destination,
+        "occurred_at": decision.occurred_at,
+        "outcome": decision.outcome,
+        "proposal_id": decision.proposal_id,
+        "review_case_id": decision.review_case_id,
+        "selected_value": decision.selected_value,
+        "target_fingerprint": decision.target_fingerprint,
+    }
 
 
 def _bounded_token(value: object) -> bool:
@@ -486,10 +586,21 @@ def _needs_attention(proposal: dict[str, object]) -> bool:
 
 
 def _library_item(
-    case_document: str, report_document: str
+    case_document: str,
+    report_document: str,
+    decision_documents: tuple[str, ...],
 ) -> dict[str, object]:
     case, report = _case_and_report(case_document, report_document)
-    attention = [value for value in case.proposals if _needs_attention(value)]
+    decisions = set()
+    for document in decision_documents:
+        decision = HumanDecision.from_json(document)
+        decision.validate_for(case)
+        decisions.add(decision.destination)
+    attention = [
+        value
+        for value in case.proposals
+        if value["destination"] not in decisions and _needs_attention(value)
+    ]
     outcomes = sorted(
         {
             value["result"]["outcome"]  # type: ignore[index]

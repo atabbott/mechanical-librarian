@@ -393,6 +393,8 @@ class MetadataPersistenceTests(unittest.TestCase):
                     ("current_metadata_report_lineages",),
                     ("current_metadata_reports",),
                     ("current_review_case_lineages",),
+                    ("human_decision_events",),
+                    ("human_decisions",),
                     ("metadata_report_cover_references",),
                     ("metadata_reports",),
                     ("proposal_sets",),
