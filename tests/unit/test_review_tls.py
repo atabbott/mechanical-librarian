@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import httpx
+from uvicorn.config import create_ssl_context
 from argon2 import PasswordHasher
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
@@ -22,6 +24,7 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.bootstrap.composition import run_review_server
 from mechanical_librarian.infrastructure.security.review_tls import (
+    REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
     open_review_tls_identity,
 )
 from tests.support.tls import synthetic_tls_identity
@@ -88,6 +91,40 @@ class ReviewTLSIdentityTests(unittest.TestCase):
                         candidate_certificate, candidate_key
                     ):
                         self.fail("invalid TLS identity was admitted")
+
+    def test_uvicorn_second_load_rejects_encrypted_keys_noninteractively(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            certificate, private_key = synthetic_tls_identity(root)
+            encrypted = root / "encrypted.key"
+            subprocess.run(
+                [
+                    "openssl",
+                    "pkey",
+                    "-in",
+                    str(private_key),
+                    "-aes256",
+                    "-passout",
+                    "pass:synthetic-test-password",
+                    "-out",
+                    str(encrypted),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            os.chmod(encrypted, 0o600)
+            arguments = {
+                "password": REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
+                "ssl_version": ssl.PROTOCOL_TLS_SERVER,
+                "cert_reqs": ssl.CERT_NONE,
+                "ca_certs": None,
+                "ciphers": "TLSv1",
+            }
+            create_ssl_context(
+                str(certificate), str(private_key), **arguments
+            )
+            with self.assertRaises(ssl.SSLError):
+                create_ssl_context(str(certificate), str(encrypted), **arguments)
 
 
 class ReviewServerTLSCompositionTests(unittest.TestCase):
@@ -216,7 +253,10 @@ class ReviewServerTLSCompositionTests(unittest.TestCase):
             def qualified_run(app, **arguments):
                 self.assertTrue(Path(arguments["ssl_certfile"]).exists())
                 self.assertTrue(Path(arguments["ssl_keyfile"]).exists())
-                self.assertEqual(arguments["ssl_keyfile_password"], "")
+                self.assertEqual(
+                    arguments["ssl_keyfile_password"],
+                    REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
+                )
                 self.assertFalse(arguments["proxy_headers"])
                 self.assertEqual(arguments["host"], "127.0.0.1")
                 self.assertEqual(arguments["port"], 8443)

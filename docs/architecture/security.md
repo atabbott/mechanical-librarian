@@ -70,7 +70,9 @@ retained descriptors prevent
 path replacement from changing the
 served identity after validation. No environment substitution, plaintext mode,
 TLS-disable flag, ambient proxy-header handling, certificate issuance, or
-certificate renewal authority is present.
+certificate renewal authority is present. Both the preflight and Uvicorn load
+use an explicit non-passphrase rejection value, so neither load can fall back
+to OpenSSL's interactive password channel.
 
 The #447 review server adds one private owner-facing HTTP entry point and no
 target-service client. An unauthenticated network client can reach only bounded

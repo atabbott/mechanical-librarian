@@ -140,6 +140,7 @@ from mechanical_librarian.infrastructure.security.credentials import (
     target_client_token,
 )
 from mechanical_librarian.infrastructure.security.review_tls import (
+    REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
     open_review_tls_identity,
 )
 from mechanical_librarian.interfaces.cli import main as cli_main
@@ -993,7 +994,7 @@ def run_review_server(
                 access_log=False,
                 ssl_certfile=tls.certificate_file,
                 ssl_keyfile=tls.private_key_file,
-                ssl_keyfile_password="",
+                ssl_keyfile_password=REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
             )
         except Exception:
             repository.close()

@@ -15,6 +15,7 @@ from mechanical_librarian.application.configuration import ConfigurationError
 
 _MAX_CERTIFICATE_BYTES = 65_536
 _MAX_PRIVATE_KEY_BYTES = 32_768
+REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD = "\0"
 
 
 @dataclass(frozen=True)
@@ -101,4 +102,8 @@ def _open_tls_file(
     return descriptor
 
 
-__all__ = ["ReviewTLSIdentity", "open_review_tls_identity"]
+__all__ = [
+    "REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD",
+    "ReviewTLSIdentity",
+    "open_review_tls_identity",
+]
