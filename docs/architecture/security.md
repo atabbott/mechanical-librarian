@@ -66,7 +66,9 @@ certificate and private-key paths are explicit schema fields, must be supplied
 together as bounded owner-controlled regular no-follow files with an owner-only
 unencrypted private key, and are opened and validated noninteractively as one
 matching identity before the application database or listener is opened. The
-immutable anonymous snapshot descriptors prevent path replacement or in-place
+key boundary admits only explicit unencrypted PKCS#8, RSA, or EC PEM envelopes,
+so encrypted keys—including empty-passphrase encryption—fail before SSL parsing.
+The immutable anonymous snapshot descriptors prevent path replacement or in-place
 mutation from changing the served identity after validation. The direct H11
 edge admits at most 100 connections, limits incomplete events to 16 KiB, and
 closes incomplete headers after 10 seconds. TLS 1.2 is confined to ECDHE AEAD

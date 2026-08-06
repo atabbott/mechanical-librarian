@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import ssl
 import stat
@@ -17,6 +19,11 @@ from mechanical_librarian.application.configuration import ConfigurationError
 _MAX_CERTIFICATE_BYTES = 65_536
 _MAX_PRIVATE_KEY_BYTES = 32_768
 REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD = "\0"
+_UNENCRYPTED_PRIVATE_KEY_ENVELOPES = {
+    b"-----BEGIN PRIVATE KEY-----": b"-----END PRIVATE KEY-----",
+    b"-----BEGIN RSA PRIVATE KEY-----": b"-----END RSA PRIVATE KEY-----",
+    b"-----BEGIN EC PRIVATE KEY-----": b"-----END EC PRIVATE KEY-----",
+}
 
 
 @dataclass(frozen=True)
@@ -118,9 +125,26 @@ def _read_tls_file(
             after.st_mtime_ns,
         ):
             raise ConfigurationError("review TLS configuration is unavailable")
+        if private:
+            _require_unencrypted_private_key(payload)
         return payload
     finally:
         os.close(descriptor)
+
+
+def _require_unencrypted_private_key(payload: bytes) -> None:
+    lines = payload.splitlines()
+    closing = (
+        None if not lines else _UNENCRYPTED_PRIVATE_KEY_ENVELOPES.get(lines[0])
+    )
+    if closing is None or len(lines) < 3 or lines[-1] != closing:
+        raise ConfigurationError("review TLS configuration is unavailable")
+    try:
+        decoded = base64.b64decode(b"".join(lines[1:-1]), validate=True)
+    except (binascii.Error, ValueError):
+        raise ConfigurationError("review TLS configuration is unavailable") from None
+    if not decoded:
+        raise ConfigurationError("review TLS configuration is unavailable")
 
 
 __all__ = [
