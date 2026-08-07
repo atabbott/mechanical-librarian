@@ -38,8 +38,8 @@ _MAX_COMMAND_STREAM_BYTES = 1_048_576
 # The installed-wheel suite intentionally exercises the complete repository.
 # Keep its subprocess deadline below the 15-minute workflow ceiling while
 # allowing slower hosted runners enough headroom as the suite grows. Setup and
-# post-test probes retain more than two minutes of the job-level allowance.
-_COMMAND_TIMEOUT_SECONDS = 720
+# post-test probes retain a bounded share of the job-level allowance.
+_COMMAND_TIMEOUT_SECONDS = 825
 _CANONICAL_TEST_ARGS = (
     "-m",
     "unittest",

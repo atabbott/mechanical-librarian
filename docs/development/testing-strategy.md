@@ -48,7 +48,8 @@ entry point supplies the required milestone evidence without adding another
 remote workflow surface. Qualification reports distinguish a bounded subprocess
 timeout (`*_timeout`) from a genuine nonzero test result (`*_failed`) without
 including captured output or checkout paths. The required subprocess has a
-12-minute ceiling within the public gate's independent 15-minute job ceiling.
+13-minute-45-second ceiling within the public gate's independent 15-minute job
+ceiling.
 
 The public gate first installs the Chromium revision bound to pinned Playwright
 1.61.0 and verifies its repository-bound complete payload digest before launch.
