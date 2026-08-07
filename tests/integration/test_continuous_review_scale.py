@@ -54,6 +54,9 @@ class _AudiobookshelfFixture:
     def __init__(self, counts: dict[str, int]) -> None:
         self.summaries: dict[str, list[dict[str, object]]] = {}
         self.details: dict[str, dict[str, object]] = {}
+        self.discovery_started = threading.Event()
+        self.discovery_release = threading.Event()
+        self.discovery_release.set()
         offset = 0
         for library, count in counts.items():
             values: list[dict[str, object]] = []
@@ -82,6 +85,11 @@ class _AudiobookshelfFixture:
                         ]
                     }
                 elif route.startswith("/api/libraries/") and route.endswith("/items"):
+                    fixture.discovery_started.set()
+                    if not fixture.discovery_release.wait(timeout=15):
+                        self.send_response(503)
+                        self.end_headers()
+                        return
                     library = route.split("/")[3]
                     rows = fixture.summaries[library]
                     page = int(parse_qs(parsed.query).get("page", ["0"])[0])
@@ -140,6 +148,13 @@ class _AudiobookshelfFixture:
         self.summaries["fiction"].append(summary)
         self.details["fiction-new"] = detail
         return summary, detail
+
+    def hold_discovery(self) -> None:
+        self.discovery_started.clear()
+        self.discovery_release.clear()
+
+    def release_discovery(self) -> None:
+        self.discovery_release.set()
 
     def start(self) -> None:
         self.thread.start()
@@ -474,30 +489,29 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                 "--port",
                 str(review_port),
             ]
+            fixture.hold_discovery()
             first_process = subprocess.Popen(
                 arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             try:
                 self._wait_for_https(first_process, origin)
-                deadline = time.monotonic() + 30
-                interrupted = False
-                while time.monotonic() < deadline:
-                    with closing(sqlite3.connect(database)) as connection:
-                        states = {
-                            row[0]
-                            for row in connection.execute(
-                                "SELECT state FROM review_preparation_scans"
-                            )
-                        }
-                    if "discovering" in states:
-                        interrupted = True
-                        break
-                    time.sleep(0.005)
-                self.assertTrue(interrupted, "first-start reconciliation was not observed")
+                self.assertTrue(
+                    fixture.discovery_started.wait(timeout=15),
+                    "first-start reconciliation was not observed",
+                )
+                with closing(sqlite3.connect(database)) as connection:
+                    states = {
+                        row[0]
+                        for row in connection.execute(
+                            "SELECT state FROM review_preparation_scans"
+                        )
+                    }
+                self.assertIn("discovering", states)
             finally:
                 if first_process.poll() is None:
                     first_process.kill()
                 first_process.wait(timeout=10)
+                fixture.release_discovery()
 
             second_process = subprocess.Popen(
                 arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
