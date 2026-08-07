@@ -28,16 +28,23 @@
   Required exact-wheel qualification continuously proves the installed restart
   workflow over a representative 45-item, three-library cohort; the complete
   1,000-item workload and memory ceiling remain an explicit exact-head slow tier.
-  Fixed, path-free evidence now distinguishes subprocess timeout from a genuine
-  nonzero test failure. The complete required installed suite runs as three
-  deterministic, disjoint shards in its single required hosted job; every shard
-  remains mandatory.
+  Fixed, path-free evidence distinguishes subprocess timeout from a genuine
+  nonzero test failure through the shared qualification tiers.
   Transient lane and final-attempt `Retry-After` values
   extend only the transient circuit; paused retry and disappearing activity
   retain truthful controls and visible keyboard focus. Stable terminal failures
   wait without repeated repository validation until an owner action, while the
   scheduling lane rechecks automatic deadlines between bounded work batches so
   a large backlog cannot starve another library's interval scan. (#475, #473)
+- Tier public qualification into independent required fast-source,
+  exact-installed, and protected-browser jobs while preserving one stable
+  aggregate gate. Scale, endurance, exhaustive, and resource assertions retain
+  an explicit exact-wheel slow owner; the first moved resource proof is the
+  unchanged maximum-shape metadata-report round trip. Each tier has a documented
+  command and path-free cohort manifest, the complete exact-head command remains
+  reproducible, and bounded evidence now distinguishes provenance, setup/build,
+  nonzero test, and subprocess-timeout failures. No product or write authority
+  changes. (#482)
 
 - Add owner-requested progressive library preparation to the authenticated
   review surface. Exact-current catalogue, report, ProposalSet, and ReviewCase

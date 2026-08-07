@@ -3,17 +3,20 @@
 Quality means the supported outcome is understandable, bounded, secure,
 recoverable within its documented envelope, and backed by exact evidence.
 
-Every pull request runs a lockfile check and exact-source installed-artifact
-qualification. The qualifier validates a newly built wheel before installation,
-seeds a new environment from all locked dependency groups, installs the explicit
-wheel without dependency resolution, validates archive and installed `RECORD`
+Every pull request runs independent required fast-source, exact-installed, and
+protected-browser jobs plus a stable aggregate gate. The exact-artifact
+qualifier validates a newly built wheel before installation, seeds a new
+environment from all locked dependency groups, installs the explicit wheel
+without dependency resolution, validates archive and installed `RECORD`
 integrity, and compares the wheel and installed distribution payloads byte for
-byte. That isolated interpreter runs the full test suite and architecture
-checks before its installed CLI is exercised outside the checkout. Aggregate
-evidence binds the source, wheel, payload, and command-output digests. Changes
-add focused unit/integration/security tests, documentation, changelog, schema or
-ADR updates as applicable. Tests, types, safety gates, and failure handling are
-never weakened to make a change pass.
+byte. Its isolated interpreter runs a representative smoke cohort before the
+installed CLI is exercised outside the checkout. Scale, endurance, exhaustive,
+and resource proofs remain in the explicit exact-head slow tier. Aggregate
+evidence binds the source, wheel, payload, selected tier, and command-output
+digests. Changes add focused unit/integration/security tests, documentation,
+changelog, schema or ADR updates as applicable. Tests, types, safety gates, and
+failure handling are never weakened to make a change pass. The authoritative
+[testing strategy](testing-strategy.md) owns the commands and tier boundary.
 
 Hostile files, network responses, configuration, credentials, SQLite rows, and
 subprocess output are bounded and fail closed. Diagnostics are value-free when

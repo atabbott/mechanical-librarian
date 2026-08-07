@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import concurrent.futures
 import csv
 import hashlib
 import io
@@ -52,17 +51,14 @@ _CANONICAL_TEST_ARGS = (
     "-p",
     "test_*.py",
 )
-_REQUIRED_TEST_SHARDS = 3
-_SLOW_CONTINUOUS_REVIEW_TEST_ARGS = (
-    "-m",
-    "unittest",
-    "discover",
-    "-s",
-    "tests",
-    "-t",
-    ".",
-    "-p",
-    "slow_continuous_review_scale.py",
+_REQUIRED_INSTALLED_TEST_ARGS = (
+    "scripts/run_test_tier.py",
+    "required-installed",
+)
+_SLOW_TEST_ARGS = ("scripts/run_test_tier.py", "slow")
+_COMPLETE_INSTALLED_TEST_ARGS = (
+    "scripts/run_test_tier.py",
+    "complete-installed",
 )
 
 
@@ -113,7 +109,7 @@ class ExactArtifactEvidence:
     locked_dependencies: bool
     qualification_tier: str
     full_suite_executed: bool
-    required_suite_shards: int
+    required_suite_executed: bool
     slow_qualification_executed: bool
     review_case_lifecycle_executed: bool
     wheel_record_validated: bool
@@ -137,7 +133,6 @@ def qualify_exact_artifact(
     wheel_output: Path | None = None,
     environment_path: Path | None = None,
     review_case_probe: bool = False,
-    parallel_required_suite: bool = False,
 ) -> ExactArtifactEvidence:
     """Qualify one clean Git source revision through its exact installed wheel."""
 
@@ -350,19 +345,12 @@ def qualify_exact_artifact(
         )
 
         if test_args is not None:
-            if parallel_required_suite and test_args == _CANONICAL_TEST_ARGS:
-                _run_required_test_suite(
-                    environment_python,
-                    build_source,
-                    runtime_environment,
-                )
-            else:
-                _run(
-                    (str(environment_python), "-I", *test_args),
-                    cwd=build_source,
-                    env=runtime_environment,
-                    reason="installed_test_suite_failed",
-                )
+            _run(
+                (str(environment_python), "-I", *test_args),
+                cwd=build_source,
+                env=runtime_environment,
+                reason="installed_test_suite_failed",
+            )
         if (
             not console.is_file()
             or console.is_symlink()
@@ -405,25 +393,13 @@ def qualify_exact_artifact(
         explicit_wheel_install=True,
         outside_checkout=True,
         locked_dependencies=True,
-        qualification_tier=(
-            "required"
-            if test_args == _CANONICAL_TEST_ARGS
-            else "slow"
-            if test_args == _SLOW_CONTINUOUS_REVIEW_TEST_ARGS
-            else "custom"
-            if test_args is not None
-            else "none"
-        ),
+        qualification_tier=_qualification_tier(test_args),
         full_suite_executed=test_args == _CANONICAL_TEST_ARGS,
-        required_suite_shards=(
-            _REQUIRED_TEST_SHARDS
-            if parallel_required_suite and test_args == _CANONICAL_TEST_ARGS
-            else 1
-            if test_args == _CANONICAL_TEST_ARGS
-            else 0
+        required_suite_executed=(
+            test_args in {_REQUIRED_INSTALLED_TEST_ARGS, _COMPLETE_INSTALLED_TEST_ARGS}
         ),
         slow_qualification_executed=(
-            test_args == _SLOW_CONTINUOUS_REVIEW_TEST_ARGS
+            test_args in {_SLOW_TEST_ARGS, _COMPLETE_INSTALLED_TEST_ARGS}
         ),
         review_case_lifecycle_executed=review_case_probe,
         wheel_record_validated=True,
@@ -1225,9 +1201,7 @@ def _run(
 
     if timed_out:
         timeout_reason = (
-            reason[: -len("_failed")] + "_timeout"
-            if reason.endswith("_failed")
-            else reason + "_timeout"
+            f"{reason[:-7]}_timeout" if reason.endswith("_failed") else reason
         )
         raise QualificationFailure(timeout_reason)
     if (
@@ -1243,51 +1217,6 @@ def _run(
         stdout=bytes(stdout),
         stderr=bytes(stderr),
     )
-
-
-def _run_required_test_suite(
-    environment_python: Path,
-    source_root: Path,
-    environment: dict[str, str],
-) -> None:
-    commands = tuple(
-        (
-            str(environment_python),
-            "-I",
-            "scripts/run_required_test_shard.py",
-            "--shard-index",
-            str(index),
-            "--shard-count",
-            str(_REQUIRED_TEST_SHARDS),
-        )
-        for index in range(_REQUIRED_TEST_SHARDS)
-    )
-    failures: list[QualificationFailure] = []
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=_REQUIRED_TEST_SHARDS
-    ) as executor:
-        futures = tuple(
-            executor.submit(
-                _run,
-                command,
-                cwd=source_root,
-                env=environment,
-                reason="installed_test_suite_failed",
-            )
-            for command in commands
-        )
-        for future in futures:
-            try:
-                future.result()
-            except QualificationFailure as error:
-                failures.append(error)
-    if failures:
-        reason = (
-            "installed_test_suite_timeout"
-            if any(error.reason.endswith("_timeout") for error in failures)
-            else "installed_test_suite_failed"
-        )
-        raise QualificationFailure(reason)
 
 
 def _read_process_stream(
@@ -1784,6 +1713,20 @@ def _canonical_distribution(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).casefold()
 
 
+def _qualification_tier(test_args: tuple[str, ...] | None) -> str:
+    if test_args == _REQUIRED_INSTALLED_TEST_ARGS:
+        return "required"
+    if test_args == _SLOW_TEST_ARGS:
+        return "slow"
+    if test_args == _COMPLETE_INSTALLED_TEST_ARGS:
+        return "complete"
+    if test_args == _CANONICAL_TEST_ARGS:
+        return "legacy-complete"
+    if test_args is None or not test_args:
+        return "none"
+    return "custom"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Qualify the exact installed Mechanical Librarian wheel."
@@ -1793,11 +1736,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--environment", type=Path)
     parser.add_argument(
         "--test-tier",
-        choices=("required", "slow"),
+        choices=("required", "slow", "complete"),
         default="required",
-        help="run the required suite or the explicit 1,000-item slow qualification",
     )
     arguments = parser.parse_args(argv)
+    tier_args = {
+        "required": _REQUIRED_INSTALLED_TEST_ARGS,
+        "slow": _SLOW_TEST_ARGS,
+        "complete": _COMPLETE_INSTALLED_TEST_ARGS,
+    }
     try:
         evidence = qualify_exact_artifact(
             Path(__file__).resolve().parents[1],
@@ -1805,12 +1752,7 @@ def main(argv: list[str] | None = None) -> int:
             wheel_output=arguments.wheel_output,
             environment_path=arguments.environment,
             review_case_probe=True,
-            parallel_required_suite=(arguments.test_tier == "required"),
-            test_args=(
-                _CANONICAL_TEST_ARGS
-                if arguments.test_tier == "required"
-                else _SLOW_CONTINUOUS_REVIEW_TEST_ARGS
-            ),
+            test_args=tier_args[arguments.test_tier],
         )
     except QualificationFailure as error:
         print(

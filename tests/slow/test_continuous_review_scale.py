@@ -1,4 +1,4 @@
-"""Explicit installed-wheel scale qualification excluded from default discovery."""
+"""Explicit installed-wheel continuous-review scale qualification."""
 
 from __future__ import annotations
 

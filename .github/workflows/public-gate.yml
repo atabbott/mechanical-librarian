@@ -15,9 +15,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  public-gate:
+  fast-source:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - name: Check out the exact revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -38,14 +38,89 @@ jobs:
       - name: Verify the lockfile is current
         run: uv lock --check
 
+      - name: Install locked development dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Run the fast source tier
+        run: uv run python scripts/run_test_tier.py fast
+
+  exact-installed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
+          version: "0.11.28"
+
+      - name: Verify the lockfile is current
+        run: uv lock --check
+
+      - name: Qualify the exact installed artifact
+        run: >-
+          python3
+          scripts/qualify_exact_artifact.py
+          --source-sha "${{ github.sha }}"
+          --test-tier required
+
+  protected-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
+          version: "0.11.28"
+
+      - name: Verify the lockfile is current
+        run: uv lock --check
+
+      - name: Install locked development dependencies
+        run: uv sync --locked --all-groups
+
       - name: Install the pinned Chromium qualification browser
         run: uv run playwright install --with-deps chromium
 
       - name: Verify the exact Chromium qualification payload
         run: uv run python scripts/verify_playwright_browser.py
 
-      - name: Qualify the exact installed artifact and run its tests
-        run: >-
-          python3
-          scripts/qualify_exact_artifact.py
-          --source-sha "${{ github.sha }}"
+      - name: Run the protected browser tier
+        run: uv run python scripts/run_test_tier.py browser
+
+  public-gate:
+    if: always()
+    needs: [fast-source, exact-installed, protected-browser]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every public qualification tier
+        env:
+          FAST_SOURCE_RESULT: ${{ needs.fast-source.result }}
+          EXACT_INSTALLED_RESULT: ${{ needs.exact-installed.result }}
+          PROTECTED_BROWSER_RESULT: ${{ needs.protected-browser.result }}
+        run: |
+          test "$FAST_SOURCE_RESULT" = success
+          test "$EXACT_INSTALLED_RESULT" = success
+          test "$PROTECTED_BROWSER_RESULT" = success

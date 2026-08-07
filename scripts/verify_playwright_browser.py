@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import platform
+import sys
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -100,5 +102,24 @@ def main(arguments: list[str] | None = None) -> int:
     return 0
 
 
+def cli(arguments: list[str] | None = None) -> int:
+    try:
+        return main(arguments)
+    except Exception:
+        print(
+            json.dumps(
+                {
+                    "reason": "browser_verification_failed",
+                    "schema": "test-tier-result-v1",
+                    "status": "failed",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(cli())
