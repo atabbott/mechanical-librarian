@@ -621,6 +621,7 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
                 review_action, report.report_id, int(time.time())
             )
         ),
+        require_singular_target=review_action is not None,
     )
     return service.run(item, file_index, expected_file_identity)
 

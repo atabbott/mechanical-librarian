@@ -5038,6 +5038,42 @@ class MetadataReportTests(unittest.TestCase):
         self.assertTrue(repository.closed)
         self.assertEqual((inspector.inspections, inspector.verifications), (1, 0))
 
+    def test_progressive_publication_rejects_a_second_final_file(self) -> None:
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        second = TargetFile("d" * 64, "other.epub", "epub")
+        target = _Target(
+            [
+                TargetSnapshot("ebook", "Current title", (selected,)),
+                TargetSnapshot(
+                    "ebook", "Current title", (selected, second)
+                ),
+            ]
+        )
+        inspector = _Inspector(InspectionResult("c" * 64, ()))
+        repository = _Repository()
+        service = GenerateMetadataReport(
+            target=target,
+            inspector=inspector,
+            repository_factory=lambda: repository,
+            providers=(),
+            connection=TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/target"
+            ),
+            library=LibraryConfiguration(
+                "ebooks", "primary", "library-id", "ebook", "books", ()
+            ),
+            mount=MediaMountConfiguration(
+                "books", "/media", "/library", True
+            ),
+            limits=ReportLimits(),
+            require_singular_target=True,
+        )
+
+        with self.assertRaises(CurrentnessError):
+            service.run("item-1", 0)
+        self.assertEqual(repository.values, {})
+        self.assertTrue(repository.closed)
+
     def test_currentness_covers_every_target_destination(self) -> None:
         selected = TargetFile("a" * 64, "book.epub", "epub")
         initial = TargetSnapshot("ebook", "Current title", (selected,))

@@ -914,6 +914,7 @@ class GenerateMetadataReport:
         publication_authority_guard: Callable[[], None] | None = None,
         publication_receipt: Callable[[ReportRepository, MetadataReport], None]
         | None = None,
+        require_singular_target: bool = False,
     ) -> None:
         self._target = target
         self._inspector = inspector
@@ -926,6 +927,7 @@ class GenerateMetadataReport:
         self._cover_observer = cover_observer
         self._publication_authority_guard = publication_authority_guard
         self._publication_receipt = publication_receipt
+        self._require_singular_target = require_singular_target
 
     def run(self, item: str, file_index: int, expected_file_identity: str | None = None) -> str:
         if self._mount is None:
@@ -1144,6 +1146,7 @@ class GenerateMetadataReport:
                     self._mount,
                     self._limits,
                     report,
+                    require_singular=self._require_singular_target,
                 )
 
             persisted = (
@@ -1187,6 +1190,8 @@ def require_report_current(
     mount: MediaMountConfiguration | None,
     limits: ReportLimits,
     report: MetadataReport,
+    *,
+    require_singular: bool = False,
 ) -> bool:
     """Revalidate the exact target, media, and ABS cover bound to a report."""
     if (
@@ -1210,6 +1215,7 @@ def require_report_current(
         final.media_kind != "ebook"
         or final.title != report.target.current_title
         or final.fields != report.target.fields
+        or (require_singular and len(final.files) != 1)
         or len(matches) != 1
         or matches[0].format != "epub"
         or not inspector.unchanged(

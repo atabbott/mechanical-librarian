@@ -55,9 +55,16 @@ Present items that cease to be eligible are staged and retire their current
 review lineage only under the same whole-scan success gate as confirmed
 absences. Preparation-owned tombstones and retirements permit later
 exact-current readmission if the item reappears or becomes eligible again.
+The final pipeline publication gate also requires the target to remain a
+single-file work; a second file appearing during extraction is stale input and
+enters bounded rediscovery without publishing a report or case.
 Report publication and its extraction checkpoint commit in the same SQLite
 transaction, closing the crash window between an immutable report and durable
-stage progress. Artifact-orphan recovery is serialized once before the first
+stage progress. Live target, media, cover, and artifact currentness checks run
+before the short local write transaction; the transaction still rechecks the
+expected database pointer. A slow external check therefore cannot hold the
+SQLite writer lock against the other lane. Artifact-orphan recovery is
+serialized once before the first
 pipeline extraction, so concurrent extraction lanes cannot remove one another's
 staged cover artifacts. Every configured provider lane, as well as its aggregate
 observation, must be complete before proposal creation.
@@ -120,7 +127,8 @@ across unrelated refreshes, successful-scan absence tombstones and ineligible
 retirements, failed-scan discard and reappearance, synchronized shared provider
 pacing, Linux derived database authority, typed proposal currentness, unchanged-work
 reuse, source-revision invalidation, atomic report/checkpoint rollback and
-restart, stage progression, source failure before proposal, third-attempt crash
+restart, slow-currentness writer-lock independence, final single-file drift,
+stale rediscovery without publication, stage progression, source failure before proposal, third-attempt crash
 containment, completed-ledger recovery, and two-lane independence. The
 exact-artifact qualifier proves the installed review server, generated OpenAPI,
 full public suite, and static architecture boundary.

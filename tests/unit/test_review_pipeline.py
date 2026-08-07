@@ -13,6 +13,7 @@ from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
+    ReviewPipelineError,
     ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
 )
@@ -493,6 +494,45 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertTrue(pipeline.run_next())
         self.assertTrue(pipeline.run_next())
         self.assertEqual(len(extracted), 2)
+
+    def test_repeated_extraction_currentness_drift_requests_rediscovery(
+        self,
+    ) -> None:
+        entry = replace(
+            _entry("item-1", "b" * 64),
+            library="ebooks",
+        )
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(self.path),
+            libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
+            discover=lambda *_: (1, "e" * 64, (entry,)),
+            extract=lambda _: (_ for _ in ()).throw(
+                ReviewPipelineError("stale")
+            ),
+            providers=lambda _: (),
+            propose=lambda _: (_ for _ in ()).throw(AssertionError()),
+            admit=lambda _: (_ for _ in ()).throw(AssertionError()),
+            project=lambda _: True,
+            clock=lambda: 30,
+        )
+        pipeline.request("primary", "ebooks")
+        self.assertTrue(pipeline.run_next())
+        self.assertEqual(sum(pipeline.run_next() for _ in range(3)), 3)
+
+        repository = open_repository(self.path)
+        progress = repository.review_pipeline_progress("primary", "ebooks")
+        reports = repository._connection.execute(
+            "SELECT COUNT(*) FROM metadata_reports"
+        ).fetchone()
+        cases = repository._connection.execute(
+            "SELECT COUNT(*) FROM review_cases"
+        ).fetchone()
+        repository.close()
+
+        assert progress is not None
+        self.assertTrue(progress.rescan_requested)
+        self.assertEqual(reports, (0,))
+        self.assertEqual(cases, (0,))
 
     def test_report_and_extraction_checkpoint_commit_atomically(self) -> None:
         report = _report()

@@ -45,6 +45,9 @@ The suite covers:
   tombstones or ineligible retirements, failed-scan staged-retirement discard,
   reappearance/readmission, synchronized shared provider pacing, Linux
   same-process derived database authority, typed proposal-currentness drift,
+  two-repository proof that slow external currentness holds no SQLite writer
+  lock, final single-file eligibility drift and stale rediscovery without report
+  or case publication,
   per-work stage progression, every-lane completeness before proposal,
   atomic report/checkpoint rollback and restart,
   bounded third-attempt crash recovery, completed-ledger inert recovery, and a fixed

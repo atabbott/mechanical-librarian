@@ -146,6 +146,10 @@ and remains a bounded failure for a later owner-requested scan.
 If an item disappears after discovery, its typed not-found result requests the
 same bounded rediscovery as other target or media drift. Authentication and
 service failures remain distinct technical failures.
+If another file appears while extraction is active, the final progressive-only
+singular-work gate likewise publishes no report or case and requests bounded
+rediscovery. Slow live currentness reads do not hold the SQLite writer lock
+needed by the other lane.
 
 This is an owner-requested preparation operation, not polling or unattended
 scheduling. It makes only the reads and provider calls already authorized by

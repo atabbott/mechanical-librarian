@@ -51,7 +51,11 @@ present lineage that is no longer eligible. Catalogue discovery and shared
 provider pacers serialize their mutation of global generation and pacing state
 across the two lanes. The first stale catalogue refresh establishes a complete
 configured-library baseline; later work validates its exact item and revision
-against the latest generation. Technical failure in any
+against the latest generation. Final pipeline publication also requires the
+target to remain singular. External target, media, cover, and artifact
+currentness checks precede the short SQLite write transaction, which retains
+its local expected-pointer check; one slow external read cannot hold the writer
+lock against the other lane. Technical failure in any
 configured provider lane stops that work before proposal creation and prevents
 that scan's staged retirements. The path cannot decide a field, construct an apply plan, write a
 target or media file, delete media, poll, or automatically retry provider
