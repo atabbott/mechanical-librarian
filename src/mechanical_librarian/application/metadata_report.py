@@ -78,6 +78,10 @@ class CurrentnessError(MetadataReportError):
     pass
 
 
+class TargetNotFoundError(MetadataReportError):
+    """The exact target item no longer exists at the supported service API."""
+
+
 class CredentialError(MetadataReportError):
     pass
 
@@ -649,7 +653,14 @@ class CoverObserver(Protocol):
 
 
 class ReportRepository(Protocol):
-    def publish(self, report: MetadataReport, currentness: Callable[[], bool], expected_current: str | None = None) -> str: ...
+    def publish(
+        self,
+        report: MetadataReport,
+        currentness: Callable[[], bool],
+        expected_current: str | None = None,
+        after_publication: Callable[[ReportRepository, MetadataReport], None]
+        | None = None,
+    ) -> str: ...
     def get(self, report_id: str) -> str: ...
     def current(self, connection: str, library: str, item: str, file_identity: str) -> str: ...
     def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None: ...
@@ -901,6 +912,8 @@ class GenerateMetadataReport:
         limits: ReportLimits,
         cover_observer: CoverObserver | None = None,
         publication_authority_guard: Callable[[], None] | None = None,
+        publication_receipt: Callable[[ReportRepository, MetadataReport], None]
+        | None = None,
     ) -> None:
         self._target = target
         self._inspector = inspector
@@ -912,6 +925,7 @@ class GenerateMetadataReport:
         self._limits = limits
         self._cover_observer = cover_observer
         self._publication_authority_guard = publication_authority_guard
+        self._publication_receipt = publication_receipt
 
     def run(self, item: str, file_index: int, expected_file_identity: str | None = None) -> str:
         if self._mount is None:
@@ -1121,27 +1135,33 @@ class GenerateMetadataReport:
             repository.close()
             raise
         try:
-            persisted = repository.publish(
-                report,
-                lambda: (
+            def currentness() -> bool:
+                if self._publication_authority_guard is not None:
                     self._publication_authority_guard()
-                    if self._publication_authority_guard is not None
-                    else None
-                )
-                is None
-                and require_report_current(
+                return require_report_current(
                     self._target,
                     self._inspector,
                     self._mount,
                     self._limits,
                     report,
-                ),
-                expected_current,
+                )
+
+            persisted = (
+                repository.publish(report, currentness, expected_current)
+                if self._publication_receipt is None
+                else repository.publish(
+                    report,
+                    currentness,
+                    expected_current,
+                    self._publication_receipt,
+                )
             )
             if persisted != report.to_json() or repository.get(report.report_id) != persisted:
                 raise MetadataReportError("persisted report readback failed")
             return persisted
-        except MetadataReportError:
+        except MetadataReportError as error:
+            if str(error) in {"target or media changed", "current report changed"}:
+                raise CurrentnessError("target or media changed") from error
             raise
         except Exception as error:
             raise MetadataReportError("report publication failed") from error
@@ -1240,7 +1260,7 @@ __all__ = [
     "MetadataProvider", "MetadataReportError",
     "ProviderBinding", "ProviderCoverDescriptor",
     "ProviderLaneResult",
-    "ReportRepository", "TargetFile", "TargetReader", "TargetSnapshot",
+    "ReportRepository", "TargetFile", "TargetNotFoundError", "TargetReader", "TargetSnapshot",
     "UnsupportedMediaError",
     "merge_provider_cover_descriptor", "merge_provider_cover_descriptors",
     "metadata_discovery_plan",

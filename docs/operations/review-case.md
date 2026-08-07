@@ -57,7 +57,8 @@ the supported serving boundary terminates TLS directly in `review-serve`:
 
 ```sh
 mechanical-librarian review-serve --config config.json \
-  --database reports.sqlite --host 127.0.0.1 --port 8443
+  --database reports.sqlite --catalogue catalogue.sqlite \
+  --artifacts artifacts --host 127.0.0.1 --port 8443
 ```
 
 The configured `canonical_origin` must name that exact external HTTPS origin,
@@ -125,6 +126,27 @@ Attention response is assembled from one database snapshot, including its
 decision summaries and counts. A concurrent supersession or decision is thus
 visible either throughout the response or not at all; snapshot failure returns
 the existing value-free unavailable response rather than partial data.
+
+The Library surface also provides one explicit **Scan now** action per
+configured library. It persistently and progressively refreshes that library's
+catalogue entries, generates exact-current reports, creates deterministic
+ProposalSets, admits ReviewCases, and projects them into the existing Library
+and Attention views. Duplicate requests coalesce, claimed work resumes after a
+restart, and two fixed lanes allow another ready work to advance while one work
+is slow. Compact checked/total/ready/blocked progress is authenticated,
+private/no-store, and contains no metadata values or paths. Confirmed absences
+are staged after complete enumeration and tombstone current lineages only if the
+whole scan completes successfully. Provider technical failure in any configured
+lane stops before proposal creation, discards staged absences, and remains a
+bounded failure for a later owner-requested scan.
+If an item disappears after discovery, its typed not-found result requests the
+same bounded rediscovery as other target or media drift. Authentication and
+service failures remain distinct technical failures.
+
+This is an owner-requested preparation operation, not polling or unattended
+scheduling. It makes only the reads and provider calls already authorized by
+catalogue and metadata-report, and it adds no field decision, apply plan,
+target write, media write, deletion, or destructive authority.
 
 The login request body is capped at 2 KiB at the ASGI boundary before JSON
 parsing. Five reserved attempts within five minutes close the login gate; the

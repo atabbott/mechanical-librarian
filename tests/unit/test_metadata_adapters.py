@@ -29,6 +29,7 @@ from mechanical_librarian.application.metadata_report import (
     CoverReadError,
     MetadataLookup,
     MetadataReportError,
+    TargetNotFoundError,
     TargetCover,
     TargetSnapshot,
     metadata_discovery_plan,
@@ -401,6 +402,9 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ("review_case_transitions",),
                 ("review_cases",),
                 ("review_login_failures",),
+                ("review_preparation_absences",),
+                ("review_preparation_scans",),
+                ("review_preparation_work",),
                 ("review_sessions",),
                 ("shadow_review_attempts",),
                     ("shadow_review_dispatches",),
@@ -4194,6 +4198,29 @@ class ProviderAdapterTests(unittest.TestCase):
 
 
 class AudiobookshelfItemTests(unittest.TestCase):
+    def test_item_404_is_typed_separately_from_credential_denial(self) -> None:
+        def reader(status: int) -> AudiobookshelfItemReader:
+            return AudiobookshelfItemReader(
+                client_factory=lambda: httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _request: httpx.Response(status)
+                    )
+                ),
+                endpoint="https://example.invalid",
+                library_id="library-id",
+                service_path="/library",
+                maximum_bytes=65_536,
+            )
+
+        with self.assertRaises(TargetNotFoundError):
+            reader(404).read("item-1")
+        for status in (401, 403):
+            with self.subTest(status=status), self.assertRaises(
+                MetadataReportError
+            ) as raised:
+                reader(status).read("item-1")
+            self.assertNotIsInstance(raised.exception, TargetNotFoundError)
+
     def test_raw_cover_accepts_matching_supported_image_signatures(self) -> None:
         client_type = httpx.Client
         detail = {

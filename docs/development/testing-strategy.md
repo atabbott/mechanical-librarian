@@ -38,6 +38,14 @@ and test artifacts are not packaged or published.
 
 The suite covers:
 
+- authenticated, CSRF-bound review preparation requests and value-free compact
+  progress; persisted request coalescing, exact-schema restart recovery,
+  complete successful scans before absence tombstones, failed-scan absence
+  discard, per-work stage progression, every-lane completeness before proposal,
+  atomic report/checkpoint rollback and restart,
+  bounded third-attempt crash recovery, completed-ledger inert recovery, and a fixed
+  two-lane proof that one slow work cannot impose a library-wide stage barrier;
+
 - closed reports, canonical serialization, stable claim/report references,
   title normalization, and occurrence-local ISBN applicability, including
   explicit non-ISBN scheme and URI controls across package, opening, and rear

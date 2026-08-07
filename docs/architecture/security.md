@@ -35,6 +35,23 @@ provider, and service failures stop safely, while item-local evidence failures
 remain value-free deterministic stream records. Interrupts propagate without
 resume, retry, worker, or background state.
 
+Authenticated review preparation composes the same bounded catalogue and
+metadata-report reads, credential loading, provider egress, isolated parser,
+artifact publication, ProposalSet creation, and ReviewCase admission. The
+owner's CSRF-protected request is persisted before two fixed worker lanes may
+claim work. Duplicate requests coalesce and restart recovery returns a claim to
+the queue; report publication and its extraction checkpoint share one database
+transaction. A third crashed attempt becomes a bounded failed work rather than
+an invalid fourth claim. Operational rows contain only bounded identifiers, stage, state,
+counts, timestamps, and fixed failure codes; the authenticated progress response
+contains no metadata values, paths, credentials, provider payloads, or raw
+errors. A complete target enumeration stages absence candidates, but only a
+fully successful scan may tombstone a review lineage. Technical failure in any
+configured provider lane stops that work before proposal creation and prevents
+that scan's tombstones. The path cannot decide a field, construct an apply plan, write a
+target or media file, delete media, poll, or automatically retry provider
+failure.
+
 ## External actors
 
 - A configured target or provider may return hostile bytes. Responses pass

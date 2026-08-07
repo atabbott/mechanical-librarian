@@ -84,13 +84,14 @@ def login_html() -> str:
     )
 
 
-def library_html(csrf_token: str) -> str:
+def library_html(csrf_token: str, preparation_available: bool = False) -> str:
+    capability = ' data-review-preparation="true"' if preparation_available else ""
     return _shell(
         title="Review library",
         active="library",
         csrf_token=csrf_token,
-        main="""<main id="workspace" class="prototype-shell">
-  <section id="library" class="library-page" tabindex="-1">
+        main=f"""<main id="workspace" class="prototype-shell">
+  <section id="library" class="library-page" tabindex="-1"{capability}>
     <p class="loading" role="status"><span aria-hidden="true"></span> Loading bounded library…</p>
   </section>
 </main>""",
@@ -223,6 +224,17 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .count-cluster small { color: var(--ink-soft); font-size: .55rem; text-transform: uppercase; }
 
 .library-tools { display: grid; grid-template-columns: minmax(260px, 1fr) auto; align-items: end; gap: 12px; margin-bottom: 14px; }
+.preparation-panel { margin-bottom: 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
+.preparation-panel > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.preparation-panel h2 { margin: 0; font-size: .86rem; }
+.preparation-panel header p { margin: 0; color: var(--ink-soft); font-size: .6rem; }
+.preparation-library { display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 12px; padding: 11px 14px; }
+.preparation-library + .preparation-library { border-top: 1px solid var(--line); }
+.preparation-library strong, .preparation-library small { display: block; }
+.preparation-library small { margin-top: 3px; color: var(--ink-soft); font-size: .58rem; }
+.preparation-progress { min-width: 130px; text-align: right; color: var(--ink-soft); font-size: .62rem; }
+.scan-now { min-height: 44px; padding: 0 13px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--surface-strong); color: var(--accent-strong); cursor: pointer; font-size: .66rem; font-weight: 800; }
+.scan-now:disabled { cursor: wait; opacity: .62; }
 .search-form { display: flex; align-items: end; gap: 8px; }
 .search-form label { flex: 1; color: var(--ink-soft); font-size: .62rem; font-weight: 800; text-transform: uppercase; }
 .search-form input { display: block; width: 100%; margin-top: 5px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface-strong); color: var(--ink); }
@@ -345,6 +357,8 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
   .count-cluster { width: 100%; }
   .count-cluster span { flex: 1; min-width: 0; }
   .library-tools { grid-template-columns: 1fr; }
+  .preparation-library { grid-template-columns: minmax(0,1fr) auto; }
+  .preparation-progress { grid-column: 1 / -1; grid-row: 2; min-width: 0; text-align: left; }
   .search-form { align-items: stretch; }
   .library-workspace, .detail-shell { border-radius: var(--radius-md); box-shadow: none; }
   .workspace-preview { display: none; }
@@ -519,6 +533,57 @@ const workRow = item => {
   return link;
 };
 
+const preparationCopy = item => {
+  if (item.state === "idle") return "Not scanned in this application state";
+  if (item.state === "queued" || item.state === "discovering") return "Checking the current library";
+  if (item.state === "processing") return `${item.checked} of ${item.total} checked · ${item.ready} ready${item.blocked ? ` · ${item.blocked} blocked` : ""}`;
+  if (item.state === "completed_with_failures") return `${item.checked} checked · ${item.ready} ready · ${item.blocked} blocked`;
+  return `${item.checked} checked · ${item.ready} ready`;
+};
+const renderPreparation = (target, data) => {
+  const header = element("header");
+  header.append(element("h2", "Library preparation"), element("p", "Read-only · exact-current work"));
+  const children = [header];
+  for (const item of data.libraries) {
+    const row = element("div", null, "preparation-library");
+    const copy = element("span");
+    copy.append(element("strong", item.library), element("small", `Audiobookshelf · ${item.connection}`));
+    const progress = element("span", preparationCopy(item), "preparation-progress");
+    progress.setAttribute("role", "status");
+    const button = element("button", "Scan now", "scan-now");
+    button.type = "button";
+    button.disabled = item.state === "queued" || item.state === "discovering";
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      progress.textContent = "Requesting a current scan…";
+      const path = `/api/v1/review-preparation/${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/scan`;
+      const send = () => fetch(path, {method: "POST", headers: {"x-csrf-token": pageCsrf}});
+      try {
+        let response = await send();
+        if (response.status === 403) { pageCsrf = await refreshPageCsrf(); response = await send(); }
+        if (!response.ok) throw new Error();
+        const updated = await response.json();
+        progress.textContent = preparationCopy(updated);
+        window.setTimeout(() => loadPreparation(target), 750);
+      } catch {
+        button.disabled = false;
+        progress.textContent = "Scan request failed safely. Try again.";
+      }
+    });
+    row.append(copy, progress, button);
+    children.push(row);
+  }
+  target.replaceChildren(...children);
+};
+const loadPreparation = target => load("/api/v1/review-preparation").then(data => {
+  renderPreparation(target, data);
+  if (data.libraries.some(item => ["queued", "discovering", "processing"].includes(item.state))) {
+    window.setTimeout(() => loadPreparation(target), 1500);
+  }
+}).catch(() => {
+  target.replaceChildren(element("p", "Library preparation status is temporarily unavailable.", "empty-state"));
+});
+
 const libraryRoot = document.querySelector("#library");
 if (libraryRoot) {
   const parameters = new URLSearchParams(location.search);
@@ -542,6 +607,11 @@ if (libraryRoot) {
       lenses.append(link);
     }
     tools.append(lenses);
+    const preparation = libraryRoot.dataset.reviewPreparation === "true" ? element("section", null, "preparation-panel") : null;
+    if (preparation) {
+      preparation.setAttribute("aria-label", "Library preparation");
+      preparation.append(element("p", "Loading library preparation…", "empty-state"));
+    }
     const workspace = element("div", null, "library-workspace");
     const list = element("section", null, "work-list");
     list.setAttribute("aria-label", "Review cases");
@@ -560,7 +630,8 @@ if (libraryRoot) {
     const book = element("span", "ML", "work-mark preview-book"); book.setAttribute("aria-hidden", "true");
     preview.append(book, element("p", "Current review cases", "eyebrow"), element("h2", data.items.length ? "Choose a work to review its exact-current fields." : "This view is clear."), element("p", data.items.length ? "Each decision is recorded as an immutable human outcome. This workspace never writes to your target library." : "Try another lens or search term to inspect other bounded cases."));
     workspace.append(list, preview);
-    libraryRoot.replaceChildren(top, tools, workspace);
+    libraryRoot.replaceChildren(...[top, preparation, tools, workspace].filter(Boolean));
+    if (preparation) loadPreparation(preparation);
     libraryRoot.focus({preventScroll: true});
   }).catch(() => failPage(libraryRoot));
 }

@@ -44,6 +44,7 @@ context and consequences rather than reproducing code.
 | [0028](0028-normalize-transient-reviewer-json-and-partition-combinations.md) | accepted | Normalize transient reviewer JSON and partition finite actions by one allowed bibliographic combination |
 | [0029](0029-provider-independent-shadow-decision-preview.md) | accepted | Add a provider-independent, read-only deterministic shadow decision preview |
 | [0030](0030-authenticated-review-web-boundary.md) | accepted | Use one authenticated Python review web boundary |
+| [0031](0031-persisted-review-preparation.md) | accepted | Persist progressive review preparation beside the review boundary |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

@@ -104,6 +104,43 @@ class RefreshCurrentCatalogue:
             self._repository.abort_refresh()
             raise
 
+    def refresh_library(
+        self,
+        configuration: ApplicationConfiguration,
+        connection: str,
+        library_name: str,
+    ) -> int:
+        fingerprint = catalogue_fingerprint(configuration).digest
+        matches = tuple(
+            library
+            for library in configuration.libraries
+            if library.connection == connection and library.name == library_name
+        )
+        if len(matches) != 1:
+            raise CatalogueError("catalogue library is unavailable")
+        library = matches[0]
+        self._repository.acquire_refresh()
+        try:
+            try:
+                existing = self._repository.inspect(fingerprint)
+            except CatalogueStaleError:
+                existing = ()
+            retained = tuple(
+                entry
+                for entry in existing
+                if (entry.connection, entry.library) != (connection, library_name)
+            )
+            maximum = 10_000 - len(retained)
+            discovered = self._reader.read_library(
+                library.connection, library, maximum
+            )
+            return self._repository.publish(
+                fingerprint, retained + tuple(discovered)
+            )
+        except Exception:
+            self._repository.abort_refresh()
+            raise
+
     def inspect(self, configuration: ApplicationConfiguration, *, exact: tuple[str, str, str, str] | None = None, facet: str | None = None, limit: int = 500) -> tuple[CatalogueEntry, ...]:
         if type(limit) is not int or not 1 <= limit <= 500:
             raise CatalogueError("catalogue limit exceeded")

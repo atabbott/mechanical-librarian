@@ -44,6 +44,10 @@ from mechanical_librarian.application.review_web import (
     ReviewWebError,
     ReviewWebRepository,
 )
+from mechanical_librarian.application.review_pipeline import (
+    ReviewPipelineError,
+    ReviewPreparationSupervisor,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.interfaces.web import review_frontend
 
@@ -241,6 +245,24 @@ class _AttentionResponse(_ClosedModel):
     total: int
 
 
+class _PreparationProgress(_ClosedModel):
+    scan_id: str | None
+    connection: str
+    library: str
+    library_id: str
+    state: str
+    checked: int
+    total: int
+    ready: int
+    blocked: int
+    rescan_requested: bool
+
+
+class _PreparationResponse(_ClosedModel):
+    libraries: list[_PreparationProgress]
+    schema_version: Literal["review-preparation-v1"] = "review-preparation-v1"
+
+
 class _DecisionRequest(_ClosedModel):
     destination: StrictStr = Field(min_length=1, max_length=64)
     outcome: Literal["accept", "keep_current", "reject"]
@@ -333,6 +355,7 @@ def create_review_app(
     *,
     clock: Callable[[], int] = lambda: int(time.time()),
     close_repository: bool = False,
+    review_preparation: ReviewPreparationSupervisor | None = None,
 ) -> FastAPI:
     serialized_repository = _SerializedReviewRepository(repository)
     verifier = _owner_password_verifier(Path(configuration.owner_password_hash_file))
@@ -349,9 +372,15 @@ def create_review_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        yield
-        if close_repository:
-            repository.close()  # type: ignore[attr-defined]
+        if review_preparation is not None:
+            review_preparation.start()
+        try:
+            yield
+        finally:
+            if review_preparation is not None:
+                review_preparation.stop()
+            if close_repository:
+                repository.close()  # type: ignore[attr-defined]
 
     app = FastAPI(
         title="Mechanical Librarian Review API",
@@ -586,6 +615,88 @@ def create_review_app(
         )
 
     @app.get(
+        "/api/v1/review-preparation",
+        response_model=_PreparationResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def review_preparation_status(
+        ml_session: str | None = Security(session_cookie),
+    ) -> _PreparationResponse:
+        _require_session(sessions, ml_session)
+        if review_preparation is None:
+            raise HTTPException(503, detail={"code": "unavailable"})
+        values: list[_PreparationProgress] = []
+        try:
+            for connection, library_name, library_id in review_preparation.libraries:
+                progress = review_preparation.progress(connection, library_name)
+                values.append(
+                    _PreparationProgress(
+                        scan_id=None if progress is None else progress.scan_id,
+                        connection=connection,
+                        library=library_name,
+                        library_id=library_id,
+                        state="idle" if progress is None else progress.state,
+                        checked=0 if progress is None else progress.checked,
+                        total=0 if progress is None else progress.total,
+                        ready=0 if progress is None else progress.ready,
+                        blocked=0 if progress is None else progress.blocked,
+                        rescan_requested=(
+                            False if progress is None else progress.rescan_requested
+                        ),
+                    )
+                )
+        except ReviewPipelineError:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        except Exception:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        return _PreparationResponse(libraries=values)
+
+    @app.post(
+        "/api/v1/review-preparation/{connection}/{library_name}/scan",
+        response_model=_PreparationProgress,
+        status_code=202,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (400, 401, 403, 404, 422, 503)
+        },
+    )
+    def request_review_scan(
+        connection: str,
+        library_name: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PreparationProgress:
+        _require_session(sessions, ml_session, x_csrf_token)
+        if review_preparation is None:
+            raise HTTPException(503, detail={"code": "unavailable"})
+        if not 1 <= len(connection) <= 64 or not 1 <= len(library_name) <= 64:
+            raise HTTPException(404, detail={"code": "library"})
+        try:
+            progress = review_preparation.request(connection, library_name)
+            library_id = next(
+                item[2]
+                for item in review_preparation.libraries
+                if item[:2] == (connection, library_name)
+            )
+        except (ReviewPipelineError, StopIteration) as error:
+            status = 404 if getattr(error, "code", "") == "library" else 503
+            raise HTTPException(status, detail={"code": "library" if status == 404 else "persistence"}) from None
+        except Exception:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        return _PreparationProgress(
+            scan_id=progress.scan_id,
+            connection=progress.connection,
+            library=progress.library,
+            library_id=library_id,
+            state=progress.state,
+            checked=progress.checked,
+            total=progress.total,
+            ready=progress.ready,
+            blocked=progress.blocked,
+            rescan_requested=progress.rescan_requested,
+        )
+
+    @app.get(
         "/api/v1/review-cases/{review_case_id}/evidence",
         response_model=_EvidenceResponse,
         responses={
@@ -647,7 +758,11 @@ def create_review_app(
     ) -> HTMLResponse:
         _require_session(sessions, ml_session)
         assert ml_session is not None
-        return HTMLResponse(review_frontend.library_html(browser_csrf(ml_session)))
+        return HTMLResponse(
+            review_frontend.library_html(
+                browser_csrf(ml_session), review_preparation is not None
+            )
+        )
 
     @app.get("/attention", include_in_schema=False)
     def attention_page(

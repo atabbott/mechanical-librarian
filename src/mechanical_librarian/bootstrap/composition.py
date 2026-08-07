@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -79,6 +80,7 @@ from mechanical_librarian.application.metadata_report import (
     ProviderBinding,
     ProviderCoverDescriptor,
     TargetCoverReader,
+    TargetNotFoundError,
     TargetSnapshot,
     UnsupportedMediaError,
     require_report_current,
@@ -92,6 +94,12 @@ from mechanical_librarian.application.review_cases import (
     GetReviewCase,
     ReviewCaseError,
 )
+from mechanical_librarian.application.review_pipeline import (
+    PipelineAction,
+    ReviewPipelineError,
+    ReviewPreparationPipeline,
+    ReviewPreparationSupervisor,
+)
 from mechanical_librarian.application.shadow_reviews import (
     execute_shadow_review,
     inspect_shadow_review,
@@ -99,6 +107,8 @@ from mechanical_librarian.application.shadow_reviews import (
     preview_shadow_review,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.review_case import ReviewAdmissionResult
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -510,7 +520,7 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
     return run_metadata_report_loaded(configuration, database_path, artifact_store_path, connection_name, library_name, item, file_index, expected_file_identity)
 
 
-def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None) -> str:
+def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True) -> str:
     """Compose one report solely from an already validated configuration snapshot."""
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if mount is None:
@@ -581,7 +591,8 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
     def repository_factory():
         repository = open_repository(database_path, expected_identity=repository_identity)
         try:
-            artifacts.recover_unreferenced(repository.artifact_is_referenced)
+            if recover_artifacts:
+                artifacts.recover_unreferenced(repository.artifact_is_referenced)
             return repository
         except Exception:
             repository.close()
@@ -598,8 +609,277 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
         limits=configuration.limits,
         cover_observer=_CoverEvidenceObserver(target, artifacts, tuple(provider_configs)),
         publication_authority_guard=artifacts.require_current,
+        publication_receipt=(
+            None
+            if review_action is None
+            else lambda repository, report: repository.complete_review_extraction_publication(
+                review_action, report.report_id, int(time.time())
+            )
+        ),
     )
     return service.run(item, file_index, expected_file_identity)
+
+def _require_report_current_loaded(configuration, artifacts, report) -> bool:
+    connection, library, mount, _ = configuration.select(
+        report.target.connection, report.target.library
+    )
+    if mount is None:
+        raise CurrentnessError("target or media changed")
+    target = AudiobookshelfItemReader(
+        client_factory=lambda: target_client(
+            connection.endpoint,
+            connection.secret_file,
+            configuration.limits.timeout_seconds,
+        ),
+        endpoint=connection.endpoint,
+        library_id=library.library_id,
+        service_path=mount.service_path,
+        maximum_bytes=configuration.limits.target_response_bytes,
+        timeout_seconds=configuration.limits.timeout_seconds,
+    )
+    valid = require_report_current(
+        target,
+        _IsolatedEpubInspector(artifacts),
+        mount,
+        configuration.limits,
+        report,
+    )
+    for source in report.cover_sources:
+        if source.artifact is not None:
+            artifacts.require_artifact(source.artifact)
+    artifacts.require_current()
+    return valid
+
+
+def create_proposal_set_loaded(
+    configuration,
+    database_path: Path,
+    artifact_store_path: Path,
+    report_id: str,
+) -> str:
+    artifacts = CoverArtifactStore(artifact_store_path, create=False)
+    repository = open_repository(database_path, create=False)
+    try:
+        return CreateProposalSet(
+            repository,
+            lambda report: _require_report_current_loaded(
+                configuration, artifacts, report
+            ),
+        ).run(report_id)
+    finally:
+        repository.close()
+
+
+def admit_review_case_loaded(
+    configuration,
+    database_path: Path,
+    artifact_store_path: Path,
+    proposal_set_id: str,
+) -> str:
+    artifacts = CoverArtifactStore(artifact_store_path, create=False)
+    repository = open_repository(database_path, create=False)
+
+    def current(proposal) -> bool:
+        try:
+            report = MetadataReport.from_json(repository.get(proposal.report_id))
+        except Exception as error:
+            raise ReviewCaseError("persistence") from error
+        try:
+            return _require_report_current_loaded(configuration, artifacts, report)
+        except CurrentnessError:
+            return False
+
+    try:
+        return AdmitReviewCase(repository, current).run(proposal_set_id)
+    finally:
+        repository.close()
+
+
+def create_review_pipeline(
+    configuration,
+    database_path: Path,
+    catalogue_path: Path,
+    artifact_store_path: Path,
+) -> ReviewPreparationSupervisor:
+    artifact_recovery_lock = threading.Lock()
+    artifacts_recovered = False
+
+    def recover_artifacts_once() -> None:
+        nonlocal artifacts_recovered
+        with artifact_recovery_lock:
+            if artifacts_recovered:
+                return
+            artifacts = CoverArtifactStore(artifact_store_path, create=False)
+            recovery_repository = open_repository(database_path, create=False)
+            try:
+                artifacts.recover_unreferenced(
+                    recovery_repository.artifact_is_referenced
+                )
+            finally:
+                recovery_repository.close()
+            artifacts_recovered = True
+    mounts = {item.name: item for item in configuration.mounts}
+    clients = {item.name: item for item in configuration.connections}
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda name: target_client(
+            clients[name].endpoint,
+            clients[name].secret_file,
+            configuration.limits.timeout_seconds,
+        ),
+        mounts=mounts,
+        maximum_bytes=configuration.limits.target_response_bytes,
+        timeout_seconds=configuration.limits.timeout_seconds,
+    )
+    open_library_pacer = (
+        OpenLibraryPacer()
+        if any(
+            provider.enabled and provider.adapter == "open_library"
+            for provider in configuration.providers
+        )
+        else None
+    )
+    hardcover_pacer = (
+        HardcoverPacer()
+        if any(
+            provider.enabled and provider.adapter == "hardcover"
+            for provider in configuration.providers
+        )
+        else None
+    )
+
+    def repository_factory():
+        return open_repository(database_path, create=False)
+
+    def discover(connection: str, library: str):
+        repository = open_catalogue(catalogue_path, create=True)
+        try:
+            service = RefreshCurrentCatalogue(reader, repository)
+            service.refresh_library(configuration, connection, library)
+            snapshot = repository.snapshot(
+                batch_catalogue_fingerprint(configuration)
+            )
+            return snapshot.generation, snapshot.fingerprint, snapshot.entries
+        except CatalogueError as error:
+            raise ReviewPipelineError("transient") from error
+        finally:
+            repository.close()
+
+    def extract(action: PipelineAction) -> tuple[str, bool]:
+        catalogue = open_catalogue(catalogue_path, create=False)
+        try:
+            entry = catalogue.current_entry(
+                action.catalogue_generation or 0,
+                action.catalogue_fingerprint or "",
+                (
+                    action.connection,
+                    action.library,
+                    action.library_id,
+                    action.item_id or "",
+                ),
+            )
+        except CatalogueError as error:
+            raise ReviewPipelineError("stale") from error
+        finally:
+            catalogue.close()
+        if (
+            entry is None
+            or entry.file_identity != action.file_identity
+            or not entry.eligible
+        ):
+            raise ReviewPipelineError("stale")
+        recover_artifacts_once()
+        try:
+            serialized = run_metadata_report_loaded(
+                configuration,
+                database_path,
+                artifact_store_path,
+                action.connection,
+                action.library,
+                action.item_id or "",
+                0,
+                expected_file_identity=action.file_identity,
+                open_library_pacer=open_library_pacer,
+                hardcover_pacer=hardcover_pacer,
+                review_action=action,
+                recover_artifacts=False,
+            )
+        except (CurrentnessError, TargetNotFoundError) as error:
+            raise ReviewPipelineError("stale") from error
+        value = MetadataReport.from_json(serialized)
+        return value.report_id, True
+
+    def providers(report_id: str):
+        repository = open_repository(database_path, create=False)
+        try:
+            value = MetadataReport.from_json(repository.get(report_id))
+        finally:
+            repository.close()
+        return tuple(
+            status
+            for provider in value.providers
+            for status in (
+                provider.status,
+                *(lane.status for lane in provider.lanes),
+            )
+        )
+
+    def propose(report_id: str) -> str:
+        serialized = create_proposal_set_loaded(
+            configuration, database_path, artifact_store_path, report_id
+        )
+        return ProposalSet.from_json(serialized).proposal_set_id
+
+    def admit(proposal_set_id: str) -> tuple[str, str | None]:
+        serialized = admit_review_case_loaded(
+            configuration, database_path, artifact_store_path, proposal_set_id
+        )
+        result = ReviewAdmissionResult.from_json(serialized)
+        if result.status == "stale":
+            raise ReviewPipelineError("stale")
+        return result.status, result.review_case_id
+
+    def project(review_case_id: str) -> bool:
+        repository = open_repository(database_path, create=False)
+        try:
+            repository.read_current_review_case(review_case_id)
+            return True
+        except Exception as error:
+            raise ReviewPipelineError("projection") from error
+        finally:
+            repository.close()
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=repository_factory,
+        libraries=tuple(
+            (
+                library.connection,
+                library.name,
+                library.library_id,
+                batch_fingerprint(
+                    configuration,
+                    (
+                        BatchSelection(
+                            library.connection,
+                            library.name,
+                            library.library_id,
+                            "producer",
+                            None,
+                            "producer",
+                            False,
+                        ),
+                    ),
+                ),
+            )
+            for library in configuration.libraries
+        ),
+        discover=discover,
+        extract=extract,
+        providers=providers,
+        propose=propose,
+        admit=admit,
+        project=project,
+    )
+    return ReviewPreparationSupervisor(pipeline)
 
 
 def reopen_metadata_report(database_path: Path, report_id: str) -> str:
@@ -636,45 +916,12 @@ def create_proposal_set(
     report_id: str,
 ) -> str:
     """Create one ProposalSet without provider calls or write authority."""
-    configuration = load_configuration_file(config_path)
-    artifacts = CoverArtifactStore(artifact_store_path, create=False)
-    repository = open_repository(database_path, create=False)
-
-    def current(report) -> bool:
-        connection, library, mount, _ = configuration.select(
-            report.target.connection, report.target.library
-        )
-        if mount is None:
-            raise CurrentnessError("target or media changed")
-        target = AudiobookshelfItemReader(
-            client_factory=lambda: target_client(
-                connection.endpoint,
-                connection.secret_file,
-                configuration.limits.timeout_seconds,
-            ),
-            endpoint=connection.endpoint,
-            library_id=library.library_id,
-            service_path=mount.service_path,
-            maximum_bytes=configuration.limits.target_response_bytes,
-            timeout_seconds=configuration.limits.timeout_seconds,
-        )
-        valid = require_report_current(
-            target,
-            _IsolatedEpubInspector(artifacts),
-            mount,
-            configuration.limits,
-            report,
-        )
-        for source in report.cover_sources:
-            if source.artifact is not None:
-                artifacts.require_artifact(source.artifact)
-        artifacts.require_current()
-        return valid
-
-    try:
-        return CreateProposalSet(repository, current).run(report_id)
-    finally:
-        repository.close()
+    return create_proposal_set_loaded(
+        load_configuration_file(config_path),
+        database_path,
+        artifact_store_path,
+        report_id,
+    )
 
 
 def reopen_proposal_set(
@@ -687,33 +934,19 @@ def reopen_proposal_set(
         repository.close()
 
 
-def admit_review_case(config_path: Path, database_path: Path, artifact_store_path: Path, proposal_set_id: str) -> str:
+def admit_review_case(
+    config_path: Path,
+    database_path: Path,
+    artifact_store_path: Path,
+    proposal_set_id: str,
+) -> str:
     """Admit one exact current ProposalSet; no decision or target mutation occurs."""
-    configuration = load_configuration_file(config_path)
-    artifacts = CoverArtifactStore(artifact_store_path, create=False)
-    repository = open_repository(database_path, create=False)
-    def current(proposal) -> bool:
-        try:
-            report = MetadataReport.from_json(repository.get(proposal.report_id))
-        except Exception as error:
-            raise ReviewCaseError("persistence") from error
-        connection, library, mount, _ = configuration.select(report.target.connection, report.target.library)
-        if mount is None:
-            return False
-        target = AudiobookshelfItemReader(client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds), endpoint=connection.endpoint, library_id=library.library_id, service_path=mount.service_path, maximum_bytes=configuration.limits.target_response_bytes, timeout_seconds=configuration.limits.timeout_seconds)
-        try:
-            valid = require_report_current(target, _IsolatedEpubInspector(artifacts), mount, configuration.limits, report)
-        except CurrentnessError:
-            return False
-        for source in report.cover_sources:
-            if source.artifact is not None:
-                artifacts.require_artifact(source.artifact)
-        artifacts.require_current()
-        return valid
-    try:
-        return AdmitReviewCase(repository, current).run(proposal_set_id)
-    finally:
-        repository.close()
+    return admit_review_case_loaded(
+        load_configuration_file(config_path),
+        database_path,
+        artifact_store_path,
+        proposal_set_id,
+    )
 
 
 def reopen_review_case(database_path: Path, review_case_id: str) -> str:
@@ -975,7 +1208,12 @@ def _load_batch_credentials(configuration, selected_connections: set[str], selec
 
 
 def run_review_server(
-    config_path: Path, database_path: Path, host: str, port: int
+    config_path: Path,
+    database_path: Path,
+    catalogue_path: Path,
+    artifact_store_path: Path,
+    host: str,
+    port: int,
 ) -> None:
     configuration = load_configuration_file(config_path)
     if configuration.review is None:
@@ -988,7 +1226,15 @@ def run_review_server(
     ) as tls:
         repository = open_repository(database_path, create=False, cross_thread=True)
         try:
-            app = create_review_app(repository, review, close_repository=True)
+            preparation = create_review_pipeline(
+                configuration, database_path, catalogue_path, artifact_store_path
+            )
+            app = create_review_app(
+                repository,
+                review,
+                close_repository=True,
+                review_preparation=preparation,
+            )
             uvicorn.run(
                 app,
                 host=host,

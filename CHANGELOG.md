@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add owner-requested progressive library preparation to the authenticated
+  review surface. Exact-current catalogue, report, ProposalSet, and ReviewCase
+  work is persisted, duplicate-safe, restart-safe, and independently advanced
+  across two fixed lanes while remaining decision-only and write-free. (#474)
+
 - Restore the authenticated review frontend to the protected variant M visual
   contract across Library, Attention, and exact-current Detail. The branded
   editorial shell, light/dark palettes, work identity and status language,
