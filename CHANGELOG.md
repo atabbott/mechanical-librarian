@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Tier public qualification into independent required fast-source,
+  exact-installed, and protected-browser jobs while preserving one stable
+  aggregate gate. Scale, endurance, exhaustive, and resource assertions retain
+  an explicit exact-wheel slow owner; the first moved resource proof is the
+  unchanged maximum-shape metadata-report round trip. Each tier has a documented
+  command and path-free cohort manifest, the complete exact-head command remains
+  reproducible, and bounded evidence now distinguishes provenance, setup/build,
+  nonzero test, and subprocess-timeout failures. No product or write authority
+  changes. (#482)
+
 - Add owner-requested progressive library preparation to the authenticated
   review surface. Exact-current catalogue, report, ProposalSet, and ReviewCase
   work is persisted, duplicate-safe, restart-safe, and independently advanced

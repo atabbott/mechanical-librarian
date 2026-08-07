@@ -43,17 +43,22 @@ committed lockfile:
 
 ```text
 uv lock --check
-python3 scripts/qualify_exact_artifact.py --source-sha "$(git rev-parse HEAD)"
+uv run python scripts/run_test_tier.py fast
+python3 scripts/qualify_exact_artifact.py \
+  --source-sha "$(git rev-parse HEAD)" \
+  --test-tier required
 ```
 
-The final command runs the
+The qualification commands run the routine source and
 [canonical exact-artifact procedure](docs/development/testing-strategy.md)
 against a clean checkout. The integration suite exercises the installed command
 end to end against disposable synthetic target, media, credential, and database
 fixtures.
 Issue #36 owns the future platform-neutral bootstrap and one-command
 verification wrapper. The qualifier alone supplies source-bound installed-
-artifact evidence and runs the public tests against that exact wheel.
+artifact evidence and runs the representative installed tier against that exact
+wheel. The testing strategy also documents the independent browser, explicit
+slow, and one-command complete exact-head qualifications.
 
 Do not install project tools globally or add unrecorded dependencies. Update
 `pyproject.toml` and regenerate `uv.lock` together when the dependency graph
