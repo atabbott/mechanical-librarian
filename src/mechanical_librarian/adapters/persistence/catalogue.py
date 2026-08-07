@@ -197,6 +197,39 @@ class SQLiteCatalogueRepository:
             if self._connection.in_transaction: self._connection.execute("ROLLBACK")
             raise
 
+    def latest_entry(
+        self, fingerprint: str, key: tuple[str, str, str, str]
+    ) -> CatalogueEntry | None:
+        self._connection.execute("BEGIN")
+        try:
+            current = self._connection.execute(
+                "SELECT generation FROM catalogue_generations "
+                "WHERE current=1 AND fingerprint=?",
+                (fingerprint,),
+            ).fetchone()
+            if current is None:
+                raise CatalogueStaleError("catalogue requires refresh")
+            entries = self._connection.execute(
+                "SELECT connection,library,library_id,item_id,updated_at,title,authors,"
+                "has_ebook,has_audio,classification,file_identity,service_path,format,mount "
+                "FROM catalogue_entries WHERE generation=? AND connection=? "
+                "AND library=? AND library_id=? AND item_id=?",
+                (current[0], *key),
+            ).fetchall()
+            self._connection.execute("COMMIT")
+            if len(entries) != 1:
+                return None
+            value = entries[0]
+            return CatalogueEntry(
+                value[0], value[1], value[2], value[3], value[4], value[5],
+                tuple(json.loads(value[6])), bool(value[7]), bool(value[8]),
+                value[9], value[10], value[11], value[12], value[13]
+            )
+        except Exception:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
+
     def close(self) -> None:
         try:
             self._connection.close()

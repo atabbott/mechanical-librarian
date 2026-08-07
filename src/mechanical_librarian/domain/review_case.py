@@ -196,7 +196,9 @@ class ReviewTransition:
             or self.checkpoint < 1
             or self.actor not in {"review-admission-v1", "review-preparation-v1"}
             or self.kind not in _TRANSITION_KIND
-            or self.reason not in {"actionable", "nonactionable", "absent"}
+            or self.reason not in {
+                "actionable", "nonactionable", "absent", "ineligible"
+            }
             or type(self.proposal_set_id) is not str
             or _PROPOSAL_SET_ID.fullmatch(self.proposal_set_id) is None
             or type(self.report_id) is not str
@@ -222,8 +224,23 @@ class ReviewTransition:
             self.to_review_case_id is None or self.reason != "actionable"
         ):
             raise ReviewCaseValueError("review transition is invalid")
-        if self.kind in {"no_case", "retired"} and (
+        if self.kind == "no_case" and (
             self.to_review_case_id is not None or self.reason != "nonactionable"
+        ):
+            raise ReviewCaseValueError("review transition is invalid")
+        if self.kind == "retired" and (
+            self.to_review_case_id is not None
+            or (
+                self.actor == "review-admission-v1"
+                and self.reason != "nonactionable"
+            )
+            or (
+                self.actor == "review-preparation-v1"
+                and (
+                    self.reason != "ineligible"
+                    or self.from_review_case_id is None
+                )
+            )
         ):
             raise ReviewCaseValueError("review transition is invalid")
         if self.kind == "tombstoned" and (
@@ -233,9 +250,12 @@ class ReviewTransition:
             or self.to_review_case_id is not None
         ):
             raise ReviewCaseValueError("review transition is invalid")
-        if self.kind != "tombstoned" and self.actor != "review-admission-v1":
+        if (
+            self.kind not in {"tombstoned", "retired"}
+            and self.actor != "review-admission-v1"
+        ):
             raise ReviewCaseValueError("review transition is invalid")
-        if self.kind != "tombstoned" and (
+        if self.actor == "review-admission-v1" and (
             (self.kind in {"admitted", "no_case"})
             != (self.from_review_case_id is None)
         ):

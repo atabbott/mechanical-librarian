@@ -20,6 +20,10 @@ class ProposalSetError(RuntimeError):
     """A ProposalSet operation failed without exposing rejected values."""
 
 
+class ProposalCurrentnessError(ProposalSetError):
+    """The exact report target changed before proposal publication."""
+
+
 class ProposalSetRepository(Protocol):
     def get(self, report_id: str) -> str: ...
 
@@ -87,6 +91,7 @@ class GetProposalSet:
 __all__ = [
     "CreateProposalSet",
     "GetProposalSet",
+    "ProposalCurrentnessError",
     "ProposalSetError",
     "ProposalSetRepository",
 ]

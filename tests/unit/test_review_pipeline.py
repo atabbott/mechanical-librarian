@@ -207,6 +207,49 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertEqual(reappeared["status"], "admitted")
         self.assertEqual(pointer, (reappeared["review_case_id"], "admitted"))
 
+    def test_complete_scan_retires_present_item_that_became_ineligible(self) -> None:
+        repository = open_repository(self.path)
+        report = _report()
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        admitted = json.loads(repository.admit_review_case(proposal))
+        repository.request_review_scan(
+            report.target.connection,
+            report.target.library,
+            "lib-1",
+            _PRODUCER,
+            10,
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        ineligible = replace(
+            _entry(report.target.item, report.file.identity),
+            library=report.target.library,
+            classification="singular-unmounted",
+            mount=None,
+        )
+        repository.complete_review_discovery(
+            discovery, 1, "c" * 64, (ineligible,), 12
+        )
+        self.assertIsNone(repository.claim_review_pipeline_action(13))
+        pointer = repository._connection.execute(
+            "SELECT review_case_id,outcome FROM current_review_case_lineages"
+        ).fetchone()
+        transition = repository._connection.execute(
+            "SELECT actor,kind,reason FROM review_case_transitions "
+            "ORDER BY checkpoint DESC LIMIT 1"
+        ).fetchone()
+        reopened = json.loads(repository.admit_review_case(proposal))
+        repository.close()
+
+        self.assertEqual(pointer, (None, "retired"))
+        self.assertEqual(
+            transition, ("review-preparation-v1", "retired", "ineligible")
+        )
+        self.assertEqual(reopened["status"], "admitted")
+        self.assertEqual(reopened["review_case_id"], admitted["review_case_id"])
+
     def test_failed_discovery_cannot_tombstone_current_lineage(self) -> None:
         repository = open_repository(self.path)
         report = _report()
@@ -235,7 +278,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         repository.close()
         self.assertEqual(pointer, (admitted["review_case_id"], "admitted"))
 
-    def test_later_work_failure_discards_staged_absence(self) -> None:
+    def test_later_work_failure_discards_staged_ineligible_retirement(self) -> None:
         repository = open_repository(self.path)
         report = _report()
         repository.publish(report, lambda: True)
@@ -256,6 +299,12 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             1,
             "d" * 64,
             (
+                replace(
+                    _entry(report.target.item, report.file.identity),
+                    library=report.target.library,
+                    classification="singular-unmounted",
+                    mount=None,
+                ),
                 replace(
                     _entry("later-failure", "9" * 64),
                     library=report.target.library,

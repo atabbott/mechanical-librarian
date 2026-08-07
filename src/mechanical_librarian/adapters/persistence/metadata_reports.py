@@ -148,8 +148,8 @@ _REVIEW_TRANSITIONS_SQL = (
     "CREATE TABLE review_case_transitions ("
     "transition_id TEXT PRIMARY KEY NOT NULL CHECK(transition_id GLOB 'review_transition_[0-9a-f]*' AND length(transition_id)=82), "
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, checkpoint INTEGER NOT NULL CHECK(checkpoint > 0), actor TEXT NOT NULL CHECK(actor IN ('review-admission-v1','review-preparation-v1')), "
-    "from_review_case_id TEXT REFERENCES review_cases(review_case_id), to_review_case_id TEXT REFERENCES review_cases(review_case_id), proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), kind TEXT NOT NULL CHECK(kind IN ('admitted','superseded','no_case','retired','tombstoned')), reason TEXT NOT NULL CHECK(reason IN ('actionable','nonactionable','absent')), "
-    "CHECK ((kind IN ('admitted','superseded') AND actor='review-admission-v1' AND reason='actionable' AND to_review_case_id IS NOT NULL) OR (kind IN ('no_case','retired') AND actor='review-admission-v1' AND reason='nonactionable' AND to_review_case_id IS NULL) OR (kind='tombstoned' AND actor='review-preparation-v1' AND reason='absent' AND from_review_case_id IS NOT NULL AND to_review_case_id IS NULL)), "
+    "from_review_case_id TEXT REFERENCES review_cases(review_case_id), to_review_case_id TEXT REFERENCES review_cases(review_case_id), proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), kind TEXT NOT NULL CHECK(kind IN ('admitted','superseded','no_case','retired','tombstoned')), reason TEXT NOT NULL CHECK(reason IN ('actionable','nonactionable','absent','ineligible')), "
+    "CHECK ((kind IN ('admitted','superseded') AND actor='review-admission-v1' AND reason='actionable' AND to_review_case_id IS NOT NULL) OR (kind IN ('no_case','retired') AND actor='review-admission-v1' AND reason='nonactionable' AND to_review_case_id IS NULL) OR (kind='tombstoned' AND actor='review-preparation-v1' AND reason='absent' AND from_review_case_id IS NOT NULL AND to_review_case_id IS NULL) OR (kind='retired' AND actor='review-preparation-v1' AND reason='ineligible' AND from_review_case_id IS NOT NULL AND to_review_case_id IS NULL)), "
     "CHECK ((kind IN ('admitted','no_case') AND from_review_case_id IS NULL) OR (kind IN ('superseded','retired','tombstoned') AND from_review_case_id IS NOT NULL)), "
     "UNIQUE(connection_name,library_name,item_id,checkpoint) )"
 )
@@ -182,7 +182,9 @@ _REVIEW_ABSENCES_SQL = (
     "scan_id TEXT NOT NULL REFERENCES review_preparation_scans(scan_id) ON DELETE CASCADE, "
     "item_id TEXT NOT NULL, proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), "
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
-    "checkpoint INTEGER NOT NULL CHECK(checkpoint>0), PRIMARY KEY(scan_id,item_id))"
+    "checkpoint INTEGER NOT NULL CHECK(checkpoint>0), kind TEXT NOT NULL CHECK(kind IN ('tombstoned','retired')), "
+    "reason TEXT NOT NULL CHECK((kind='tombstoned' AND reason='absent') OR (kind='retired' AND reason='ineligible')), "
+    "PRIMARY KEY(scan_id,item_id))"
 )
 _REVIEW_WORK_CLAIM_INDEX_SQL = (
     "CREATE INDEX review_preparation_work_claim "
@@ -502,6 +504,8 @@ class _LinuxDatabaseBinding:
         directory_chain: _LinuxDirectoryChain,
         alias_name: str,
         expected_identity: tuple[int, int],
+        owns_lock: bool,
+        authority: "_LinuxDatabaseBinding | None",
     ) -> None:
         self.configured_name = configured_name
         self.descriptor = descriptor
@@ -509,13 +513,20 @@ class _LinuxDatabaseBinding:
         self.parent_descriptor = directory_chain.parent_descriptor
         self.alias_name = alias_name
         self.expected_identity = expected_identity
+        self.owns_lock = owns_lock
+        self.authority = authority
         self.alias_path = Path(
             f"/proc/self/fd/{self.parent_descriptor}/{alias_name}"
         )
         self.closed = False
 
     @classmethod
-    def create(cls, path: Path, descriptor: int) -> "_LinuxDatabaseBinding":
+    def create(
+        cls,
+        path: Path,
+        descriptor: int,
+        authority: object | None = None,
+    ) -> "_LinuxDatabaseBinding":
         if fcntl is None:
             raise MetadataReportError("database private binding is unavailable")
         absolute = path.absolute()
@@ -531,10 +542,23 @@ class _LinuxDatabaseBinding:
             _require_owner_only_database_parent(
                 os.fstat(parent_descriptor)
             )
-            fcntl.flock(parent_descriptor, fcntl.LOCK_EX)
-            locked = True
             expected = os.fstat(descriptor)
             expected_identity = (expected.st_dev, expected.st_ino)
+            if authority is None:
+                fcntl.flock(parent_descriptor, fcntl.LOCK_EX)
+                locked = True
+            elif type(authority) is not cls:
+                raise MetadataReportError("database authority changed")
+            else:
+                authority.require_current()
+                if (
+                    authority.closed
+                    or authority.configured_name != absolute.name
+                    or authority.expected_identity != expected_identity
+                    or authority.directory_chain.identities[-1]
+                    != directory_chain.identities[-1]
+                ):
+                    raise MetadataReportError("database authority changed")
             _require_named_identity(
                 parent_descriptor, absolute.name, expected_identity
             )
@@ -570,6 +594,8 @@ class _LinuxDatabaseBinding:
                 directory_chain,
                 alias_name,
                 expected_identity,
+                locked,
+                authority if type(authority) is cls else None,
             )
             succeeded = True
             return binding
@@ -605,6 +631,10 @@ class _LinuxDatabaseBinding:
                     directory_chain.close()
 
     def require_current(self) -> None:
+        if self.closed:
+            raise MetadataReportError("database authority changed")
+        if self.authority is not None:
+            self.authority.require_current()
         current_parent = self.directory_chain.open_current_parent()
         try:
             _require_owner_only_database_parent(
@@ -662,10 +692,11 @@ class _LinuxDatabaseBinding:
             os.close(self.descriptor)
         except OSError as error:
             failure = failure or error
-        try:
-            fcntl.flock(self.parent_descriptor, fcntl.LOCK_UN)
-        except OSError as error:
-            failure = failure or error
+        if self.owns_lock:
+            try:
+                fcntl.flock(self.parent_descriptor, fcntl.LOCK_UN)
+            except OSError as error:
+                failure = failure or error
         try:
             self.directory_chain.close()
         except MetadataReportError as error:
@@ -686,6 +717,10 @@ class SQLiteMetadataReportRepository:
         self._connection = connection
         self._binding = binding
         self.identity = identity
+
+    @property
+    def authority(self) -> object | None:
+        return self._binding
 
     def request_review_scan(
         self,
@@ -978,6 +1013,7 @@ class SQLiteMetadataReportRepository:
             if entry.eligible and entry.file_identity is not None
         )
         present_items = {entry.item_id for entry in selected}
+        eligible_items = {entry.item_id for entry in eligible}
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             current = self._connection.execute(
@@ -997,12 +1033,14 @@ class SQLiteMetadataReportRepository:
                 (action.scan_id,),
             )
             for item_id, proposal_id, report_id, case_id, checkpoint in pointers:
-                if item_id in present_items:
+                if item_id in eligible_items:
                     continue
+                kind = "tombstoned" if item_id not in present_items else "retired"
+                reason = "absent" if kind == "tombstoned" else "ineligible"
                 self._connection.execute(
                     "INSERT INTO review_preparation_absences("
-                    "scan_id,item_id,proposal_set_id,report_id,review_case_id,checkpoint"
-                    ") VALUES(?,?,?,?,?,?)",
+                    "scan_id,item_id,proposal_set_id,report_id,review_case_id,checkpoint,kind,reason"
+                    ") VALUES(?,?,?,?,?,?,?,?)",
                     (
                         action.scan_id,
                         item_id,
@@ -1010,6 +1048,8 @@ class SQLiteMetadataReportRepository:
                         report_id,
                         case_id,
                         checkpoint,
+                        kind,
+                        reason,
                     ),
                 )
             for ordinal, entry in enumerate(
@@ -1121,7 +1161,6 @@ class SQLiteMetadataReportRepository:
                         completed_at,
                     ),
                 )
-            eligible_items = {entry.item_id for entry in eligible}
             for work_id, item_id in self._connection.execute(
                 "SELECT work_id,item_id FROM review_preparation_work WHERE scan_id=?",
                 (action.scan_id,),
@@ -1155,11 +1194,19 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("review preparation state changed")
         connection, library = scan
         candidates = self._connection.execute(
-            "SELECT item_id,proposal_set_id,report_id,review_case_id,checkpoint "
+            "SELECT item_id,proposal_set_id,report_id,review_case_id,checkpoint,kind,reason "
             "FROM review_preparation_absences WHERE scan_id=? ORDER BY item_id",
             (scan_id,),
         ).fetchall()
-        for item_id, proposal_id, report_id, case_id, checkpoint in candidates:
+        for (
+            item_id,
+            proposal_id,
+            report_id,
+            case_id,
+            checkpoint,
+            kind,
+            reason,
+        ) in candidates:
             current = self._connection.execute(
                 "SELECT proposal_set_id,report_id,review_case_id,checkpoint "
                 "FROM current_review_case_lineages WHERE connection_name=? "
@@ -1175,10 +1222,10 @@ class SQLiteMetadataReportRepository:
                 checkpoint + 1,
                 proposal_id,
                 report_id,
-                "tombstoned",
+                kind,
                 case_id,
                 None,
-                "absent",
+                reason,
                 "review-preparation-v1",
             )
             self._connection.execute(
@@ -1197,18 +1244,19 @@ class SQLiteMetadataReportRepository:
                     None,
                     proposal_id,
                     report_id,
-                    "tombstoned",
-                    "absent",
+                    kind,
+                    reason,
                 ),
             )
             self._connection.execute(
                 "UPDATE current_review_case_lineages SET review_case_id=NULL,"
-                "transition_id=?,checkpoint=?,outcome='tombstoned' "
+                "transition_id=?,checkpoint=?,outcome=? "
                 "WHERE connection_name=? AND library_name=? AND item_id=? "
                 "AND review_case_id=? AND checkpoint=?",
                 (
                     transition.transition_id,
                     checkpoint + 1,
+                    kind,
                     connection,
                     library,
                     item_id,
@@ -1613,7 +1661,12 @@ class SQLiteMetadataReportRepository:
             if (
                 prior is not None
                 and prior[0] == proposal_set.proposal_set_id
-                and validated[5] != "tombstoned"
+                and self._connection.execute(
+                    "SELECT actor FROM review_case_transitions "
+                    "WHERE transition_id=?",
+                    (validated[3],),
+                ).fetchone()
+                != ("review-preparation-v1",)
             ):
                 if self._binding is not None:
                     self._binding.require_current()
@@ -3181,7 +3234,7 @@ def open_shadow_preview_repository(path: Path) -> SQLiteShadowPreviewRepository:
             os.close(descriptor)
 
 
-def open_repository(path: Path, *, create: bool = True, expected_identity: tuple[int, int] | None = None, cross_thread: bool = False) -> SQLiteMetadataReportRepository:
+def open_repository(path: Path, *, create: bool = True, expected_identity: tuple[int, int] | None = None, cross_thread: bool = False, authority: object | None = None) -> SQLiteMetadataReportRepository:
     created = False
     descriptor = -1
     created_identity: tuple[int, int] | None = None
@@ -3201,7 +3254,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
                 raise MetadataReportError("database path is invalid")
             _validate_delete_mode_header(descriptor)
             if sys.platform.startswith("linux"):
-                binding = _LinuxDatabaseBinding.create(path, descriptor)
+                binding = _LinuxDatabaseBinding.create(path, descriptor, authority)
                 descriptor = -1
                 _validate_existing_read_only(
                     binding.alias_path, binding.descriptor
@@ -3221,7 +3274,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             created = True
             created_identity = (information.st_dev, information.st_ino)
             if sys.platform.startswith("linux"):
-                binding = _LinuxDatabaseBinding.create(path, descriptor)
+                binding = _LinuxDatabaseBinding.create(path, descriptor, authority)
                 descriptor = -1
         else:
             raise MetadataReportError("database is unavailable")

@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from typing import cast
@@ -953,6 +954,23 @@ class MetadataPersistenceTests(unittest.TestCase):
             reopened.close()
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
+    def test_linux_database_authority_allows_same_process_derived_connection(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            owner = open_repository(path)
+            derived = open_repository(
+                path,
+                create=False,
+                authority=owner.authority,
+            )
+            derived.publish(_report(), lambda: True)
+            self.assertEqual(derived.get(_report().report_id), _report().to_json())
+            derived.close()
+            owner.close()
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
     def test_linux_database_parent_must_be_owner_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory) / "shared"
@@ -1815,6 +1833,37 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual([1.0], delays)
         self.assertFalse(pacer.wait(deadline=now[0] + 1.0))
         self.assertEqual([1.0], delays)
+
+    def test_hardcover_pacer_serializes_concurrent_callers(self) -> None:
+        active = 0
+        maximum = 0
+        guard = threading.Lock()
+        barrier = threading.Barrier(3)
+
+        def sleep(_: float) -> None:
+            nonlocal active, maximum
+            with guard:
+                active += 1
+                maximum = max(maximum, active)
+            time.sleep(0.02)
+            with guard:
+                active -= 1
+
+        pacer = HardcoverPacer(clock=lambda: 0.0, sleep=sleep)
+        self.assertTrue(pacer.wait(deadline=None))
+
+        def wait() -> None:
+            barrier.wait()
+            self.assertTrue(pacer.wait(deadline=None))
+
+        threads = [threading.Thread(target=wait) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(maximum, 1)
 
     def test_hardcover_requests_retries_and_instances_share_pacing(
         self,

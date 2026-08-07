@@ -44,6 +44,17 @@ changing. Absence candidates are staged after a complete successful library
 enumeration. They become authoritative and may tombstone that library's current
 review lineage only when every work in that scan completes without failure or
 stale input; a partial or failed scan discards them.
+Discovery is serialized across the two lanes because the catalogue has one
+current-generation publication boundary. The first library request for an
+absent or configuration-stale catalogue enumerates every configured library to
+establish a complete baseline; later library refreshes retain the other
+libraries. Queued work validates its exact item identity and source revision in
+the latest current generation, so an unrelated library refresh does not make it
+stale. Provider pacers serialize shared dispatch starts across both lanes.
+Present items that cease to be eligible are staged and retire their current
+review lineage only under the same whole-scan success gate as confirmed
+absences. Preparation-owned tombstones and retirements permit later
+exact-current readmission if the item reappears or becomes eligible again.
 Report publication and its extraction checkpoint commit in the same SQLite
 transaction, closing the crash window between an immutable report and durable
 stage progress. Artifact-orphan recovery is serialized once before the first
@@ -53,6 +64,14 @@ observation, must be complete before proposal creation.
 An item-specific service 404 is a typed stale-input signal and requests bounded
 rediscovery; credential denial and general service failure remain technical
 failures rather than masquerading as target drift.
+Target drift detected during ProposalSet currentness validation is likewise a
+typed stale-input result rather than a terminal proposal-publication failure.
+
+On Linux, the review server retains the owner-only parent-directory lock for
+its lifetime and passes an identity-bound authority to its same-process
+pipeline repository connections. Derived connections revalidate that live
+authority and the exact database identity without attempting a second blocking
+lock on the same directory.
 
 The pipeline is manually requested. It is not a generic queue or scheduler and
 does not poll, retry provider failures, rank work, decide fields, construct an
@@ -96,8 +115,10 @@ broker, or plugin seam would add unused policy and authority.
 ## Validation
 
 Focused tests cover request coalescing, exact schema validation, complete and
-empty discovery, successful-scan absence tombstones, failed-scan discard and
-reappearance, unchanged-work
+empty discovery, complete first-refresh baselines, item-scoped currentness
+across unrelated refreshes, successful-scan absence tombstones and ineligible
+retirements, failed-scan discard and reappearance, synchronized shared provider
+pacing, Linux derived database authority, typed proposal currentness, unchanged-work
 reuse, source-revision invalidation, atomic report/checkpoint rollback and
 restart, stage progression, source failure before proposal, third-attempt crash
 containment, completed-ledger recovery, and two-lane independence. The

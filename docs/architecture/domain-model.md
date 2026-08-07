@@ -255,10 +255,14 @@ records.
 
 Claims are persisted before work. Restart changes discovering and running
 claims back to queued without inventing a result. Two fixed claimers have no
-library-wide stage barrier. A complete enumeration stages candidates for the
-fixed `review-preparation-v1`/`tombstoned`/`absent` transition. They are
-appended only after every work in that scan succeeds; partial, stale, or failed
-scans discard them.
+library-wide stage barrier, while catalogue publication and each shared
+provider pacer serialize their own global state. A complete enumeration stages
+candidates for either the fixed
+`review-preparation-v1`/`tombstoned`/`absent` transition when an item vanished,
+or `review-preparation-v1`/`retired`/`ineligible` when it remains present but is
+no longer eligible. They are appended only after every work in that scan
+succeeds; partial, stale, or failed scans discard them. Either
+preparation-owned transition permits later exact-current readmission.
 One bounded work row binds the exact source revision, file identity, and
 producer fingerprint. An unchanged later scan reuses its complete state; a
 changed source or producer restarts at extraction, while a durable partial work

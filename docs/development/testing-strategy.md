@@ -40,8 +40,12 @@ The suite covers:
 
 - authenticated, CSRF-bound review preparation requests and value-free compact
   progress; persisted request coalescing, exact-schema restart recovery,
-  complete successful scans before absence tombstones, failed-scan absence
-  discard, per-work stage progression, every-lane completeness before proposal,
+  complete first-refresh catalogue baselines, item-scoped currentness across
+  unrelated library refreshes, complete successful scans before absence
+  tombstones or ineligible retirements, failed-scan staged-retirement discard,
+  reappearance/readmission, synchronized shared provider pacing, Linux
+  same-process derived database authority, typed proposal-currentness drift,
+  per-work stage progression, every-lane completeness before proposal,
   atomic report/checkpoint rollback and restart,
   bounded third-attempt crash recovery, completed-ledger inert recovery, and a fixed
   two-lane proof that one slow work cannot impose a library-wide stage barrier;

@@ -135,10 +135,14 @@ and Attention views. Duplicate requests coalesce, claimed work resumes after a
 restart, and two fixed lanes allow another ready work to advance while one work
 is slow. Compact checked/total/ready/blocked progress is authenticated,
 private/no-store, and contains no metadata values or paths. Confirmed absences
-are staged after complete enumeration and tombstone current lineages only if the
-whole scan completes successfully. Provider technical failure in any configured
-lane stops before proposal creation, discards staged absences, and remains a
-bounded failure for a later owner-requested scan.
+and present items that are no longer eligible are staged after complete
+enumeration; they tombstone or retire current lineages only if the whole scan
+completes successfully. A stale or absent catalogue first establishes a
+complete baseline for every configured library, while later library scans
+retain unrelated entries. The two lanes serialize catalogue publication and
+share synchronized provider pacing. Provider technical failure in any
+configured lane stops before proposal creation, discards staged retirements,
+and remains a bounded failure for a later owner-requested scan.
 If an item disappears after discovery, its typed not-found result requests the
 same bounded rediscovery as other target or media drift. Authentication and
 service failures remain distinct technical failures.

@@ -88,6 +88,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.application.proposal_sets import (
     CreateProposalSet,
     GetProposalSet,
+    ProposalCurrentnessError,
 )
 from mechanical_librarian.application.review_cases import (
     AdmitReviewCase,
@@ -520,7 +521,7 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
     return run_metadata_report_loaded(configuration, database_path, artifact_store_path, connection_name, library_name, item, file_index, expected_file_identity)
 
 
-def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True) -> str:
+def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True, repository_authority: object | None = None) -> str:
     """Compose one report solely from an already validated configuration snapshot."""
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if mount is None:
@@ -589,7 +590,11 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
             )
         )
     def repository_factory():
-        repository = open_repository(database_path, expected_identity=repository_identity)
+        repository = open_repository(
+            database_path,
+            expected_identity=repository_identity,
+            authority=repository_authority,
+        )
         try:
             if recover_artifacts:
                 artifacts.recover_unreferenced(repository.artifact_is_referenced)
@@ -656,15 +661,25 @@ def create_proposal_set_loaded(
     database_path: Path,
     artifact_store_path: Path,
     report_id: str,
+    repository_authority: object | None = None,
 ) -> str:
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
-    repository = open_repository(database_path, create=False)
+    repository = open_repository(
+        database_path, create=False, authority=repository_authority
+    )
+
+    def current(report) -> bool:
+        try:
+            return _require_report_current_loaded(
+                configuration, artifacts, report
+            )
+        except (CurrentnessError, TargetNotFoundError) as error:
+            raise ProposalCurrentnessError("proposal report is stale") from error
+
     try:
         return CreateProposalSet(
             repository,
-            lambda report: _require_report_current_loaded(
-                configuration, artifacts, report
-            ),
+            current,
         ).run(report_id)
     finally:
         repository.close()
@@ -675,9 +690,12 @@ def admit_review_case_loaded(
     database_path: Path,
     artifact_store_path: Path,
     proposal_set_id: str,
+    repository_authority: object | None = None,
 ) -> str:
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
-    repository = open_repository(database_path, create=False)
+    repository = open_repository(
+        database_path, create=False, authority=repository_authority
+    )
 
     def current(proposal) -> bool:
         try:
@@ -700,6 +718,7 @@ def create_review_pipeline(
     database_path: Path,
     catalogue_path: Path,
     artifact_store_path: Path,
+    database_authority: object | None = None,
 ) -> ReviewPreparationSupervisor:
     artifact_recovery_lock = threading.Lock()
     artifacts_recovered = False
@@ -710,7 +729,11 @@ def create_review_pipeline(
             if artifacts_recovered:
                 return
             artifacts = CoverArtifactStore(artifact_store_path, create=False)
-            recovery_repository = open_repository(database_path, create=False)
+            recovery_repository = open_repository(
+                database_path,
+                create=False,
+                authority=database_authority,
+            )
             try:
                 artifacts.recover_unreferenced(
                     recovery_repository.artifact_is_referenced
@@ -746,29 +769,32 @@ def create_review_pipeline(
         )
         else None
     )
+    discovery_lock = threading.Lock()
 
     def repository_factory():
-        return open_repository(database_path, create=False)
+        return open_repository(
+            database_path, create=False, authority=database_authority
+        )
 
     def discover(connection: str, library: str):
-        repository = open_catalogue(catalogue_path, create=True)
-        try:
-            service = RefreshCurrentCatalogue(reader, repository)
-            service.refresh_library(configuration, connection, library)
-            snapshot = repository.snapshot(
-                batch_catalogue_fingerprint(configuration)
-            )
-            return snapshot.generation, snapshot.fingerprint, snapshot.entries
-        except CatalogueError as error:
-            raise ReviewPipelineError("transient") from error
-        finally:
-            repository.close()
+        with discovery_lock:
+            repository = open_catalogue(catalogue_path, create=True)
+            try:
+                service = RefreshCurrentCatalogue(reader, repository)
+                service.refresh_library(configuration, connection, library)
+                snapshot = repository.snapshot(
+                    batch_catalogue_fingerprint(configuration)
+                )
+                return snapshot.generation, snapshot.fingerprint, snapshot.entries
+            except CatalogueError as error:
+                raise ReviewPipelineError("transient") from error
+            finally:
+                repository.close()
 
     def extract(action: PipelineAction) -> tuple[str, bool]:
         catalogue = open_catalogue(catalogue_path, create=False)
         try:
-            entry = catalogue.current_entry(
-                action.catalogue_generation or 0,
+            entry = catalogue.latest_entry(
                 action.catalogue_fingerprint or "",
                 (
                     action.connection,
@@ -784,6 +810,7 @@ def create_review_pipeline(
         if (
             entry is None
             or entry.file_identity != action.file_identity
+            or entry.updated_at != action.source_revision
             or not entry.eligible
         ):
             raise ReviewPipelineError("stale")
@@ -802,6 +829,7 @@ def create_review_pipeline(
                 hardcover_pacer=hardcover_pacer,
                 review_action=action,
                 recover_artifacts=False,
+                repository_authority=database_authority,
             )
         except (CurrentnessError, TargetNotFoundError) as error:
             raise ReviewPipelineError("stale") from error
@@ -809,7 +837,9 @@ def create_review_pipeline(
         return value.report_id, True
 
     def providers(report_id: str):
-        repository = open_repository(database_path, create=False)
+        repository = open_repository(
+            database_path, create=False, authority=database_authority
+        )
         try:
             value = MetadataReport.from_json(repository.get(report_id))
         finally:
@@ -824,14 +854,25 @@ def create_review_pipeline(
         )
 
     def propose(report_id: str) -> str:
-        serialized = create_proposal_set_loaded(
-            configuration, database_path, artifact_store_path, report_id
-        )
+        try:
+            serialized = create_proposal_set_loaded(
+                configuration,
+                database_path,
+                artifact_store_path,
+                report_id,
+                database_authority,
+            )
+        except ProposalCurrentnessError as error:
+            raise ReviewPipelineError("stale") from error
         return ProposalSet.from_json(serialized).proposal_set_id
 
     def admit(proposal_set_id: str) -> tuple[str, str | None]:
         serialized = admit_review_case_loaded(
-            configuration, database_path, artifact_store_path, proposal_set_id
+            configuration,
+            database_path,
+            artifact_store_path,
+            proposal_set_id,
+            database_authority,
         )
         result = ReviewAdmissionResult.from_json(serialized)
         if result.status == "stale":
@@ -839,7 +880,9 @@ def create_review_pipeline(
         return result.status, result.review_case_id
 
     def project(review_case_id: str) -> bool:
-        repository = open_repository(database_path, create=False)
+        repository = open_repository(
+            database_path, create=False, authority=database_authority
+        )
         try:
             repository.read_current_review_case(review_case_id)
             return True
@@ -1227,7 +1270,11 @@ def run_review_server(
         repository = open_repository(database_path, create=False, cross_thread=True)
         try:
             preparation = create_review_pipeline(
-                configuration, database_path, catalogue_path, artifact_store_path
+                configuration,
+                database_path,
+                catalogue_path,
+                artifact_store_path,
+                repository.authority,
             )
             app = create_review_app(
                 repository,

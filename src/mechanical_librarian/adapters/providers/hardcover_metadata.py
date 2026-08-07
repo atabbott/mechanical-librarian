@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import threading
 import time
 import unicodedata
 from dataclasses import replace
@@ -111,23 +112,25 @@ class HardcoverPacer:
         self._clock = clock
         self._sleep = sleep
         self._last_start: float | None = None
+        self._lock = threading.Lock()
 
     def wait(self, *, deadline: float | None) -> bool:
-        now = self._clock()
-        delay = (
-            0.0
-            if self._last_start is None
-            else max(0.0, 1.0 - (now - self._last_start))
-        )
-        if deadline is not None and now + delay >= deadline:
-            return False
-        if delay:
-            self._sleep(delay)
-        now = self._clock()
-        if deadline is not None and now >= deadline:
-            return False
-        self._last_start = now
-        return True
+        with self._lock:
+            now = self._clock()
+            delay = (
+                0.0
+                if self._last_start is None
+                else max(0.0, 1.0 - (now - self._last_start))
+            )
+            if deadline is not None and now + delay >= deadline:
+                return False
+            if delay:
+                self._sleep(delay)
+            now = self._clock()
+            if deadline is not None and now >= deadline:
+                return False
+            self._last_start = now
+            return True
 
 
 class HardcoverMetadataProvider:

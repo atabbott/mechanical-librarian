@@ -46,9 +46,14 @@ an invalid fourth claim. Operational rows contain only bounded identifiers, stag
 counts, timestamps, and fixed failure codes; the authenticated progress response
 contains no metadata values, paths, credentials, provider payloads, or raw
 errors. A complete target enumeration stages absence candidates, but only a
-fully successful scan may tombstone a review lineage. Technical failure in any
+fully successful scan may tombstone an absent review lineage or retire a
+present lineage that is no longer eligible. Catalogue discovery and shared
+provider pacers serialize their mutation of global generation and pacing state
+across the two lanes. The first stale catalogue refresh establishes a complete
+configured-library baseline; later work validates its exact item and revision
+against the latest generation. Technical failure in any
 configured provider lane stops that work before proposal creation and prevents
-that scan's tombstones. The path cannot decide a field, construct an apply plan, write a
+that scan's staged retirements. The path cannot decide a field, construct an apply plan, write a
 target or media file, delete media, poll, or automatically retry provider
 failure.
 

@@ -57,6 +57,7 @@ class CatalogueRepository(Protocol):
     def inspect(self, fingerprint: str) -> tuple[CatalogueEntry, ...]: ...
     def snapshot(self, fingerprint: str): ...
     def current_entry(self, generation: int, fingerprint: str, key: tuple[str, str, str, str]) -> CatalogueEntry | None: ...
+    def latest_entry(self, fingerprint: str, key: tuple[str, str, str, str]) -> CatalogueEntry | None: ...
     def close(self) -> None: ...
 
 
@@ -123,17 +124,23 @@ class RefreshCurrentCatalogue:
         try:
             try:
                 existing = self._repository.inspect(fingerprint)
+                libraries = (library,)
             except CatalogueStaleError:
                 existing = ()
+                libraries = configuration.libraries
             retained = tuple(
                 entry
                 for entry in existing
                 if (entry.connection, entry.library) != (connection, library_name)
             )
-            maximum = 10_000 - len(retained)
-            discovered = self._reader.read_library(
-                library.connection, library, maximum
-            )
+            discovered: list[CatalogueEntry] = []
+            for selected in libraries:
+                maximum = 10_000 - len(retained) - len(discovered)
+                discovered.extend(
+                    self._reader.read_library(
+                        selected.connection, selected, maximum
+                    )
+                )
             return self._repository.publish(
                 fingerprint, retained + tuple(discovered)
             )
