@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import concurrent.futures
 import csv
 import hashlib
 import io
@@ -51,6 +52,7 @@ _CANONICAL_TEST_ARGS = (
     "-p",
     "test_*.py",
 )
+_REQUIRED_TEST_SHARDS = 3
 _SLOW_CONTINUOUS_REVIEW_TEST_ARGS = (
     "-m",
     "unittest",
@@ -111,6 +113,7 @@ class ExactArtifactEvidence:
     locked_dependencies: bool
     qualification_tier: str
     full_suite_executed: bool
+    required_suite_shards: int
     slow_qualification_executed: bool
     review_case_lifecycle_executed: bool
     wheel_record_validated: bool
@@ -134,6 +137,7 @@ def qualify_exact_artifact(
     wheel_output: Path | None = None,
     environment_path: Path | None = None,
     review_case_probe: bool = False,
+    parallel_required_suite: bool = False,
 ) -> ExactArtifactEvidence:
     """Qualify one clean Git source revision through its exact installed wheel."""
 
@@ -346,12 +350,19 @@ def qualify_exact_artifact(
         )
 
         if test_args is not None:
-            _run(
-                (str(environment_python), "-I", *test_args),
-                cwd=build_source,
-                env=runtime_environment,
-                reason="installed_test_suite_failed",
-            )
+            if parallel_required_suite and test_args == _CANONICAL_TEST_ARGS:
+                _run_required_test_suite(
+                    environment_python,
+                    build_source,
+                    runtime_environment,
+                )
+            else:
+                _run(
+                    (str(environment_python), "-I", *test_args),
+                    cwd=build_source,
+                    env=runtime_environment,
+                    reason="installed_test_suite_failed",
+                )
         if (
             not console.is_file()
             or console.is_symlink()
@@ -404,6 +415,13 @@ def qualify_exact_artifact(
             else "none"
         ),
         full_suite_executed=test_args == _CANONICAL_TEST_ARGS,
+        required_suite_shards=(
+            _REQUIRED_TEST_SHARDS
+            if parallel_required_suite and test_args == _CANONICAL_TEST_ARGS
+            else 1
+            if test_args == _CANONICAL_TEST_ARGS
+            else 0
+        ),
         slow_qualification_executed=(
             test_args == _SLOW_CONTINUOUS_REVIEW_TEST_ARGS
         ),
@@ -1227,6 +1245,51 @@ def _run(
     )
 
 
+def _run_required_test_suite(
+    environment_python: Path,
+    source_root: Path,
+    environment: dict[str, str],
+) -> None:
+    commands = tuple(
+        (
+            str(environment_python),
+            "-I",
+            "scripts/run_required_test_shard.py",
+            "--shard-index",
+            str(index),
+            "--shard-count",
+            str(_REQUIRED_TEST_SHARDS),
+        )
+        for index in range(_REQUIRED_TEST_SHARDS)
+    )
+    failures: list[QualificationFailure] = []
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=_REQUIRED_TEST_SHARDS
+    ) as executor:
+        futures = tuple(
+            executor.submit(
+                _run,
+                command,
+                cwd=source_root,
+                env=environment,
+                reason="installed_test_suite_failed",
+            )
+            for command in commands
+        )
+        for future in futures:
+            try:
+                future.result()
+            except QualificationFailure as error:
+                failures.append(error)
+    if failures:
+        reason = (
+            "installed_test_suite_timeout"
+            if any(error.reason.endswith("_timeout") for error in failures)
+            else "installed_test_suite_failed"
+        )
+        raise QualificationFailure(reason)
+
+
 def _read_process_stream(
     process: subprocess.Popen[bytes],
     stream: BinaryIO,
@@ -1742,6 +1805,7 @@ def main(argv: list[str] | None = None) -> int:
             wheel_output=arguments.wheel_output,
             environment_path=arguments.environment,
             review_case_probe=True,
+            parallel_required_suite=(arguments.test_tier == "required"),
             test_args=(
                 _CANONICAL_TEST_ARGS
                 if arguments.test_tier == "required"

@@ -29,7 +29,9 @@
   workflow over a representative 45-item, three-library cohort; the complete
   1,000-item workload and memory ceiling remain an explicit exact-head slow tier.
   Fixed, path-free evidence now distinguishes subprocess timeout from a genuine
-  nonzero test failure.
+  nonzero test failure. The complete required installed suite runs as three
+  deterministic, disjoint shards in its single required hosted job; every shard
+  remains mandatory.
   Transient lane and final-attempt `Retry-After` values
   extend only the transient circuit; paused retry and disappearing activity
   retain truthful controls and visible keyboard focus. Stable terminal failures
