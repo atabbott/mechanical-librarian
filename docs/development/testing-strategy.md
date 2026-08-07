@@ -25,7 +25,7 @@ The protected browser tier remains independently runnable. Install and verify
 the repository-pinned Chromium payload before accepting its result:
 
 ```bash
-uv run playwright install chromium
+uv run playwright install --with-deps chromium
 uv run python scripts/verify_playwright_browser.py
 uv run python scripts/run_test_tier.py browser
 ```

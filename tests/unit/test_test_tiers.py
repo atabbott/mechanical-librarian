@@ -37,15 +37,7 @@ class TestTierTests(unittest.TestCase):
             for path in (root / relative).glob(pattern)
         }
         expected_files = {
-            path.resolve()
-            for directory in (
-                "tests/unit",
-                "tests/integration",
-                "tests/architecture",
-                "tests/browser",
-                "tests/slow",
-            )
-            for path in (root / directory).glob("test_*.py")
+            path.resolve() for path in (root / "tests").rglob("test_*.py")
         }
         self.assertEqual(owned_files, expected_files)
 
