@@ -522,19 +522,26 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
     return run_metadata_report_loaded(configuration, database_path, artifact_store_path, connection_name, library_name, item, file_index, expected_file_identity)
 
 
-def _provider_recovery_delay(provider_instances: list[object], report: MetadataReport) -> int:
-    if not any(
-        status in {ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE}
+def _provider_recovery_delay(
+    provider_instances: dict[str, object], report: MetadataReport
+) -> int:
+    transient_providers = {
+        provider.provider
         for provider in report.providers
-        for status in (
-            provider.status,
-            *(lane.status for lane in provider.lanes),
+        if any(
+            status in {ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE}
+            for status in (
+                provider.status,
+                *(lane.status for lane in provider.lanes),
+            )
         )
-    ):
+    }
+    if not transient_providers:
         return 0
     delays = tuple(
         record.delay_seconds
-        for provider in provider_instances
+        for name, provider in provider_instances.items()
+        if name in transient_providers
         for record in getattr(provider, "attempt_records", ())
         if type(record.delay_seconds) in {int, float}
         and math.isfinite(record.delay_seconds)
@@ -543,7 +550,20 @@ def _provider_recovery_delay(provider_instances: list[object], report: MetadataR
     return min(86_400, math.ceil(max(delays, default=0)))
 
 
-def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True, repository_authority: object | None = None) -> str:
+class _NonClosingRepository:
+    """Let one composed service borrow a pipeline-owned repository connection."""
+
+    def __init__(self, repository) -> None:
+        self._repository = repository
+
+    def __getattr__(self, name: str):
+        return getattr(self._repository, name)
+
+    def close(self) -> None:
+        return None
+
+
+def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True, repository_authority: object | None = None, pipeline_repository=None) -> str:
     """Compose one report solely from an already validated configuration snapshot."""
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if mount is None:
@@ -568,7 +588,7 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
     ):
         hardcover_pacer = HardcoverPacer()
     bindings: list[ProviderBinding] = []
-    provider_instances: list[object] = []
+    provider_instances: dict[str, object] = {}
     for provider in provider_configs:
         def factory(value=provider):
             if value.adapter == "google_books":
@@ -608,7 +628,7 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
                 )
             else:
                 raise MetadataReportError("provider configuration is invalid")
-            provider_instances.append(instance)
+            provider_instances[value.name] = instance
             return instance
         bindings.append(
             ProviderBinding(
@@ -616,10 +636,14 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
             )
         )
     def repository_factory():
-        repository = open_repository(
-            database_path,
-            expected_identity=repository_identity,
-            authority=repository_authority,
+        repository = (
+            _NonClosingRepository(pipeline_repository)
+            if pipeline_repository is not None
+            else open_repository(
+                database_path,
+                expected_identity=repository_identity,
+                authority=repository_authority,
+            )
         )
         try:
             if recover_artifacts:
@@ -692,10 +716,15 @@ def create_proposal_set_loaded(
     artifact_store_path: Path,
     report_id: str,
     repository_authority: object | None = None,
+    pipeline_repository=None,
 ) -> str:
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
-    repository = open_repository(
-        database_path, create=False, authority=repository_authority
+    repository = (
+        _NonClosingRepository(pipeline_repository)
+        if pipeline_repository is not None
+        else open_repository(
+            database_path, create=False, authority=repository_authority
+        )
     )
 
     def current(report) -> bool:
@@ -721,10 +750,15 @@ def admit_review_case_loaded(
     artifact_store_path: Path,
     proposal_set_id: str,
     repository_authority: object | None = None,
+    pipeline_repository=None,
 ) -> str:
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
-    repository = open_repository(
-        database_path, create=False, authority=repository_authority
+    repository = (
+        _NonClosingRepository(pipeline_repository)
+        if pipeline_repository is not None
+        else open_repository(
+            database_path, create=False, authority=repository_authority
+        )
     )
 
     def current(proposal) -> bool:
@@ -821,7 +855,7 @@ def create_review_pipeline(
             finally:
                 repository.close()
 
-    def extract(action: PipelineAction) -> tuple[str, bool]:
+    def extract(pipeline_repository, action: PipelineAction) -> tuple[str, bool]:
         catalogue = open_catalogue(catalogue_path, create=False)
         try:
             entry = catalogue.latest_entry(
@@ -860,20 +894,15 @@ def create_review_pipeline(
                 review_action=action,
                 recover_artifacts=False,
                 repository_authority=database_authority,
+                pipeline_repository=pipeline_repository,
             )
         except (CurrentnessError, TargetNotFoundError) as error:
             raise ReviewPipelineError("stale") from error
         value = MetadataReport.from_json(serialized)
         return value.report_id, True
 
-    def providers(report_id: str):
-        repository = open_repository(
-            database_path, create=False, authority=database_authority
-        )
-        try:
-            value = MetadataReport.from_json(repository.get(report_id))
-        finally:
-            repository.close()
+    def providers(pipeline_repository, report_id: str):
+        value = MetadataReport.from_json(pipeline_repository.get(report_id))
         return tuple(
             status
             for provider in value.providers
@@ -883,7 +912,7 @@ def create_review_pipeline(
             )
         )
 
-    def propose(report_id: str) -> str:
+    def propose(pipeline_repository, report_id: str) -> str:
         try:
             serialized = create_proposal_set_loaded(
                 configuration,
@@ -891,35 +920,32 @@ def create_review_pipeline(
                 artifact_store_path,
                 report_id,
                 database_authority,
+                pipeline_repository,
             )
         except ProposalCurrentnessError as error:
             raise ReviewPipelineError("stale") from error
         return ProposalSet.from_json(serialized).proposal_set_id
 
-    def admit(proposal_set_id: str) -> tuple[str, str | None]:
+    def admit(pipeline_repository, proposal_set_id: str) -> tuple[str, str | None]:
         serialized = admit_review_case_loaded(
             configuration,
             database_path,
             artifact_store_path,
             proposal_set_id,
             database_authority,
+            pipeline_repository,
         )
         result = ReviewAdmissionResult.from_json(serialized)
         if result.status == "stale":
             raise ReviewPipelineError("stale")
         return result.status, result.review_case_id
 
-    def project(review_case_id: str) -> bool:
-        repository = open_repository(
-            database_path, create=False, authority=database_authority
-        )
+    def project(pipeline_repository, review_case_id: str) -> bool:
         try:
-            repository.read_current_review_case(review_case_id)
+            pipeline_repository.read_current_review_case(review_case_id)
             return True
         except Exception as error:
             raise ReviewPipelineError("projection") from error
-        finally:
-            repository.close()
 
     pipeline = ReviewPreparationPipeline(
         repository_factory=repository_factory,

@@ -164,9 +164,14 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
         "value": detail.get("coverPath"),
     }
     media_revision = {
-        name: metadata_file.get(name)
+        name: value
         for name in ("mtimeMs", "mtime", "modifiedAt", "lastModified")
-        if type(metadata_file) is dict and name in metadata_file
+        if type(metadata_file) is dict
+        and (value := metadata_file.get(name)) is not None
+        and (
+            (type(value) is int and value >= 0)
+            or (type(value) is str and 1 <= len(value) <= 128)
+        )
     }
     # Audiobookshelf's item timestamp is also advanced by playback activity, so
     # prefer the file revision when it is available.  Without one, retain the

@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-08-07
 - Owners: project maintainers
-- Supersedes: the polling deferral in ADR-0031
+- Supersedes: the polling deferral and complete-baseline catalogue publication boundary in ADR-0031
 
 ## Context
 
@@ -39,6 +39,9 @@ review inputs. Stable media revisions keep volatile service activity timestamps
 out of that identity; an absent material revision or an independently
 unversioned cover conservatively falls back to the item timestamp. The clean
 catalogue schema advances to `catalogue-v2` to retain that fingerprint.
+The absent or configuration-stale catalogue baseline is published progressively
+per successfully observed library, replacing ADR-0031's all-library initial
+publication boundary so one unavailable connection cannot block healthy ones.
 
 The authenticated shell exposes one compact activity control only while work is
 active or operational action is needed. Its popover contains bounded counts and

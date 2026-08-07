@@ -258,7 +258,7 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                 offset = {"fiction": 1, "history": 2, "science": 3}[library]
                 return offset, f"{offset:064x}", tuple(entries[library])
 
-            def extract(action: PipelineAction):
+            def extract(_, action: PipelineAction):
                 assert action.item_id is not None
                 extracted.append(action.item_id)
                 index = int(action.file_identity or "0", 16)
@@ -291,7 +291,7 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                 )
                 return report.report_id, True
 
-            def providers(report_id: str):
+            def providers(_, report_id: str):
                 item = report_items[report_id]
                 attempt = provider_attempts.get(item, 0)
                 provider_attempts[item] = attempt + 1
@@ -301,13 +301,13 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                     return (ProviderStatus.AUTHENTICATION,)
                 return (ProviderStatus.DISABLED,)
 
-            def propose(report_id: str) -> str:
+            def propose(_, report_id: str) -> str:
                 proposal = evaluate_report(reports[report_id])
                 proposals[proposal.proposal_set_id] = proposal
                 repository.publish_proposal(proposal)
                 return proposal.proposal_set_id
 
-            def admit(proposal_id: str):
+            def admit(_, proposal_id: str):
                 result = json.loads(
                     repository.admit_review_case(proposals[proposal_id])
                 )
@@ -325,7 +325,7 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                     providers=providers,
                     propose=propose,
                     admit=admit,
-                    project=lambda _: True,
+                    project=lambda *_: True,
                     clock=lambda: clock[0],
                 )
 

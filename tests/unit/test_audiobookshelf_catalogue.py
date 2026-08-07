@@ -122,6 +122,26 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
         )
         self.assertNotEqual(first.source_fingerprint, second.source_fingerprint)
 
+    def test_invalid_material_revision_retains_item_revision_fallback(self) -> None:
+        summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+        for invalid_revision in (None, -1, "", [], {}):
+            baseline = _item()
+            baseline["media"]["ebookFile"]["metadata"]["mtimeMs"] = invalid_revision
+            changed = _item()
+            changed["updatedAt"] = 2
+            changed["media"]["ebookFile"]["metadata"]["mtimeMs"] = invalid_revision
+            first = catalogue_entry(
+                "primary", _library(), None, summary, baseline
+            )
+            second = catalogue_entry(
+                "primary",
+                _library(),
+                None,
+                {**summary, "updatedAt": 2},
+                changed,
+            )
+            self.assertNotEqual(first.source_fingerprint, second.source_fingerprint)
+
     def test_reviewed_field_presence_changes_source_fingerprint(self) -> None:
         summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
         absent = _item()

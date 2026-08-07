@@ -174,7 +174,8 @@ class ReviewPipelineRepository(Protocol):
         action: PipelineAction,
         output_id: str | None,
         completed_at: int,
-    ) -> None: ...
+        claim_next: bool = False,
+    ) -> PipelineAction | None: ...
 
     def fail_review_pipeline_action(
         self,
@@ -198,11 +199,17 @@ class ReviewPreparationPipeline:
         discover: Callable[
             [str, str], tuple[int, str, tuple[CatalogueEntry, ...]]
         ],
-        extract: Callable[[PipelineAction], tuple[str, bool]],
-        providers: Callable[[str], tuple[ProviderStatus, ...]],
-        propose: Callable[[str], str],
-        admit: Callable[[str], tuple[str, str | None]],
-        project: Callable[[str], bool],
+        extract: Callable[
+            [ReviewPipelineRepository, PipelineAction], tuple[str, bool]
+        ],
+        providers: Callable[
+            [ReviewPipelineRepository, str], tuple[ProviderStatus, ...]
+        ],
+        propose: Callable[[ReviewPipelineRepository, str], str],
+        admit: Callable[
+            [ReviewPipelineRepository, str], tuple[str, str | None]
+        ],
+        project: Callable[[ReviewPipelineRepository, str], bool],
         clock: Callable[[], int] = lambda: int(time.time()),
     ) -> None:
         if not libraries or len(libraries) != len(set(libraries)):
@@ -327,7 +334,9 @@ class ReviewPreparationPipeline:
         finally:
             repository.close()
 
-    def run_next(self) -> bool:
+    def run_next(self, maximum_actions: int = 64) -> bool:
+        if type(maximum_actions) is not int or not 1 <= maximum_actions <= 64:
+            raise ReviewPipelineError("configuration")
         repository = self._open_repository()
         try:
             try:
@@ -338,54 +347,79 @@ class ReviewPreparationPipeline:
                 raise ReviewPipelineError("persistence") from error
             if action is None:
                 return False
-            try:
-                output_id: str | None = None
-                if action.stage == "discovery":
-                    generation, fingerprint, entries = self._discover(
-                        action.connection, action.library
-                    )
-                    self._complete_discovery(
-                        repository, action, generation, fingerprint, entries
-                    )
-                    return True
-                if action.stage == "extraction":
-                    output_id, checkpoint_committed = self._extract(action)
-                    if checkpoint_committed:
-                        return True
-                elif action.stage == "provider":
-                    if action.report_id is None:
-                        raise ReviewPipelineError("state")
-                    statuses = self._providers(action.report_id)
-                    disposition = _provider_failure_disposition(statuses)
-                    if disposition is not None:
-                        self._fail(repository, action, *disposition)
-                        return True
-                elif action.stage == "proposal":
-                    if action.report_id is None:
-                        raise ReviewPipelineError("state")
-                    output_id = self._propose(action.report_id)
-                elif action.stage == "admission":
-                    if action.proposal_set_id is None:
-                        raise ReviewPipelineError("state")
-                    _, output_id = self._admit(action.proposal_set_id)
-                elif action.stage == "projection":
-                    if action.review_case_id is not None and not self._project(
-                        action.review_case_id
-                    ):
-                        raise ReviewPipelineError("projection")
-                self._advance(repository, action, output_id)
-            except ReviewPipelineError as error:
-                self._fail(
+            for index in range(maximum_actions):
+                next_action = self._run_claimed_action(
                     repository,
                     action,
-                    error.code,
-                    error.code in {"stale", "transient"},
+                    claim_next=index + 1 < maximum_actions,
                 )
-            except Exception:
-                self._fail(repository, action, "failed", False)
+                if next_action is None:
+                    return True
+                action = next_action
             return True
         finally:
             repository.close()
+
+    def _run_claimed_action(
+        self,
+        repository: ReviewPipelineRepository,
+        action: PipelineAction,
+        *,
+        claim_next: bool,
+    ) -> PipelineAction | None:
+        try:
+            output_id: str | None = None
+            if action.stage == "discovery":
+                generation, fingerprint, entries = self._discover(
+                    action.connection, action.library
+                )
+                self._complete_discovery(
+                    repository, action, generation, fingerprint, entries
+                )
+                return None
+            if action.stage == "extraction":
+                output_id, checkpoint_committed = self._extract(
+                    repository, action
+                )
+                if checkpoint_committed:
+                    return None
+            elif action.stage == "provider":
+                if action.report_id is None:
+                    raise ReviewPipelineError("state")
+                statuses = self._providers(repository, action.report_id)
+                disposition = _provider_failure_disposition(statuses)
+                if disposition is not None:
+                    self._fail(repository, action, *disposition)
+                    return None
+            elif action.stage == "proposal":
+                if action.report_id is None:
+                    raise ReviewPipelineError("state")
+                output_id = self._propose(repository, action.report_id)
+            elif action.stage == "admission":
+                if action.proposal_set_id is None:
+                    raise ReviewPipelineError("state")
+                _, output_id = self._admit(repository, action.proposal_set_id)
+            elif action.stage == "projection":
+                if action.review_case_id is not None and not self._project(
+                    repository, action.review_case_id
+                ):
+                    raise ReviewPipelineError("projection")
+            return self._advance(
+                repository,
+                action,
+                output_id,
+                claim_next=claim_next,
+            )
+        except ReviewPipelineError as error:
+            self._fail(
+                repository,
+                action,
+                error.code,
+                error.code in {"stale", "transient"},
+            )
+        except Exception:
+            self._fail(repository, action, "failed", False)
+        return None
 
     def _complete_discovery(
         self,
@@ -409,10 +443,12 @@ class ReviewPreparationPipeline:
         repository: ReviewPipelineRepository,
         action: PipelineAction,
         output_id: str | None,
-    ) -> None:
+        *,
+        claim_next: bool,
+    ) -> PipelineAction | None:
         try:
-            repository.advance_review_pipeline_action(
-                action, output_id, self._clock()
+            return repository.advance_review_pipeline_action(
+                action, output_id, self._clock(), claim_next
             )
         except ReviewPipelineError:
             raise

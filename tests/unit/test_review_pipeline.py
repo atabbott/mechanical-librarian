@@ -183,6 +183,43 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         assert recent is not None
         self.assertEqual((aged.item_id, recent.item_id), ("old", "recent"))
 
+    def test_advance_atomically_claims_recoverable_next_action(self) -> None:
+        repository = open_repository(self.path)
+        report = _report()
+        repository.publish(report, lambda: True)
+        repository.request_review_scan(
+            "primary", "ebooks", "lib-1", _PRODUCER, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "a" * 64,
+            (replace(_entry("item-1", report.file.identity), library="ebooks"),),
+            12,
+        )
+        extraction = repository.claim_review_pipeline_action(13)
+        assert extraction is not None
+        provider = repository.advance_review_pipeline_action(
+            extraction, report.report_id, 14, True
+        )
+        assert provider is not None
+        self.assertEqual(provider.stage, "provider")
+        repository.close()
+
+        reopened = open_repository(self.path)
+        reopened.recover_review_pipeline(
+            (("primary", "ebooks", "lib-1", _PRODUCER),)
+        )
+        recovered = reopened.claim_review_pipeline_action(15)
+        reopened.close()
+        assert recovered is not None
+        self.assertEqual(
+            (recovered.action_id, recovered.stage, recovered.attempt),
+            (provider.action_id, "provider", 2),
+        )
+
     def test_admission_target_not_found_is_typed_stale(self) -> None:
         repository = open_repository(self.path)
         report = _report()
@@ -622,15 +659,15 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             repository_factory=lambda: open_repository(self.path),
             libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
             discover=lambda *_: (_ for _ in ()).throw(RuntimeError("synthetic")),
-            extract=lambda _: (_ for _ in ()).throw(AssertionError()),
-            providers=lambda _: (),
-            propose=lambda _: (_ for _ in ()).throw(AssertionError()),
-            admit=lambda _: (_ for _ in ()).throw(AssertionError()),
-            project=lambda _: True,
+            extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            providers=lambda *_: (),
+            propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            project=lambda *_: True,
             clock=lambda: 20,
         )
         pipeline.request("primary", "ebooks")
-        self.assertTrue(pipeline.run_next())
+        self.assertTrue(pipeline.run_next(1))
         repository = open_repository(self.path)
         pointer = repository._connection.execute(
             "SELECT review_case_id,outcome FROM current_review_case_lineages"
@@ -712,7 +749,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         )]
         extracted: list[str] = []
 
-        def publish_report(_: PipelineAction):
+        def publish_report(_, __: PipelineAction):
             extracted.append(report.report_id)
             repository = open_repository(self.path)
             try:
@@ -721,7 +758,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 repository.close()
             return report.report_id, False
 
-        def publish_proposal(_: str) -> str:
+        def publish_proposal(_, __: str) -> str:
             repository = open_repository(self.path)
             try:
                 repository.publish_proposal(proposal)
@@ -729,7 +766,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 repository.close()
             return proposal.proposal_set_id
 
-        def admit(_: str) -> tuple[str, str | None]:
+        def admit(_, __: str) -> tuple[str, str | None]:
             repository = open_repository(self.path)
             try:
                 result = json.loads(repository.admit_review_case(proposal))
@@ -742,15 +779,15 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
             discover=lambda *_: (1, "d" * 64, tuple(entries)),
             extract=publish_report,
-            providers=lambda _: (ProviderStatus.DISABLED,),
+            providers=lambda *_: (ProviderStatus.DISABLED,),
             propose=publish_proposal,
             admit=admit,
-            project=lambda case_id: case_id.startswith("review_case_"),
+            project=lambda _, case_id: case_id.startswith("review_case_"),
             clock=lambda: 20,
         )
         pipeline.request("primary", "ebooks")
-        self.assertEqual(sum(pipeline.run_next() for _ in range(6)), 6)
-        self.assertFalse(pipeline.run_next())
+        self.assertEqual(sum(pipeline.run_next(1) for _ in range(6)), 6)
+        self.assertFalse(pipeline.run_next(1))
         progress = pipeline.progress("primary", "ebooks")
         assert progress is not None
         self.assertEqual(
@@ -760,16 +797,16 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertEqual(len(extracted), 1)
 
         pipeline.request("primary", "ebooks")
-        self.assertTrue(pipeline.run_next())
-        self.assertFalse(pipeline.run_next())
+        self.assertTrue(pipeline.run_next(1))
+        self.assertFalse(pipeline.run_next(1))
         self.assertEqual(len(extracted), 1)
 
         entries[0] = replace(
             entries[0], updated_at=2, source_fingerprint="9" * 64
         )
         pipeline.request("primary", "ebooks")
-        self.assertTrue(pipeline.run_next())
-        self.assertTrue(pipeline.run_next())
+        self.assertTrue(pipeline.run_next(1))
+        self.assertTrue(pipeline.run_next(1))
         self.assertEqual(len(extracted), 2)
 
         changed_producer = "e" * 64
@@ -800,7 +837,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         ]
         report = _report()
 
-        def publish_report(_: PipelineAction) -> str:
+        def publish_report(_, __: PipelineAction) -> str:
             extracted.append(report.report_id)
             repository = open_repository(self.path)
             try:
@@ -835,17 +872,17 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 ),
             ),
             extract=publish_report,
-            providers=lambda _: provider_statuses.pop(0),
-            propose=lambda report_id: proposed.append(report_id) or "unreachable",
-            admit=lambda _: ("no_case", None),
-            project=lambda _: True,
+            providers=lambda *_: provider_statuses.pop(0),
+            propose=lambda _, report_id: proposed.append(report_id) or "unreachable",
+            admit=lambda *_: ("no_case", None),
+            project=lambda *_: True,
             clock=lambda: clock[0],
         )
         pipeline.request("primary", "ebooks")
-        self.assertTrue(pipeline.run_next())
-        self.assertTrue(pipeline.run_next())
-        self.assertTrue(pipeline.run_next())
-        self.assertFalse(pipeline.run_next())
+        self.assertTrue(pipeline.run_next(1))
+        self.assertTrue(pipeline.run_next(1))
+        self.assertTrue(pipeline.run_next(1))
+        self.assertFalse(pipeline.run_next(1))
         self.assertEqual(proposed, [])
         progress = pipeline.progress("primary", "ebooks")
         assert progress is not None
@@ -860,13 +897,13 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         repository.close()
         self.assertGreater(deadline, clock[0])
         clock[0] = deadline - 1
-        self.assertFalse(pipeline.run_next())
+        self.assertFalse(pipeline.run_next(1))
         clock[0] = deadline
-        self.assertTrue(pipeline.run_next())
-        self.assertTrue(pipeline.run_next())
+        self.assertTrue(pipeline.run_next(1))
+        self.assertTrue(pipeline.run_next(1))
         self.assertEqual(len(extracted), 2)
         self.assertEqual(proposed, [])
-        self.assertTrue(pipeline.run_next())
+        self.assertTrue(pipeline.run_next(1))
         self.assertEqual(proposed, [report.report_id])
         repository = open_repository(self.path)
         control = repository._connection.execute(
@@ -883,7 +920,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         extracted: list[str] = []
         provider_calls = 0
 
-        def publish_report(_: PipelineAction) -> tuple[str, bool]:
+        def publish_report(_, __: PipelineAction) -> tuple[str, bool]:
             extracted.append(report.report_id)
             repository = open_repository(self.path)
             try:
@@ -892,7 +929,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 repository.close()
             return report.report_id, False
 
-        def unavailable(_: str) -> tuple[ProviderStatus, ...]:
+        def unavailable(_, __: str) -> tuple[ProviderStatus, ...]:
             nonlocal provider_calls
             provider_calls += 1
             return (ProviderStatus.UNAVAILABLE,)
@@ -907,25 +944,25 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             ),
             extract=publish_report,
             providers=unavailable,
-            propose=lambda _: (_ for _ in ()).throw(AssertionError()),
-            admit=lambda _: (_ for _ in ()).throw(AssertionError()),
-            project=lambda _: True,
+            propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            project=lambda *_: True,
             clock=lambda: clock[0],
         )
         pipeline.request("primary", "ebooks")
-        self.assertTrue(pipeline.run_next())
+        self.assertTrue(pipeline.run_next(1))
         for recovery in range(3):
-            self.assertTrue(pipeline.run_next())
-            self.assertTrue(pipeline.run_next())
+            self.assertTrue(pipeline.run_next(1))
+            self.assertTrue(pipeline.run_next(1))
             repository = open_repository(self.path)
             deadline = repository._connection.execute(
                 "SELECT circuit_open_until FROM review_preparation_control"
             ).fetchone()[0]
             repository.close()
             if recovery < 2:
-                self.assertFalse(pipeline.run_next())
+                self.assertFalse(pipeline.run_next(1))
                 clock[0] = deadline
-        self.assertFalse(pipeline.run_next())
+        self.assertFalse(pipeline.run_next(1))
         progress = pipeline.progress("primary", "ebooks")
         assert progress is not None
         self.assertEqual(
@@ -999,18 +1036,18 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             repository_factory=lambda: open_repository(self.path),
             libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
             discover=lambda *_: (1, "e" * 64, (entry,)),
-            extract=lambda _: (_ for _ in ()).throw(
+            extract=lambda *_: (_ for _ in ()).throw(
                 ReviewPipelineError("stale")
             ),
-            providers=lambda _: (),
-            propose=lambda _: (_ for _ in ()).throw(AssertionError()),
-            admit=lambda _: (_ for _ in ()).throw(AssertionError()),
-            project=lambda _: True,
+            providers=lambda *_: (),
+            propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            project=lambda *_: True,
             clock=lambda: 30,
         )
         pipeline.request("primary", "ebooks")
-        self.assertTrue(pipeline.run_next())
-        self.assertEqual(sum(pipeline.run_next() for _ in range(3)), 3)
+        self.assertTrue(pipeline.run_next(1))
+        self.assertEqual(sum(pipeline.run_next(1) for _ in range(3)), 3)
 
         repository = open_repository(self.path)
         progress = repository.review_pipeline_progress("primary", "ebooks")
@@ -1302,7 +1339,7 @@ class ReviewPipelineConcurrencyTests(unittest.TestCase):
         ]
         repository = _ConcurrentRepository(actions)
 
-        def extract(action: PipelineAction):
+        def extract(_, action: PipelineAction):
             if action.item_id == "slow":
                 slow_started.set()
                 self.assertTrue(release_slow.wait(2))
@@ -1315,10 +1352,10 @@ class ReviewPipelineConcurrencyTests(unittest.TestCase):
             libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
             discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
             extract=extract,
-            providers=lambda _: (ProviderStatus.DISABLED,),
-            propose=lambda _: "proposal_set_" + "4" * 64,
-            admit=lambda _: ("admitted", "review_case_" + "5" * 64),
-            project=lambda _: True,
+            providers=lambda *_: (ProviderStatus.DISABLED,),
+            propose=lambda *_: "proposal_set_" + "4" * 64,
+            admit=lambda *_: ("admitted", "review_case_" + "5" * 64),
+            project=lambda *_: True,
             clock=lambda: 20,
         )
         supervisor = ReviewPreparationSupervisor(pipeline)

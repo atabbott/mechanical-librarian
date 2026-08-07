@@ -14,7 +14,12 @@
   catalogue preparation is isolated per library, and compact activity reads one
   aggregate repository snapshot; one supervisor lane schedules from that same
   bounded snapshot and a retained deadline. Superseded Library refresh responses
-  cannot replace newer exact-current results. Transient lane and final-attempt `Retry-After` values
+  cannot replace newer exact-current results. Fair claims select their bounded
+  library before using aged/recent indexes, and a durable stage transition may
+  atomically claim the next fair action before that action executes, reducing
+  full-synchronous commits without weakening restart recovery. Pipeline-composed
+  services borrow the already-validated stage repository without taking ownership.
+  Transient lane and final-attempt `Retry-After` values
   extend only the transient circuit; paused retry and disappearing activity
   retain truthful controls and visible keyboard focus. (#475, #473)
 
