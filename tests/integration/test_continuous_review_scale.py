@@ -49,8 +49,7 @@ class _SharedRepository:
 
 
 class _AudiobookshelfFixture:
-    def __init__(self) -> None:
-        counts = {"fiction": 3, "history": 498, "science": 498}
+    def __init__(self, counts: dict[str, int]) -> None:
         self.summaries: dict[str, list[dict[str, object]]] = {}
         self.details: dict[str, dict[str, object]] = {}
         offset = 0
@@ -150,10 +149,23 @@ class _AudiobookshelfFixture:
 
 
 class ContinuousReviewScaleQualificationTests(unittest.TestCase):
-    def test_installed_pipeline_reconciles_one_thousand_fairly_across_restart(self) -> None:
+    def test_installed_pipeline_reconciles_representative_cohort_across_restart(
+        self,
+    ) -> None:
+        self._qualify_installed_pipeline(
+            {"fiction": 4, "history": 20, "science": 20},
+            expected_total=45,
+        )
+
+    def _qualify_installed_pipeline(
+        self,
+        counts: dict[str, int],
+        *,
+        expected_total: int,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            fixture = _AudiobookshelfFixture()
+            fixture = _AudiobookshelfFixture(counts)
             fixture.start()
             self.addCleanup(fixture.close)
             secret = root / "target.secret"
@@ -398,8 +410,8 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                 for library in ("fiction", "history", "science")
             ]
             self.assertTrue(all(value is not None for value in final))
-            self.assertEqual(sum(value.total for value in final if value), 1_000)
-            self.assertEqual(sum(value.checked for value in final if value), 1_000)
+            self.assertEqual(sum(value.total for value in final if value), expected_total)
+            self.assertEqual(sum(value.checked for value in final if value), expected_total)
             self.assertEqual(sum(value.blocked for value in final if value), 0)
             self.assertTrue(all(value.state == "completed" for value in final if value))
             self.assertEqual(provider_attempts[transient_item], 2)
@@ -502,10 +514,12 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                             self.fail("installed reconciliation did not complete")
                         time.sleep(0.02)
                 self.assertEqual(
-                    sum(item["total"] for item in projection["libraries"]), 1_000
+                    sum(item["total"] for item in projection["libraries"]),
+                    expected_total,
                 )
                 self.assertEqual(
-                    sum(item["checked"] for item in projection["libraries"]), 1_000
+                    sum(item["checked"] for item in projection["libraries"]),
+                    expected_total,
                 )
                 self.assertEqual(
                     sum(item["blocked"] for item in projection["libraries"]), 0
@@ -524,7 +538,7 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                 work_count = connection.execute(
                     "SELECT COUNT(*) FROM review_preparation_work"
                 ).fetchone()[0]
-            self.assertEqual(work_count, 1_000)
+            self.assertEqual(work_count, expected_total)
             self.assertEqual(tuple(media.iterdir()), ())
             self.assertEqual(tuple(artifacts.iterdir()), ())
 

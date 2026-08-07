@@ -50,6 +50,15 @@ _CANONICAL_TEST_ARGS = (
     "-p",
     "test_*.py",
 )
+_SLOW_CONTINUOUS_REVIEW_TEST_ARGS = (
+    "-m",
+    "unittest",
+    (
+        "tests.integration.slow_continuous_review_scale."
+        "SlowContinuousReviewScaleQualificationTests."
+        "test_installed_pipeline_reconciles_one_thousand_fairly_across_restart"
+    ),
+)
 
 
 class QualificationFailure(RuntimeError):
@@ -97,7 +106,9 @@ class ExactArtifactEvidence:
     explicit_wheel_install: bool
     outside_checkout: bool
     locked_dependencies: bool
+    qualification_tier: str
     full_suite_executed: bool
+    slow_qualification_executed: bool
     review_case_lifecycle_executed: bool
     wheel_record_validated: bool
     retained_wheel: bool
@@ -365,7 +376,7 @@ def qualify_exact_artifact(
         _verify_source_checkout(source_root, expected_source_sha)
 
     return ExactArtifactEvidence(
-        schema="exact-artifact-evidence-v2",
+        schema="exact-artifact-evidence-v3",
         status="passed",
         source_sha=actual_sha,
         wheel_sha256=wheel_sha256,
@@ -380,7 +391,19 @@ def qualify_exact_artifact(
         explicit_wheel_install=True,
         outside_checkout=True,
         locked_dependencies=True,
+        qualification_tier=(
+            "required"
+            if test_args == _CANONICAL_TEST_ARGS
+            else "slow"
+            if test_args == _SLOW_CONTINUOUS_REVIEW_TEST_ARGS
+            else "custom"
+            if test_args is not None
+            else "none"
+        ),
         full_suite_executed=test_args == _CANONICAL_TEST_ARGS,
+        slow_qualification_executed=(
+            test_args == _SLOW_CONTINUOUS_REVIEW_TEST_ARGS
+        ),
         review_case_lifecycle_executed=review_case_probe,
         wheel_record_validated=True,
         retained_wheel=retained,
@@ -1179,9 +1202,15 @@ def _run(
         process.stdout.close()
         process.stderr.close()
 
+    if timed_out:
+        timeout_reason = (
+            reason[: -len("_failed")] + "_timeout"
+            if reason.endswith("_failed")
+            else reason + "_timeout"
+        )
+        raise QualificationFailure(timeout_reason)
     if (
-        timed_out
-        or overflow.is_set()
+        overflow.is_set()
         or descendants_terminated
         or readers_stuck
         or returncode != 0
@@ -1696,6 +1725,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--wheel-output", type=Path)
     parser.add_argument("--environment", type=Path)
+    parser.add_argument(
+        "--test-tier",
+        choices=("required", "slow"),
+        default="required",
+        help="run the required suite or the explicit 1,000-item slow qualification",
+    )
     arguments = parser.parse_args(argv)
     try:
         evidence = qualify_exact_artifact(
@@ -1704,13 +1739,18 @@ def main(argv: list[str] | None = None) -> int:
             wheel_output=arguments.wheel_output,
             environment_path=arguments.environment,
             review_case_probe=True,
+            test_args=(
+                _CANONICAL_TEST_ARGS
+                if arguments.test_tier == "required"
+                else _SLOW_CONTINUOUS_REVIEW_TEST_ARGS
+            ),
         )
     except QualificationFailure as error:
         print(
             json.dumps(
                 {
                     "reason": error.reason,
-                    "schema": "exact-artifact-evidence-v2",
+                    "schema": "exact-artifact-evidence-v3",
                     "status": "failed",
                 },
                 sort_keys=True,

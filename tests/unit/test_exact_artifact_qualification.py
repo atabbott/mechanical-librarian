@@ -177,6 +177,8 @@ class ExactArtifactQualificationTests(unittest.TestCase):
         self.assertEqual(first.distribution_version, "0.0.0")
         self.assertEqual(second.distribution_version, "0.0.0")
         self.assertFalse(first.full_suite_executed)
+        self.assertEqual(first.qualification_tier, "none")
+        self.assertFalse(first.slow_qualification_executed)
         self.assertFalse(partial.full_suite_executed)
         self.assertFalse(second.review_case_lifecycle_executed)
         self.assertNotEqual(first.source_sha, second.source_sha)
@@ -193,9 +195,27 @@ class ExactArtifactQualificationTests(unittest.TestCase):
         self.assertTrue(second.retained_environment)
         self.assertTrue(second.locked_dependencies)
         self.assertTrue(second.full_suite_executed)
+        self.assertEqual(second.qualification_tier, "required")
         self.assertTrue(second.wheel_record_validated)
         self.assertTrue(retained_console_exists)
         self.assertEqual(1, retained_wheel_count)
+
+    def test_command_timeout_has_a_distinct_path_free_reason(self) -> None:
+        with patch.object(qualifier_module, "_COMMAND_TIMEOUT_SECONDS", 0.01):
+            with self.assertRaises(QualificationFailure) as raised:
+                _run(
+                    (sys.executable, "-c", "import time; time.sleep(10)"),
+                    reason="installed_test_suite_failed",
+                )
+
+        self.assertEqual("installed_test_suite_timeout", raised.exception.reason)
+
+        with self.assertRaises(QualificationFailure) as failed:
+            _run(
+                (sys.executable, "-c", "raise SystemExit(2)"),
+                reason="installed_test_suite_failed",
+            )
+        self.assertEqual("installed_test_suite_failed", failed.exception.reason)
 
     def test_qualification_environment_discards_inherited_uv_controls(self) -> None:
         inherited = {

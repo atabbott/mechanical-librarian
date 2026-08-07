@@ -14,7 +14,7 @@ wheel's bounded archive and `RECORD` before installation, seeds a new
 environment from all locked dependency groups, and installs the explicit wheel
 pathname without dependency resolution. It proves the wheel and installed
 distribution payloads are byte-identical, validates the installer-updated
-`RECORD`, rechecks the whole-wheel hash, and runs the entire public suite with
+`RECORD`, rechecks the whole-wheel hash, and runs the required public suite with
 the isolated environment's interpreter. It then checks the PEP 610 install
 origin and invokes the installed console command from outside the checkout.
 Its path-free JSON evidence binds the source SHA, wheel SHA-256, payload
@@ -25,6 +25,29 @@ import/command fails closed. The installed console proof performs exact-ID
 report and ProposalSet creation, concurrent admission, replay, restart-backed
 get, successor/historical projection, and nonactionable retirement against a
 disposable loopback target and synthetic EPUB.
+
+The required suite includes a 45-item continuous-review restart cohort across
+three libraries. It retains the cross-library fairness, interruption, forced
+restart and recovery, authenticated progress and completion, exact installed
+console, and zero target/media/artifact write assertions while remaining a
+continuous pull-request gate. The full 1,000-item workload is an explicit slow
+exact-wheel qualification with the same behavioral assertions plus its
+throughput and 512 MiB resident-memory ceiling:
+
+```bash
+python3 scripts/qualify_exact_artifact.py \
+  --source-sha "$(git rev-parse HEAD)" \
+  --test-tier slow
+```
+
+Run that command from a clean exact-head checkout. The slow module is
+deliberately outside `test_*.py` discovery and is not required by the public
+pull-request gate; this is an explicit test tier, not a skipped test. A separate
+manual or scheduled workflow is not maintained because the local exact-wheel
+entry point supplies the required milestone evidence without adding another
+remote workflow surface. Qualification reports distinguish a bounded subprocess
+timeout (`*_timeout`) from a genuine nonzero test result (`*_failed`) without
+including captured output or checkout paths.
 
 The public gate first installs the Chromium revision bound to pinned Playwright
 1.61.0 and verifies its repository-bound complete payload digest before launch.
@@ -62,9 +85,11 @@ The suite covers:
   field presence and raw-state distinctions, one validated repository open per
   claimed stage, atomic output-plus-transition-plus-next-claim crash recovery,
   report-publication provider disposition, no-case admission completion, indexed
-  aged and recent claim ordering, atomic proposal-plus-admission recovery, and an exact
-  installed-`review-serve` 1,000-work three-library first-start, forced-restart,
-  authenticated-progress, memory-ceiling, and zero-write resource proof;
+  aged and recent claim ordering, atomic proposal-plus-admission recovery, and
+  an exact installed-`review-serve` 45-work three-library first-start,
+  forced-restart, authenticated-progress, completion, and zero-write proof in
+  the required gate. The explicit slow tier repeats the complete behavioral
+  proof over 1,000 works and retains the throughput and memory-ceiling assertions;
 
 - closed reports, canonical serialization, stable claim/report references,
   title normalization, and occurrence-local ISBN applicability, including

@@ -25,6 +25,11 @@
   checkpoint may claim the next fair action in the same durable transaction.
   Local deterministic proposal evaluation and admission share one atomic action;
   rollback requeues that already-durable action without an intermediate commit.
+  Required exact-wheel qualification continuously proves the installed restart
+  workflow over a representative 45-item, three-library cohort; the complete
+  1,000-item workload and memory ceiling remain an explicit exact-head slow tier.
+  Fixed, path-free evidence now distinguishes subprocess timeout from a genuine
+  nonzero test failure.
   Transient lane and final-attempt `Retry-After` values
   extend only the transient circuit; paused retry and disappearing activity
   retain truthful controls and visible keyboard focus. (#475, #473)
