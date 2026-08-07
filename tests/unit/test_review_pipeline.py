@@ -141,6 +141,22 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         for start in range(0, 9, 3):
             self.assertEqual(set(claimed[start : start + 3]), {item[0] for item in libraries})
 
+    def test_oversized_fairness_cursor_fails_closed(self) -> None:
+        repository = open_repository(self.path)
+        repository._connection.execute("PRAGMA ignore_check_constraints=ON")
+        repository._connection.execute(
+            "UPDATE review_preparation_control SET last_library=? WHERE singleton=1",
+            ("x" * 65,),
+        )
+        repository._connection.commit()
+        repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
+
+        with self.assertRaisesRegex(
+            MetadataReportError, "review preparation control is invalid"
+        ):
+            repository.claim_review_pipeline_action(10)
+        repository.close()
+
     def test_claims_age_backlog_and_reserve_every_fourth_for_recent_work(self) -> None:
         repository = open_repository(self.path)
         repository.request_review_scan(

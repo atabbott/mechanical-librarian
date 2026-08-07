@@ -355,9 +355,29 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     )
                     activity = page.locator(".activity-button")
                     activity.wait_for(state="visible")
+                    page.set_viewport_size({"width": 1440, "height": 1000})
                     activity.click()
                     activity_region = page.get_by_role("region", name="Background activity")
                     activity_region.wait_for()
+                    self.assertLessEqual(
+                        page.evaluate("() => document.documentElement.scrollWidth"), 1440
+                    )
+                    self.assertLessEqual(activity_region.bounding_box()["width"], 390)
+                    self.assertEqual(
+                        page.locator(".topbar").evaluate(
+                            "node => getComputedStyle(node).position"
+                        ),
+                        "sticky",
+                    )
+                    self.assertEqual(
+                        page.locator(".workspace-navigation").evaluate(
+                            "node => getComputedStyle(node).position"
+                        ),
+                        "sticky",
+                    )
+                    activity_region.locator(".activity-library").first.get_by_text(
+                        re.compile(r"\d+ checked · \d+ remaining")
+                    ).wait_for(timeout=8_000)
                     page.set_viewport_size({"width": 390, "height": 844})
                     self.assertLessEqual(
                         page.evaluate("() => document.documentElement.scrollWidth"), 390

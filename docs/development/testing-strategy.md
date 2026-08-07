@@ -81,7 +81,10 @@ restart and recovery, authenticated progress and completion, exact installed
 console, and zero target/media/artifact write assertions while remaining a
 continuous pull-request gate. The full 1,000-item workload is an explicit slow
 exact-wheel qualification with the same behavioral assertions plus its
-throughput and 512 MiB resident-memory ceiling:
+throughput and 512 MiB resident-memory ceiling. Its timer and RSS sampling cover
+the actual synthetic report, proposal, and admission workload before the
+installed-console restart proof; the later no-change scan is not used as a
+proxy for processing cost:
 
 ```bash
 python3 scripts/qualify_exact_artifact.py \

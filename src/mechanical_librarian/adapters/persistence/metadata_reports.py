@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 import stat
@@ -169,7 +170,7 @@ _REVIEW_CONTROL_SQL = (
     "singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
     "paused INTEGER NOT NULL CHECK(paused IN (0,1)), "
     "claim_sequence INTEGER NOT NULL CHECK(claim_sequence>=0), "
-    "last_library TEXT, circuit_failures INTEGER NOT NULL CHECK(circuit_failures BETWEEN 0 AND 3), "
+    "last_library TEXT CHECK(last_library IS NULL OR (typeof(last_library)='text' AND length(CAST(last_library AS BLOB)) BETWEEN 1 AND 64 AND last_library NOT GLOB '*[^a-z0-9_-]*' AND substr(last_library,1,1) GLOB '[a-z]')), circuit_failures INTEGER NOT NULL CHECK(circuit_failures BETWEEN 0 AND 3), "
     "circuit_open_until INTEGER NOT NULL CHECK(circuit_open_until>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
 )
 _REVIEW_WORK_SQL = (
@@ -1010,6 +1011,11 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             if control is None:
                 raise MetadataReportError("review preparation control is unavailable")
+            if control[1] is not None and (
+                type(control[1]) is not str
+                or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", control[1]) is None
+            ):
+                raise MetadataReportError("review preparation control is invalid")
             scan = self._connection.execute(
                 "SELECT scan_id,connection_name,library_name,library_id,producer_fingerprint "
                 "FROM review_preparation_scans WHERE state='queued' "

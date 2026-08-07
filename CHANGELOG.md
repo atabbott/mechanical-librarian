@@ -27,7 +27,8 @@
   rollback requeues that already-durable action without an intermediate commit.
   Required exact-wheel qualification continuously proves the installed restart
   workflow over a representative 45-item, three-library cohort; the complete
-  1,000-item workload and memory ceiling remain an explicit exact-head slow tier.
+  1,000-item workload and memory ceiling remain an explicit exact-head slow tier,
+  measured across its real report, proposal, and admission processing path.
   Fixed, path-free evidence distinguishes subprocess timeout from a genuine
   nonzero test failure through the shared qualification tiers.
   Transient lane and final-attempt `Retry-After` values

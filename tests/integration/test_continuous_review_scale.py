@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -149,6 +151,19 @@ class _AudiobookshelfFixture:
 
 
 class ContinuousReviewScaleQualificationTests(unittest.TestCase):
+    def test_exited_installed_server_reports_only_a_fixed_failure(self) -> None:
+        process = subprocess.Popen(
+            (sys.executable, "-c", "raise SystemExit(2)"),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        process.wait(timeout=10)
+
+        with self.assertRaisesRegex(
+            AssertionError, r"^installed review server did not start$"
+        ):
+            self._wait_for_https(process, "https://127.0.0.1:1")
+
     def test_installed_pipeline_reconciles_representative_cohort_across_restart(
         self,
     ) -> None:
@@ -265,6 +280,15 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
             transient_item = "history-0000"
             credential_item = "science-0000"
             credentials_valid = [False]
+            processing_started = time.monotonic()
+            processing_peak_rss_kib = [self._rss_kib(os.getpid())]
+
+            def run_next(value: ReviewPreparationPipeline) -> bool:
+                advanced = value.run_next()
+                processing_peak_rss_kib[0] = max(
+                    processing_peak_rss_kib[0], self._rss_kib(os.getpid())
+                )
+                return advanced
 
             def discover(_: str, library: str):
                 offset = {"fiction": 1, "history": 2, "science": 3}[library]
@@ -352,7 +376,7 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
             first = pipeline()
             for _, library, _ in first.libraries:
                 first.request("primary", library)
-            while first.run_next():
+            while run_next(first):
                 pass
             circuit = repository._connection.execute(
                 "SELECT circuit_open_until FROM review_preparation_control"
@@ -361,12 +385,12 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
 
             restarted = pipeline()
             restarted.recover()
-            self.assertFalse(restarted.run_next())
+            self.assertFalse(run_next(restarted))
             clock[0] = circuit
             while True:
                 if restarted.progress("primary", "fiction").state == "completed":
                     break
-                advanced = restarted.run_next()
+                advanced = run_next(restarted)
                 if not advanced:
                     self.assertEqual(
                         restarted.progress("primary", "fiction").state,
@@ -374,6 +398,14 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                     )
 
             before_new = len(extracted)
+            initial_extracted = tuple(extracted)
+            for library in counts:
+                first_library_position = next(
+                    index
+                    for index, item_id in enumerate(initial_extracted)
+                    if item_id.startswith(library + "-")
+                )
+                self.assertLessEqual(first_library_position + 1, 6)
             new_summary, new_detail = fixture.add_new_fiction()
             entries["fiction"].append(
                 catalogue_entry(
@@ -386,7 +418,7 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
             )
             restarted.request("primary", "fiction")
             for _ in range(40):
-                self.assertTrue(restarted.run_next())
+                self.assertTrue(run_next(restarted))
                 if "fiction-new" in extracted[before_new:]:
                     break
             self.assertIn("fiction-new", extracted[before_new:])
@@ -395,15 +427,21 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                 4,
             )
 
-            while restarted.run_next():
+            while run_next(restarted):
                 pass
             science = restarted.progress("primary", "science")
             assert science is not None
             self.assertEqual(science.state, "completed_with_failures")
             credentials_valid[0] = True
             restarted.request("primary", "science")
-            while restarted.run_next():
+            while run_next(restarted):
                 pass
+
+            processing_elapsed = time.monotonic() - processing_started
+            # This measures the real report/proposal/admission workload, not the
+            # later no-change console restart.
+            self.assertGreaterEqual(expected_total / processing_elapsed, 5.0)
+            self.assertLess(processing_peak_rss_kib[0], 524_288)
 
             final = [
                 restarted.progress("primary", library)
@@ -437,7 +475,7 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                 str(review_port),
             ]
             first_process = subprocess.Popen(
-                arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             try:
                 self._wait_for_https(first_process, origin)
@@ -459,10 +497,10 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
             finally:
                 if first_process.poll() is None:
                     first_process.kill()
-                first_process.communicate(timeout=10)
+                first_process.wait(timeout=10)
 
             second_process = subprocess.Popen(
-                arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             peak_rss_kib = 0
             try:
@@ -477,11 +515,7 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                     deadline = time.monotonic() + 60
                     while True:
                         if second_process.poll() is not None:
-                            _, error = second_process.communicate()
-                            self.fail(
-                                "installed review server exited during reconciliation: "
-                                + error.decode("utf-8", "replace")
-                            )
+                            self.fail("installed review server exited during reconciliation")
                         peak_rss_kib = max(
                             peak_rss_kib, self._rss_kib(second_process.pid)
                         )
@@ -529,10 +563,10 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                 if second_process.poll() is None:
                     second_process.terminate()
                 try:
-                    second_process.communicate(timeout=10)
+                    second_process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     second_process.kill()
-                    second_process.communicate(timeout=10)
+                    second_process.wait(timeout=10)
 
             with closing(sqlite3.connect(database)) as connection:
                 work_count = connection.execute(
@@ -548,11 +582,7 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
         with httpx.Client(verify=False, trust_env=False) as client:
             while True:
                 if process.poll() is not None:
-                    _, error = process.communicate()
-                    raise AssertionError(
-                        "installed review server did not start: "
-                        + error.decode("utf-8", "replace")
-                    )
+                    raise AssertionError("installed review server did not start")
                 try:
                     response = client.get(origin + "/health/live")
                     if response.status_code == 200:
