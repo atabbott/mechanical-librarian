@@ -976,7 +976,7 @@ class SQLiteMetadataReportRepository:
                 "AND s.state='processing') "
                 "AND (stage!='extraction' OR ?<=?) "
                 "ORDER BY CASE WHEN library_name>? THEN 0 ELSE 1 END,library_name,"
-                "CASE WHEN ?=0 THEN updated_at ELSE -updated_at END,ordinal LIMIT 1",
+                "CASE WHEN ?=0 THEN -updated_at ELSE updated_at END,ordinal LIMIT 1",
                 (
                     control[2],
                     claimed_at,

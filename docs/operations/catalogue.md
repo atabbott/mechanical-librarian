@@ -21,9 +21,12 @@ and credentials.
 Each entry retains a canonical fingerprint of the bounded Audiobookshelf values
 that can affect review evidence or currentness: stable item and library
 identity, reviewed metadata and cover identity, file identity, media presence,
-and media revision. Volatile playback, bookmark, progress, and generic service
-activity timestamps are excluded, so they do not invalidate completed review
-work.
+and media revision. Volatile playback, bookmark, and progress fields are
+excluded. When Audiobookshelf supplies a stable EPUB revision, generic item
+activity timestamps do not invalidate completed work. When that material
+revision is absent, or a cover has no independent revision, the item timestamp
+is retained as a conservative freshness fallback so changed bytes cannot reuse
+stale evidence.
 
 The database retains only the installed `catalogue-v2` schema. A different or
 tampered schema fails closed and requires an operator-created clean database.

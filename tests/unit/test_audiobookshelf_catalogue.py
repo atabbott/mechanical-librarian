@@ -89,6 +89,7 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
 
     def test_volatile_activity_fields_do_not_change_catalogue_identity(self) -> None:
         baseline = _item()
+        baseline["media"]["ebookFile"]["metadata"]["mtimeMs"] = 1
         active = {
             **baseline,
             "updatedAt": 2,
@@ -106,6 +107,38 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
             {"id": "item-1", "libraryId": "library-1", "updatedAt": 2}, active,
         )
         self.assertEqual(first.source_fingerprint, second.source_fingerprint)
+
+    def test_item_revision_is_fallback_when_material_revision_is_unavailable(self) -> None:
+        baseline = _item()
+        changed = _item()
+        changed["updatedAt"] = 2
+        first = catalogue_entry(
+            "primary", _library(), None,
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}, baseline,
+        )
+        second = catalogue_entry(
+            "primary", _library(), None,
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 2}, changed,
+        )
+        self.assertNotEqual(first.source_fingerprint, second.source_fingerprint)
+
+    def test_item_revision_protects_cover_bytes_without_a_cover_revision(self) -> None:
+        baseline = _item()
+        baseline["coverPath"] = "/cover/item-1"
+        baseline["media"]["ebookFile"]["metadata"]["mtimeMs"] = 1
+        changed = _item()
+        changed["coverPath"] = "/cover/item-1"
+        changed["updatedAt"] = 2
+        changed["media"]["ebookFile"]["metadata"]["mtimeMs"] = 1
+        first = catalogue_entry(
+            "primary", _library(), None,
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}, baseline,
+        )
+        second = catalogue_entry(
+            "primary", _library(), None,
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 2}, changed,
+        )
+        self.assertNotEqual(first.source_fingerprint, second.source_fingerprint)
 
     def test_each_material_review_source_dimension_changes_fingerprint(self) -> None:
         summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}

@@ -164,6 +164,14 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
         for name in ("mtimeMs", "mtime", "modifiedAt", "lastModified")
         if type(metadata_file) is dict and name in metadata_file
     }
+    # Audiobookshelf's item timestamp is also advanced by playback activity, so
+    # prefer the file revision when it is available.  Without one, retain the
+    # item timestamp as the conservative material-change signal.  A cover path
+    # has no independent revision in the supported payload, so its bytes also
+    # require that fallback even when the EPUB has a stable revision.
+    item_revision_fallback = (
+        detail["updatedAt"] if not media_revision or cover_reference is not None else None
+    )
     source_fingerprint = hashlib.sha256(
         canonical_json(
             {
@@ -176,6 +184,7 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
                     "has_audio": has_audio,
                     "has_ebook": has_ebook,
                     "revision": media_revision,
+                    "item_revision_fallback": item_revision_fallback,
                 },
             }
         ).encode("utf-8")

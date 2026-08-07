@@ -120,6 +120,48 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         for start in range(0, 9, 3):
             self.assertEqual(set(claimed[start : start + 3]), {item[0] for item in libraries})
 
+    def test_claims_age_backlog_and_reserve_every_fourth_for_recent_work(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "a" * 64,
+            (_entry("old", "1" * 64), _entry("recent", "2" * 64)),
+            12,
+        )
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET updated_at=10 WHERE item_id='old'"
+        )
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET updated_at=20 WHERE item_id='recent'"
+        )
+        repository._connection.execute(
+            "UPDATE review_preparation_control SET claim_sequence=? WHERE singleton=1",
+            (1,),
+        )
+        repository._connection.commit()
+        aged = repository.claim_review_pipeline_action(30)
+        assert aged is not None
+        repository.fail_review_pipeline_action(aged, "failed", False, 31)
+        repository._connection.execute(
+            "UPDATE review_preparation_control SET claim_sequence=? WHERE singleton=1",
+            (4,),
+        )
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET state='queued',updated_at=10 "
+            "WHERE item_id='old'"
+        )
+        repository._connection.commit()
+        recent = repository.claim_review_pipeline_action(32)
+        repository.close()
+        assert recent is not None
+        self.assertEqual((aged.item_id, recent.item_id), ("old", "recent"))
+
     def test_admission_target_not_found_is_typed_stale(self) -> None:
         repository = open_repository(self.path)
         report = _report()

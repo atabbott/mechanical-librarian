@@ -32,7 +32,9 @@ fourth claim for recently changed work. Provider adapters retain their bounded
 greater of its bounded exponential delay and a provider-supplied `Retry-After`.
 Success from another in-flight work cannot shorten an unexpired deadline.
 Work reuse is bound to a canonical fingerprint of the material Audiobookshelf
-review inputs rather than volatile service activity timestamps; the clean
+review inputs. Stable media revisions keep volatile service activity timestamps
+out of that identity; an absent material revision or an independently
+unversioned cover conservatively falls back to the item timestamp. The clean
 catalogue schema advances to `catalogue-v2` to retain that fingerprint.
 
 The authenticated shell exposes one compact activity control only while work is

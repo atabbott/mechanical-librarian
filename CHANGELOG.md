@@ -7,7 +7,9 @@
   pipeline, fair claims and provider circuit state survive restart, and the
   protected M shell gains one compact activity popover with pause, resume, and
   eligible retry controls, including per-library scan. The path remains
-  decision-only and write-free. (#475, #473)
+  decision-only and write-free. Material-source reuse prefers stable media
+  revisions and conservatively falls back to the item revision for unversioned
+  EPUB or cover bytes. (#475, #473)
 
 - Add owner-requested progressive library preparation to the authenticated
   review surface. Exact-current catalogue, report, ProposalSet, and ReviewCase
