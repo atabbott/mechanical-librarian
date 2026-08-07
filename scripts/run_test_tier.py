@@ -7,17 +7,56 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
+import threading
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 
 
+_STALL_DIAGNOSTIC_SECONDS = 30
+_SAFE_TEST_ID = re.compile(r"[A-Za-z0-9_.]{1,512}")
+
+
 @dataclass(frozen=True, slots=True)
 class TestCohort:
     discoveries: tuple[tuple[str, str], ...]
+
+
+class _DiagnosticTestResult(unittest.TestResult):
+    def __init__(self) -> None:
+        super().__init__()
+        self._progress_lock = threading.Lock()
+        self._current_test_id: str | None = None
+        self._current_started_at = 0.0
+
+    def startTest(self, test: unittest.TestCase) -> None:
+        with self._progress_lock:
+            identifier = test.id()
+            self._current_test_id = (
+                identifier if _SAFE_TEST_ID.fullmatch(identifier) is not None else None
+            )
+            self._current_started_at = time.monotonic()
+        super().startTest(test)
+
+    def stopTest(self, test: unittest.TestCase) -> None:
+        with self._progress_lock:
+            self._current_test_id = None
+            self._current_started_at = 0.0
+        super().stopTest(test)
+
+    def stalled_test(self, now: float) -> str | None:
+        with self._progress_lock:
+            if (
+                self._current_test_id is None
+                or now - self._current_started_at < _STALL_DIAGNOSTIC_SECONDS
+            ):
+                return None
+            return self._current_test_id
 
 
 COHORTS = {
@@ -88,10 +127,21 @@ def cohort_manifest(root: Path, name: str) -> dict[str, object]:
 
 
 def run_cohort(root: Path, name: str) -> bool:
-    result = unittest.TestResult()
+    result = _DiagnosticTestResult()
+    stopped = threading.Event()
+    reporter = threading.Thread(
+        target=_report_stalled_test,
+        args=(result, stopped),
+        daemon=True,
+    )
+    reporter.start()
     with Path(os.devnull).open("w", encoding="utf-8") as discarded:
-        with redirect_stdout(discarded), redirect_stderr(discarded):
-            load_cohort(root, name).run(result)
+        try:
+            with redirect_stdout(discarded), redirect_stderr(discarded):
+                load_cohort(root, name).run(result)
+        finally:
+            stopped.set()
+            reporter.join(timeout=2)
     if result.wasSuccessful():
         print(
             json.dumps(
@@ -130,6 +180,31 @@ def run_cohort(root: Path, name: str) -> bool:
         file=sys.stderr,
     )
     return False
+
+
+def _report_stalled_test(
+    result: _DiagnosticTestResult,
+    stopped: threading.Event,
+) -> None:
+    reported: str | None = None
+    while not stopped.wait(timeout=1):
+        identifier = result.stalled_test(time.monotonic())
+        if identifier is None or identifier == reported:
+            continue
+        print(
+            json.dumps(
+                {
+                    "schema": "test-tier-stall-v1",
+                    "status": "running",
+                    "test_id": identifier,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            file=sys.__stderr__,
+            flush=True,
+        )
+        reported = identifier
 
 
 def _verify_exact_source(root: Path, expected_sha: str) -> None:

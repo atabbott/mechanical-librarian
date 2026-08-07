@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr
 from io import StringIO
@@ -9,6 +10,8 @@ from unittest.mock import patch
 
 from scripts.run_test_tier import (
     COHORTS,
+    _DiagnosticTestResult,
+    _STALL_DIAGNOSTIC_SECONDS,
     _leaf_tests,
     cohort_manifest,
     load_cohort,
@@ -17,6 +20,19 @@ from scripts.run_test_tier import (
 
 
 class TestTierTests(unittest.TestCase):
+    def test_stall_diagnostic_exposes_only_a_safe_test_identifier(self) -> None:
+        result = _DiagnosticTestResult()
+        test = self.__class__("test_empty_cohort_fails_closed")
+        result.startTest(test)
+        self.assertEqual(
+            result.stalled_test(time.monotonic() + _STALL_DIAGNOSTIC_SECONDS),
+            test.id(),
+        )
+        result.stopTest(test)
+        self.assertIsNone(
+            result.stalled_test(time.monotonic() + _STALL_DIAGNOSTIC_SECONDS)
+        )
+
     def test_source_tiers_are_disjoint_and_own_every_public_test_file(self) -> None:
         root = Path(__file__).resolve().parents[2]
         identifiers = {

@@ -30,7 +30,9 @@
   1,000-item workload and memory ceiling remain an explicit exact-head slow tier,
   measured across its real report, proposal, and admission processing path.
   Fixed, path-free evidence distinguishes subprocess timeout from a genuine
-  nonzero test failure through the shared qualification tiers.
+  nonzero test failure through the shared qualification tiers, and a stalled
+  test emits one bounded path-free identifier after 30 seconds without exposing
+  raw test output.
   Transient lane and final-attempt `Retry-After` values
   extend only the transient circuit; paused retry and disappearing activity
   retain truthful controls and visible keyboard focus. Stable terminal failures
