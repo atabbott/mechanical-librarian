@@ -50,6 +50,15 @@ _CANONICAL_TEST_ARGS = (
     "-p",
     "test_*.py",
 )
+_REQUIRED_INSTALLED_TEST_ARGS = (
+    "scripts/run_test_tier.py",
+    "required-installed",
+)
+_SLOW_TEST_ARGS = ("scripts/run_test_tier.py", "slow")
+_COMPLETE_INSTALLED_TEST_ARGS = (
+    "scripts/run_test_tier.py",
+    "complete-installed",
+)
 
 
 class QualificationFailure(RuntimeError):
@@ -97,7 +106,10 @@ class ExactArtifactEvidence:
     explicit_wheel_install: bool
     outside_checkout: bool
     locked_dependencies: bool
+    qualification_tier: str
     full_suite_executed: bool
+    required_suite_executed: bool
+    slow_qualification_executed: bool
     review_case_lifecycle_executed: bool
     wheel_record_validated: bool
     retained_wheel: bool
@@ -365,7 +377,7 @@ def qualify_exact_artifact(
         _verify_source_checkout(source_root, expected_source_sha)
 
     return ExactArtifactEvidence(
-        schema="exact-artifact-evidence-v2",
+        schema="exact-artifact-evidence-v3",
         status="passed",
         source_sha=actual_sha,
         wheel_sha256=wheel_sha256,
@@ -380,7 +392,14 @@ def qualify_exact_artifact(
         explicit_wheel_install=True,
         outside_checkout=True,
         locked_dependencies=True,
+        qualification_tier=_qualification_tier(test_args),
         full_suite_executed=test_args == _CANONICAL_TEST_ARGS,
+        required_suite_executed=(
+            test_args in {_REQUIRED_INSTALLED_TEST_ARGS, _COMPLETE_INSTALLED_TEST_ARGS}
+        ),
+        slow_qualification_executed=(
+            test_args in {_SLOW_TEST_ARGS, _COMPLETE_INSTALLED_TEST_ARGS}
+        ),
         review_case_lifecycle_executed=review_case_probe,
         wheel_record_validated=True,
         retained_wheel=retained,
@@ -1179,9 +1198,13 @@ def _run(
         process.stdout.close()
         process.stderr.close()
 
+    if timed_out:
+        timeout_reason = (
+            f"{reason[:-7]}_timeout" if reason.endswith("_failed") else reason
+        )
+        raise QualificationFailure(timeout_reason)
     if (
-        timed_out
-        or overflow.is_set()
+        overflow.is_set()
         or descendants_terminated
         or readers_stuck
         or returncode != 0
@@ -1689,6 +1712,20 @@ def _canonical_distribution(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).casefold()
 
 
+def _qualification_tier(test_args: tuple[str, ...] | None) -> str:
+    if test_args == _REQUIRED_INSTALLED_TEST_ARGS:
+        return "required"
+    if test_args == _SLOW_TEST_ARGS:
+        return "slow"
+    if test_args == _COMPLETE_INSTALLED_TEST_ARGS:
+        return "complete"
+    if test_args == _CANONICAL_TEST_ARGS:
+        return "legacy-complete"
+    if test_args is None or not test_args:
+        return "none"
+    return "custom"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Qualify the exact installed Mechanical Librarian wheel."
@@ -1696,7 +1733,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--wheel-output", type=Path)
     parser.add_argument("--environment", type=Path)
+    parser.add_argument(
+        "--test-tier",
+        choices=("required", "slow", "complete"),
+        default="required",
+    )
     arguments = parser.parse_args(argv)
+    tier_args = {
+        "required": _REQUIRED_INSTALLED_TEST_ARGS,
+        "slow": _SLOW_TEST_ARGS,
+        "complete": _COMPLETE_INSTALLED_TEST_ARGS,
+    }
     try:
         evidence = qualify_exact_artifact(
             Path(__file__).resolve().parents[1],
@@ -1704,13 +1751,14 @@ def main(argv: list[str] | None = None) -> int:
             wheel_output=arguments.wheel_output,
             environment_path=arguments.environment,
             review_case_probe=True,
+            test_args=tier_args[arguments.test_tier],
         )
     except QualificationFailure as error:
         print(
             json.dumps(
                 {
                     "reason": error.reason,
-                    "schema": "exact-artifact-evidence-v2",
+                    "schema": "exact-artifact-evidence-v3",
                     "status": "failed",
                 },
                 sort_keys=True,

@@ -1,20 +1,69 @@
 # Testing strategy
 
-The public gate checks the lockfile and runs the canonical exact-artifact
-qualifier:
+The public suite has four explicit qualification tiers. They retain every
+existing assertion while keeping independent feedback paths parallel and
+diagnosable.
+
+The fast routine source tier owns unit, focused integration, and static
+architecture behavior:
+
+```bash
+uv run python scripts/run_test_tier.py fast
+```
+
+The required exact-installed-artifact tier owns wheel identity, archive and
+installed `RECORD` integrity, installed imports, generated package/schema
+integrity, the installed console, and a representative end-to-end lifecycle:
 
 ```bash
 python3 scripts/qualify_exact_artifact.py \
+  --source-sha "$(git rev-parse HEAD)" \
+  --test-tier required
+```
+
+The protected browser tier remains independently runnable. Install and verify
+the repository-pinned Chromium payload before accepting its result:
+
+```bash
+uv run playwright install --with-deps chromium
+uv run python scripts/verify_playwright_browser.py
+uv run python scripts/run_test_tier.py browser
+```
+
+The explicit slow tier owns scale, memory/resource ceilings, endurance,
+exhaustive aggregate corpora, and extended recovery:
+
+```bash
+python3 scripts/qualify_exact_artifact.py \
+  --source-sha "$(git rev-parse HEAD)" \
+  --test-tier slow
+```
+
+Run the complete public suite at one clean exact head with the pinned browser
+already installed:
+
+```bash
+uv run python scripts/run_test_tier.py complete \
   --source-sha "$(git rev-parse HEAD)"
 ```
 
-That procedure requires a clean checkout at the supplied source SHA, snapshots
+That command validates source identity and cleanliness before accepting source
+results, verifies the browser payload, runs the fast and browser cohorts, then
+builds one exact wheel and runs both the required installed cohort and slow
+cohort against it. The `fast`, `browser`, and `slow` source cohorts are disjoint
+by directory. The required installed cohort intentionally repeats a small fast
+subset because its distinct invariant is execution through the installed wheel.
+Each cohort has a path-free count and identifier digest available through
+`scripts/run_test_tier.py <tier> --list`; an empty or unimportable cohort fails
+closed.
+
+The exact-artifact procedure requires a clean checkout at the supplied source SHA, snapshots
 the committed source, disables the `uv` build and install cache, validates the
 wheel's bounded archive and `RECORD` before installation, seeds a new
 environment from all locked dependency groups, and installs the explicit wheel
 pathname without dependency resolution. It proves the wheel and installed
 distribution payloads are byte-identical, validates the installer-updated
-`RECORD`, rechecks the whole-wheel hash, and runs the entire public suite with
+`RECORD`, rechecks the whole-wheel hash, and runs the selected installed tier with
 the isolated environment's interpreter. It then checks the PEP 610 install
 origin and invokes the installed console command from outside the checkout.
 Its path-free JSON evidence binds the source SHA, wheel SHA-256, payload
@@ -25,6 +74,31 @@ import/command fails closed. The installed console proof performs exact-ID
 report and ProposalSet creation, concurrent admission, replay, restart-backed
 get, successor/historical projection, and nonactionable retirement against a
 disposable loopback target and synthetic EPUB.
+
+## Timing baseline and tier decision
+
+On exact `main` source `6405ff514f4b33498a7c907cf540a651b7f2ccb9`, the
+former serial local discovery took 132.42 seconds: unit 77.37 seconds,
+integration 34.94 seconds, browser 18.28 seconds, and architecture 1.72 seconds.
+One exact maximum-shape resource test accounted for 38.56 seconds of the unit
+cohort; it now lives unchanged in the slow tier. The corresponding hosted
+`main` gate took 4 minutes 51 seconds including checkout, dependency, browser,
+wheel, and test setup. These measurements are a compact baseline, not a
+machine-specific pass threshold. On the tiered candidate, fast source took
+74.07 seconds, browser 17.92 seconds, and the unchanged slow resource proof
+37.16 seconds locally; the two routine source jobs can run independently. The
+tiered gate runs fast source, installed
+smoke, and protected browser as independent required jobs while retaining the
+stable aggregate `public-gate` result.
+
+A test may move out of routine qualification only when its expensive property
+is scale, endurance, exhaustive breadth, or resource measurement and a smaller
+required test preserves the same functional path and failure transitions. A
+slow test is never silently skipped: delivery documentation identifies when
+exact-head slow evidence is required. Fixed diagnostics distinguish source
+provenance, setup/build failure, nonzero test failure, and subprocess timeout;
+captured subprocess streams remain bounded and are not exposed in failure
+evidence.
 
 The public gate first installs the Chromium revision bound to pinned Playwright
 1.61.0 and verifies its repository-bound complete payload digest before launch.

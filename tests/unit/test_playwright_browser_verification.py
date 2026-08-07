@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 
 from scripts.verify_playwright_browser import (
     BrowserVerificationError,
     browser_tree_sha256,
+    cli,
 )
 
 
@@ -32,6 +35,18 @@ class PlaywrightBrowserVerificationTests(unittest.TestCase):
             (root / "alias").symlink_to(target)
             with self.assertRaises(BrowserVerificationError):
                 browser_tree_sha256(root)
+
+    def test_cli_failure_is_path_free_and_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            private_path = Path(directory) / "missing"
+            diagnostics = StringIO()
+            with redirect_stderr(diagnostics):
+                result = cli(
+                    ("--path", str(private_path), "--platform", "darwin-arm64")
+                )
+        self.assertEqual(result, 1)
+        self.assertIn('"reason":"browser_verification_failed"', diagnostics.getvalue())
+        self.assertNotIn(str(private_path), diagnostics.getvalue())
 
 
 if __name__ == "__main__":
