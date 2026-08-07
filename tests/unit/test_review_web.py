@@ -837,6 +837,10 @@ class ReviewWebTests(unittest.TestCase):
         script = self.client.get("/assets/review.js").text
         self.assertIn("removeAttribute('data-csrf-token')", script)
         self.assertIn("No attention needed", script)
+        self.assertIn("preparationProjection", script)
+        self.assertIn("await refreshLibrary()", script)
+        self.assertIn("refreshedList.replaceChildren", script)
+        self.assertIn("replacement.focus({preventScroll: true})", script)
         self.assertNotIn("Automatically handled", script)
         self.assertNotIn("localStorage", script)
         self.assertNotIn("sessionStorage", script)

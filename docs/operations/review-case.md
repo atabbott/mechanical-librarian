@@ -137,19 +137,25 @@ is slow. Compact checked/total/ready/blocked progress is authenticated,
 private/no-store, and contains no metadata values or paths. Confirmed absences
 and present items that are no longer eligible are staged after complete
 enumeration; they tombstone or retire current lineages only if the whole scan
-completes successfully. A stale or absent catalogue first establishes a
+completes successfully and a confirmation discovery still observes the same
+absence or ineligibility. A stale or absent catalogue first establishes a
 complete baseline for every configured library, while later library scans
 retain unrelated entries. The two lanes serialize catalogue publication and
 share synchronized provider pacing. Provider technical failure in any
 configured lane stops before proposal creation, discards staged retirements,
 and remains a bounded failure for a later owner-requested scan.
 If an item disappears after discovery, its typed not-found result requests the
-same bounded rediscovery as other target or media drift. Authentication and
-service failures remain distinct technical failures.
+same bounded rediscovery as other target or media drift, including between
+proposal creation and admission. A failed rediscovery terminalizes the scan;
+its old queued children cannot execute. Authentication and service failures
+remain distinct technical failures.
 If another file appears while extraction is active, the final progressive-only
 singular-work gate likewise publishes no report or case and requests bounded
 rediscovery. Slow live currentness reads do not hold the SQLite writer lock
 needed by the other lane.
+When preparation changes ready/blocked counts or lifecycle state, the Library
+page refreshes its exact-current projection so newly admitted or retired cases
+are reflected without a manual reload.
 
 This is an owner-requested preparation operation, not polling or unattended
 scheduling. It makes only the reads and provider calls already authorized by

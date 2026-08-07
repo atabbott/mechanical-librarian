@@ -918,6 +918,9 @@ class SQLiteMetadataReportRepository:
                 "item_id,file_identity,source_revision,"
                 "report_id,proposal_set_id,review_case_id "
                 "FROM review_preparation_work WHERE state='queued' "
+                "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
+                "WHERE s.scan_id=review_preparation_work.scan_id "
+                "AND s.state='processing') "
                 "ORDER BY scan_id,ordinal LIMIT 1"
             ).fetchone()
             if work is not None:
@@ -956,7 +959,27 @@ class SQLiteMetadataReportRepository:
                 "AND w.state IN ('queued','running'))"
             ).fetchall()
             for scan_id, rescan_requested in scans:
-                if rescan_requested:
+                failures = self._connection.execute(
+                    "SELECT COUNT(*) FROM review_preparation_work "
+                    "WHERE scan_id=? AND state='failed'",
+                    (scan_id,),
+                ).fetchone()[0]
+                stale = self._connection.execute(
+                    "SELECT COUNT(*) FROM review_preparation_work "
+                    "WHERE scan_id=? AND state='stale'",
+                    (scan_id,),
+                ).fetchone()[0]
+                if failures:
+                    self._connection.execute(
+                        "DELETE FROM review_preparation_absences WHERE scan_id=?",
+                        (scan_id,),
+                    )
+                    self._connection.execute(
+                        "UPDATE review_preparation_scans SET state='completed_with_failures',"
+                        "rescan_requested=0,updated_at=? WHERE scan_id=?",
+                        (claimed_at, scan_id),
+                    )
+                elif rescan_requested:
                     self._connection.execute(
                         "UPDATE review_preparation_scans SET state='queued',"
                         "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
@@ -964,13 +987,8 @@ class SQLiteMetadataReportRepository:
                         (claimed_at, scan_id),
                     )
                 else:
-                    failures = self._connection.execute(
-                        "SELECT COUNT(*) FROM review_preparation_work "
-                        "WHERE scan_id=? AND state IN ('failed','stale')",
-                        (scan_id,),
-                    ).fetchone()[0]
-                    state = "completed_with_failures" if failures else "completed"
-                    if failures:
+                    state = "completed_with_failures" if stale else "completed"
+                    if stale:
                         self._connection.execute(
                             "DELETE FROM review_preparation_absences WHERE scan_id=?",
                             (scan_id,),
@@ -1022,6 +1040,11 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             if current != ("discovering",):
                 raise MetadataReportError("review preparation state changed")
+            previous_retirements = self._connection.execute(
+                "SELECT item_id,proposal_set_id,report_id,review_case_id,checkpoint,kind,reason "
+                "FROM review_preparation_absences WHERE scan_id=? ORDER BY item_id",
+                (action.scan_id,),
+            ).fetchall()
             pointers = self._connection.execute(
                 "SELECT item_id,proposal_set_id,report_id,review_case_id,checkpoint "
                 "FROM current_review_case_lineages "
@@ -1052,6 +1075,21 @@ class SQLiteMetadataReportRepository:
                         reason,
                     ),
                 )
+            staged_retirements = self._connection.execute(
+                "SELECT item_id,proposal_set_id,report_id,review_case_id,checkpoint,kind,reason "
+                "FROM review_preparation_absences WHERE scan_id=? ORDER BY item_id",
+                (action.scan_id,),
+            ).fetchall()
+            confirmation_required = bool(staged_retirements) and not previous_retirements
+            if previous_retirements:
+                confirmed = set(previous_retirements).intersection(staged_retirements)
+                for candidate in staged_retirements:
+                    if candidate not in confirmed:
+                        self._connection.execute(
+                            "DELETE FROM review_preparation_absences "
+                            "WHERE scan_id=? AND item_id=?",
+                            (action.scan_id, candidate[0]),
+                        )
             for ordinal, entry in enumerate(
                 sorted(eligible, key=lambda value: value.item_id)
             ):
@@ -1172,9 +1210,18 @@ class SQLiteMetadataReportRepository:
             self._connection.execute(
                 "UPDATE review_preparation_scans SET state='processing',"
                 "catalogue_generation=?,catalogue_fingerprint=?,total=?,"
-                "refresh_count=refresh_count+1,updated_at=? "
+                "refresh_count=refresh_count+1,rescan_requested="
+                "CASE WHEN ? THEN 1 ELSE rescan_requested END,"
+                "updated_at=? "
                 "WHERE scan_id=?",
-                (generation, fingerprint, len(eligible), completed_at, action.scan_id),
+                (
+                    generation,
+                    fingerprint,
+                    len(eligible),
+                    confirmation_required,
+                    completed_at,
+                    action.scan_id,
+                ),
             )
             self._connection.commit()
         except (sqlite3.Error, MetadataReportError, ReviewCaseValueError) as error:

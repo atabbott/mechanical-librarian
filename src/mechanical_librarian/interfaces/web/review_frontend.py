@@ -575,10 +575,18 @@ const renderPreparation = (target, data) => {
   }
   target.replaceChildren(...children);
 };
-const loadPreparation = target => load("/api/v1/review-preparation").then(data => {
+const preparationProjection = data => JSON.stringify(data.libraries.map(item => [
+  item.connection, item.library, item.state, item.total, item.ready, item.blocked
+]));
+const libraryProjection = data => JSON.stringify([data.counts, data.items, data.next_cursor]);
+const loadPreparation = (target, previousProjection = null, refreshLibrary = null) => load("/api/v1/review-preparation").then(async data => {
+  const projection = preparationProjection(data);
   renderPreparation(target, data);
+  if (previousProjection !== null && projection !== previousProjection && refreshLibrary) {
+    await refreshLibrary();
+  }
   if (data.libraries.some(item => ["queued", "discovering", "processing"].includes(item.state))) {
-    window.setTimeout(() => loadPreparation(target), 1500);
+    window.setTimeout(() => loadPreparation(target, projection, refreshLibrary), 1500);
   }
 }).catch(() => {
   target.replaceChildren(element("p", "Library preparation status is temporarily unavailable.", "empty-state"));
@@ -631,7 +639,54 @@ if (libraryRoot) {
     preview.append(book, element("p", "Current review cases", "eyebrow"), element("h2", data.items.length ? "Choose a work to review its exact-current fields." : "This view is clear."), element("p", data.items.length ? "Each decision is recorded as an immutable human outcome. This workspace never writes to your target library." : "Try another lens or search term to inspect other bounded cases."));
     workspace.append(list, preview);
     libraryRoot.replaceChildren(...[top, preparation, tools, workspace].filter(Boolean));
-    if (preparation) loadPreparation(preparation);
+    let currentLibraryProjection = libraryProjection(data);
+    const refreshLibrary = () => load(`/api/v1/library?${new URLSearchParams(location.search)}`).then(updated => {
+      const updatedProjection = libraryProjection(updated);
+      if (updatedProjection === currentLibraryProjection) return;
+      currentLibraryProjection = updatedProjection;
+      const active = document.activeElement;
+      const focusedLink = active?.closest?.(".lenses a, .work-list a");
+      const focusRegion = focusedLink?.closest(".lenses") ? ".lenses" : focusedLink?.closest(".work-list") ? ".work-list" : null;
+      const focusedHref = focusedLink?.getAttribute("href") || null;
+      const refreshedCounts = libraryRoot.querySelector(".count-cluster");
+      refreshedCounts.replaceChildren();
+      for (const [label, value] of [["Attention", updated.counts.needs_attention], ["All cases", updated.counts.all], ["No attention", updated.counts.no_attention_needed]]) {
+        const metric = element("span"); metric.append(element("strong", String(value)), element("small", label)); refreshedCounts.append(metric);
+      }
+      const refreshedLenses = libraryRoot.querySelector(".lenses");
+      refreshedLenses.replaceChildren();
+      for (const [value, label] of [["needs_attention", "Needs attention"], ["all", "All review cases"], ["no_attention_needed", "No attention needed"]]) {
+        const link = element("a", `${label} (${updated.counts[value]})`);
+        const target = new URLSearchParams(); target.set("lens", value); if (updated.query) target.set("q", updated.query);
+        link.href = `/library?${target}`;
+        if (value === lens) link.setAttribute("aria-current", "page");
+        refreshedLenses.append(link);
+      }
+      const refreshedList = libraryRoot.querySelector(".work-list");
+      const refreshedHead = element("div", null, "work-list-header");
+      refreshedHead.append(element("span", friendly(lens)), element("span", `${updated.items.length} shown`));
+      const refreshedChildren = [refreshedHead, ...updated.items.map(workRow)];
+      if (!updated.items.length) refreshedChildren.push(element("p", "No exact-current cases match this view.", "empty-state"));
+      const refreshedPagination = element("div", null, "pagination");
+      refreshedPagination.append(element("p", updated.next_cursor ? "A bounded page of current cases" : "End of the bounded current result"));
+      if (updated.next_cursor) {
+        const next = element("a", "Next page", "next");
+        const target = new URLSearchParams(location.search); target.set("cursor", updated.next_cursor); next.href = `/library?${target}`;
+        refreshedPagination.append(next);
+      }
+      refreshedChildren.push(refreshedPagination);
+      refreshedList.replaceChildren(...refreshedChildren);
+      const refreshedPreview = libraryRoot.querySelector(".workspace-preview");
+      const refreshedBook = element("span", "ML", "work-mark preview-book"); refreshedBook.setAttribute("aria-hidden", "true");
+      refreshedPreview.replaceChildren(refreshedBook, element("p", "Current review cases", "eyebrow"), element("h2", updated.items.length ? "Choose a work to review its exact-current fields." : "This view is clear."), element("p", updated.items.length ? "Each decision is recorded as an immutable human outcome. This workspace never writes to your target library." : "Try another lens or search term to inspect other bounded cases."));
+      if (focusRegion && focusedHref) {
+        const region = libraryRoot.querySelector(focusRegion);
+        const replacement = [...region.querySelectorAll("a")].find(link => link.getAttribute("href") === focusedHref);
+        if (replacement) replacement.focus({preventScroll: true});
+        else { region.tabIndex = -1; region.focus({preventScroll: true}); }
+      }
+    });
+    if (preparation) loadPreparation(preparation, null, refreshLibrary);
     libraryRoot.focus({preventScroll: true});
   }).catch(() => failPage(libraryRoot));
 }

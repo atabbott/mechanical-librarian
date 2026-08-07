@@ -10,7 +10,10 @@
   shared provider pacing, and proposal-currentness drift remain bounded and
   race-safe; slow currentness checks do not hold the cross-lane writer lock and
   a second file appearing during extraction publishes no report or case. The
-  workflow stays decision-only and write-free. (#474)
+  workflow confirms staged retirements with a final discovery, prevents terminal
+  scans from claiming stale children, refreshes changed Library projections,
+  and treats admission-time disappearance as stale. It stays decision-only and
+  write-free. (#474)
 
 - Restore the authenticated review frontend to the protected variant M visual
   contract across Library, Attention, and exact-current Detail. The branded

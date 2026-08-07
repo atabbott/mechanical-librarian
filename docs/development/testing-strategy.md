@@ -47,7 +47,9 @@ The suite covers:
   same-process derived database authority, typed proposal-currentness drift,
   two-repository proof that slow external currentness holds no SQLite writer
   lock, final single-file eligibility drift and stale rediscovery without report
-  or case publication,
+  or case publication, confirmation discovery before staged retirement,
+  reappearance cancellation, failed-rediscovery child isolation, admission-time
+  typed not-found handling, and Library projection refresh on material progress,
   per-work stage progression, every-lane completeness before proposal,
   atomic report/checkpoint rollback and restart,
   bounded third-attempt crash recovery, completed-ledger inert recovery, and a fixed

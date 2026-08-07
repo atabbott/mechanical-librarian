@@ -7,10 +7,15 @@ import threading
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
+import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.catalogue import CatalogueEntry
-from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.metadata_report import (
+    MetadataReportError,
+    TargetNotFoundError,
+)
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     ReviewPipelineError,
@@ -33,6 +38,37 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_admission_target_not_found_is_typed_stale(self) -> None:
+        repository = open_repository(self.path)
+        report = _report()
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        repository.close()
+
+        with (
+            patch.object(composition, "CoverArtifactStore", return_value=object()),
+            patch.object(
+                composition,
+                "_require_report_current_loaded",
+                side_effect=TargetNotFoundError("target item is unavailable"),
+            ),
+        ):
+            result = json.loads(
+                composition.admit_review_case_loaded(
+                    object(), self.path, Path("ignored"), proposal.proposal_set_id
+                )
+            )
+
+        repository = open_repository(self.path)
+        cases = repository._connection.execute(
+            "SELECT COUNT(*) FROM review_cases"
+        ).fetchone()
+        repository.close()
+        self.assertEqual(result["status"], "stale")
+        self.assertIsNone(result["review_case_id"])
+        self.assertEqual(cases, (0,))
 
     def test_request_discovery_claim_and_restart_are_persisted(self) -> None:
         repository = open_repository(self.path)
@@ -134,6 +170,38 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertEqual(refreshed.producer_fingerprint, changed_producer)
         repository.close()
 
+    def test_failed_rediscovery_cannot_claim_queued_children(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery, 1, "a" * 64, (_entry("queued", "9" * 64),), 12
+        )
+        changed_producer = "d" * 64
+        repository.recover_review_pipeline(
+            (("primary", "fiction", "lib-2", changed_producer),)
+        )
+        rediscovery = repository.claim_review_pipeline_action(13)
+        assert rediscovery is not None
+        self.assertEqual(rediscovery.stage, "discovery")
+        repository.fail_review_pipeline_action(
+            rediscovery, "transient", True, 14
+        )
+
+        self.assertIsNone(repository.claim_review_pipeline_action(15))
+        progress = repository.review_pipeline_progress("primary", "fiction")
+        child = repository._connection.execute(
+            "SELECT state FROM review_preparation_work"
+        ).fetchone()
+        repository.close()
+
+        assert progress is not None
+        self.assertEqual(progress.state, "completed_with_failures")
+        self.assertEqual(child, ("queued",))
+
     def test_third_crashed_stage_is_terminal_instead_of_overflowing_claim(self) -> None:
         repository = open_repository(self.path)
         repository.request_review_scan(
@@ -183,6 +251,13 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             discovery, 1, "c" * 64, (), 12
         )
         self.assertIsNone(repository.claim_review_pipeline_action(13))
+        confirmation = repository.claim_review_pipeline_action(14)
+        assert confirmation is not None
+        self.assertEqual(confirmation.stage, "discovery")
+        repository.complete_review_discovery(
+            confirmation, 2, "c" * 64, (), 15
+        )
+        self.assertIsNone(repository.claim_review_pipeline_action(16))
         repository.close()
 
         connection = sqlite3.connect(self.path)
@@ -234,6 +309,12 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             discovery, 1, "c" * 64, (ineligible,), 12
         )
         self.assertIsNone(repository.claim_review_pipeline_action(13))
+        confirmation = repository.claim_review_pipeline_action(14)
+        assert confirmation is not None
+        repository.complete_review_discovery(
+            confirmation, 2, "c" * 64, (ineligible,), 15
+        )
+        self.assertIsNone(repository.claim_review_pipeline_action(16))
         pointer = repository._connection.execute(
             "SELECT review_case_id,outcome FROM current_review_case_lineages"
         ).fetchone()
@@ -250,6 +331,140 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         )
         self.assertEqual(reopened["status"], "admitted")
         self.assertEqual(reopened["review_case_id"], admitted["review_case_id"])
+
+    def test_confirmation_discovery_cancels_absence_after_reappearance(self) -> None:
+        repository = open_repository(self.path)
+        report = _report()
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        admitted = json.loads(repository.admit_review_case(proposal))
+        repository.request_review_scan(
+            report.target.connection,
+            report.target.library,
+            "lib-1",
+            _PRODUCER,
+            10,
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery, 1, "c" * 64, (), 12
+        )
+        self.assertIsNone(repository.claim_review_pipeline_action(13))
+        confirmation = repository.claim_review_pipeline_action(14)
+        assert confirmation is not None
+        reappeared = replace(
+            _entry(report.target.item, report.file.identity),
+            library=report.target.library,
+        )
+        repository.complete_review_discovery(
+            confirmation, 2, "c" * 64, (reappeared,), 15
+        )
+        pointer = repository._connection.execute(
+            "SELECT review_case_id,outcome FROM current_review_case_lineages"
+        ).fetchone()
+        staged = repository._connection.execute(
+            "SELECT COUNT(*) FROM review_preparation_absences"
+        ).fetchone()
+        repository.close()
+
+        self.assertEqual(pointer, (admitted["review_case_id"], "admitted"))
+        self.assertEqual(staged, (0,))
+
+    def test_changed_retirement_candidate_is_discarded_without_third_scan(self) -> None:
+        repository = open_repository(self.path)
+        report = _report()
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        admitted = json.loads(repository.admit_review_case(proposal))
+        repository.request_review_scan(
+            report.target.connection,
+            report.target.library,
+            "lib-1",
+            _PRODUCER,
+            10,
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(discovery, 1, "c" * 64, (), 12)
+        self.assertIsNone(repository.claim_review_pipeline_action(13))
+        confirmation = repository.claim_review_pipeline_action(14)
+        assert confirmation is not None
+        ineligible = replace(
+            _entry(report.target.item, report.file.identity),
+            library=report.target.library,
+            classification="multiple-files",
+        )
+        repository.complete_review_discovery(
+            confirmation, 2, "d" * 64, (ineligible,), 15
+        )
+
+        self.assertIsNone(repository.claim_review_pipeline_action(16))
+        self.assertIsNone(repository.claim_review_pipeline_action(17))
+        pointer = repository._connection.execute(
+            "SELECT review_case_id,outcome FROM current_review_case_lineages"
+        ).fetchone()
+        staged = repository._connection.execute(
+            "SELECT COUNT(*) FROM review_preparation_absences"
+        ).fetchone()
+        repository.close()
+        self.assertEqual(pointer, (admitted["review_case_id"], "admitted"))
+        self.assertEqual(staged, (0,))
+
+    def test_later_rediscovery_confirms_new_absence_before_tombstone(self) -> None:
+        repository = open_repository(self.path)
+        report = _report()
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        admitted = json.loads(repository.admit_review_case(proposal))
+        repository.request_review_scan(
+            report.target.connection,
+            report.target.library,
+            "lib-1",
+            _PRODUCER,
+            10,
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        present = replace(
+            _entry(report.target.item, report.file.identity),
+            library=report.target.library,
+        )
+        repository.complete_review_discovery(discovery, 1, "c" * 64, (present,), 12)
+        repository.request_review_scan(
+            report.target.connection,
+            report.target.library,
+            "lib-1",
+            _PRODUCER,
+            13,
+        )
+        work = repository.claim_review_pipeline_action(14)
+        while work is not None:
+            repository.advance_review_pipeline_action(work, None, 15)
+            work = repository.claim_review_pipeline_action(16)
+        later = repository.claim_review_pipeline_action(17)
+        assert later is not None
+        repository.complete_review_discovery(later, 2, "d" * 64, (), 18)
+
+        self.assertIsNone(repository.claim_review_pipeline_action(19))
+        confirmation = repository.claim_review_pipeline_action(20)
+        assert confirmation is not None
+        self.assertEqual(confirmation.stage, "discovery")
+        pointer = repository._connection.execute(
+            "SELECT review_case_id,outcome FROM current_review_case_lineages"
+        ).fetchone()
+        self.assertEqual(pointer, (admitted["review_case_id"], "admitted"))
+
+        repository.complete_review_discovery(confirmation, 3, "e" * 64, (), 21)
+        self.assertIsNone(repository.claim_review_pipeline_action(22))
+        pointer = repository._connection.execute(
+            "SELECT review_case_id,outcome FROM current_review_case_lineages"
+        ).fetchone()
+        repository.close()
+        self.assertEqual(pointer, (None, "tombstoned"))
 
     def test_failed_discovery_cannot_tombstone_current_lineage(self) -> None:
         repository = open_repository(self.path)

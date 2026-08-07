@@ -55,6 +55,10 @@ Present items that cease to be eligible are staged and retire their current
 review lineage only under the same whole-scan success gate as confirmed
 absences. Preparation-owned tombstones and retirements permit later
 exact-current readmission if the item reappears or becomes eligible again.
+Before any staged tombstone or retirement commits, one confirmation discovery
+re-enumerates the library; reappearance or renewed eligibility cancels the
+staged transition. A failed rediscovery makes the scan terminal and its queued
+children are not claimable.
 The final pipeline publication gate also requires the target to remain a
 single-file work; a second file appearing during extraction is stale input and
 enters bounded rediscovery without publishing a report or case.
@@ -73,6 +77,8 @@ rediscovery; credential denial and general service failure remain technical
 failures rather than masquerading as target drift.
 Target drift detected during ProposalSet currentness validation is likewise a
 typed stale-input result rather than a terminal proposal-publication failure.
+The same typed-not-found handling applies between proposal creation and
+ReviewCase admission.
 
 On Linux, the review server retains the owner-only parent-directory lock for
 its lifetime and passes an identity-bound authority to its same-process
@@ -93,6 +99,8 @@ apply plan, or write a target or media file.
 - Existing report, proposal, admission, provider-pacing, and review contracts
   remain the only semantic authorities.
 - The owner sees compact progress in the existing Library surface.
+- A material progress/state change refreshes the Library projection so newly
+  admitted, tombstoned, or retired cases are not left stale on screen.
 
 ### Negative
 
@@ -124,7 +132,9 @@ broker, or plugin seam would add unused policy and authority.
 Focused tests cover request coalescing, exact schema validation, complete and
 empty discovery, complete first-refresh baselines, item-scoped currentness
 across unrelated refreshes, successful-scan absence tombstones and ineligible
-retirements, failed-scan discard and reappearance, synchronized shared provider
+retirements, confirmation rediscovery and reappearance cancellation,
+failed-rediscovery child isolation, failed-scan discard and reappearance,
+synchronized shared provider
 pacing, Linux derived database authority, typed proposal currentness, unchanged-work
 reuse, source-revision invalidation, atomic report/checkpoint rollback and
 restart, slow-currentness writer-lock independence, final single-file drift,

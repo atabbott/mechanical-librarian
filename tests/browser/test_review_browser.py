@@ -236,6 +236,115 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         verify_playwright_browser()
 
+    def test_preparation_progress_refreshes_library_without_navigation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.chmod(root, 0o700)
+            hash_path = root / "owner.hash"
+            hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+            os.chmod(hash_path, 0o600)
+            certificate, key = _certificate(root)
+            database = root / "application.sqlite3"
+            port = _unused_port()
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                context = browser.new_context(ignore_https_errors=True)
+                page = context.new_page()
+                with _server(
+                    database=database,
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    report=_manual_report(),
+                ) as (origin, _case_id):
+                    responses = [
+                        ("queued", 0, 0),
+                        ("processing", 1, 0),
+                        ("processing", 1, 1),
+                        ("completed", 1, 1),
+                    ]
+                    requests = 0
+                    library_requests = 0
+
+                    def library_page(route) -> None:
+                        response = route.fetch()
+                        body = response.text().replace(
+                            '<section id="library"',
+                            '<section id="library" data-review-preparation="true"',
+                            1,
+                        )
+                        route.fulfill(response=response, body=body)
+
+                    def library_api(route) -> None:
+                        nonlocal library_requests
+                        response = route.fetch()
+                        payload = response.json()
+                        library_requests += 1
+                        if library_requests > 1 and payload["items"]:
+                            payload["items"][0]["title"] += (
+                                f" refreshed {library_requests}"
+                            )
+                        route.fulfill(status=200, json=payload)
+
+                    def preparation(route) -> None:
+                        nonlocal requests
+                        state, checked, ready = responses[min(requests, 3)]
+                        requests += 1
+                        route.fulfill(
+                            status=200,
+                            content_type="application/json",
+                            body=json.dumps(
+                                {
+                                    "schema_version": "review-preparation-v1",
+                                    "libraries": [
+                                        {
+                                            "connection": "primary",
+                                            "library": "fiction",
+                                            "library_id": "lib-1",
+                                            "state": state,
+                                            "checked": checked,
+                                            "total": 1,
+                                            "ready": ready,
+                                            "blocked": 0,
+                                        }
+                                    ],
+                                }
+                            ),
+                        )
+
+                    page.route("**/library", library_page)
+                    page.route("**/api/v1/library*", library_api)
+                    page.route("**/api/v1/review-preparation", preparation)
+                    _login(page, origin)
+                    page.get_by_role("heading", name="Review library").wait_for()
+                    search = page.get_by_role("searchbox")
+                    search.fill("unsent search")
+                    work = page.locator(".work-list a.work-row").first
+                    work.focus()
+                    work_href = work.get_attribute("href")
+                    navigations: list[str] = []
+                    page.on("framenavigated", lambda frame: navigations.append(frame.url))
+                    page.get_by_text("refreshed 2", exact=False).wait_for(timeout=8_000)
+                    self.assertTrue(
+                        page.locator(f'.work-list a.work-row[href="{work_href}"]').evaluate(
+                            "node => node === document.activeElement"
+                        )
+                    )
+                    lens_link = page.locator('.lenses a[aria-current="page"]')
+                    lens_link.focus()
+                    page.get_by_text("1 checked · 1 ready", exact=True).wait_for(
+                        timeout=8_000
+                    )
+                    self.assertGreaterEqual(requests, 4)
+                    self.assertGreaterEqual(library_requests, 2)
+                    self.assertEqual(navigations, [])
+                    self.assertEqual(search.input_value(), "unsent search")
+                    self.assertTrue(
+                        lens_link.evaluate("node => node === document.activeElement")
+                    )
+                    context.close()
+
     def test_desktop_round_trip_is_explicit_responsive_and_durable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

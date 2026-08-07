@@ -705,7 +705,7 @@ def admit_review_case_loaded(
             raise ReviewCaseError("persistence") from error
         try:
             return _require_report_current_loaded(configuration, artifacts, report)
-        except CurrentnessError:
+        except (CurrentnessError, TargetNotFoundError):
             return False
 
     try:

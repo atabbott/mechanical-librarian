@@ -51,7 +51,9 @@ present lineage that is no longer eligible. Catalogue discovery and shared
 provider pacers serialize their mutation of global generation and pacing state
 across the two lanes. The first stale catalogue refresh establishes a complete
 configured-library baseline; later work validates its exact item and revision
-against the latest generation. Final pipeline publication also requires the
+against the latest generation. Staged absence and ineligibility transitions
+require one final confirmation discovery; failed rediscovery makes queued child
+work unclaimable. Final pipeline publication also requires the
 target to remain singular. External target, media, cover, and artifact
 currentness checks precede the short SQLite write transaction, which retains
 its local expected-pointer check; one slow external read cannot hold the writer
