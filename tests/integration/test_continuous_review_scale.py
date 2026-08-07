@@ -192,6 +192,7 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
         counts: dict[str, int],
         *,
         expected_total: int,
+        memory_ceiling_kib: int | None = None,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -296,13 +297,14 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
             credential_item = "science-0000"
             credentials_valid = [False]
             processing_started = time.monotonic()
-            processing_peak_rss_kib = [self._rss_kib(os.getpid())]
+            processing_peak_rss_kib = [0]
 
             def run_next(value: ReviewPreparationPipeline) -> bool:
                 advanced = value.run_next()
-                processing_peak_rss_kib[0] = max(
-                    processing_peak_rss_kib[0], self._rss_kib(os.getpid())
-                )
+                if memory_ceiling_kib is not None:
+                    processing_peak_rss_kib[0] = max(
+                        processing_peak_rss_kib[0], self._rss_kib(os.getpid())
+                    )
                 return advanced
 
             def discover(_: str, library: str):
@@ -456,7 +458,8 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
             # This measures the real report/proposal/admission workload, not the
             # later no-change console restart.
             self.assertGreaterEqual(expected_total / processing_elapsed, 5.0)
-            self.assertLess(processing_peak_rss_kib[0], 524_288)
+            if memory_ceiling_kib is not None:
+                self.assertLess(processing_peak_rss_kib[0], memory_ceiling_kib)
 
             final = [
                 restarted.progress("primary", library)

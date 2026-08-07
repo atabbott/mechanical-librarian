@@ -18,6 +18,7 @@ class SlowContinuousReviewScaleQualificationTests(
         self._qualify_installed_pipeline(
             {"fiction": 3, "history": 498, "science": 498},
             expected_total=1_000,
+            memory_ceiling_kib=524_288,
         )
 
 
