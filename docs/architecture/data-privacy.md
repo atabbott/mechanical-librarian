@@ -1,5 +1,19 @@
 # Data privacy
 
+## Review preparation progress
+
+The authenticated preparation surface exposes only configured connection and
+library names, an opaque scan identifier, a closed state, checked/total/ready/
+blocked counts, and whether another owner request was coalesced. It never
+projects item titles, authors, filenames, media paths, provider queries or
+responses, credentials, failure text, or report values. Normal review items
+remain governed by the existing private/no-store Library and Attention
+contracts. Persisted operational work rows use existing opaque target, file,
+report, proposal, and case identities with exact source/producer identity and
+fixed stage and failure codes. One bounded current work ledger per discovered
+eligible item is reconciled in place; run history does not accumulate.
+
+
 0.10 minimizes retained data to one neutral evidence document per distinct
 observation. It retains the configured logical connection/library names,
 target item identifier, current title, opaque file identity and digest, bounded

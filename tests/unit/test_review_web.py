@@ -34,6 +34,7 @@ from mechanical_librarian.application.review_web import (
     _encode_cursor,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_pipeline import PipelineProgress
 from mechanical_librarian.interfaces.cli import main as cli_main
 from mechanical_librarian.bootstrap.composition import run_review_server
 from mechanical_librarian.domain.proposal_set import evaluate_report
@@ -313,6 +314,34 @@ class _Repository:
         )
 
 
+class _Preparation:
+    libraries = (("primary", "fiction", "lib-1"),)
+
+    def start(self) -> None:
+        return None
+
+    def stop(self) -> None:
+        return None
+
+    def progress(self, connection: str, library: str):
+        if (connection, library) != ("primary", "fiction"):
+            return None
+        return PipelineProgress(
+            "review_scan_" + "a" * 64,
+            connection,
+            library,
+            "processing",
+            2,
+            5,
+            1,
+            0,
+            False,
+        )
+
+    def request(self, connection: str, library: str):
+        return self.progress(connection, library)
+
+
 class ReviewWebTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -349,6 +378,53 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
+
+    def test_review_preparation_is_authenticated_csrf_bound_and_bounded(self) -> None:
+        configuration = ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(self.hash_path),
+            session_lifetime_seconds=600,
+        )
+        self.client = TestClient(
+            create_review_app(
+                self.repository,
+                configuration,
+                clock=lambda: self.now,
+                review_preparation=_Preparation(),
+            ),
+            base_url="https://review.test",
+        )
+        anonymous = self.client.get("/api/v1/review-preparation")
+        self.assertEqual(anonymous.status_code, 401)
+        session = self._login()
+        status = self.client.get("/api/v1/review-preparation")
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(
+            status.json()["libraries"][0],
+            {
+                "blocked": 0,
+                "checked": 2,
+                "connection": "primary",
+                "library": "fiction",
+                "library_id": "lib-1",
+                "ready": 1,
+                "rescan_requested": False,
+                "scan_id": "review_scan_" + "a" * 64,
+                "state": "processing",
+                "total": 5,
+            },
+        )
+        missing_csrf = self.client.post(
+            "/api/v1/review-preparation/primary/fiction/scan",
+            headers=self.origin,
+        )
+        self.assertEqual(missing_csrf.status_code, 422)
+        requested = self.client.post(
+            "/api/v1/review-preparation/primary/fiction/scan",
+            headers={**self.origin, "x-csrf-token": session["csrf_token"]},
+        )
+        self.assertEqual(requested.status_code, 202)
+        self.assertEqual(requested.json()["state"], "processing")
 
     def test_only_liveness_and_login_are_anonymous(self) -> None:
         live = self.client.get("/health/live")
@@ -761,6 +837,10 @@ class ReviewWebTests(unittest.TestCase):
         script = self.client.get("/assets/review.js").text
         self.assertIn("removeAttribute('data-csrf-token')", script)
         self.assertIn("No attention needed", script)
+        self.assertIn("preparationProjection", script)
+        self.assertIn("await refreshLibrary()", script)
+        self.assertIn("refreshedList.replaceChildren", script)
+        self.assertIn("replacement.focus({preventScroll: true})", script)
         self.assertNotIn("Automatically handled", script)
         self.assertNotIn("localStorage", script)
         self.assertNotIn("sessionStorage", script)
@@ -934,10 +1014,15 @@ class ReviewWebTests(unittest.TestCase):
             {
                 ("get", "/api/v1/attention"),
                 ("get", "/api/v1/library"),
+                ("get", "/api/v1/review-preparation"),
                 ("get", "/api/v1/review-cases/{review_case_id}"),
                 ("get", "/api/v1/review-cases/{review_case_id}/evidence"),
                 ("get", "/api/v1/review-cases/{review_case_id}/history"),
                 ("post", "/api/v1/review-cases/{review_case_id}/decisions"),
+                (
+                    "post",
+                    "/api/v1/review-preparation/{connection}/{library_name}/scan",
+                ),
                 ("post", "/api/v1/session/logout"),
             },
         )
@@ -974,6 +1059,19 @@ class ReviewWebTests(unittest.TestCase):
                 response_statuses[("get", path)],
                 {"200", "400", "401", "422", "503"},
             )
+        self.assertEqual(
+            response_statuses[("get", "/api/v1/review-preparation")],
+            {"200", "401", "503"},
+        )
+        self.assertEqual(
+            response_statuses[
+                (
+                    "post",
+                    "/api/v1/review-preparation/{connection}/{library_name}/scan",
+                )
+            ],
+            {"202", "400", "401", "403", "404", "422", "503"},
+        )
         headers = {
             value["name"]: value
             for value in decision_operation["parameters"]
@@ -1187,7 +1285,7 @@ class ReviewWebTests(unittest.TestCase):
                 canonical_origin="http://review.test",
                 owner_password_hash_file=str(self.hash_path),
             )
-        calls: list[tuple[Path, Path, str, int]] = []
+        calls: list[tuple[Path, Path, Path, Path, str, int]] = []
         output = StringIO()
         errors = StringIO()
         result = cli_main(
@@ -1197,6 +1295,10 @@ class ReviewWebTests(unittest.TestCase):
                 "/config.json",
                 "--database",
                 "/application.sqlite3",
+                "--catalogue",
+                "/catalogue.sqlite3",
+                "--artifacts",
+                "/artifacts",
                 "--host",
                 "0.0.0.0",
                 "--port",
@@ -1209,7 +1311,16 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(result, 0, errors.getvalue())
         self.assertEqual(
             calls,
-            [(Path("/config.json"), Path("/application.sqlite3"), "0.0.0.0", 8443)],
+            [
+                (
+                    Path("/config.json"),
+                    Path("/application.sqlite3"),
+                    Path("/catalogue.sqlite3"),
+                    Path("/artifacts"),
+                    "0.0.0.0",
+                    8443,
+                )
+            ],
         )
 
     def test_composition_opens_the_single_database_for_worker_threads(self) -> None:
@@ -1238,11 +1349,17 @@ class ReviewWebTests(unittest.TestCase):
                 "mechanical_librarian.bootstrap.composition.create_review_app",
                 return_value=object(),
             ),
+            patch(
+                "mechanical_librarian.bootstrap.composition.create_review_pipeline",
+                return_value=Mock(),
+            ),
             patch("mechanical_librarian.bootstrap.composition.uvicorn.run"),
         ):
             run_review_server(
                 Path("/config.json"),
                 Path("/application.sqlite3"),
+                Path("/catalogue.sqlite3"),
+                Path("/artifacts"),
                 "127.0.0.1",
                 8443,
             )

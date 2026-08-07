@@ -57,6 +57,7 @@ class CatalogueRepository(Protocol):
     def inspect(self, fingerprint: str) -> tuple[CatalogueEntry, ...]: ...
     def snapshot(self, fingerprint: str): ...
     def current_entry(self, generation: int, fingerprint: str, key: tuple[str, str, str, str]) -> CatalogueEntry | None: ...
+    def latest_entry(self, fingerprint: str, key: tuple[str, str, str, str]) -> CatalogueEntry | None: ...
     def close(self) -> None: ...
 
 
@@ -100,6 +101,49 @@ class RefreshCurrentCatalogue:
             for library in configuration.libraries:
                 entries.extend(self._reader.read_library(library.connection, library, 10_000 - len(entries)))
             return self._repository.publish(fingerprint, tuple(entries))
+        except Exception:
+            self._repository.abort_refresh()
+            raise
+
+    def refresh_library(
+        self,
+        configuration: ApplicationConfiguration,
+        connection: str,
+        library_name: str,
+    ) -> int:
+        fingerprint = catalogue_fingerprint(configuration).digest
+        matches = tuple(
+            library
+            for library in configuration.libraries
+            if library.connection == connection and library.name == library_name
+        )
+        if len(matches) != 1:
+            raise CatalogueError("catalogue library is unavailable")
+        library = matches[0]
+        self._repository.acquire_refresh()
+        try:
+            try:
+                existing = self._repository.inspect(fingerprint)
+                libraries = (library,)
+            except CatalogueStaleError:
+                existing = ()
+                libraries = configuration.libraries
+            retained = tuple(
+                entry
+                for entry in existing
+                if (entry.connection, entry.library) != (connection, library_name)
+            )
+            discovered: list[CatalogueEntry] = []
+            for selected in libraries:
+                maximum = 10_000 - len(retained) - len(discovered)
+                discovered.extend(
+                    self._reader.read_library(
+                        selected.connection, selected, maximum
+                    )
+                )
+            return self._repository.publish(
+                fingerprint, retained + tuple(discovered)
+            )
         except Exception:
             self._repository.abort_refresh()
             raise

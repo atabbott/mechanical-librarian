@@ -38,6 +38,23 @@ and test artifacts are not packaged or published.
 
 The suite covers:
 
+- authenticated, CSRF-bound review preparation requests and value-free compact
+  progress; persisted request coalescing, exact-schema restart recovery,
+  complete first-refresh catalogue baselines, item-scoped currentness across
+  unrelated library refreshes, complete successful scans before absence
+  tombstones or ineligible retirements, failed-scan staged-retirement discard,
+  reappearance/readmission, synchronized shared provider pacing, Linux
+  same-process derived database authority, typed proposal-currentness drift,
+  two-repository proof that slow external currentness holds no SQLite writer
+  lock, final single-file eligibility drift and stale rediscovery without report
+  or case publication, confirmation discovery before staged retirement,
+  reappearance cancellation, failed-rediscovery child isolation, admission-time
+  typed not-found handling, and Library projection refresh on material progress,
+  per-work stage progression, every-lane completeness before proposal,
+  atomic report/checkpoint rollback and restart,
+  bounded third-attempt crash recovery, completed-ledger inert recovery, and a fixed
+  two-lane proof that one slow work cannot impose a library-wide stage barrier;
+
 - closed reports, canonical serialization, stable claim/report references,
   title normalization, and occurrence-local ISBN applicability, including
   explicit non-ISBN scheme and URI controls across package, opening, and rear

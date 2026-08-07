@@ -125,7 +125,9 @@ ranking policy:
 - `timeout_seconds` (1–60; default 30)
 
 Optional `review` configuration is required by `review-serve` and ignored by
-report-only commands. `canonical_origin` is one exact HTTPS origin. The owner
+report-only commands. The server also requires explicit `--catalogue` and
+`--artifacts` paths; neither is inferred from configuration or an environment
+variable. `canonical_origin` is one exact HTTPS origin. The owner
 hash file is an absolute, owner-only regular no-follow file containing one
 Argon2id PHC string. `tls_certificate_file` and `tls_private_key_file` are an
 all-or-nothing pair of absolute, owner-controlled regular no-follow files; the

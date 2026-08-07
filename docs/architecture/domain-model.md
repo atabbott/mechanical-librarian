@@ -240,3 +240,34 @@ durable batch state.
 The batch model has no queue, job, worker, scheduler, lease, resume, automatic
 retry, parallelism, proposal, review, decision, or write concept. Manual
 recovery is a fresh manifest and foreground run.
+
+## Progressive review preparation
+
+A `review-preparation-v1` scan is bounded to one configured connection/library
+pair. It owns mutable operational state only: queued, discovering, processing,
+completed, or completed-with-failures; a checked/total/ready/blocked summary;
+and a coalesced-rescan marker. Each eligible catalogue entry produces one
+opaque work identity and independently advances through extraction,
+provider-completeness, proposal, admission, and read-only projection stages.
+Existing immutable reports,
+ProposalSets, ReviewCases, decisions, and audit transitions remain the semantic
+records.
+
+Claims are persisted before work. Restart changes discovering and running
+claims back to queued without inventing a result. Two fixed claimers have no
+library-wide stage barrier, while catalogue publication and each shared
+provider pacer serialize their own global state. A complete enumeration stages
+candidates for either the fixed
+`review-preparation-v1`/`tombstoned`/`absent` transition when an item vanished,
+or `review-preparation-v1`/`retired`/`ineligible` when it remains present but is
+no longer eligible. They are appended only after every work in that scan
+succeeds; partial, stale, or failed scans discard them. Either
+preparation-owned transition permits later exact-current readmission.
+One bounded work row binds the exact source revision, file identity, and
+producer fingerprint. An unchanged later scan reuses its complete state; a
+changed source or producer restarts at extraction, while a durable partial work
+resumes at its first missing stage. At most three discovery generations may
+converge one owner request before changed work remains blocked for another
+request. The model has no accumulated run history, automatic polling, provider
+retry policy, field decision, apply plan, target or media write, or destructive
+operation.

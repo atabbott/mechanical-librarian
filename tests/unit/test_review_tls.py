@@ -271,6 +271,10 @@ class ReviewServerTLSCompositionTests(unittest.TestCase):
                     str(config),
                     "--database",
                     str(database),
+                    "--catalogue",
+                    str(root / "catalogue.sqlite3"),
+                    "--artifacts",
+                    str(root / "artifacts"),
                     "--host",
                     "127.0.0.1",
                     "--port",
@@ -390,6 +394,10 @@ class ReviewServerTLSCompositionTests(unittest.TestCase):
                     return_value=object(),
                 ),
                 patch(
+                    "mechanical_librarian.bootstrap.composition.create_review_pipeline",
+                    return_value=Mock(),
+                ),
+                patch(
                     "mechanical_librarian.bootstrap.composition.uvicorn.run",
                     side_effect=qualified_run,
                 ),
@@ -397,6 +405,8 @@ class ReviewServerTLSCompositionTests(unittest.TestCase):
                 run_review_server(
                     Path("/config.json"),
                     Path("/application.sqlite3"),
+                    Path("/catalogue.sqlite3"),
+                    Path("/artifacts"),
                     "127.0.0.1",
                     8443,
                 )
@@ -464,6 +474,8 @@ class ReviewServerTLSCompositionTests(unittest.TestCase):
                     run_review_server(
                         Path("/config.json"),
                         Path("/application.sqlite3"),
+                        Path("/catalogue.sqlite3"),
+                        Path("/artifacts"),
                         "127.0.0.1",
                         8443,
                     )

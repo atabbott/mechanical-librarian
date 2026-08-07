@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Add owner-requested progressive library preparation to the authenticated
+  review surface. Exact-current catalogue, report, ProposalSet, and ReviewCase
+  work is persisted, duplicate-safe, restart-safe, and independently advanced
+  across two fixed lanes. Complete scans also retire present works that become
+  ineligible, and later eligibility permits readmission. Catalogue discovery,
+  shared provider pacing, and proposal-currentness drift remain bounded and
+  race-safe; slow currentness checks do not hold the cross-lane writer lock and
+  a second file appearing during extraction publishes no report or case. The
+  workflow confirms staged retirements with a final discovery, prevents terminal
+  scans from claiming stale children, refreshes changed Library projections,
+  and treats admission-time disappearance as stale. It stays decision-only and
+  write-free. (#474)
+
 - Restore the authenticated review frontend to the protected variant M visual
   contract across Library, Attention, and exact-current Detail. The branded
   editorial shell, light/dark palettes, work identity and status language,

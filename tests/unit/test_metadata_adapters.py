@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from typing import cast
@@ -29,6 +30,7 @@ from mechanical_librarian.application.metadata_report import (
     CoverReadError,
     MetadataLookup,
     MetadataReportError,
+    TargetNotFoundError,
     TargetCover,
     TargetSnapshot,
     metadata_discovery_plan,
@@ -233,6 +235,61 @@ def _leave_hot_journal(path: Path) -> Path:
 
 
 class MetadataPersistenceTests(unittest.TestCase):
+    def test_slow_external_currentness_does_not_hold_the_publication_lock(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            slow = open_repository(path, cross_thread=True)
+            fast = open_repository(
+                path,
+                create=False,
+                cross_thread=True,
+                authority=slow.authority,
+            )
+            entered = threading.Event()
+            release = threading.Event()
+            fast_completed = threading.Event()
+            errors: list[tuple[str, Exception]] = []
+
+            def slow_currentness() -> bool:
+                entered.set()
+                release.wait(5)
+                return True
+
+            def publish_slow() -> None:
+                try:
+                    slow.publish(_report("Slow title"), slow_currentness)
+                except Exception as error:
+                    errors.append(("slow", error))
+
+            def publish_fast() -> None:
+                try:
+                    fast.publish(_report("Fast title"), lambda: True)
+                except Exception as error:
+                    errors.append(("fast", error))
+                finally:
+                    fast_completed.set()
+
+            slow_thread = threading.Thread(target=publish_slow)
+            fast_thread = threading.Thread(target=publish_fast)
+            slow_thread.start()
+            self.assertTrue(entered.wait(1))
+            fast_thread.start()
+            try:
+                self.assertTrue(fast_completed.wait(1))
+            finally:
+                release.set()
+                slow_thread.join(5)
+                fast_thread.join(5)
+                fast.close()
+                slow.close()
+
+            self.assertFalse(slow_thread.is_alive())
+            self.assertFalse(fast_thread.is_alive())
+            self.assertEqual([name for name, _ in errors], ["slow"])
+            self.assertIsInstance(errors[0][1], MetadataReportError)
+
     def test_legacy_and_intermediate_schemas_are_rejected_without_mutation(self) -> None:
         for kind, prepare in (
             (
@@ -401,6 +458,9 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ("review_case_transitions",),
                 ("review_cases",),
                 ("review_login_failures",),
+                ("review_preparation_absences",),
+                ("review_preparation_scans",),
+                ("review_preparation_work",),
                 ("review_sessions",),
                 ("shadow_review_attempts",),
                     ("shadow_review_dispatches",),
@@ -625,7 +685,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             self.assertEqual(repository._connection.execute("SELECT COUNT(*) FROM metadata_reports").fetchone(), (0,))
             repository.close()
 
-    def test_publication_precondition_failure_rolls_back_report_and_pointer(self) -> None:
+    def test_external_precondition_failure_precedes_report_transaction(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "reports.sqlite"
             repository = open_repository(path)
@@ -635,7 +695,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                     _report(),
                     lambda: calls.append(repository._connection.in_transaction) or False,
                 )
-            self.assertEqual(calls, [True])
+            self.assertEqual(calls, [False])
             self.assertEqual(
                 repository._connection.execute(
                     "SELECT COUNT(*) FROM metadata_reports"
@@ -947,6 +1007,23 @@ class MetadataPersistenceTests(unittest.TestCase):
             with self.assertRaises(MetadataReportError):
                 reopened.get(_report().report_id)
             reopened.close()
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
+    def test_linux_database_authority_allows_same_process_derived_connection(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            owner = open_repository(path)
+            derived = open_repository(
+                path,
+                create=False,
+                authority=owner.authority,
+            )
+            derived.publish(_report(), lambda: True)
+            self.assertEqual(derived.get(_report().report_id), _report().to_json())
+            derived.close()
+            owner.close()
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
     def test_linux_database_parent_must_be_owner_only(self) -> None:
@@ -1811,6 +1888,37 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual([1.0], delays)
         self.assertFalse(pacer.wait(deadline=now[0] + 1.0))
         self.assertEqual([1.0], delays)
+
+    def test_hardcover_pacer_serializes_concurrent_callers(self) -> None:
+        active = 0
+        maximum = 0
+        guard = threading.Lock()
+        barrier = threading.Barrier(3)
+
+        def sleep(_: float) -> None:
+            nonlocal active, maximum
+            with guard:
+                active += 1
+                maximum = max(maximum, active)
+            time.sleep(0.02)
+            with guard:
+                active -= 1
+
+        pacer = HardcoverPacer(clock=lambda: 0.0, sleep=sleep)
+        self.assertTrue(pacer.wait(deadline=None))
+
+        def wait() -> None:
+            barrier.wait()
+            self.assertTrue(pacer.wait(deadline=None))
+
+        threads = [threading.Thread(target=wait) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(maximum, 1)
 
     def test_hardcover_requests_retries_and_instances_share_pacing(
         self,
@@ -4194,6 +4302,29 @@ class ProviderAdapterTests(unittest.TestCase):
 
 
 class AudiobookshelfItemTests(unittest.TestCase):
+    def test_item_404_is_typed_separately_from_credential_denial(self) -> None:
+        def reader(status: int) -> AudiobookshelfItemReader:
+            return AudiobookshelfItemReader(
+                client_factory=lambda: httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _request: httpx.Response(status)
+                    )
+                ),
+                endpoint="https://example.invalid",
+                library_id="library-id",
+                service_path="/library",
+                maximum_bytes=65_536,
+            )
+
+        with self.assertRaises(TargetNotFoundError):
+            reader(404).read("item-1")
+        for status in (401, 403):
+            with self.subTest(status=status), self.assertRaises(
+                MetadataReportError
+            ) as raised:
+                reader(status).read("item-1")
+            self.assertNotIsInstance(raised.exception, TargetNotFoundError)
+
     def test_raw_cover_accepts_matching_supported_image_signatures(self) -> None:
         client_type = httpx.Client
         detail = {

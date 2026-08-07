@@ -20,6 +20,7 @@ from mechanical_librarian.application.metadata_report import (
     CoverSourceChangedError,
     CoverTimeoutError,
     TargetFile,
+    TargetNotFoundError,
     TargetCover,
     TargetSnapshot,
 )
@@ -71,7 +72,9 @@ class AudiobookshelfItemReader:
                 headers={"Accept": "application/json", "Accept-Encoding": "identity"},
                 timeout=_phase_timeout(deadline, self._timeout_seconds),
             ) as response:
-                if response.status_code in {401, 403, 404}:
+                if response.status_code == 404:
+                    raise TargetNotFoundError("target item is absent")
+                if response.status_code in {401, 403}:
                     raise MetadataReportError("target item is unavailable")
                 if response.status_code != 200:
                     raise MetadataReportError("target service is unavailable")

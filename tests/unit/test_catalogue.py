@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from multiprocessing import Event, Process
 from pathlib import Path
 import os
@@ -34,6 +35,22 @@ def _configuration() -> ApplicationConfiguration:
     return ApplicationConfiguration((TargetConnectionConfiguration("primary", "https://example.invalid", "/private/token"),), (LibraryConfiguration("books", "primary", "library-id", "book", None, ()),), (), ())
 
 
+def _two_library_configuration() -> ApplicationConfiguration:
+    return ApplicationConfiguration(
+        (
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/token"
+            ),
+        ),
+        (
+            LibraryConfiguration("audio", "primary", "audio-id", "book", None, ()),
+            LibraryConfiguration("books", "primary", "library-id", "book", None, ()),
+        ),
+        (),
+        (),
+    )
+
+
 def _hold_refresh_lock(path: str, ready: Event, release: Event) -> None:
     repository = open_catalogue(Path(path), create=True)
     try:
@@ -43,6 +60,72 @@ def _hold_refresh_lock(path: str, ready: Event, release: Event) -> None:
 
 
 class CatalogueRepositoryTests(unittest.TestCase):
+    def test_first_library_refresh_builds_complete_configuration_baseline(self) -> None:
+        class Reader:
+            def __init__(self) -> None:
+                self.libraries: list[str] = []
+
+            def read_library(self, connection, library, remaining):
+                self.libraries.append(library.name)
+                return (
+                    CatalogueEntry(
+                        connection,
+                        library.name,
+                        library.library_id,
+                        f"{library.name}-item",
+                        1,
+                        library.name,
+                        (),
+                        True,
+                        False,
+                        "singular-supported",
+                        "a" * 64,
+                        f"/{library.name}.epub",
+                        "epub",
+                        "books",
+                    ),
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_catalogue(
+                Path(directory) / "catalogue.sqlite", create=True
+            )
+            reader = Reader()
+            configuration = _two_library_configuration()
+            RefreshCurrentCatalogue(reader, repository).refresh_library(
+                configuration, "primary", "books"
+            )
+            entries = repository.inspect(
+                catalogue_fingerprint(configuration).digest
+            )
+            repository.close()
+
+        self.assertEqual(reader.libraries, ["audio", "books"])
+        self.assertEqual({entry.library for entry in entries}, {"books", "audio"})
+
+    def test_latest_entry_survives_unrelated_library_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_catalogue(
+                Path(directory) / "catalogue.sqlite", create=True
+            )
+            fingerprint = "a" * 64
+            books = _entry()
+            audio = CatalogueEntry(
+                "primary", "audio", "audio-id", "audio-item", 1, "Audio", (),
+                False, True, "singular-supported", "b" * 64, "/audio.m4b",
+                "m4b", "books"
+            )
+            repository.acquire_refresh()
+            repository.publish(fingerprint, (books, audio))
+            repository.acquire_refresh()
+            repository.publish(fingerprint, (books, replace(audio, updated_at=2)))
+            found = repository.latest_entry(
+                fingerprint,
+                ("primary", "books", "library-id", "item-1"),
+            )
+            repository.close()
+
+        self.assertEqual(found, books)
     def test_atomic_current_switch_and_stale_fingerprint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "catalogue.sqlite"

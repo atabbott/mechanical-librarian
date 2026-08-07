@@ -41,6 +41,15 @@ login/logout, an attention-first current-case library, and a separate exact
 field queue, plus one exact-version individual human decision. Library-wide
 activity/history, cross-case summaries, bulk and reversal remain #195.
 
+Progressive preparation adds authenticated
+`GET /api/v1/review-preparation` and CSRF-protected
+`POST /api/v1/review-preparation/{connection}/{library_name}/scan`. The first
+returns only configured library identity, opaque scan identity, closed state,
+counts, and coalescing state. The second accepts no metadata values or arbitrary
+scope and returns `202` only after the configured-library request is persisted.
+Unknown libraries return `404`; unavailable persistence returns `503`.
+Preparation creates no field decision and has no apply or target-write route.
+
 The bundled browser obtains a freshly rotated per-page CSRF token from its
 authenticated private detail document, removes it from the DOM at startup, and
 holds it only in page memory. It submits an exact server-presented decision and

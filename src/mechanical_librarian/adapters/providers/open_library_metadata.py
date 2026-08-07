@@ -6,6 +6,7 @@ import asyncio
 import json
 import random
 import re
+import threading
 import time
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -155,20 +156,22 @@ class OpenLibraryPacer:
         self._clock = clock
         self._sleep = sleep
         self._last_started: float | None = None
+        self._lock = threading.Lock()
 
     def wait(self, deadline: float | None = None) -> bool:
-        now = self._clock()
-        if self._last_started is not None:
-            delay = max(0.0, self._last_started + 1.0 - now)
-            if deadline is not None and now + delay >= deadline:
+        with self._lock:
+            now = self._clock()
+            if self._last_started is not None:
+                delay = max(0.0, self._last_started + 1.0 - now)
+                if deadline is not None and now + delay >= deadline:
+                    return False
+                if delay:
+                    self._sleep(delay)
+                    now = self._clock()
+            if deadline is not None and now >= deadline:
                 return False
-            if delay:
-                self._sleep(delay)
-                now = self._clock()
-        if deadline is not None and now >= deadline:
-            return False
-        self._last_started = now
-        return True
+            self._last_started = now
+            return True
 
 
 class OpenLibraryMetadataProvider:

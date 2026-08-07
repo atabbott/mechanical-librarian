@@ -58,7 +58,7 @@ ProposalCreateRunner = Callable[[Path, Path, Path, str], str]
 ProposalGetRunner = Callable[[Path, str], str]
 ReviewAdmitRunner = Callable[[Path, Path, Path, str], str]
 ReviewGetRunner = Callable[[Path, str], str]
-ReviewServeRunner = Callable[[Path, Path, str, int], None]
+ReviewServeRunner = Callable[[Path, Path, Path, Path, str, int], None]
 ReviewerAuthRunner = Callable[[Path, str], str]
 ShadowPreviewRunner = Callable[[Path, str, Path], str]
 ShadowRequestRunner = Callable[[Path, str, Path], str]
@@ -155,6 +155,8 @@ def _parser() -> _Parser:
     )
     review_serve.add_argument("--config", required=True, metavar="PATH", type=Path)
     review_serve.add_argument("--database", required=True, metavar="PATH", type=Path)
+    review_serve.add_argument("--catalogue", required=True, metavar="PATH", type=Path)
+    review_serve.add_argument("--artifacts", required=True, metavar="PATH", type=Path)
     review_serve.add_argument(
         "--host",
         choices=("127.0.0.1", "::1", "0.0.0.0", "::"),
@@ -533,7 +535,12 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
             if review_serve_runner is None:
                 raise ValueError
             review_serve_runner(
-                arguments.config, arguments.database, arguments.host, arguments.port
+                arguments.config,
+                arguments.database,
+                arguments.catalogue,
+                arguments.artifacts,
+                arguments.host,
+                arguments.port,
             )
         except ConfigurationError:
             errors.write("Review server failed: configuration unavailable.\n")

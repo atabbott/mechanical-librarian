@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import gzip
 import tempfile
+import threading
+import time
 import unittest
 from dataclasses import replace
 from decimal import Decimal
@@ -198,6 +200,37 @@ def _work(key: str = "/works/OL5W", *, cover: int | None = None) -> dict[str, ob
 
 
 class OpenLibraryMetadataTests(unittest.TestCase):
+    def test_pacer_serializes_concurrent_callers(self) -> None:
+        active = 0
+        maximum = 0
+        guard = threading.Lock()
+        barrier = threading.Barrier(3)
+
+        def sleep(_: float) -> None:
+            nonlocal active, maximum
+            with guard:
+                active += 1
+                maximum = max(maximum, active)
+            time.sleep(0.02)
+            with guard:
+                active -= 1
+
+        pacer = OpenLibraryPacer(clock=lambda: 0.0, sleep=sleep)
+        self.assertTrue(pacer.wait())
+
+        def wait() -> None:
+            barrier.wait()
+            self.assertTrue(pacer.wait())
+
+        threads = [threading.Thread(target=wait) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(maximum, 1)
+
     def test_detail_schema_diagnostics_are_context_local_and_replay_exact(
         self,
     ) -> None:

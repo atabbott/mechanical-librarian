@@ -1,6 +1,7 @@
 # Architecture overview
 
-The 0.10 development runtime exposes synchronous CLI command families:
+The development runtime exposes synchronous CLI command families plus one
+authenticated, owner-requested preparation path:
 
 ```text
 CLI catalogue -> application RefreshCurrentCatalogue
@@ -27,6 +28,12 @@ CLI proposal-set-create -> application CreateProposalSet
 CLI review-case-admit -> application AdmitReviewCase
                       `-> exact-current ProposalSet/report/lineage recheck
                       `-> append-only immutable ReviewCase repository
+
+Web Scan now -> application ReviewPreparationPipeline
+             |-> one-library catalogue refresh
+             |-> existing report, ProposalSet, and ReviewCase services
+             |-> two fixed independently claimable work lanes
+             `-> bounded persisted scan/work state and read-only projection
 
 CLI shadow-review-preview -> application preview
                           -> profile bytes + exact-current ReviewCase lineage
@@ -73,8 +80,10 @@ validation, and canonical replay. The application owns orchestration and the
 exactly-once canonical merge of adapter and attempt diagnostics. The ProposalSet
 seam adds exact create/get orchestration but no provider or write
 port. ReviewCase and shadow-review seams add exact-current admission and
-qualification-only execution/persistence. There is no central speculative ports
-module, generic provider registry, queue, worker, or scheduler. Bootstrap
+qualification-only execution/persistence. Review preparation is one closed,
+manual-triggered pipeline rather than a general-purpose queue or scheduler.
+There is no central speculative ports module, generic provider registry, job
+broker, polling service, or plugin scheduler. Bootstrap
 explicitly composes Audiobookshelf, the isolated EPUB and cover children, the
 closed Hardcover/Open Library/Google Books adapter choice, private-file credentials, SQLite,
 the private artifact store, and the external reviewer tuple.
@@ -125,9 +134,12 @@ database, configuration, artifacts, and manifest each recognize only absent or
 their exact current pre-release state. Prior and intermediate schemas are
 rejected before mutation; there is no migration, import, compatibility parser,
 workflow, job, cache, or deletion surface. Batch work stores no attempt or
-resume state; shadow-review attempts are the explicit qualification-only
-exception. These rules are the current-runtime application of repository-wide
-ADR-0013.
+resume state. Review preparation stores only bounded mutable scan/work
+progression and reconciles one current per-work row on a later scan; immutable
+reports, ProposalSets, ReviewCases, decisions, and audit transitions retain
+their existing authority. Shadow-review attempts remain the explicit
+qualification-only exception. These rules are the current-runtime application
+of repository-wide ADR-0013.
 The `metadata-report-v22` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
@@ -174,5 +186,7 @@ process identity make that check stable against other unprivileged identities.
 Catalogue and batch manifest filesystem operations apply their own bounded
 no-follow, identity-checked publication and read contracts.
 
-Normal activation, human or AI decision, approval, apply, target/media write,
-background execution, and automatic retry remain unavailable.
+Review preparation performs background read-only progression only after an
+authenticated owner request. Automatic polling, policy decisions, approval,
+apply, target/media writes, destructive actions, and automatic provider retry
+remain unavailable.
