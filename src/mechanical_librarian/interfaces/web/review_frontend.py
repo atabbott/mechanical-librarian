@@ -519,7 +519,8 @@ const renderActivity = data => {
   const focusedAction = activityPopover.contains(document.activeElement) ? document.activeElement.dataset.actionKey : null;
   const visible=data.active||data.actionable||data.paused;
   if (!visible && (activityButton === document.activeElement || activityPopover.contains(document.activeElement))) {
-    document.querySelector('.lenses a[aria-current="page"]')?.focus({preventScroll: true});
+    const focusTarget = document.querySelector('.lenses a[aria-current="page"]') || document.querySelector('.workspace-tab[aria-current="page"][href]') || document.querySelector('.workspace-tab[href]');
+    focusTarget?.focus({preventScroll: true});
   }
   activityButton.hidden = !visible;
   activityButton.classList.toggle("actionable", data.actionable || data.paused);

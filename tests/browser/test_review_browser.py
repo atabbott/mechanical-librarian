@@ -257,7 +257,8 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     key=key,
                     port=port,
                     report=_manual_report(),
-                ) as (origin, _case_id):
+                ) as (origin, case_id):
+                    assert case_id is not None
                     responses = [
                         ("queued", 0, 0),
                         ("processing", 1, 0),
@@ -411,6 +412,35 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertTrue(
                         lens_link.evaluate("node => node === document.activeElement")
                     )
+                    for path, heading, focus_target in (
+                        (
+                            "/attention",
+                            re.compile(r"^Fields needing attention"),
+                            '.workspace-tab.attention-tab[aria-current="page"]',
+                        ),
+                        (
+                            f"/review/{case_id}",
+                            "Current review case",
+                            '.workspace-tab[href="/library"]',
+                        ),
+                    ):
+                        finished = False
+                        requests = 0
+                        page.goto(f"{origin}{path}")
+                        page.get_by_role("heading", name=heading).wait_for()
+                        activity = page.locator(".activity-button")
+                        activity.wait_for(state="visible", timeout=8_000)
+                        activity.click()
+                        activity_region = page.get_by_role(
+                            "region", name="Background activity"
+                        )
+                        activity_region.get_by_role("button", name="Close").focus()
+                        target = page.locator(focus_target)
+                        finished = True
+                        activity.wait_for(state="hidden", timeout=8_000)
+                        self.assertTrue(
+                            target.evaluate("node => node === document.activeElement")
+                        )
                     context.close()
 
     def test_desktop_round_trip_is_explicit_responsive_and_durable(self) -> None:
