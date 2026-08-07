@@ -112,6 +112,7 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
         raise CatalogueError("catalogue item is unavailable")
     ebook = media.get("ebookFile")
     plural = media.get("ebookFiles")
+    metadata_file = None
     has_audio = type(media.get("audioFiles")) is list
     if ebook is None and (plural is None or plural == []):
         classification = "none"; file_identity = service_path = format_value = mount_name = None; has_ebook = False
@@ -140,7 +141,46 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
             service_path = relative; format_value = "epub"; mount_name = None if mount is None else mount.name
     else:
         classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None; has_ebook = True
-    return CatalogueEntry(connection, library.name, library.library_id, item_id, detail["updatedAt"], title, names, has_ebook, has_audio, classification, file_identity, service_path, format_value, mount_name)
+    reviewed_fields = {
+        name: metadata.get(name)
+        for name in (
+            "title", "subtitle", "authors", "narrators", "series", "genres", "tags",
+            "publishedYear", "publishedDate", "publisher", "description", "isbn", "asin",
+            "language", "explicit",
+        )
+    }
+    cover_reference = next(
+        (
+            value
+            for value in (
+                detail.get("coverPath"), media.get("coverPath"), metadata.get("coverPath")
+            )
+            if type(value) is str
+        ),
+        None,
+    )
+    media_revision = {
+        name: metadata_file.get(name)
+        for name in ("mtimeMs", "mtime", "modifiedAt", "lastModified")
+        if type(metadata_file) is dict and name in metadata_file
+    }
+    source_fingerprint = hashlib.sha256(
+        canonical_json(
+            {
+                "schema": "audiobookshelf-review-source-v1",
+                "identity": {"item_id": item_id, "library_id": library.library_id},
+                "metadata": reviewed_fields,
+                "cover_reference": cover_reference,
+                "media": {
+                    "file_identity": file_identity,
+                    "has_audio": has_audio,
+                    "has_ebook": has_ebook,
+                    "revision": media_revision,
+                },
+            }
+        ).encode("utf-8")
+    ).hexdigest()
+    return CatalogueEntry(connection, library.name, library.library_id, item_id, detail["updatedAt"], title, names, has_ebook, has_audio, classification, file_identity, service_path, format_value, mount_name, source_fingerprint)
 
 
 def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:

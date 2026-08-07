@@ -43,6 +43,7 @@ class ReviewWebConfiguration:
     trusted_proxy_ips: tuple[str, ...] = ()
     tls_certificate_file: str | None = None
     tls_private_key_file: str | None = None
+    library_polling_interval_seconds: int = 900
 
     def __post_init__(self) -> None:
         try:
@@ -84,6 +85,8 @@ class ReviewWebConfiguration:
                 for value in self.trusted_proxy_ips
             )
             or self.trusted_proxy_ips != tuple(sorted(set(self.trusted_proxy_ips)))
+            or type(self.library_polling_interval_seconds) is not int
+            or not 60 <= self.library_polling_interval_seconds <= 86_400
         ):
             raise ConfigurationError("review web configuration is invalid")
         try:

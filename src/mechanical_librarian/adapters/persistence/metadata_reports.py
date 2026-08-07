@@ -23,6 +23,7 @@ from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     PipelineProgress,
+    ReviewPipelineError,
     pipeline_scan_id,
 )
 from mechanical_librarian.application.review_web import (
@@ -163,18 +164,26 @@ _REVIEW_SCANS_SQL = (
     "catalogue_generation INTEGER CHECK(catalogue_generation IS NULL OR catalogue_generation>0), catalogue_fingerprint TEXT CHECK(catalogue_fingerprint IS NULL OR (length(catalogue_fingerprint)=64 AND catalogue_fingerprint NOT GLOB '*[^0-9a-f]*')), "
     "total INTEGER NOT NULL DEFAULT 0 CHECK(total>=0), refresh_count INTEGER NOT NULL DEFAULT 0 CHECK(refresh_count BETWEEN 0 AND 3), rescan_requested INTEGER NOT NULL DEFAULT 0 CHECK(rescan_requested IN (0,1)))"
 )
+_REVIEW_CONTROL_SQL = (
+    "CREATE TABLE review_preparation_control ("
+    "singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
+    "paused INTEGER NOT NULL CHECK(paused IN (0,1)), "
+    "claim_sequence INTEGER NOT NULL CHECK(claim_sequence>=0), "
+    "last_library TEXT, circuit_failures INTEGER NOT NULL CHECK(circuit_failures BETWEEN 0 AND 3), "
+    "circuit_open_until INTEGER NOT NULL CHECK(circuit_open_until>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
+)
 _REVIEW_WORK_SQL = (
     "CREATE TABLE review_preparation_work ("
     "work_id TEXT PRIMARY KEY NOT NULL CHECK(work_id GLOB 'review_work_[0-9a-f]*' AND length(work_id)=76), "
     "scan_id TEXT NOT NULL REFERENCES review_preparation_scans(scan_id) ON DELETE CASCADE, ordinal INTEGER NOT NULL CHECK(ordinal>=0), "
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, library_id TEXT NOT NULL, item_id TEXT NOT NULL, "
-    "file_identity TEXT NOT NULL CHECK(length(file_identity)=64 AND file_identity NOT GLOB '*[^0-9a-f]*'), source_revision INTEGER NOT NULL CHECK(source_revision>=0), "
+    "file_identity TEXT NOT NULL CHECK(length(file_identity)=64 AND file_identity NOT GLOB '*[^0-9a-f]*'), source_revision INTEGER NOT NULL CHECK(source_revision>=0), source_fingerprint TEXT NOT NULL CHECK(length(source_fingerprint)=64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "producer_fingerprint TEXT NOT NULL CHECK(length(producer_fingerprint)=64 AND producer_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "catalogue_generation INTEGER NOT NULL CHECK(catalogue_generation>0), catalogue_fingerprint TEXT NOT NULL CHECK(length(catalogue_fingerprint)=64 AND catalogue_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "stage TEXT NOT NULL CHECK(stage IN ('extraction','provider','proposal','admission','projection','complete')), "
-    "state TEXT NOT NULL CHECK(state IN ('queued','running','complete','failed','stale')), attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt BETWEEN 0 AND 3), "
+    "state TEXT NOT NULL CHECK(state IN ('queued','running','complete','failed','stale')), attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt BETWEEN 0 AND 3), recovery_attempt INTEGER NOT NULL DEFAULT 0 CHECK(recovery_attempt BETWEEN 0 AND 3), "
     "report_id TEXT REFERENCES metadata_reports(report_id), proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
-    "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('provider','stale','transient','projection','failed','currentness')), "
+    "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('provider','configuration','stale','transient','projection','failed','currentness')), "
     "updated_at INTEGER NOT NULL CHECK(updated_at>=0), UNIQUE(scan_id,item_id))"
 )
 _REVIEW_ABSENCES_SQL = (
@@ -741,6 +750,13 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("review preparation request is invalid")
         try:
             self._connection.execute("BEGIN IMMEDIATE")
+            control = self._connection.execute(
+                "SELECT paused FROM review_preparation_control WHERE singleton=1"
+            ).fetchone()
+            if control is None:
+                raise MetadataReportError("review preparation control is unavailable")
+            if bool(control[0]):
+                raise ReviewPipelineError("paused")
             row = self._connection.execute(
                 "SELECT scan_id,state,producer_fingerprint FROM review_preparation_scans "
                 "WHERE connection_name=? AND library_name=? LIMIT 1",
@@ -795,12 +811,12 @@ class SQLiteMetadataReportRepository:
             )
             self._connection.commit()
             return PipelineProgress(
-                scan_id, connection, library, "queued", 0, 0, 0, 0, False
+                scan_id, connection, library, "queued", 0, 0, 0, 0, False, requested_at
             )
-        except (sqlite3.Error, MetadataReportError) as error:
+        except (sqlite3.Error, MetadataReportError, ReviewPipelineError) as error:
             if self._connection.in_transaction:
                 self._connection.rollback()
-            if isinstance(error, MetadataReportError):
+            if isinstance(error, (MetadataReportError, ReviewPipelineError)):
                 raise
             raise MetadataReportError("review preparation persistence failed") from error
 
@@ -809,7 +825,7 @@ class SQLiteMetadataReportRepository:
     ) -> PipelineProgress | None:
         try:
             row = self._connection.execute(
-                "SELECT scan_id,state,total,rescan_requested FROM review_preparation_scans "
+                "SELECT scan_id,state,total,rescan_requested,updated_at FROM review_preparation_scans "
                 "WHERE connection_name=? AND library_name=? "
                 "ORDER BY requested_at DESC LIMIT 1",
                 (connection, library),
@@ -834,7 +850,31 @@ class SQLiteMetadataReportRepository:
                 counts[1],
                 counts[2],
                 bool(row[3]),
+                row[4],
             )
+        except sqlite3.Error as error:
+            raise MetadataReportError("review preparation persistence failed") from error
+
+    def review_pipeline_paused(self) -> bool:
+        try:
+            row = self._connection.execute(
+                "SELECT paused FROM review_preparation_control WHERE singleton=1"
+            ).fetchone()
+            if row is None:
+                raise MetadataReportError("review preparation control is unavailable")
+            return bool(row[0])
+        except sqlite3.Error as error:
+            raise MetadataReportError("review preparation persistence failed") from error
+
+    def set_review_pipeline_paused(self, paused: bool, updated_at: int) -> None:
+        if type(paused) is not bool or type(updated_at) is not int or updated_at < 0:
+            raise MetadataReportError("review preparation control is invalid")
+        try:
+            self._connection.execute(
+                "UPDATE review_preparation_control SET paused=?,updated_at=? WHERE singleton=1",
+                (paused, updated_at),
+            )
+            self._connection.commit()
         except sqlite3.Error as error:
             raise MetadataReportError("review preparation persistence failed") from error
 
@@ -876,7 +916,7 @@ class SQLiteMetadataReportRepository:
                     )
                     self._connection.execute(
                         "UPDATE review_preparation_work SET stage='extraction',"
-                        "state='queued',attempt=0,library_id=?,producer_fingerprint=?,"
+                        "state='queued',attempt=0,recovery_attempt=0,library_id=?,producer_fingerprint=?,"
                         "report_id=NULL,"
                         "proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL "
                         "WHERE scan_id=?",
@@ -890,6 +930,19 @@ class SQLiteMetadataReportRepository:
     def claim_review_pipeline_action(self, claimed_at: int) -> PipelineAction | None:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
+            active = self._connection.execute(
+                "SELECT (SELECT COUNT(*) FROM review_preparation_scans WHERE state='discovering')+"
+                "(SELECT COUNT(*) FROM review_preparation_work WHERE state='running')"
+            ).fetchone()[0]
+            if active >= 2:
+                self._connection.commit()
+                return None
+            control = self._connection.execute(
+                "SELECT claim_sequence,last_library,circuit_open_until "
+                "FROM review_preparation_control WHERE singleton=1"
+            ).fetchone()
+            if control is None:
+                raise MetadataReportError("review preparation control is unavailable")
             scan = self._connection.execute(
                 "SELECT scan_id,connection_name,library_name,library_id,producer_fingerprint "
                 "FROM review_preparation_scans WHERE state='queued' "
@@ -916,12 +969,20 @@ class SQLiteMetadataReportRepository:
                 "SELECT work_id,scan_id,stage,attempt,connection_name,library_name,library_id,"
                 "producer_fingerprint,catalogue_generation,catalogue_fingerprint,"
                 "item_id,file_identity,source_revision,"
-                "report_id,proposal_set_id,review_case_id "
+                "report_id,proposal_set_id,review_case_id,source_fingerprint "
                 "FROM review_preparation_work WHERE state='queued' "
                 "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
                 "WHERE s.scan_id=review_preparation_work.scan_id "
                 "AND s.state='processing') "
-                "ORDER BY scan_id,ordinal LIMIT 1"
+                "AND (stage!='extraction' OR ?<=?) "
+                "ORDER BY CASE WHEN library_name>? THEN 0 ELSE 1 END,library_name,"
+                "CASE WHEN ?=0 THEN updated_at ELSE -updated_at END,ordinal LIMIT 1",
+                (
+                    control[2],
+                    claimed_at,
+                    control[1] or "",
+                    control[0] % 4,
+                ),
             ).fetchone()
             if work is not None:
                 attempt = work[3] + 1
@@ -932,6 +993,11 @@ class SQLiteMetadataReportRepository:
                 ).rowcount
                 if updated != 1:
                     raise MetadataReportError("review preparation claim changed")
+                self._connection.execute(
+                    "UPDATE review_preparation_control SET claim_sequence=claim_sequence+1,"
+                    "last_library=?,updated_at=? WHERE singleton=1",
+                    (work[5], claimed_at),
+                )
                 self._connection.commit()
                 return PipelineAction(
                     work[0],
@@ -950,6 +1016,7 @@ class SQLiteMetadataReportRepository:
                     work[13],
                     work[14],
                     work[15],
+                    work[16],
                 )
             scans = self._connection.execute(
                 "SELECT scan_id,rescan_requested FROM review_preparation_scans "
@@ -1102,7 +1169,7 @@ class SQLiteMetadataReportRepository:
                     material.encode("utf-8")
                 ).hexdigest()
                 existing = self._connection.execute(
-                    "SELECT file_identity,source_revision,producer_fingerprint,"
+                    "SELECT file_identity,source_fingerprint,producer_fingerprint,"
                     "stage,state,report_id,proposal_set_id,review_case_id "
                     "FROM review_preparation_work WHERE work_id=?",
                     (work_id,),
@@ -1112,7 +1179,7 @@ class SQLiteMetadataReportRepository:
                 report_id = proposal_set_id = review_case_id = None
                 if existing is not None and existing[:3] == (
                     entry.file_identity,
-                    entry.updated_at,
+                    entry.source_fingerprint,
                     action.producer_fingerprint,
                 ):
                     stage, previous_state = existing[3], existing[4]
@@ -1162,17 +1229,18 @@ class SQLiteMetadataReportRepository:
                 self._connection.execute(
                     "INSERT INTO review_preparation_work("
                     "work_id,scan_id,ordinal,connection_name,library_name,library_id,"
-                    "item_id,file_identity,source_revision,producer_fingerprint,"
-                    "catalogue_generation,catalogue_fingerprint,stage,state,attempt,"
+                    "item_id,file_identity,source_revision,source_fingerprint,producer_fingerprint,"
+                    "catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,"
                     "report_id,proposal_set_id,review_case_id,failure_code,updated_at"
-                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT(work_id) DO UPDATE SET ordinal=excluded.ordinal,"
                     "library_id=excluded.library_id,file_identity=excluded.file_identity,"
                     "source_revision=excluded.source_revision,"
+                    "source_fingerprint=excluded.source_fingerprint,"
                     "producer_fingerprint=excluded.producer_fingerprint,"
                     "catalogue_generation=excluded.catalogue_generation,"
                     "catalogue_fingerprint=excluded.catalogue_fingerprint,"
-                    "stage=excluded.stage,state=excluded.state,attempt=0,"
+                    "stage=excluded.stage,state=excluded.state,attempt=0,recovery_attempt=0,"
                     "report_id=excluded.report_id,proposal_set_id=excluded.proposal_set_id,"
                     "review_case_id=excluded.review_case_id,failure_code=NULL,"
                     "updated_at=excluded.updated_at",
@@ -1186,11 +1254,13 @@ class SQLiteMetadataReportRepository:
                         entry.item_id,
                         entry.file_identity,
                         entry.updated_at,
+                        entry.source_fingerprint,
                         action.producer_fingerprint,
                         generation,
                         fingerprint,
                         stage,
                         state,
+                        0,
                         0,
                         report_id,
                         proposal_set_id,
@@ -1349,6 +1419,14 @@ class SQLiteMetadataReportRepository:
             ).rowcount
             if updated != 1:
                 raise MetadataReportError("review preparation state changed")
+            if action.stage == "provider":
+                self._connection.execute(
+                    "UPDATE review_preparation_control SET circuit_failures="
+                    "CASE WHEN circuit_open_until<=? THEN 0 ELSE circuit_failures END,"
+                    "circuit_open_until=CASE WHEN circuit_open_until<=? THEN 0 "
+                    "ELSE circuit_open_until END,updated_at=? WHERE singleton=1",
+                    (completed_at, completed_at, completed_at),
+                )
             self._connection.commit()
         except (sqlite3.Error, MetadataReportError) as error:
             if self._connection.in_transaction:
@@ -1362,9 +1440,15 @@ class SQLiteMetadataReportRepository:
         action: PipelineAction,
         report_id: str,
         completed_at: int,
+        recovery_delay_seconds: int = 0,
     ) -> None:
         """Bind report publication and the extraction checkpoint atomically."""
-        if not self._connection.in_transaction or action.stage != "extraction":
+        if (
+            not self._connection.in_transaction
+            or action.stage != "extraction"
+            or type(recovery_delay_seconds) is not int
+            or not 0 <= recovery_delay_seconds <= 86_400
+        ):
             raise MetadataReportError("review preparation state is invalid")
         updated = self._connection.execute(
             "UPDATE review_preparation_work SET stage='provider',state='queued',"
@@ -1374,6 +1458,12 @@ class SQLiteMetadataReportRepository:
         ).rowcount
         if updated != 1:
             raise MetadataReportError("review preparation state changed")
+        if recovery_delay_seconds:
+            self._connection.execute(
+                "UPDATE review_preparation_control SET circuit_open_until="
+                "MAX(circuit_open_until,?+?),updated_at=? WHERE singleton=1",
+                (completed_at, recovery_delay_seconds, completed_at),
+            )
 
     def fail_review_pipeline_action(
         self,
@@ -1402,6 +1492,7 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("review preparation persistence failed") from error
         if code not in {
             "provider",
+            "configuration",
             "stale",
             "transient",
             "projection",
@@ -1414,18 +1505,34 @@ class SQLiteMetadataReportRepository:
         )
         try:
             self._connection.execute("BEGIN IMMEDIATE")
-            updated = self._connection.execute(
-                "UPDATE review_preparation_work SET state=?,failure_code=?,updated_at=? "
-                "WHERE work_id=? AND stage=? AND state='running' AND attempt=?",
-                (
-                    state,
-                    code,
-                    completed_at,
-                    action.action_id,
-                    action.stage,
-                    action.attempt,
-                ),
-            ).rowcount
+            if code == "transient" and retryable:
+                updated = self._connection.execute(
+                    "UPDATE review_preparation_work SET stage='extraction',"
+                    "state=CASE WHEN recovery_attempt<2 THEN 'queued' ELSE 'failed' END,"
+                    "attempt=0,recovery_attempt=recovery_attempt+1,"
+                    "report_id=NULL,proposal_set_id=NULL,review_case_id=NULL,"
+                    "failure_code='transient',updated_at=? WHERE work_id=? AND stage=? "
+                    "AND state='running' AND attempt=?",
+                    (completed_at, action.action_id, action.stage, action.attempt),
+                ).rowcount
+                if updated == 1:
+                    state = self._connection.execute(
+                        "SELECT state FROM review_preparation_work WHERE work_id=?",
+                        (action.action_id,),
+                    ).fetchone()[0]
+            else:
+                updated = self._connection.execute(
+                    "UPDATE review_preparation_work SET state=?,failure_code=?,updated_at=? "
+                    "WHERE work_id=? AND stage=? AND state='running' AND attempt=?",
+                    (
+                        state,
+                        code,
+                        completed_at,
+                        action.action_id,
+                        action.stage,
+                        action.attempt,
+                    ),
+                ).rowcount
             if updated != 1:
                 raise MetadataReportError("review preparation state changed")
             if state == "stale":
@@ -1434,6 +1541,14 @@ class SQLiteMetadataReportRepository:
                     "CASE WHEN refresh_count<3 THEN 1 ELSE 0 END,updated_at=? "
                     "WHERE scan_id=?",
                     (completed_at, action.scan_id),
+                )
+            if code in {"provider", "transient"}:
+                self._connection.execute(
+                    "UPDATE review_preparation_control SET "
+                    "circuit_failures=MIN(3,circuit_failures+1),"
+                    "circuit_open_until=MAX(circuit_open_until,?+(5*(1 << MIN(3,circuit_failures+1)))),"
+                    "updated_at=? WHERE singleton=1",
+                    (completed_at, completed_at),
                 )
             self._connection.commit()
         except (sqlite3.Error, MetadataReportError) as error:
@@ -3362,6 +3477,10 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_REVIEW_POINTERS_SQL)
             connection.execute(_REVIEW_TRANSITIONS_SQL)
             connection.execute(_REVIEW_SCANS_SQL)
+            connection.execute(_REVIEW_CONTROL_SQL)
+            connection.execute(
+                "INSERT INTO review_preparation_control(singleton,paused,claim_sequence,last_library,circuit_failures,circuit_open_until,updated_at) VALUES(1,0,0,NULL,0,0,0)"
+            )
             connection.execute(_REVIEW_WORK_SQL)
             connection.execute(_REVIEW_ABSENCES_SQL)
             connection.execute(_REVIEW_WORK_CLAIM_INDEX_SQL)
@@ -3703,6 +3822,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
         ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
         ("table", "review_cases", _REVIEW_CASES_SQL),
+        ("table", "review_preparation_control", _REVIEW_CONTROL_SQL),
         ("table", "review_preparation_scans", _REVIEW_SCANS_SQL),
         ("table", "review_preparation_absences", _REVIEW_ABSENCES_SQL),
         ("table", "review_preparation_work", _REVIEW_WORK_SQL),

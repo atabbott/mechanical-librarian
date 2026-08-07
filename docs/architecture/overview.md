@@ -129,7 +129,7 @@ current pointer after external currentness. The report database also stores
 immutable ReviewCases with current lineages and append-only qualification-only
 shadow request, attempt, dispatch, and outcome records. The sole baseline uses
 rollback-journal `DELETE` mode. The separate catalogue database stores one
-exact-current `catalogue-v1` schema. The final report database, catalogue
+exact-current `catalogue-v2` schema. The final report database, catalogue
 database, configuration, artifacts, and manifest each recognize only absent or
 their exact current pre-release state. Prior and intermediate schemas are
 rejected before mutation; there is no migration, import, compatibility parser,

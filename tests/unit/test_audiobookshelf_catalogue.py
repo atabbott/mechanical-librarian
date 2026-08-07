@@ -87,6 +87,51 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
             entry = catalogue_entry("primary", _library(), None, summary, detail)
             self.assertEqual((entry.has_ebook, entry.classification), expected)
 
+    def test_volatile_activity_fields_do_not_change_catalogue_identity(self) -> None:
+        baseline = _item()
+        active = {
+            **baseline,
+            "updatedAt": 2,
+            "progress": 0.75,
+            "currentTime": 1234,
+            "bookmarks": [{"title": "Later", "time": 1200}],
+            "mediaProgress": {"isFinished": False, "progress": 0.75},
+        }
+        first = catalogue_entry(
+            "primary", _library(), None,
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}, baseline,
+        )
+        second = catalogue_entry(
+            "primary", _library(), None,
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 2}, active,
+        )
+        self.assertEqual(first.source_fingerprint, second.source_fingerprint)
+
+    def test_each_material_review_source_dimension_changes_fingerprint(self) -> None:
+        summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+        baseline = _item()
+        original = catalogue_entry("primary", _library(), None, summary, baseline)
+        variants = []
+        for mutation in (
+            {"subtitle": "A subtitle"},
+            {"isbn": "9780000000002"},
+            {"coverPath": "/cover/item-1"},
+        ):
+            detail = _item()
+            if "coverPath" in mutation:
+                detail.update(mutation)
+            else:
+                detail["media"]["metadata"].update(mutation)
+            variants.append(detail)
+        media_revision = _item()
+        media_revision["media"]["ebookFile"]["metadata"]["mtimeMs"] = 2
+        variants.append(media_revision)
+        for detail in variants:
+            self.assertNotEqual(
+                original.source_fingerprint,
+                catalogue_entry("primary", _library(), None, summary, detail).source_fingerprint,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

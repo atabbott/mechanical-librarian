@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Activate bounded continuous review reconciliation in the supported container:
+  first-start and interval scans coalesce through the persisted two-lane
+  pipeline, fair claims and provider circuit state survive restart, and the
+  protected M shell gains one compact activity popover with pause, resume, and
+  eligible retry controls, including per-library scan. The path remains
+  decision-only and write-free. (#475, #473)
+
 - Add owner-requested progressive library preparation to the authenticated
   review surface. Exact-current catalogue, report, ProposalSet, and ReviewCase
   work is persisted, duplicate-safe, restart-safe, and independently advanced

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 import time
@@ -521,6 +522,23 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
     return run_metadata_report_loaded(configuration, database_path, artifact_store_path, connection_name, library_name, item, file_index, expected_file_identity)
 
 
+def _provider_recovery_delay(provider_instances: list[object], report: MetadataReport) -> int:
+    if not any(
+        value.status in {ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE}
+        for value in report.providers
+    ):
+        return 0
+    delays = tuple(
+        record.delay_seconds
+        for provider in provider_instances
+        for record in getattr(provider, "attempt_records", ())
+        if type(record.delay_seconds) in {int, float}
+        and math.isfinite(record.delay_seconds)
+        and record.delay_seconds > 0
+    )
+    return min(86_400, math.ceil(max(delays, default=0)))
+
+
 def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True, repository_authority: object | None = None) -> str:
     """Compose one report solely from an already validated configuration snapshot."""
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
@@ -546,6 +564,7 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
     ):
         hardcover_pacer = HardcoverPacer()
     bindings: list[ProviderBinding] = []
+    provider_instances: list[object] = []
     for provider in provider_configs:
         def factory(value=provider):
             if value.adapter == "google_books":
@@ -558,32 +577,35 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
                         else credentials["provider:" + value.name]
                     )
                 )
-                return GoogleBooksMetadataProvider(
+                instance = GoogleBooksMetadataProvider(
                     value.name,
                     google_books_client(configuration.limits.timeout_seconds),
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     api_key=api_key,
                 )
-            if value.adapter == "hardcover":
+            elif value.adapter == "hardcover":
                 if value.secret_file is None:
                     raise MetadataReportError("provider credential unavailable")
-                return HardcoverMetadataProvider(
+                instance = HardcoverMetadataProvider(
                     value.name,
                     hardcover_client(value.secret_file, configuration.limits.timeout_seconds) if credentials is None else hardcover_client_token(credentials["provider:" + value.name], configuration.limits.timeout_seconds),
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     pacer=hardcover_pacer,
                 )
-            if value.adapter == "open_library" and value.contact_email is not None:
-                return OpenLibraryMetadataProvider(
+            elif value.adapter == "open_library" and value.contact_email is not None:
+                instance = OpenLibraryMetadataProvider(
                     value.name,
                     open_library_client(value.contact_email, configuration.limits.timeout_seconds),
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     pacer=open_library_pacer,
                 )
-            raise MetadataReportError("provider configuration is invalid")
+            else:
+                raise MetadataReportError("provider configuration is invalid")
+            provider_instances.append(instance)
+            return instance
         bindings.append(
             ProviderBinding(
                 provider.name, provider.enabled, factory, provider.adapter
@@ -618,7 +640,10 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
             None
             if review_action is None
             else lambda repository, report: repository.complete_review_extraction_publication(
-                review_action, report.report_id, int(time.time())
+                review_action,
+                report.report_id,
+                int(time.time()),
+                _provider_recovery_delay(provider_instances, report),
             )
         ),
         require_singular_target=review_action is not None,
@@ -811,7 +836,7 @@ def create_review_pipeline(
         if (
             entry is None
             or entry.file_identity != action.file_identity
-            or entry.updated_at != action.source_revision
+            or entry.source_fingerprint != action.source_fingerprint
             or not entry.eligible
         ):
             raise ReviewPipelineError("stale")
@@ -923,7 +948,10 @@ def create_review_pipeline(
         admit=admit,
         project=project,
     )
-    return ReviewPreparationSupervisor(pipeline)
+    return ReviewPreparationSupervisor(
+        pipeline,
+        polling_interval_seconds=configuration.review.library_polling_interval_seconds,
+    )
 
 
 def reopen_metadata_report(database_path: Path, report_id: str) -> str:

@@ -35,6 +35,7 @@ def _shell(*, title: str, active: str, main: str, csrf_token: str | None) -> str
     {brand_close}
     <div class="topbar-actions">
       {'' if csrf_token is None else '<span class="private-pill"><span aria-hidden="true">●</span> Owner session</span>'}
+      {'' if csrf_token is None else '<button class="activity-button" type="button" aria-expanded="false" aria-controls="activity-popover" hidden><span class="activity-pulse" aria-hidden="true"></span><span class="activity-label">Background activity</span></button>'}
       <button class="theme-toggle" type="button" aria-pressed="false">
         <span aria-hidden="true">◐</span><span class="theme-label">Dark mode</span>
       </button>
@@ -43,6 +44,7 @@ def _shell(*, title: str, active: str, main: str, csrf_token: str | None) -> str
   </header>
   {'' if csrf_token is None else _navigation(active)}
   {main}
+  {'' if csrf_token is None else '<section id="activity-popover" class="activity-popover" aria-label="Background activity" hidden></section>'}
   <p class="visually-hidden" id="theme-status" role="status" aria-live="polite"></p>
   <script src="/assets/review.js" defer></script>
 </body>
@@ -224,15 +226,15 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .count-cluster small { color: var(--ink-soft); font-size: .55rem; text-transform: uppercase; }
 
 .library-tools { display: grid; grid-template-columns: minmax(260px, 1fr) auto; align-items: end; gap: 12px; margin-bottom: 14px; }
-.preparation-panel { margin-bottom: 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
-.preparation-panel > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
-.preparation-panel h2 { margin: 0; font-size: .86rem; }
-.preparation-panel header p { margin: 0; color: var(--ink-soft); font-size: .6rem; }
-.preparation-library { display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 12px; padding: 11px 14px; }
-.preparation-library + .preparation-library { border-top: 1px solid var(--line); }
-.preparation-library strong, .preparation-library small { display: block; }
-.preparation-library small { margin-top: 3px; color: var(--ink-soft); font-size: .58rem; }
-.preparation-progress { min-width: 130px; text-align: right; color: var(--ink-soft); font-size: .62rem; }
+.activity-button { display: inline-flex; min-height: 40px; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--accent); border-radius: 999px; background: var(--accent-soft); color: var(--accent-strong); cursor: pointer; font-size: .62rem; font-weight: 850; }
+.activity-button[hidden], .activity-popover[hidden] { display: none; }
+.activity-button.actionable { border-color: var(--notice); background: var(--notice-soft); color: var(--notice); }
+.activity-pulse { width: 8px; height: 8px; flex: none; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 16%, transparent); }
+.activity-popover { position: fixed; z-index: 55; top: 72px; right: clamp(12px, 3vw, 38px); width: min(390px, calc(100vw - 24px)); max-height: calc(100vh - 90px); overflow: auto; padding: 16px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface-strong); box-shadow: var(--shadow); }
+.activity-popover h2 { margin-bottom: 5px; }
+.activity-library { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: .66rem; }
+.activity-library small { color: var(--ink-soft); }
+.activity-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .scan-now { min-height: 44px; padding: 0 13px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--surface-strong); color: var(--accent-strong); cursor: pointer; font-size: .66rem; font-weight: 800; }
 .scan-now:disabled { cursor: wait; opacity: .62; }
 .search-form { display: flex; align-items: end; gap: 8px; }
@@ -342,6 +344,8 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 }
 
 @media (max-width: 700px) {
+  .activity-button { width: 42px; justify-content: center; padding: 0; }
+  .activity-label { display: none; }
   .topbar { min-height: 56px; padding: 7px 10px; }
   .brand-mark { width: 36px; height: 36px; }
   .brand strong, .brand small, .private-pill { display: none; }
@@ -357,8 +361,6 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
   .count-cluster { width: 100%; }
   .count-cluster span { flex: 1; min-width: 0; }
   .library-tools { grid-template-columns: 1fr; }
-  .preparation-library { grid-template-columns: minmax(0,1fr) auto; }
-  .preparation-progress { grid-column: 1 / -1; grid-row: 2; min-width: 0; text-align: left; }
   .search-form { align-items: stretch; }
   .library-workspace, .detail-shell { border-radius: var(--radius-md); box-shadow: none; }
   .workspace-preview { display: none; }
@@ -503,6 +505,64 @@ const load = async path => {
   }
   return response.json();
 };
+const sendPreparationAction = async path => {
+  const send = () => fetch(path, {method: "POST", headers: {"x-csrf-token": pageCsrf}});
+  let response = await send();
+  if (response.status === 403) { pageCsrf = await refreshPageCsrf(); response = await send(); }
+  if (!response.ok) throw new Error();
+  return response.json();
+};
+const activityButton = document.querySelector(".activity-button");
+const activityPopover = document.querySelector(".activity-popover");
+const renderActivity = data => {
+  if(!activityButton||!activityPopover)return;
+  const focusedAction = activityPopover.contains(document.activeElement) ? document.activeElement.dataset.actionKey : null;
+  const visible=data.active||data.actionable||data.paused;
+  activityButton.hidden = !visible;
+  activityButton.classList.toggle("actionable", data.actionable || data.paused);
+  activityButton.querySelector(".activity-label").textContent = data.paused ? "Preparation paused" : data.actionable ? "Preparation needs attention" : "Preparing libraries";
+  if (!visible) { activityPopover.hidden = true; activityButton.setAttribute("aria-expanded", "false"); return; }
+  const heading = element("h2", data.paused ? "Preparation paused" : data.actionable ? "Action available" : "Preparing libraries");
+  const copy = element("p", data.paused ? "Committed work may finish; no new scans are admitted." : "New review work appears as each library item becomes ready.");
+  const children = [element("p", "Background activity", "eyebrow"), heading, copy];
+  for (const item of data.libraries) {
+    const row = element("div", null, "activity-library");
+    row.append(element("strong", item.library), element("span", friendly(item.state)), element("small", `${item.checked} checked · ${Math.max(0,item.total-item.checked)} remaining`), element("small", `${item.ready} ready · ${item.blocked} blocked`));
+    const scan = element("button", "Scan now", "inline-action"); scan.type = "button"; scan.dataset.actionKey = `${item.connection}:${item.library}:scan`; scan.disabled = data.paused || ["queued","discovering"].includes(item.state);
+    scan.addEventListener("click",async()=>{scan.disabled=true;try{await sendPreparationAction(`/api/v1/review-preparation/${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/scan`);activityStatus.textContent="Scan requested.";}catch{scan.disabled=false;activityStatus.setAttribute("role","alert");activityStatus.textContent="Scan request failed safely. Try again.";}});
+    row.append(scan);
+    if (item.state === "completed_with_failures") {
+      const retry = element("button", "Retry", "inline-action"); retry.type = "button"; retry.dataset.actionKey = `${item.connection}:${item.library}:retry`;
+      retry.addEventListener("click",async()=>{retry.disabled=true;try{await sendPreparationAction(`/api/v1/review-preparation/${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/retry`);activityStatus.textContent="Validation retry requested.";}catch{retry.disabled=false;activityStatus.setAttribute("role","alert");activityStatus.textContent="Retry failed safely. Correct configuration if needed, then try again.";}});
+      row.append(retry);
+    }
+    children.push(row);
+  }
+  const activityStatus = element("p", "", "activity-status"); activityStatus.setAttribute("role", "status"); children.push(activityStatus);
+  const actions = element("div", null, "activity-actions");
+  const pause = element("button", data.paused ? "Resume" : "Pause", "inline-action"); pause.type = "button"; pause.dataset.actionKey = "control:pause";
+  pause.addEventListener("click",async()=>{pause.disabled=true;try{renderActivity(await sendPreparationAction(`/api/v1/review-preparation/${data.paused?"resume":"pause"}`));}catch{pause.disabled=false;activityStatus.setAttribute("role","alert");activityStatus.textContent="Preparation control failed safely. Try again.";}});
+  const close = element("button", "Close", "inline-action"); close.type = "button"; close.dataset.actionKey = "control:close";
+  close.addEventListener("click", () => { activityPopover.hidden = true; activityButton.setAttribute("aria-expanded", "false"); activityButton.focus(); });
+  actions.append(pause, close); children.push(actions); activityPopover.replaceChildren(...children);
+  if (focusedAction) {
+    const replacement = [...activityPopover.querySelectorAll("button")].find(button => button.dataset.actionKey === focusedAction);
+    if (replacement) replacement.focus({preventScroll: true});
+    else { activityPopover.tabIndex = -1; activityPopover.focus({preventScroll: true}); }
+  }
+};
+let activityProjection = null;
+const loadActivity=()=>load("/api/v1/review-preparation").then(data=>{
+  const projection = JSON.stringify(data.libraries.map(item => [item.connection,item.library,item.state,item.checked,item.total,item.ready,item.blocked]));
+  renderActivity(data);
+  if (activityProjection !== null && projection !== activityProjection) dispatchEvent(new Event("review-preparation-change"));
+  activityProjection = projection;
+  setTimeout(loadActivity,data.active||data.actionable||data.paused?1500:15000);
+}).catch(()=>setTimeout(loadActivity,15000));
+if(activityButton&&activityPopover){
+  activityButton.addEventListener("click",()=>{const opening=activityPopover.hidden;activityPopover.hidden=!opening;activityButton.setAttribute("aria-expanded",String(opening));if(opening)activityPopover.querySelector("button")?.focus();});
+  loadActivity();
+}
 const failPage = target => {
   const box = element("section", null, "error-state");
   const alert = element("p", "The bounded review data could not be loaded. Refresh to retry.");
@@ -533,64 +593,7 @@ const workRow = item => {
   return link;
 };
 
-const preparationCopy = item => {
-  if (item.state === "idle") return "Not scanned in this application state";
-  if (item.state === "queued" || item.state === "discovering") return "Checking the current library";
-  if (item.state === "processing") return `${item.checked} of ${item.total} checked · ${item.ready} ready${item.blocked ? ` · ${item.blocked} blocked` : ""}`;
-  if (item.state === "completed_with_failures") return `${item.checked} checked · ${item.ready} ready · ${item.blocked} blocked`;
-  return `${item.checked} checked · ${item.ready} ready`;
-};
-const renderPreparation = (target, data) => {
-  const header = element("header");
-  header.append(element("h2", "Library preparation"), element("p", "Read-only · exact-current work"));
-  const children = [header];
-  for (const item of data.libraries) {
-    const row = element("div", null, "preparation-library");
-    const copy = element("span");
-    copy.append(element("strong", item.library), element("small", `Audiobookshelf · ${item.connection}`));
-    const progress = element("span", preparationCopy(item), "preparation-progress");
-    progress.setAttribute("role", "status");
-    const button = element("button", "Scan now", "scan-now");
-    button.type = "button";
-    button.disabled = item.state === "queued" || item.state === "discovering";
-    button.addEventListener("click", async () => {
-      button.disabled = true;
-      progress.textContent = "Requesting a current scan…";
-      const path = `/api/v1/review-preparation/${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/scan`;
-      const send = () => fetch(path, {method: "POST", headers: {"x-csrf-token": pageCsrf}});
-      try {
-        let response = await send();
-        if (response.status === 403) { pageCsrf = await refreshPageCsrf(); response = await send(); }
-        if (!response.ok) throw new Error();
-        const updated = await response.json();
-        progress.textContent = preparationCopy(updated);
-        window.setTimeout(() => loadPreparation(target), 750);
-      } catch {
-        button.disabled = false;
-        progress.textContent = "Scan request failed safely. Try again.";
-      }
-    });
-    row.append(copy, progress, button);
-    children.push(row);
-  }
-  target.replaceChildren(...children);
-};
-const preparationProjection = data => JSON.stringify(data.libraries.map(item => [
-  item.connection, item.library, item.state, item.total, item.ready, item.blocked
-]));
 const libraryProjection = data => JSON.stringify([data.counts, data.items, data.next_cursor]);
-const loadPreparation = (target, previousProjection = null, refreshLibrary = null) => load("/api/v1/review-preparation").then(async data => {
-  const projection = preparationProjection(data);
-  renderPreparation(target, data);
-  if (previousProjection !== null && projection !== previousProjection && refreshLibrary) {
-    await refreshLibrary();
-  }
-  if (data.libraries.some(item => ["queued", "discovering", "processing"].includes(item.state))) {
-    window.setTimeout(() => loadPreparation(target, projection, refreshLibrary), 1500);
-  }
-}).catch(() => {
-  target.replaceChildren(element("p", "Library preparation status is temporarily unavailable.", "empty-state"));
-});
 
 const libraryRoot = document.querySelector("#library");
 if (libraryRoot) {
@@ -615,11 +618,6 @@ if (libraryRoot) {
       lenses.append(link);
     }
     tools.append(lenses);
-    const preparation = libraryRoot.dataset.reviewPreparation === "true" ? element("section", null, "preparation-panel") : null;
-    if (preparation) {
-      preparation.setAttribute("aria-label", "Library preparation");
-      preparation.append(element("p", "Loading library preparation…", "empty-state"));
-    }
     const workspace = element("div", null, "library-workspace");
     const list = element("section", null, "work-list");
     list.setAttribute("aria-label", "Review cases");
@@ -638,7 +636,7 @@ if (libraryRoot) {
     const book = element("span", "ML", "work-mark preview-book"); book.setAttribute("aria-hidden", "true");
     preview.append(book, element("p", "Current review cases", "eyebrow"), element("h2", data.items.length ? "Choose a work to review its exact-current fields." : "This view is clear."), element("p", data.items.length ? "Each decision is recorded as an immutable human outcome. This workspace never writes to your target library." : "Try another lens or search term to inspect other bounded cases."));
     workspace.append(list, preview);
-    libraryRoot.replaceChildren(...[top, preparation, tools, workspace].filter(Boolean));
+    libraryRoot.replaceChildren(top, tools, workspace);
     let currentLibraryProjection = libraryProjection(data);
     const refreshLibrary = () => load(`/api/v1/library?${new URLSearchParams(location.search)}`).then(updated => {
       const updatedProjection = libraryProjection(updated);
@@ -686,7 +684,7 @@ if (libraryRoot) {
         else { region.tabIndex = -1; region.focus({preventScroll: true}); }
       }
     });
-    if (preparation) loadPreparation(preparation, null, refreshLibrary);
+    addEventListener("review-preparation-change", refreshLibrary);
     libraryRoot.focus({preventScroll: true});
   }).catch(() => failPage(libraryRoot));
 }

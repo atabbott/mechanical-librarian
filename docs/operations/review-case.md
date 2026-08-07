@@ -157,10 +157,18 @@ When preparation changes ready/blocked counts or lifecycle state, the Library
 page refreshes its exact-current projection so newly admitted or retired cases
 are reflected without a manual reload.
 
-This is an owner-requested preparation operation, not polling or unattended
-scheduling. It makes only the reads and provider calls already authorized by
-catalogue and metadata-report, and it adds no field decision, apply plan,
-target write, media write, deletion, or destructive authority.
+The supported container requests every configured library on first startup and
+after `review.library_polling_interval_seconds` from its last successful scan.
+Repeated automatic and owner requests coalesce. The compact shared activity
+control appears only while active, paused, or actionable; pause prevents new
+admissions without cancelling committed work. Transient provider failures
+recover automatically behind the shared durable circuit for at most three
+cycles; exhausted recovery becomes an actionable terminal failure. Explicit
+retry is also offered after corrected credential or configuration validation.
+It makes only the reads and provider calls
+already authorized by catalogue and metadata-report, and adds no field
+decision, apply plan, target write, media write, deletion, or destructive
+authority.
 
 The login request body is capped at 2 KiB at the ASGI boundary before JSON
 parsing. Five reserved attempts within five minutes close the login gate; the

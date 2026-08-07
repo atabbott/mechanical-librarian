@@ -317,6 +317,9 @@ class _Repository:
 class _Preparation:
     libraries = (("primary", "fiction", "lib-1"),)
 
+    def __init__(self) -> None:
+        self.is_paused = False
+
     def start(self) -> None:
         return None
 
@@ -339,6 +342,15 @@ class _Preparation:
         )
 
     def request(self, connection: str, library: str):
+        return self.progress(connection, library)
+
+    def paused(self) -> bool:
+        return self.is_paused
+
+    def set_paused(self, paused: bool) -> None:
+        self.is_paused = paused
+
+    def retry(self, connection: str, library: str):
         return self.progress(connection, library)
 
 
@@ -399,6 +411,8 @@ class ReviewWebTests(unittest.TestCase):
         session = self._login()
         status = self.client.get("/api/v1/review-preparation")
         self.assertEqual(status.status_code, 200)
+        self.assertTrue(status.json()["active"])
+        self.assertFalse(status.json()["paused"])
         self.assertEqual(
             status.json()["libraries"][0],
             {
@@ -425,6 +439,25 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(requested.status_code, 202)
         self.assertEqual(requested.json()["state"], "processing")
+        paused = self.client.post(
+            "/api/v1/review-preparation/pause",
+            headers={**self.origin, "x-csrf-token": session["csrf_token"]},
+        )
+        self.assertEqual(paused.status_code, 200)
+        self.assertTrue(paused.json()["paused"])
+        resumed = self.client.post(
+            "/api/v1/review-preparation/resume",
+            headers={**self.origin, "x-csrf-token": session["csrf_token"]},
+        )
+        self.assertEqual(resumed.status_code, 200)
+        self.assertFalse(resumed.json()["paused"])
+        with patch.object(_Preparation, "set_paused", side_effect=RuntimeError):
+            failed = self.client.post(
+                "/api/v1/review-preparation/pause",
+                headers={**self.origin, "x-csrf-token": session["csrf_token"]},
+            )
+        self.assertEqual(failed.status_code, 503)
+        self.assertEqual(failed.json()["error"]["code"], "persistence")
 
     def test_only_liveness_and_login_are_anonymous(self) -> None:
         live = self.client.get("/health/live")
@@ -827,6 +860,18 @@ class ReviewWebTests(unittest.TestCase):
 
     def test_review_page_rotates_one_memory_only_csrf_token(self) -> None:
         login = self._login()
+        inactive = self.client.get("/api/v1/review-preparation")
+        self.assertEqual(inactive.status_code, 200, inactive.text)
+        self.assertEqual(
+            inactive.json(),
+            {
+                "schema_version": "review-preparation-v1",
+                "libraries": [],
+                "paused": False,
+                "active": False,
+                "actionable": False,
+            },
+        )
         page = self.client.get(f"/review/{self.case.review_case_id}")
         self.assertEqual(page.status_code, 200, page.text)
         match = re.search(r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', page.text)
@@ -837,8 +882,8 @@ class ReviewWebTests(unittest.TestCase):
         script = self.client.get("/assets/review.js").text
         self.assertIn("removeAttribute('data-csrf-token')", script)
         self.assertIn("No attention needed", script)
-        self.assertIn("preparationProjection", script)
-        self.assertIn("await refreshLibrary()", script)
+        self.assertIn("activityProjection", script)
+        self.assertIn('new Event("review-preparation-change")', script)
         self.assertIn("refreshedList.replaceChildren", script)
         self.assertIn("replacement.focus({preventScroll: true})", script)
         self.assertNotIn("Automatically handled", script)
@@ -1023,6 +1068,12 @@ class ReviewWebTests(unittest.TestCase):
                     "post",
                     "/api/v1/review-preparation/{connection}/{library_name}/scan",
                 ),
+                (
+                    "post",
+                    "/api/v1/review-preparation/{connection}/{library_name}/retry",
+                ),
+                ("post", "/api/v1/review-preparation/pause"),
+                ("post", "/api/v1/review-preparation/resume"),
                 ("post", "/api/v1/session/logout"),
             },
         )
@@ -1070,7 +1121,19 @@ class ReviewWebTests(unittest.TestCase):
                     "/api/v1/review-preparation/{connection}/{library_name}/scan",
                 )
             ],
-            {"202", "400", "401", "403", "404", "422", "503"},
+            {"202", "400", "401", "403", "404", "409", "422", "503"},
+        )
+        self.assertEqual(
+            response_statuses[("post", "/api/v1/review-preparation/pause")],
+            {"200", "401", "403", "422", "503"},
+        )
+        self.assertEqual(
+            response_statuses[("post", "/api/v1/review-preparation/resume")],
+            {"200", "401", "403", "422", "503"},
+        )
+        self.assertEqual(
+            response_statuses[("post", "/api/v1/review-preparation/{connection}/{library_name}/retry")],
+            {"202", "401", "403", "404", "409", "422", "503"},
         )
         headers = {
             value["name"]: value

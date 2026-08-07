@@ -40,6 +40,35 @@ class CatalogueEntry:
     service_path: str | None = None
     format: str | None = None
     mount: str | None = None
+    source_fingerprint: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.source_fingerprint is None:
+            value = Fingerprint.from_canonical_value(
+                {
+                    "schema": "review-source-v1",
+                    "identity": {
+                        "connection": self.connection,
+                        "library": self.library,
+                        "library_id": self.library_id,
+                        "item_id": self.item_id,
+                    },
+                    "metadata": {"title": self.title, "authors": self.authors},
+                    "media": {
+                        "file_identity": self.file_identity,
+                        "has_audio": self.has_audio,
+                        "has_ebook": self.has_ebook,
+                    },
+                },
+                schema=SchemaVersion("review-source-v1"),
+            ).digest
+            object.__setattr__(self, "source_fingerprint", value)
+        if (
+            type(self.source_fingerprint) is not str
+            or len(self.source_fingerprint) != 64
+            or any(value not in "0123456789abcdef" for value in self.source_fingerprint)
+        ):
+            raise CatalogueError("catalogue source fingerprint is invalid")
 
     @property
     def eligible(self) -> bool:

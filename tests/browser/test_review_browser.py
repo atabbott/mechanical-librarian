@@ -262,7 +262,10 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         ("queued", 0, 0),
                         ("processing", 1, 0),
                         ("processing", 1, 1),
-                        ("completed", 1, 1),
+                        ("processing", 1, 1),
+                        ("processing", 1, 1),
+                        ("processing", 1, 1),
+                        ("completed_with_failures", 1, 1),
                     ]
                     requests = 0
                     library_requests = 0
@@ -289,7 +292,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
 
                     def preparation(route) -> None:
                         nonlocal requests
-                        state, checked, ready = responses[min(requests, 3)]
+                        state, checked, ready = responses[min(requests, len(responses) - 1)]
                         requests += 1
                         route.fulfill(
                             status=200,
@@ -297,6 +300,9 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                             body=json.dumps(
                                 {
                                     "schema_version": "review-preparation-v1",
+                                    "active": state in {"queued", "discovering", "processing"},
+                                    "actionable": state == "completed_with_failures",
+                                    "paused": False,
                                     "libraries": [
                                         {
                                             "connection": "primary",
@@ -307,7 +313,17 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                                             "total": 1,
                                             "ready": ready,
                                             "blocked": 0,
-                                        }
+                                        },
+                                        {
+                                            "connection": "primary",
+                                            "library": "history",
+                                            "library_id": "lib-2",
+                                            "state": state,
+                                            "checked": checked,
+                                            "total": 1,
+                                            "ready": 0,
+                                            "blocked": 1 if state == "completed_with_failures" else 0,
+                                        },
                                     ],
                                 }
                             ),
@@ -331,12 +347,52 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                             "node => node === document.activeElement"
                         )
                     )
-                    lens_link = page.locator('.lenses a[aria-current="page"]')
-                    lens_link.focus()
-                    page.get_by_text("1 checked · 1 ready", exact=True).wait_for(
+                    activity = page.locator(".activity-button")
+                    activity.wait_for(state="visible")
+                    activity.click()
+                    activity_region = page.get_by_role("region", name="Background activity")
+                    activity_region.wait_for()
+                    page.set_viewport_size({"width": 390, "height": 844})
+                    self.assertLessEqual(
+                        page.evaluate("() => document.documentElement.scrollWidth"), 390
+                    )
+                    self.assertLessEqual(activity_region.bounding_box()["width"], 366)
+                    activity_region.locator(".activity-library").first.get_by_text(
+                        "1 checked · 0 remaining", exact=True
+                    ).wait_for(
                         timeout=8_000
                     )
-                    self.assertGreaterEqual(requests, 4)
+                    activity_region.locator(".activity-library").first.get_by_text(
+                        "1 ready · 0 blocked", exact=True
+                    ).wait_for()
+                    retries = activity_region.get_by_role("button", name="Retry")
+                    retries.first.wait_for(timeout=8_000)
+                    self.assertEqual(retries.count(), 2)
+                    retries.nth(1).focus()
+                    page.wait_for_timeout(1_750)
+                    self.assertTrue(
+                        retries.nth(1).evaluate("node => node === document.activeElement")
+                    )
+                    page.route(
+                        "**/api/v1/review-preparation/**",
+                        lambda route: route.fulfill(
+                            status=503,
+                            content_type="application/json",
+                            body='{"error":{"code":"persistence"}}',
+                        ),
+                    )
+                    retries.nth(1).click()
+                    failure = activity_region.get_by_role("alert")
+                    failure.wait_for()
+                    self.assertIn("Retry failed safely", failure.inner_text())
+                    self.assertEqual(page.locator(".preparation-panel").count(), 0)
+                    page.get_by_role("button", name="Close").click()
+                    self.assertTrue(
+                        activity.evaluate("node => node === document.activeElement")
+                    )
+                    lens_link = page.locator('.lenses a[aria-current="page"]')
+                    lens_link.focus()
+                    self.assertGreaterEqual(requests, len(responses))
                     self.assertGreaterEqual(library_requests, 2)
                     self.assertEqual(navigations, [])
                     self.assertEqual(search.input_value(), "unsent search")

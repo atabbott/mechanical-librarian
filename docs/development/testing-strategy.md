@@ -54,6 +54,11 @@ The suite covers:
   atomic report/checkpoint rollback and restart,
   bounded third-attempt crash recovery, completed-ledger inert recovery, and a fixed
   two-lane proof that one slow work cannot impose a library-wide stage barrier;
+  automatic first-start and interval admission, durable pause/resume, explicit
+  terminal retry, cross-library ageing and reserved-new-work fairness, bounded
+  circuit recovery, canonical material-source fingerprints, and an exact
+  installed-`review-serve` 1,000-work three-library first-start, forced-restart,
+  authenticated-progress, memory-ceiling, and zero-write resource proof;
 
 - closed reports, canonical serialization, stable claim/report references,
   title normalization, and occurrence-local ISBN applicability, including

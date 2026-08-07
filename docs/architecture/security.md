@@ -60,8 +60,10 @@ its local expected-pointer check; one slow external read cannot hold the writer
 lock against the other lane. Technical failure in any
 configured provider lane stops that work before proposal creation and prevents
 that scan's staged retirements. The path cannot decide a field, construct an apply plan, write a
-target or media file, delete media, poll, or automatically retry provider
-failure.
+target or media file, or delete media. The supported review server may poll on
+the one bounded configured interval, resume transient work, and hold terminal
+provider failure for an authenticated owner retry. Durable pause, fair-claim,
+and circuit state contains only bounded operational values.
 
 ## External actors
 
@@ -488,7 +490,7 @@ one exact closed reviewer producer shape; a provider-only category/stage cannot
 cross by claiming the reviewer component. The legitimate
 persistence/persistence/persistence producer remains accepted.
 
-The final report database, `catalogue-v1` database, `config-v5`, artifact
+The final report database, `catalogue-v2` database, `config-v5`, artifact
 records, and `batch-manifest-v5` each accept only absent or their exact current
 schema. `metadata-report-v1` through `metadata-report-v10`, prior development
 schemas, extra objects, altered
