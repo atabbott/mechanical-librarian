@@ -1487,8 +1487,11 @@ class SQLiteMetadataReportRepository:
         target = stages.get(action.stage)
         if target is None:
             raise MetadataReportError("review preparation state is invalid")
+        if action.stage == "admission" and output_id is None:
+            target = ("complete", None)
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            if not self._connection.in_transaction:
+                self._connection.execute("BEGIN IMMEDIATE")
             values: list[object] = [target[0], completed_at]
             assignment = ""
             if target[1] is not None:
@@ -1525,6 +1528,21 @@ class SQLiteMetadataReportRepository:
                 self._connection.rollback()
             if isinstance(error, MetadataReportError):
                 raise
+            raise MetadataReportError("review preparation persistence failed") from error
+
+    def begin_review_pipeline_output(self) -> None:
+        try:
+            if self._connection.in_transaction:
+                raise MetadataReportError("review preparation state is invalid")
+            self._connection.execute("BEGIN IMMEDIATE")
+        except sqlite3.Error as error:
+            raise MetadataReportError("review preparation persistence failed") from error
+
+    def rollback_review_pipeline_output(self) -> None:
+        try:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+        except sqlite3.Error as error:
             raise MetadataReportError("review preparation persistence failed") from error
 
     def complete_review_extraction_publication(
@@ -1801,8 +1819,10 @@ class SQLiteMetadataReportRepository:
             proposal_set.policy_version,
             document,
         )
+        owns_transaction = not self._connection.in_transaction
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            if owns_transaction:
+                self._connection.execute("BEGIN IMMEDIATE")
             if self._binding is not None:
                 self._binding.require_current()
             existing = self._connection.execute(
@@ -1845,7 +1865,8 @@ class SQLiteMetadataReportRepository:
                 )
             if self._binding is not None:
                 self._binding.require_current()
-            self._connection.commit()
+            if owns_transaction:
+                self._connection.commit()
             return self.get_proposal(proposal_set.proposal_set_id)
         except MetadataReportError:
             self._connection.rollback()
@@ -1878,8 +1899,10 @@ class SQLiteMetadataReportRepository:
         """Atomically bind one exact current ProposalSet to its target lineage."""
         if type(proposal_set) is not ProposalSet:
             raise MetadataReportError("review admission failed")
+        owns_transaction = not self._connection.in_transaction
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            if owns_transaction:
+                self._connection.execute("BEGIN IMMEDIATE")
             if self._binding is not None:
                 self._binding.require_current()
             proposal_row = self._connection.execute("SELECT proposal_set_id,report_id,policy_version,document FROM proposal_sets WHERE proposal_set_id=?", (proposal_set.proposal_set_id,)).fetchone()
@@ -1926,7 +1949,8 @@ class SQLiteMetadataReportRepository:
             ):
                 if self._binding is not None:
                     self._binding.require_current()
-                self._connection.commit()
+                if owns_transaction:
+                    self._connection.commit()
                 replay_status = (
                     "replayed"
                     if validated[5] in {"admitted", "superseded"}
@@ -1940,7 +1964,8 @@ class SQLiteMetadataReportRepository:
                 self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?, ?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=NULL,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome", (*lineage, proposal_set.proposal_set_id, report.report_id, None, transition.transition_id, checkpoint, outcome))
                 if self._binding is not None:
                     self._binding.require_current()
-                self._connection.commit()
+                if owns_transaction:
+                    self._connection.commit()
                 return _admission_json(outcome, None)
             case = ReviewCase.create(proposal_set, report)
             existing = self._connection.execute("SELECT document FROM review_cases WHERE review_case_id=?", (case.review_case_id,)).fetchone()
@@ -1954,7 +1979,8 @@ class SQLiteMetadataReportRepository:
             self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome", (*lineage, proposal_set.proposal_set_id, report.report_id, case.review_case_id, transition.transition_id, checkpoint, outcome))
             if self._binding is not None:
                 self._binding.require_current()
-            self._connection.commit()
+            if owns_transaction:
+                self._connection.commit()
             return _admission_json(outcome, case.review_case_id)
         except (
             MetadataReportError,

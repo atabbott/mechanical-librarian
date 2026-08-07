@@ -160,6 +160,10 @@ class ReviewPipelineRepository(Protocol):
 
     def claim_review_pipeline_action(self, claimed_at: int) -> PipelineAction | None: ...
 
+    def begin_review_pipeline_output(self) -> None: ...
+
+    def rollback_review_pipeline_output(self) -> None: ...
+
     def complete_review_discovery(
         self,
         action: PipelineAction,
@@ -367,6 +371,7 @@ class ReviewPreparationPipeline:
         *,
         claim_next: bool,
     ) -> PipelineAction | None:
+        output_transaction = False
         try:
             output_id: str | None = None
             if action.stage == "discovery":
@@ -394,10 +399,14 @@ class ReviewPreparationPipeline:
             elif action.stage == "proposal":
                 if action.report_id is None:
                     raise ReviewPipelineError("state")
+                repository.begin_review_pipeline_output()
+                output_transaction = True
                 output_id = self._propose(repository, action.report_id)
             elif action.stage == "admission":
                 if action.proposal_set_id is None:
                     raise ReviewPipelineError("state")
+                repository.begin_review_pipeline_output()
+                output_transaction = True
                 _, output_id = self._admit(repository, action.proposal_set_id)
             elif action.stage == "projection":
                 if action.review_case_id is not None and not self._project(
@@ -411,6 +420,8 @@ class ReviewPreparationPipeline:
                 claim_next=claim_next,
             )
         except ReviewPipelineError as error:
+            if output_transaction:
+                repository.rollback_review_pipeline_output()
             self._fail(
                 repository,
                 action,
@@ -418,6 +429,8 @@ class ReviewPreparationPipeline:
                 error.code in {"stale", "transient"},
             )
         except Exception:
+            if output_transaction:
+                repository.rollback_review_pipeline_output()
             self._fail(repository, action, "failed", False)
         return None
 
@@ -492,6 +505,7 @@ class ReviewPreparationSupervisor:
         self._clock = clock
         self._schedule_lock = threading.Lock()
         self._next_schedule_at: int | None = None
+        self._schedule_paused = False
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._threads: tuple[threading.Thread, ...] = ()
@@ -543,9 +557,11 @@ class ReviewPreparationSupervisor:
 
     def set_paused(self, paused: bool) -> None:
         self._pipeline.set_paused(paused)
-        if not paused:
-            with self._schedule_lock:
+        with self._schedule_lock:
+            self._schedule_paused = paused
+            if not paused:
                 self._next_schedule_at = None
+        if not paused:
             self._schedule_due()
             self._wake.set()
 
@@ -559,11 +575,14 @@ class ReviewPreparationSupervisor:
         with self._schedule_lock:
             if self._polling_interval_seconds is None:
                 return
+            if self._schedule_paused:
+                return
             now = self._clock()
             if self._next_schedule_at is not None and now < self._next_schedule_at:
                 return
             progresses, paused = self._pipeline.status()
             if paused:
+                self._schedule_paused = True
                 self._next_schedule_at = None
                 return
             next_schedule_at: int | None = None

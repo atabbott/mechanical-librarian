@@ -58,10 +58,11 @@ scan admission, using that aggregate snapshot and a retained next deadline rathe
 than repeated per-library integrity validation. A claimed stage retains its
 already-validated repository connection, without an open transaction, until its
 separate durable transition; composed report, proposal, admission, and projection
-services borrow that validated connection without owning or closing it. A stage
-transition may claim the next globally fair action in the same full-synchronous
-transaction, so the next action is durable before execution and crash recovery
-can requeue it. External work still occurs outside SQLite write transactions.
+services borrow that validated connection without owning or closing it. Proposal
+and admission output publication shares the full-synchronous transaction that
+advances its stage and may claim the next globally fair action, so the next
+action is durable before execution and crash recovery can requeue it. External
+work still occurs outside SQLite write transactions.
 Staged absence and ineligibility transitions
 require one final confirmation discovery; failed rediscovery makes queued child
 work unclaimable. Final pipeline publication also requires the

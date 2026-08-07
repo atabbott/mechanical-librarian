@@ -16,9 +16,11 @@
   bounded snapshot and a retained deadline. Superseded Library refresh responses
   cannot replace newer exact-current results. Fair claims select their bounded
   library before using aged/recent indexes, and a durable stage transition may
-  atomically claim the next fair action before that action executes, reducing
-  full-synchronous commits without weakening restart recovery. Pipeline-composed
-  services borrow the already-validated stage repository without taking ownership.
+  atomically persist proposal/admission output, transition its stage, and claim
+  the next fair action before that action executes, reducing full-synchronous
+  commits without weakening restart recovery. Pipeline-composed
+  services borrow the already-validated stage repository without taking ownership;
+  admission without a review case completes without a no-op projection stage.
   Transient lane and final-attempt `Retry-After` values
   extend only the transient circuit; paused retry and disappearing activity
   retain truthful controls and visible keyboard focus. (#475, #473)

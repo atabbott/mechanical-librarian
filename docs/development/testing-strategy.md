@@ -60,8 +60,8 @@ The suite covers:
   terminal retry, cross-library ageing and reserved-new-work fairness, bounded
   circuit recovery, canonical material-source fingerprints including root-cover
   field presence and raw-state distinctions, one validated repository open per
-  claimed stage, atomic transition-plus-next-claim crash recovery, indexed aged
-  and recent claim ordering, and an exact
+  claimed stage, atomic output-plus-transition-plus-next-claim crash recovery,
+  no-case admission completion, indexed aged and recent claim ordering, and an exact
   installed-`review-serve` 1,000-work three-library first-start, forced-restart,
   authenticated-progress, memory-ceiling, and zero-write resource proof;
 

@@ -543,6 +543,7 @@ def _provider_recovery_delay(
         for name, provider in provider_instances.items()
         if name in transient_providers
         for record in getattr(provider, "attempt_records", ())
+        if record.outcome == "exhausted"
         if type(record.delay_seconds) in {int, float}
         and math.isfinite(record.delay_seconds)
         and record.delay_seconds > 0

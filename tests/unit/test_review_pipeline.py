@@ -758,20 +758,12 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 repository.close()
             return report.report_id, False
 
-        def publish_proposal(_, __: str) -> str:
-            repository = open_repository(self.path)
-            try:
-                repository.publish_proposal(proposal)
-            finally:
-                repository.close()
+        def publish_proposal(repository, __: str) -> str:
+            repository.publish_proposal(proposal)
             return proposal.proposal_set_id
 
-        def admit(_, __: str) -> tuple[str, str | None]:
-            repository = open_repository(self.path)
-            try:
-                result = json.loads(repository.admit_review_case(proposal))
-            finally:
-                repository.close()
+        def admit(repository, __: str) -> tuple[str, str | None]:
+            result = json.loads(repository.admit_review_case(proposal))
             return result["status"], result.get("review_case_id")
 
         pipeline = ReviewPreparationPipeline(
@@ -1186,7 +1178,13 @@ class _ConcurrentRepository:
     def complete_review_discovery(self, *args):  # pragma: no cover - not used here
         raise AssertionError
 
-    def advance_review_pipeline_action(self, action, output_id, completed_at):
+    def begin_review_pipeline_output(self):
+        pass
+
+    def rollback_review_pipeline_output(self):
+        pass
+
+    def advance_review_pipeline_action(self, action, output_id, completed_at, claim_next=False):
         with self.lock:
             self.completed.append(action.item_id)
 
@@ -1272,6 +1270,10 @@ class ReviewPipelineSchedulingTests(unittest.TestCase):
         clock[0] = 220
         supervisor._schedule_due()
         self.assertEqual(pipeline.requests, [])
+        self.assertEqual(pipeline.status_calls, 4)
+        supervisor._schedule_due()
+        clock[0] = 1_000_000
+        supervisor._schedule_due()
         self.assertEqual(pipeline.status_calls, 4)
 
     def test_retry_is_limited_to_terminal_actionable_failure(self) -> None:
