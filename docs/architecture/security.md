@@ -62,7 +62,10 @@ services borrow that validated connection without owning or closing it. Proposal
 and admission output publication shares the full-synchronous transaction that
 advances its stage and may claim the next globally fair action, so the next
 action is durable before execution and crash recovery can requeue it. External
-work still occurs outside SQLite write transactions.
+work still occurs outside SQLite write transactions. Provider disposition is a
+pure classification of the report already being published and shares that
+publication checkpoint; a retry is durably returned to extraction before it runs,
+while a successful checkpoint may atomically claim the next globally fair action.
 Staged absence and ineligibility transitions
 require one final confirmation discovery; failed rediscovery makes queued child
 work unclaimable. Final pipeline publication also requires the

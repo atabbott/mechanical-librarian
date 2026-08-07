@@ -49,7 +49,7 @@ _CONFIGURATION_PROVIDER_FAILURES = frozenset(
 )
 
 
-def _provider_failure_disposition(
+def provider_failure_disposition(
     statuses: tuple[ProviderStatus, ...],
 ) -> tuple[str, bool] | None:
     failures = _TECHNICAL_PROVIDER_FAILURES.intersection(statuses)
@@ -60,6 +60,9 @@ def _provider_failure_disposition(
     if failures:
         return "provider", False
     return None
+
+
+_provider_failure_disposition = provider_failure_disposition
 
 
 class ReviewPipelineError(RuntimeError):
@@ -160,6 +163,8 @@ class ReviewPipelineRepository(Protocol):
 
     def claim_review_pipeline_action(self, claimed_at: int) -> PipelineAction | None: ...
 
+    def take_review_pipeline_claim(self) -> PipelineAction | None: ...
+
     def begin_review_pipeline_output(self) -> None: ...
 
     def rollback_review_pipeline_output(self) -> None: ...
@@ -204,7 +209,7 @@ class ReviewPreparationPipeline:
             [str, str], tuple[int, str, tuple[CatalogueEntry, ...]]
         ],
         extract: Callable[
-            [ReviewPipelineRepository, PipelineAction], tuple[str, bool]
+            [ReviewPipelineRepository, PipelineAction, bool], tuple[str, bool]
         ],
         providers: Callable[
             [ReviewPipelineRepository, str], tuple[ProviderStatus, ...]
@@ -384,15 +389,15 @@ class ReviewPreparationPipeline:
                 return None
             if action.stage == "extraction":
                 output_id, checkpoint_committed = self._extract(
-                    repository, action
+                    repository, action, claim_next
                 )
                 if checkpoint_committed:
-                    return None
+                    return repository.take_review_pipeline_claim()
             elif action.stage == "provider":
                 if action.report_id is None:
                     raise ReviewPipelineError("state")
                 statuses = self._providers(repository, action.report_id)
-                disposition = _provider_failure_disposition(statuses)
+                disposition = provider_failure_disposition(statuses)
                 if disposition is not None:
                     self._fail(repository, action, *disposition)
                     return None

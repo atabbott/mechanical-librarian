@@ -749,7 +749,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         )]
         extracted: list[str] = []
 
-        def publish_report(_, __: PipelineAction):
+        def publish_report(_, __: PipelineAction, ___: bool):
             extracted.append(report.report_id)
             repository = open_repository(self.path)
             try:
@@ -829,7 +829,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         ]
         report = _report()
 
-        def publish_report(_, __: PipelineAction) -> str:
+        def publish_report(_, __: PipelineAction, ___: bool) -> str:
             extracted.append(report.report_id)
             repository = open_repository(self.path)
             try:
@@ -912,7 +912,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         extracted: list[str] = []
         provider_calls = 0
 
-        def publish_report(_, __: PipelineAction) -> tuple[str, bool]:
+        def publish_report(_, __: PipelineAction, ___: bool) -> tuple[str, bool]:
             extracted.append(report.report_id)
             repository = open_repository(self.path)
             try:
@@ -1126,7 +1126,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             "SELECT circuit_open_until FROM review_preparation_control"
         ).fetchone()
         reopened.close()
-        self.assertEqual(resumed.stage, "provider")
+        self.assertEqual(resumed.stage, "proposal")
         self.assertEqual(resumed.report_id, report.report_id)
         self.assertEqual(circuit, (45,))
 
@@ -1180,6 +1180,9 @@ class _ConcurrentRepository:
 
     def begin_review_pipeline_output(self):
         pass
+
+    def take_review_pipeline_claim(self):
+        return None
 
     def rollback_review_pipeline_output(self):
         pass
@@ -1341,7 +1344,7 @@ class ReviewPipelineConcurrencyTests(unittest.TestCase):
         ]
         repository = _ConcurrentRepository(actions)
 
-        def extract(_, action: PipelineAction):
+        def extract(_, action: PipelineAction, __: bool):
             if action.item_id == "slow":
                 slow_started.set()
                 self.assertTrue(release_slow.wait(2))

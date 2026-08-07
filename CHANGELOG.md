@@ -20,7 +20,9 @@
   the next fair action before that action executes, reducing full-synchronous
   commits without weakening restart recovery. Pipeline-composed
   services borrow the already-validated stage repository without taking ownership;
-  admission without a review case completes without a no-op projection stage.
+  provider disposition is checkpointed with report publication, and admission
+  without a review case completes without a no-op projection stage. The report
+  checkpoint may claim the next fair action in the same durable transaction.
   Transient lane and final-attempt `Retry-After` values
   extend only the transient circuit; paused retry and disappearing activity
   retain truthful controls and visible keyboard focus. (#475, #473)

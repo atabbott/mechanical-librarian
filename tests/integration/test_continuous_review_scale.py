@@ -258,7 +258,7 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                 offset = {"fiction": 1, "history": 2, "science": 3}[library]
                 return offset, f"{offset:064x}", tuple(entries[library])
 
-            def extract(_, action: PipelineAction):
+            def extract(_, action: PipelineAction, claim_next: bool):
                 assert action.item_id is not None
                 extracted.append(action.item_id)
                 index = int(action.file_identity or "0", 16)
@@ -280,26 +280,34 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
                 )
                 reports[report.report_id] = report
                 report_items[report.report_id] = action.item_id
-                delay = 7 if action.item_id == transient_item and provider_attempts.get(action.item_id, 0) == 0 else 0
+                attempt = provider_attempts.get(action.item_id, 0)
+                provider_attempts[action.item_id] = attempt + 1
+                transient = action.item_id == transient_item and attempt == 0
+                configuration_failure = (
+                    action.item_id == credential_item and not credentials_valid[0]
+                )
+                delay = 7 if transient else 0
                 repository.publish(
                     report,
                     lambda: True,
                     None,
                     lambda value, published: value.complete_review_extraction_publication(
-                        action, published.report_id, clock[0], delay
+                        action,
+                        published.report_id,
+                        clock[0],
+                        delay,
+                        (
+                            "transient"
+                            if transient
+                            else "configuration" if configuration_failure else None
+                        ),
+                        claim_next,
                     ),
                 )
                 return report.report_id, True
 
             def providers(_, report_id: str):
-                item = report_items[report_id]
-                attempt = provider_attempts.get(item, 0)
-                provider_attempts[item] = attempt + 1
-                if item == transient_item and attempt == 0:
-                    return (ProviderStatus.UNAVAILABLE,)
-                if item == credential_item and not credentials_valid[0]:
-                    return (ProviderStatus.AUTHENTICATION,)
-                return (ProviderStatus.DISABLED,)
+                raise AssertionError("provider disposition belongs to publication")
 
             def propose(_, report_id: str) -> str:
                 proposal = evaluate_report(reports[report_id])

@@ -730,6 +730,7 @@ class SQLiteMetadataReportRepository:
         self._connection = connection
         self._binding = binding
         self.identity = identity
+        self._review_pipeline_claim: PipelineAction | None = None
 
     @property
     def authority(self) -> object | None:
@@ -1538,6 +1539,11 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             raise MetadataReportError("review preparation persistence failed") from error
 
+    def take_review_pipeline_claim(self) -> PipelineAction | None:
+        action = self._review_pipeline_claim
+        self._review_pipeline_claim = None
+        return action
+
     def rollback_review_pipeline_output(self) -> None:
         try:
             if self._connection.in_transaction:
@@ -1551,29 +1557,66 @@ class SQLiteMetadataReportRepository:
         report_id: str,
         completed_at: int,
         recovery_delay_seconds: int = 0,
+        provider_failure_code: str | None = None,
+        claim_next: bool = False,
     ) -> None:
-        """Bind report publication and the extraction checkpoint atomically."""
+        """Bind report publication and provider disposition atomically."""
         if (
             not self._connection.in_transaction
             or action.stage != "extraction"
             or type(recovery_delay_seconds) is not int
             or not 0 <= recovery_delay_seconds <= 86_400
+            or provider_failure_code
+            not in {None, "provider", "configuration", "transient"}
+            or type(claim_next) is not bool
         ):
             raise MetadataReportError("review preparation state is invalid")
-        updated = self._connection.execute(
-            "UPDATE review_preparation_work SET stage='provider',state='queued',"
-            "attempt=0,report_id=?,failure_code=NULL,updated_at=? "
-            "WHERE work_id=? AND stage='extraction' AND state='running' AND attempt=?",
-            (report_id, completed_at, action.action_id, action.attempt),
-        ).rowcount
+        if provider_failure_code == "transient":
+            updated = self._connection.execute(
+                "UPDATE review_preparation_work SET stage='extraction',"
+                "state=CASE WHEN recovery_attempt<2 THEN 'queued' ELSE 'failed' END,"
+                "attempt=0,recovery_attempt=recovery_attempt+1,report_id=NULL,"
+                "proposal_set_id=NULL,review_case_id=NULL,failure_code='transient',"
+                "updated_at=? WHERE work_id=? AND stage='extraction' "
+                "AND state='running' AND attempt=?",
+                (completed_at, action.action_id, action.attempt),
+            ).rowcount
+        else:
+            state = "queued" if provider_failure_code is None else "failed"
+            updated = self._connection.execute(
+                "UPDATE review_preparation_work SET stage=?,state=?,attempt=0,"
+                "report_id=?,failure_code=?,updated_at=? WHERE work_id=? "
+                "AND stage='extraction' AND state='running' AND attempt=?",
+                (
+                    "proposal" if provider_failure_code is None else "provider",
+                    state,
+                    report_id,
+                    provider_failure_code,
+                    completed_at,
+                    action.action_id,
+                    action.attempt,
+                ),
+            ).rowcount
         if updated != 1:
             raise MetadataReportError("review preparation state changed")
+        if provider_failure_code == "transient":
+            self._connection.execute(
+                "UPDATE review_preparation_control SET "
+                "circuit_failures=MIN(3,circuit_failures+1),"
+                "circuit_open_until=MAX(circuit_open_until,"
+                "?+(5*(1 << MIN(3,circuit_failures+1)))),updated_at=? "
+                "WHERE singleton=1",
+                (completed_at, completed_at),
+            )
         if recovery_delay_seconds:
             self._connection.execute(
                 "UPDATE review_preparation_control SET circuit_open_until="
                 "MAX(circuit_open_until,?+?),updated_at=? WHERE singleton=1",
                 (completed_at, recovery_delay_seconds, completed_at),
             )
+        self._review_pipeline_claim = (
+            self.claim_review_pipeline_action(completed_at) if claim_next else None
+        )
 
     def fail_review_pipeline_action(
         self,

@@ -101,6 +101,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
     ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
+    provider_failure_disposition,
 )
 from mechanical_librarian.application.shadow_reviews import (
     execute_shadow_review,
@@ -551,6 +552,17 @@ def _provider_recovery_delay(
     return min(86_400, math.ceil(max(delays, default=0)))
 
 
+def _provider_statuses(report: MetadataReport) -> tuple[ProviderStatus, ...]:
+    return tuple(
+        status
+        for provider in report.providers
+        for status in (
+            provider.status,
+            *(lane.status for lane in provider.lanes),
+        )
+    )
+
+
 class _NonClosingRepository:
     """Let one composed service borrow a pipeline-owned repository connection."""
 
@@ -564,7 +576,7 @@ class _NonClosingRepository:
         return None
 
 
-def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True, repository_authority: object | None = None, pipeline_repository=None) -> str:
+def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True, repository_authority: object | None = None, pipeline_repository=None, review_claim_next: bool = False) -> str:
     """Compose one report solely from an already validated configuration snapshot."""
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if mount is None:
@@ -673,6 +685,14 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
                 report.report_id,
                 int(time.time()),
                 _provider_recovery_delay(provider_instances, report),
+                (
+                    None
+                    if (disposition := provider_failure_disposition(
+                        _provider_statuses(report)
+                    )) is None
+                    else disposition[0]
+                ),
+                review_claim_next,
             )
         ),
         require_singular_target=review_action is not None,
@@ -856,7 +876,9 @@ def create_review_pipeline(
             finally:
                 repository.close()
 
-    def extract(pipeline_repository, action: PipelineAction) -> tuple[str, bool]:
+    def extract(
+        pipeline_repository, action: PipelineAction, claim_next: bool
+    ) -> tuple[str, bool]:
         catalogue = open_catalogue(catalogue_path, create=False)
         try:
             entry = catalogue.latest_entry(
@@ -896,6 +918,7 @@ def create_review_pipeline(
                 recover_artifacts=False,
                 repository_authority=database_authority,
                 pipeline_repository=pipeline_repository,
+                review_claim_next=claim_next,
             )
         except (CurrentnessError, TargetNotFoundError) as error:
             raise ReviewPipelineError("stale") from error
@@ -904,14 +927,7 @@ def create_review_pipeline(
 
     def providers(pipeline_repository, report_id: str):
         value = MetadataReport.from_json(pipeline_repository.get(report_id))
-        return tuple(
-            status
-            for provider in value.providers
-            for status in (
-                provider.status,
-                *(lane.status for lane in provider.lanes),
-            )
-        )
+        return _provider_statuses(value)
 
     def propose(pipeline_repository, report_id: str) -> str:
         try:
