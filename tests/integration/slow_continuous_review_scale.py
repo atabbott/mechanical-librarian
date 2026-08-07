@@ -21,5 +21,21 @@ class SlowContinuousReviewScaleQualificationTests(
         )
 
 
+def load_tests(
+    _: unittest.TestLoader,
+    __: unittest.TestSuite,
+    ___: str | None,
+) -> unittest.TestSuite:
+    """Select only the explicit slow method despite its shared qualification base."""
+
+    return unittest.TestSuite(
+        (
+            SlowContinuousReviewScaleQualificationTests(
+                "test_installed_pipeline_reconciles_one_thousand_fairly_across_restart"
+            ),
+        )
+    )
+
+
 if __name__ == "__main__":
     unittest.main()

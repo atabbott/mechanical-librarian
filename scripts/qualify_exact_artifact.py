@@ -53,11 +53,13 @@ _CANONICAL_TEST_ARGS = (
 _SLOW_CONTINUOUS_REVIEW_TEST_ARGS = (
     "-m",
     "unittest",
-    (
-        "tests.integration.slow_continuous_review_scale."
-        "SlowContinuousReviewScaleQualificationTests."
-        "test_installed_pipeline_reconciles_one_thousand_fairly_across_restart"
-    ),
+    "discover",
+    "-s",
+    "tests",
+    "-t",
+    ".",
+    "-p",
+    "slow_continuous_review_scale.py",
 )
 
 
