@@ -62,7 +62,7 @@ The suite covers:
   field presence and raw-state distinctions, one validated repository open per
   claimed stage, atomic output-plus-transition-plus-next-claim crash recovery,
   report-publication provider disposition, no-case admission completion, indexed
-  aged and recent claim ordering, and an exact
+  aged and recent claim ordering, atomic proposal-plus-admission recovery, and an exact
   installed-`review-serve` 1,000-work three-library first-start, forced-restart,
   authenticated-progress, memory-ceiling, and zero-write resource proof;
 

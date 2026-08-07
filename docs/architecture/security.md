@@ -66,6 +66,9 @@ work still occurs outside SQLite write transactions. Provider disposition is a
 pure classification of the report already being published and shares that
 publication checkpoint; a retry is durably returned to extraction before it runs,
 while a successful checkpoint may atomically claim the next globally fair action.
+Proposal evaluation and admission are local deterministic steps in one persisted
+action and one transaction; failure rolls back their outputs before retry/failure
+state is recorded.
 Staged absence and ineligibility transitions
 require one final confirmation discovery; failed rediscovery makes queued child
 work unclaimable. Final pipeline publication also requires the

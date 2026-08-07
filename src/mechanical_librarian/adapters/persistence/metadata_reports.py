@@ -1544,6 +1544,55 @@ class SQLiteMetadataReportRepository:
         self._review_pipeline_claim = None
         return action
 
+    def complete_review_pipeline_proposal(
+        self,
+        action: PipelineAction,
+        proposal_set_id: str,
+        review_case_id: str | None,
+        completed_at: int,
+        claim_next: bool,
+    ) -> PipelineAction | None:
+        if (
+            not self._connection.in_transaction
+            or action.stage != "proposal"
+            or type(proposal_set_id) is not str
+            or not proposal_set_id
+            or (review_case_id is not None and type(review_case_id) is not str)
+            or type(claim_next) is not bool
+        ):
+            raise MetadataReportError("review preparation state is invalid")
+        target = "complete" if review_case_id is None else "projection"
+        try:
+            updated = self._connection.execute(
+                "UPDATE review_preparation_work SET stage=?,state=?,attempt=0,"
+                "proposal_set_id=?,review_case_id=?,failure_code=NULL,updated_at=? "
+                "WHERE work_id=? AND stage='proposal' AND state='running' AND attempt=?",
+                (
+                    target,
+                    "complete" if target == "complete" else "queued",
+                    proposal_set_id,
+                    review_case_id,
+                    completed_at,
+                    action.action_id,
+                    action.attempt,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise MetadataReportError("review preparation state changed")
+            next_action = (
+                self.claim_review_pipeline_action(completed_at)
+                if claim_next
+                else None
+            )
+            self._connection.commit()
+            return next_action
+        except (sqlite3.Error, MetadataReportError) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("review preparation persistence failed") from error
+
     def rollback_review_pipeline_output(self) -> None:
         try:
             if self._connection.in_transaction:

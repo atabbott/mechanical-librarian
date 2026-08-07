@@ -23,6 +23,8 @@
   provider disposition is checkpointed with report publication, and admission
   without a review case completes without a no-op projection stage. The report
   checkpoint may claim the next fair action in the same durable transaction.
+  Local deterministic proposal evaluation and admission share one atomic action;
+  rollback requeues that already-durable action without an intermediate commit.
   Transient lane and final-attempt `Retry-After` values
   extend only the transient circuit; paused retry and disappearing activity
   retain truthful controls and visible keyboard focus. (#475, #473)
