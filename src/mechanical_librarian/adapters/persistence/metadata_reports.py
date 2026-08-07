@@ -855,6 +855,65 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             raise MetadataReportError("review preparation persistence failed") from error
 
+    def review_pipeline_status(
+        self, libraries: tuple[tuple[str, str], ...]
+    ) -> tuple[tuple[PipelineProgress | None, ...], bool]:
+        if (
+            type(libraries) is not tuple
+            or len(libraries) > 128
+            or len(libraries) != len(set(libraries))
+            or any(
+                type(connection) is not str
+                or type(library) is not str
+                or not 1 <= len(connection) <= 64
+                or not 1 <= len(library) <= 64
+                for connection, library in libraries
+            )
+        ):
+            raise MetadataReportError("review preparation scope is invalid")
+        try:
+            self._connection.execute("BEGIN")
+            control = self._connection.execute(
+                "SELECT paused FROM review_preparation_control WHERE singleton=1"
+            ).fetchone()
+            if control is None:
+                raise MetadataReportError("review preparation control is unavailable")
+            scope = " OR ".join(
+                "(s.connection_name=? AND s.library_name=?)" for _ in libraries
+            ) or "0"
+            rows = self._connection.execute(
+                "SELECT s.scan_id,s.connection_name,s.library_name,s.state,s.total,"
+                "s.rescan_requested,s.updated_at,"
+                "COALESCE(SUM(CASE WHEN w.state IN ('complete','failed','stale') THEN 1 ELSE 0 END),0),"
+                "COALESCE(SUM(CASE WHEN w.state='complete' AND w.review_case_id IS NOT NULL THEN 1 ELSE 0 END),0),"
+                "COALESCE(SUM(CASE WHEN w.state IN ('failed','stale') THEN 1 ELSE 0 END),0) "
+                "FROM review_preparation_scans s "
+                "LEFT JOIN review_preparation_work w ON w.scan_id=s.scan_id "
+                f"WHERE ({scope}) AND s.scan_id=(SELECT selected.scan_id "
+                "FROM review_preparation_scans selected "
+                "WHERE selected.connection_name=s.connection_name "
+                "AND selected.library_name=s.library_name "
+                "ORDER BY selected.requested_at DESC,selected.scan_id DESC LIMIT 1) "
+                "GROUP BY s.scan_id,s.connection_name,s.library_name,s.state,s.total,"
+                "s.rescan_requested,s.updated_at",
+                tuple(value for library in libraries for value in library),
+            ).fetchall()
+            self._connection.commit()
+            progress = {
+                (row[1], row[2]): PipelineProgress(
+                    row[0], row[1], row[2], row[3], row[7], row[4], row[8], row[9],
+                    bool(row[5]), row[6]
+                )
+                for row in rows
+            }
+            return tuple(progress.get(library) for library in libraries), bool(control[0])
+        except (sqlite3.Error, MetadataReportError) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("review preparation persistence failed") from error
+
     def review_pipeline_paused(self) -> bool:
         try:
             row = self._connection.execute(

@@ -146,6 +146,10 @@ class ReviewPipelineRepository(Protocol):
         self, connection: str, library: str
     ) -> PipelineProgress | None: ...
 
+    def review_pipeline_status(
+        self, libraries: tuple[tuple[str, str], ...]
+    ) -> tuple[tuple[PipelineProgress | None, ...], bool]: ...
+
     def recover_review_pipeline(
         self, producers: tuple[tuple[str, str, str, str], ...]
     ) -> None: ...
@@ -260,6 +264,19 @@ class ReviewPreparationPipeline:
         try:
             try:
                 return repository.review_pipeline_progress(connection, library)
+            except ReviewPipelineError:
+                raise
+            except Exception as error:
+                raise ReviewPipelineError("persistence") from error
+        finally:
+            repository.close()
+
+    def status(self) -> tuple[tuple[PipelineProgress | None, ...], bool]:
+        libraries = tuple(sorted(self._libraries))
+        repository = self._open_repository()
+        try:
+            try:
+                return repository.review_pipeline_status(libraries)
             except ReviewPipelineError:
                 raise
             except Exception as error:
@@ -472,6 +489,9 @@ class ReviewPreparationSupervisor:
 
     def progress(self, connection: str, library: str) -> PipelineProgress | None:
         return self._pipeline.progress(connection, library)
+
+    def status(self) -> tuple[tuple[PipelineProgress | None, ...], bool]:
+        return self._pipeline.status()
 
     def paused(self) -> bool:
         return self._pipeline.paused()

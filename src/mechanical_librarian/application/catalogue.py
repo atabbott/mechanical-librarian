@@ -153,23 +153,20 @@ class RefreshCurrentCatalogue:
         try:
             try:
                 existing = self._repository.inspect(fingerprint)
-                libraries = (library,)
             except CatalogueStaleError:
                 existing = ()
-                libraries = configuration.libraries
             retained = tuple(
                 entry
                 for entry in existing
                 if (entry.connection, entry.library) != (connection, library_name)
             )
             discovered: list[CatalogueEntry] = []
-            for selected in libraries:
-                maximum = 10_000 - len(retained) - len(discovered)
-                discovered.extend(
-                    self._reader.read_library(
-                        selected.connection, selected, maximum
-                    )
+            maximum = 10_000 - len(retained)
+            discovered.extend(
+                self._reader.read_library(
+                    library.connection, library, maximum
                 )
+            )
             return self._repository.publish(
                 fingerprint, retained + tuple(discovered)
             )

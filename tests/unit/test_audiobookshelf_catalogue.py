@@ -122,6 +122,17 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
         )
         self.assertNotEqual(first.source_fingerprint, second.source_fingerprint)
 
+    def test_reviewed_field_presence_changes_source_fingerprint(self) -> None:
+        summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+        absent = _item()
+        absent["media"]["ebookFile"]["metadata"]["mtimeMs"] = 1
+        explicit_null = _item()
+        explicit_null["media"]["ebookFile"]["metadata"]["mtimeMs"] = 1
+        explicit_null["media"]["metadata"]["subtitle"] = None
+        first = catalogue_entry("primary", _library(), None, summary, absent)
+        second = catalogue_entry("primary", _library(), None, summary, explicit_null)
+        self.assertNotEqual(first.source_fingerprint, second.source_fingerprint)
+
     def test_item_revision_protects_cover_bytes_without_a_cover_revision(self) -> None:
         baseline = _item()
         baseline["coverPath"] = "/cover/item-1"

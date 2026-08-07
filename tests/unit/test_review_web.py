@@ -319,6 +319,7 @@ class _Preparation:
 
     def __init__(self) -> None:
         self.is_paused = False
+        self.status_calls = 0
 
     def start(self) -> None:
         return None
@@ -343,6 +344,10 @@ class _Preparation:
 
     def request(self, connection: str, library: str):
         return self.progress(connection, library)
+
+    def status(self):
+        self.status_calls += 1
+        return ((self.progress("primary", "fiction"),), self.is_paused)
 
     def paused(self) -> bool:
         return self.is_paused
@@ -397,12 +402,13 @@ class ReviewWebTests(unittest.TestCase):
             owner_password_hash_file=str(self.hash_path),
             session_lifetime_seconds=600,
         )
+        preparation = _Preparation()
         self.client = TestClient(
             create_review_app(
                 self.repository,
                 configuration,
                 clock=lambda: self.now,
-                review_preparation=_Preparation(),
+                review_preparation=preparation,
             ),
             base_url="https://review.test",
         )
@@ -411,6 +417,7 @@ class ReviewWebTests(unittest.TestCase):
         session = self._login()
         status = self.client.get("/api/v1/review-preparation")
         self.assertEqual(status.status_code, 200)
+        self.assertEqual(preparation.status_calls, 1)
         self.assertTrue(status.json()["active"])
         self.assertFalse(status.json()["paused"])
         self.assertEqual(

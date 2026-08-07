@@ -630,8 +630,12 @@ def create_review_app(
             return _PreparationResponse(libraries=[])
         values: list[_PreparationProgress] = []
         try:
-            for connection, library_name, library_id in review_preparation.libraries:
-                progress = review_preparation.progress(connection, library_name)
+            progress_values, paused = review_preparation.status()
+            if len(progress_values) != len(review_preparation.libraries):
+                raise ReviewPipelineError("state")
+            for (connection, library_name, library_id), progress in zip(
+                review_preparation.libraries, progress_values, strict=True
+            ):
                 values.append(
                     _PreparationProgress(
                         scan_id=None if progress is None else progress.scan_id,
@@ -648,7 +652,6 @@ def create_review_app(
                         ),
                     )
                 )
-            paused = review_preparation.paused()
         except ReviewPipelineError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
         except Exception:

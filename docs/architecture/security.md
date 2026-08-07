@@ -49,9 +49,11 @@ errors. A complete target enumeration stages absence candidates, but only a
 fully successful scan may tombstone an absent review lineage or retire a
 present lineage that is no longer eligible. Catalogue discovery and shared
 provider pacers serialize their mutation of global generation and pacing state
-across the two lanes. The first stale catalogue refresh establishes a complete
-configured-library baseline; later work validates its exact item and revision
-against the latest generation. Staged absence and ineligibility transitions
+across the two lanes. A stale catalogue baseline is rebuilt progressively per
+successfully observed library, isolating unavailable connections; later work
+validates its exact item and revision against the latest generation. The
+authenticated activity projection reads all library progress and pause state
+from one validated repository snapshot. Staged absence and ineligibility transitions
 require one final confirmation discovery; failed rediscovery makes queued child
 work unclaimable. Final pipeline publication also requires the
 target to remain singular. External target, media, cover, and artifact

@@ -69,6 +69,27 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         repository.close()
         self.assertEqual(count, (0,))
 
+    def test_status_reads_all_latest_library_progress_and_pause_in_one_snapshot(self) -> None:
+        repository = open_repository(self.path)
+        first = repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+        second = repository.request_review_scan(
+            "primary", "history", "lib-2", _PRODUCER, 11
+        )
+        repository.set_review_pipeline_paused(True, 12)
+        progress, paused = repository.review_pipeline_status(
+            (("primary", "fiction"), ("primary", "history"), ("primary", "missing"))
+        )
+        repository.close()
+
+        self.assertTrue(paused)
+        self.assertEqual(progress, (first, second, None))
+        repository = open_repository(self.path)
+        with self.assertRaises(MetadataReportError):
+            repository.review_pipeline_status((("x" * 65, "fiction"),))
+        repository.close()
+
     def test_provider_failures_separate_recovery_from_configuration_validation(self) -> None:
         self.assertEqual(
             _provider_failure_disposition((ProviderStatus.UNAVAILABLE,)),

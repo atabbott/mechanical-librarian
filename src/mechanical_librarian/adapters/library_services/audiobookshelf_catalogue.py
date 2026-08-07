@@ -142,7 +142,7 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
     else:
         classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None; has_ebook = True
     reviewed_fields = {
-        name: metadata.get(name)
+        name: {"present": name in metadata, "value": metadata.get(name)}
         for name in (
             "title", "subtitle", "authors", "narrators", "series", "genres", "tags",
             "publishedYear", "publishedDate", "publisher", "description", "isbn", "asin",

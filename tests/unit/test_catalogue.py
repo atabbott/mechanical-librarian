@@ -60,7 +60,7 @@ def _hold_refresh_lock(path: str, ready: Event, release: Event) -> None:
 
 
 class CatalogueRepositoryTests(unittest.TestCase):
-    def test_first_library_refresh_builds_complete_configuration_baseline(self) -> None:
+    def test_first_library_refresh_builds_a_progressive_isolated_baseline(self) -> None:
         class Reader:
             def __init__(self) -> None:
                 self.libraries: list[str] = []
@@ -95,13 +95,22 @@ class CatalogueRepositoryTests(unittest.TestCase):
             RefreshCurrentCatalogue(reader, repository).refresh_library(
                 configuration, "primary", "books"
             )
-            entries = repository.inspect(
+            first = repository.inspect(
+                catalogue_fingerprint(configuration).digest
+            )
+            RefreshCurrentCatalogue(reader, repository).refresh_library(
+                configuration, "primary", "audio"
+            )
+            completed = repository.inspect(
                 catalogue_fingerprint(configuration).digest
             )
             repository.close()
 
-        self.assertEqual(reader.libraries, ["audio", "books"])
-        self.assertEqual({entry.library for entry in entries}, {"books", "audio"})
+        self.assertEqual(reader.libraries, ["books", "audio"])
+        self.assertEqual({entry.library for entry in first}, {"books"})
+        self.assertEqual(
+            {entry.library for entry in completed}, {"books", "audio"}
+        )
 
     def test_latest_entry_survives_unrelated_library_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -126,6 +135,34 @@ class CatalogueRepositoryTests(unittest.TestCase):
             repository.close()
 
         self.assertEqual(found, books)
+
+    def test_unavailable_first_library_does_not_block_healthy_baseline(self) -> None:
+        class Reader:
+            def read_library(self, connection, library, remaining):
+                if library.name == "audio":
+                    raise CatalogueError("unavailable")
+                return (
+                    CatalogueEntry(
+                        connection, library.name, library.library_id, "book", 1,
+                        "Book", (), True, False, "singular-supported", "a" * 64,
+                        "/book.epub", "epub", "books",
+                    ),
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_catalogue(
+                Path(directory) / "catalogue.sqlite", create=True
+            )
+            service = RefreshCurrentCatalogue(Reader(), repository)
+            configuration = _two_library_configuration()
+            with self.assertRaises(CatalogueError):
+                service.refresh_library(configuration, "primary", "audio")
+            service.refresh_library(configuration, "primary", "books")
+            entries = repository.inspect(catalogue_fingerprint(configuration).digest)
+            repository.close()
+
+        self.assertEqual(tuple(entry.library for entry in entries), ("books",))
+
     def test_atomic_current_switch_and_stale_fingerprint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "catalogue.sqlite"

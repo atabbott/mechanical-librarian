@@ -40,8 +40,9 @@ The suite covers:
 
 - authenticated, CSRF-bound review preparation requests and value-free compact
   progress; persisted request coalescing, exact-schema restart recovery,
-  complete first-refresh catalogue baselines, item-scoped currentness across
-  unrelated library refreshes, complete successful scans before absence
+  isolated progressive first-refresh catalogue baselines, one-snapshot
+  aggregate activity status, item-scoped currentness across unrelated library
+  refreshes, complete successful scans before absence
   tombstones or ineligible retirements, failed-scan staged-retirement discard,
   reappearance/readmission, synchronized shared provider pacing, Linux
   same-process derived database authority, typed proposal-currentness drift,

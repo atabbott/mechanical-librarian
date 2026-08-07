@@ -138,10 +138,11 @@ private/no-store, and contains no metadata values or paths. Confirmed absences
 and present items that are no longer eligible are staged after complete
 enumeration; they tombstone or retire current lineages only if the whole scan
 completes successfully and a confirmation discovery still observes the same
-absence or ineligibility. A stale or absent catalogue first establishes a
-complete baseline for every configured library, while later library scans
-retain unrelated entries. The two lanes serialize catalogue publication and
-share synchronized provider pacing. Provider technical failure in any
+absence or ineligibility. A stale or absent catalogue establishes its baseline
+progressively, one successfully observed library at a time, so an unavailable
+library cannot block healthy libraries; later library scans retain unrelated
+entries. The two lanes serialize catalogue publication and share synchronized
+provider pacing. Provider technical failure in any
 configured lane stops before proposal creation, discards staged retirements,
 and remains a bounded failure for a later owner-requested scan.
 If an item disappears after discovery, its typed not-found result requests the
@@ -162,6 +163,8 @@ after `review.library_polling_interval_seconds` from its last successful scan.
 Repeated automatic and owner requests coalesce. The compact shared activity
 control appears only while active, paused, or actionable; pause prevents new
 admissions without cancelling committed work and disables retry until resumed.
+Each activity response reads every configured library and the pause flag from
+one validated repository snapshot rather than reopening the database per row.
 Transient provider failures recover automatically behind the shared durable
 circuit for at most three cycles. The circuit honours bounded `Retry-After`
 from any failed provider lane, including the final provider-local attempt, but
