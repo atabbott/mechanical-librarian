@@ -69,7 +69,7 @@ class ReviewWebRepository(Protocol):
     ) -> tuple[str, str, int]: ...
     def rotate_review_session_csrf(
         self, session_digest: str, csrf_digest: str, now: int
-    ) -> None: ...
+    ) -> str: ...
     def revoke_review_session(
         self, session_digest: str, csrf_digest: str, now: int
     ) -> str: ...
@@ -159,11 +159,13 @@ class OwnerSessionService:
         if not 32 <= len(csrf_token) <= 128:
             raise ReviewWebError("runtime")
         try:
-            self._repository.rotate_review_session_csrf(
+            outcome = self._repository.rotate_review_session_csrf(
                 _digest(session_token), _digest(csrf_token), self._clock()
             )
         except Exception as error:
-            raise ReviewWebError("unauthorized") from error
+            raise ReviewWebError("persistence") from error
+        if outcome != "rotated":
+            raise ReviewWebError("unauthorized")
         return csrf_token
 
     def logout(self, session_token: str, csrf_token: str) -> None:

@@ -1315,7 +1315,7 @@ class SQLiteMetadataReportRepository:
 
     def rotate_review_session_csrf(
         self, session_digest: str, csrf_digest: str, now: int
-    ) -> None:
+    ) -> str:
         try:
             row = self._connection.execute(
                 "UPDATE review_sessions SET csrf_digest=? "
@@ -1323,14 +1323,17 @@ class SQLiteMetadataReportRepository:
                 "RETURNING actor,expires_at",
                 (csrf_digest, session_digest, now),
             ).fetchone()
+            if row is None:
+                self._connection.rollback()
+                return "unauthorized"
             if (
-                row is None
-                or len(row) != 2
+                len(row) != 2
                 or row[0] != "owner"
                 or type(row[1]) is not int
             ):
                 raise MetadataReportError("review session is unavailable")
             self._connection.commit()
+            return "rotated"
         except MetadataReportError:
             self._connection.rollback()
             raise

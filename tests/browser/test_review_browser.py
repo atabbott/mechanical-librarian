@@ -14,7 +14,7 @@ from pathlib import Path
 
 import uvicorn
 from argon2 import PasswordHasher
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Locator, Page, sync_playwright
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
@@ -183,6 +183,12 @@ def _server(
 
 def _login(page: Page, origin: str) -> None:
     page.goto(f"{origin}/login")
+    brand = page.locator(".brand")
+    brand.wait_for()
+    assert brand.evaluate("node => node.tagName") == "SPAN"
+    assert page.get_by_role(
+        "link", name="Mechanical Librarian review library"
+    ).count() == 0
     page.get_by_label("Password").fill(_PASSWORD)
     page.get_by_role("button", name="Sign in").click()
     page.wait_for_url(f"{origin}/library")
@@ -195,6 +201,24 @@ def _capture_errors(page: Page, errors: list[str]) -> None:
         lambda message: errors.append(message.text)
         if message.type == "error"
         else None,
+    )
+
+
+def _contrast_ratio(locator: Locator) -> float:
+    return locator.evaluate(
+        """node => {
+          const channel = value => {
+            value /= 255;
+            return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
+          };
+          const luminance = color => {
+            const values = color.match(/\\d+/g).slice(0, 3).map(Number);
+            return .2126 * channel(values[0]) + .7152 * channel(values[1]) + .0722 * channel(values[2]);
+          };
+          const style = getComputedStyle(node);
+          const values = [luminance(style.color), luminance(style.backgroundColor)].sort((a, b) => b - a);
+          return (values[0] + .05) / (values[1] + .05);
+        }"""
     )
 
 
@@ -248,6 +272,55 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         response.headers["content-security-policy"],
                     )
                     page.get_by_role("heading", name="Current review case").wait_for()
+                    current_field = page.locator(
+                        '.field-navigation a[href="#field-series"]'
+                    )
+                    self.assertEqual(
+                        current_field.get_attribute("aria-current"), "true"
+                    )
+                    first_field = page.locator(".field-navigation a").first
+                    first_field.click()
+                    self.assertEqual(
+                        first_field.get_attribute("aria-current"), "true"
+                    )
+                    self.assertEqual(current_field.get_attribute("aria-current"), None)
+                    page.go_back()
+                    self.assertEqual(
+                        current_field.get_attribute("aria-current"), "true"
+                    )
+                    self.assertTrue(
+                        page.locator("#field-series").evaluate(
+                            "node => node === document.activeElement"
+                        )
+                    )
+                    page.go_forward()
+                    self.assertEqual(
+                        first_field.get_attribute("aria-current"), "true"
+                    )
+                    current_field.click()
+                    page.go_back()
+                    self.assertEqual(
+                        first_field.get_attribute("aria-current"), "true"
+                    )
+                    self.assertTrue(
+                        page.locator(first_field.get_attribute("href")).evaluate(
+                            "node => node === document.activeElement"
+                        )
+                    )
+                    page.go_forward()
+                    self.assertEqual(
+                        current_field.get_attribute("aria-current"), "true"
+                    )
+                    page.reload()
+                    page.get_by_role(
+                        "heading", name="Current review case"
+                    ).wait_for()
+                    current_field = page.locator(
+                        '.field-navigation a[href="#field-series"]'
+                    )
+                    self.assertEqual(
+                        current_field.get_attribute("aria-current"), "true"
+                    )
                     self.assertEqual(page.locator("img,script:not([src])").count(), 0)
                     self.assertEqual(
                         page.evaluate(
@@ -306,6 +379,12 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         "heading", name="Current review case"
                     ).wait_for()
                     self.assertEqual(page.locator(".decision-recorded").count(), 1)
+                    resolved_decision = page.locator(".resolved-field").filter(
+                        has=page.locator(".decision-recorded")
+                    )
+                    self.assertIn(
+                        "Outcome value:", resolved_decision.text_content() or ""
+                    )
                     self.assertEqual(page.locator(".choices").count(), 2)
                     page.go_forward()
                     page.wait_for_url(accepted_url)
@@ -550,8 +629,19 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertNotIn("lens=", page.url)
                     page.set_viewport_size({"width": 390, "height": 844})
 
+                    evidence_failures = 0
+
                     def evidence_pages(route) -> None:
+                        nonlocal evidence_failures
                         second_page = "cursor=" in route.request.url
+                        if second_page and evidence_failures == 0:
+                            evidence_failures += 1
+                            route.fulfill(
+                                status=503,
+                                content_type="application/json",
+                                body='{"error":{"code":"persistence"}}',
+                            )
+                            return
                         start = 50 if second_page else 0
                         count = 8 if second_page else 50
                         items = [
@@ -591,13 +681,25 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     page.get_by_role("heading", name="Current review case").wait_for()
                     self.assertEqual(page.locator(".toast").count(), 0)
                     self.assertTrue(
-                        page.locator("#review").evaluate(
+                        page.locator(".field").first.evaluate(
                             "node => node === document.activeElement"
                         )
                     )
                     self.assertEqual(page.locator("section pre").count(), 50)
                     page.get_by_role("button", name="Load more evidence").click()
+                    evidence_status = page.locator(
+                        ".ledger .details-inner > p[role]"
+                    )
+                    page.get_by_text(
+                        "More evidence could not be loaded. Try again."
+                    ).wait_for()
+                    self.assertEqual(evidence_status.get_attribute("role"), "alert")
+                    self.assertEqual(len(errors), 1, errors)
+                    self.assertIn("status of 503", errors[0])
+                    errors.clear()
+                    page.get_by_role("button", name="Load more evidence").click()
                     page.get_by_text("All referenced evidence is shown.").wait_for()
+                    self.assertEqual(evidence_status.get_attribute("role"), "status")
                     self.assertEqual(page.locator("section pre").count(), 58)
                     self.assertEqual(
                         page.get_by_role("button", name="Load more evidence").count(),
@@ -705,6 +807,130 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         390,
                     )
                     automatic_context.close()
+                browser.close()
+            self.assertEqual(errors, [])
+
+    def test_variant_m_light_dark_visual_matrix_is_bounded_and_persistent(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.chmod(root, 0o700)
+            hash_path = root / "owner.hash"
+            hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+            os.chmod(hash_path, 0o600)
+            certificate, key = _certificate(root)
+            errors: list[str] = []
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                context = browser.new_context(
+                    ignore_https_errors=True,
+                    viewport={"width": 1440, "height": 1000},
+                )
+                page = context.new_page()
+                _capture_errors(page, errors)
+                with _server(
+                    database=root / "visual.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=_unused_port(),
+                    report=_manual_report(),
+                ) as (origin, case_id):
+                    assert case_id is not None
+                    _login(page, origin)
+
+                    for width in (1440, 884, 390, 320):
+                        page.set_viewport_size({"width": width, "height": 1000})
+                        for selected_theme in ("light", "dark"):
+                            page.goto(f"{origin}/library")
+                            page.get_by_role(
+                                "heading", name="Review library"
+                            ).wait_for()
+                            current_theme = page.locator("html").get_attribute(
+                                "data-theme"
+                            )
+                            if current_theme != selected_theme:
+                                page.locator(".theme-toggle").press("Enter")
+                            self.assertEqual(
+                                page.locator("html").get_attribute("data-theme"),
+                                selected_theme,
+                            )
+                            self.assertEqual(
+                                page.locator(".theme-toggle").get_attribute(
+                                    "aria-pressed"
+                                ),
+                                str(selected_theme == "dark").lower(),
+                            )
+
+                            for path, heading_name in (
+                                ("/library", "Review library"),
+                                ("/attention", "Fields needing attention"),
+                                (f"/review/{case_id}", "Current review case"),
+                            ):
+                                page.goto(f"{origin}{path}")
+                                page.get_by_role(
+                                    "heading",
+                                    name=(
+                                        re.compile(r"^Fields needing attention")
+                                        if path == "/attention"
+                                        else heading_name
+                                    ),
+                                ).wait_for()
+                                self.assertEqual(
+                                    page.locator("html").get_attribute("data-theme"),
+                                    selected_theme,
+                                )
+                                self.assertLessEqual(
+                                    page.evaluate(
+                                        "() => document.documentElement.scrollWidth"
+                                    ),
+                                    width,
+                                )
+                                screenshot = page.screenshot(
+                                    full_page=True,
+                                    animations="disabled",
+                                    caret="hide",
+                                )
+                                self.assertTrue(screenshot.startswith(b"\x89PNG\r\n\x1a\n"))
+                                self.assertGreater(len(screenshot), 1_000)
+                                if path.startswith("/review/") and selected_theme == "dark":
+                                    contrast = _contrast_ratio(
+                                        page.locator(".choices button").first
+                                    )
+                                    self.assertGreaterEqual(contrast, 4.5)
+
+                            page.reload()
+                            page.get_by_role(
+                                "heading", name="Current review case"
+                            ).wait_for()
+                            self.assertEqual(
+                                page.locator("html").get_attribute("data-theme"),
+                                selected_theme,
+                            )
+                            self.assertEqual(
+                                page.evaluate(
+                                    "() => [Object.keys(localStorage).length, Object.keys(sessionStorage).length]"
+                                ),
+                                [0, 0],
+                            )
+                    sibling = context.new_page()
+                    sibling.goto(f"{origin}/library")
+                    sibling.get_by_role(
+                        "heading", name="Review library"
+                    ).wait_for()
+                    sibling.close()
+                    with page.expect_navigation():
+                        page.get_by_role("button", name="Sign out").press("Enter")
+                    page.get_by_role(
+                        "heading", name="Review your library with confidence."
+                    ).wait_for()
+                    self.assertEqual(len(errors), 1, errors)
+                    self.assertIn("status of 403", errors[0])
+                    errors.clear()
+                    login_contrast = _contrast_ratio(page.locator(".primary-button"))
+                    self.assertGreaterEqual(login_contrast, 4.5)
+                    context.close()
                 browser.close()
             self.assertEqual(errors, [])
 

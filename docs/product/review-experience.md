@@ -9,10 +9,12 @@ target-shaped decision surface backed by server-authoritative state.
 This document is the product contract for that experience. It incorporates the
 validated behavior from the retired prototype baseline, while rejecting the
 prototype's static-file delivery and browser-local workflow authority.
-Locked variant M at `026e338` is directional interaction evidence. Its separate
-library activity view is not an F16a surface: F16a exposes only bounded
-current-case history, while library-wide and cross-case activity/history remain
-deferred to #195. Variant I is retained only as design lineage.
+Locked variant M at `026e338` is the authoritative visual contract for the
+in-scope Library, Attention, and Detail surfaces. Its prototype code remains
+directional evidence rather than production code. Its separate library
+activity view is not an F16a surface: F16a exposes only bounded current-case
+history, while library-wide and cross-case activity/history remain deferred to
+#195. Variant I is retained only as design lineage.
 
 ## Governing outcomes
 
@@ -302,6 +304,15 @@ becoming executable markup. Synthetic browser artifacts must be bounded,
 sanitized, and free of credentials or private library data. Real-browser
 qualification runs these privacy, storage, content-security, hostile-rendering,
 performance, and artifact checks in the primary supported browser.
+
+The production presentation retains variant M's branded editorial shell,
+display/UI typography pairing, complete light/dark palettes, work identity and
+status language, attention-only field navigation, current-to-outcome decision
+hierarchy, progressive evidence and current-case history, interaction states,
+and compact navigation. Qualification covers 1440, 884, 390, and 320 CSS-pixel
+widths in both themes without document-level horizontal overflow. The selected
+theme is non-authoritative presentation state and cannot affect review data or
+decision authority.
 
 The delivered F16a detail page uses a bounded horizontally scrollable field
 attention-only strip inside a non-overflowing document. Each genuinely

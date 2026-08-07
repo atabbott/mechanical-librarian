@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Restore the authenticated review frontend to the protected variant M visual
+  contract across Library, Attention, and exact-current Detail. The branded
+  editorial shell, light/dark palettes, work identity and status language,
+  attention-only field navigation, current-to-outcome controls, progressive
+  evidence/history, feedback, and compact layouts now qualify at 1440, 884,
+  390, and 320 CSS-pixel widths. Theme selection is a presentation-only secure
+  cookie; it adds no automatic decision, target-write, bulk, reversal, or
+  library-wide history authority. (#455)
+
 - Reconcile immutable decision retries with authoritative state. A committed
   same-key/same-payload request now replays its original acknowledgement even
   after case supersession, while changed payloads retain an explicit conflict.
