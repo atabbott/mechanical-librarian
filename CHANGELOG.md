@@ -9,7 +9,9 @@
   eligible retry controls, including per-library scan. The path remains
   decision-only and write-free. Material-source reuse prefers stable media
   revisions and conservatively falls back to the item revision for unversioned
-  EPUB or cover bytes. (#475, #473)
+  EPUB or cover bytes. Transient lane and final-attempt `Retry-After` values
+  extend only the transient circuit; paused retry and disappearing activity
+  retain truthful controls and visible keyboard focus. (#475, #473)
 
 - Add owner-requested progressive library preparation to the authenticated
   review surface. Exact-current catalogue, report, ProposalSet, and ReviewCase

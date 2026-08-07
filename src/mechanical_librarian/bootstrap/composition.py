@@ -524,8 +524,12 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
 
 def _provider_recovery_delay(provider_instances: list[object], report: MetadataReport) -> int:
     if not any(
-        value.status in {ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE}
-        for value in report.providers
+        status in {ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE}
+        for provider in report.providers
+        for status in (
+            provider.status,
+            *(lane.status for lane in provider.lanes),
+        )
     ):
         return 0
     delays = tuple(

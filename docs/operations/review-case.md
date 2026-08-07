@@ -161,10 +161,13 @@ The supported container requests every configured library on first startup and
 after `review.library_polling_interval_seconds` from its last successful scan.
 Repeated automatic and owner requests coalesce. The compact shared activity
 control appears only while active, paused, or actionable; pause prevents new
-admissions without cancelling committed work. Transient provider failures
-recover automatically behind the shared durable circuit for at most three
-cycles; exhausted recovery becomes an actionable terminal failure. Explicit
-retry is also offered after corrected credential or configuration validation.
+admissions without cancelling committed work and disables retry until resumed.
+Transient provider failures recover automatically behind the shared durable
+circuit for at most three cycles. The circuit honours bounded `Retry-After`
+from any failed provider lane, including the final provider-local attempt, but
+terminal technical failures do not delay unrelated work. Exhausted recovery
+becomes an actionable terminal failure. Explicit retry is also offered after
+corrected credential or configuration validation.
 It makes only the reads and provider calls
 already authorized by catalogue and metadata-report, and adds no field
 decision, apply plan, target write, media write, deletion, or destructive

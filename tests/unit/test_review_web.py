@@ -883,6 +883,8 @@ class ReviewWebTests(unittest.TestCase):
         self.assertIn("removeAttribute('data-csrf-token')", script)
         self.assertIn("No attention needed", script)
         self.assertIn("activityProjection", script)
+        self.assertIn("retry.disabled = data.paused", script)
+        self.assertIn("activityPopover.contains(document.activeElement)", script)
         self.assertIn('new Event("review-preparation-change")', script)
         self.assertIn("refreshedList.replaceChildren", script)
         self.assertIn("replacement.focus({preventScroll: true})", script)

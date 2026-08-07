@@ -28,9 +28,12 @@ the bounded shared provider circuit deadline. Pause prevents new scan admission
 but does not cancel persisted work. Two fixed lanes remain the global in-flight
 limit. Claims prefer a different library, age backlog work, and reserve every
 fourth claim for recently changed work. Provider adapters retain their bounded
-`Retry-After` handling and shared dispatch pacers. The circuit persists the
-greater of its bounded exponential delay and a provider-supplied `Retry-After`.
-Success from another in-flight work cannot shorten an unexpired deadline.
+`Retry-After` handling and shared dispatch pacers. Only transient aggregate or
+lane failures open the circuit. It persists the greater of its bounded
+exponential delay and a provider-supplied `Retry-After`, including one returned
+on the final provider-local attempt. Terminal technical failures do not delay
+unrelated work, and success from another in-flight work cannot shorten an
+unexpired deadline.
 Work reuse is bound to a canonical fingerprint of the material Audiobookshelf
 review inputs. Stable media revisions keep volatile service activity timestamps
 out of that identity; an absent material revision or an independently

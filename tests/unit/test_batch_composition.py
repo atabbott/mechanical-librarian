@@ -13,10 +13,12 @@ from mechanical_librarian.domain.metadata_report import ProviderStatus
 
 class BatchCompositionTests(unittest.TestCase):
  def test_provider_retry_after_becomes_bounded_durable_recovery_delay(self):
-  transient=SimpleNamespace(providers=(SimpleNamespace(status=ProviderStatus.RATE_LIMITED),))
+  transient=SimpleNamespace(providers=(SimpleNamespace(status=ProviderStatus.RATE_LIMITED,lanes=()),))
   attempts=[SimpleNamespace(delay_seconds=12.25),SimpleNamespace(delay_seconds=90_000.0)]
   self.assertEqual(composition._provider_recovery_delay([SimpleNamespace(attempt_records=attempts)],transient),86_400)
-  healthy=SimpleNamespace(providers=(SimpleNamespace(status=ProviderStatus.CANDIDATES),))
+  mixed=SimpleNamespace(providers=(SimpleNamespace(status=ProviderStatus.CANDIDATES,lanes=(SimpleNamespace(status=ProviderStatus.UNAVAILABLE),)),))
+  self.assertEqual(composition._provider_recovery_delay([SimpleNamespace(attempt_records=attempts)],mixed),86_400)
+  healthy=SimpleNamespace(providers=(SimpleNamespace(status=ProviderStatus.CANDIDATES,lanes=()),))
   self.assertEqual(composition._provider_recovery_delay([SimpleNamespace(attempt_records=attempts)],healthy),0)
 
  def test_google_books_keyless_keyed_and_disabled_composition(self):

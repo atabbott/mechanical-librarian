@@ -1542,7 +1542,7 @@ class SQLiteMetadataReportRepository:
                     "WHERE scan_id=?",
                     (completed_at, action.scan_id),
                 )
-            if code in {"provider", "transient"}:
+            if code == "transient":
                 self._connection.execute(
                     "UPDATE review_preparation_control SET "
                     "circuit_failures=MIN(3,circuit_failures+1),"

@@ -518,6 +518,9 @@ const renderActivity = data => {
   if(!activityButton||!activityPopover)return;
   const focusedAction = activityPopover.contains(document.activeElement) ? document.activeElement.dataset.actionKey : null;
   const visible=data.active||data.actionable||data.paused;
+  if (!visible && (activityButton === document.activeElement || activityPopover.contains(document.activeElement))) {
+    document.querySelector('.lenses a[aria-current="page"]')?.focus({preventScroll: true});
+  }
   activityButton.hidden = !visible;
   activityButton.classList.toggle("actionable", data.actionable || data.paused);
   activityButton.querySelector(".activity-label").textContent = data.paused ? "Preparation paused" : data.actionable ? "Preparation needs attention" : "Preparing libraries";
@@ -533,6 +536,7 @@ const renderActivity = data => {
     row.append(scan);
     if (item.state === "completed_with_failures") {
       const retry = element("button", "Retry", "inline-action"); retry.type = "button"; retry.dataset.actionKey = `${item.connection}:${item.library}:retry`;
+      retry.disabled = data.paused;
       retry.addEventListener("click",async()=>{retry.disabled=true;try{await sendPreparationAction(`/api/v1/review-preparation/${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/retry`);activityStatus.textContent="Validation retry requested.";}catch{retry.disabled=false;activityStatus.setAttribute("role","alert");activityStatus.textContent="Retry failed safely. Correct configuration if needed, then try again.";}});
       row.append(retry);
     }

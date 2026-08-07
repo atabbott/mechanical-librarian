@@ -308,6 +308,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
         self.assertEqual(
             "exhausted", deadline_provider.attempt_records[-1].outcome
         )
+        self.assertEqual(3.0, deadline_provider.attempt_records[-1].delay_seconds)
 
         cancelled = GoogleBooksMetadataProvider(
             "google_books",

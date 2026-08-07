@@ -940,6 +940,33 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         repository.close()
         self.assertEqual(control, (2, 100))
 
+    def test_terminal_provider_failure_does_not_open_shared_circuit(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery, 1, "a" * 64, (_entry("item-1", "b" * 64),), 12
+        )
+        extraction = repository.claim_review_pipeline_action(13)
+        assert extraction is not None
+        repository.advance_review_pipeline_action(extraction, None, 14)
+        provider = repository.claim_review_pipeline_action(15)
+        assert provider is not None
+        repository.fail_review_pipeline_action(provider, "provider", False, 16)
+        control = repository._connection.execute(
+            "SELECT circuit_failures,circuit_open_until "
+            "FROM review_preparation_control WHERE singleton=1"
+        ).fetchone()
+        work = repository._connection.execute(
+            "SELECT state,failure_code FROM review_preparation_work"
+        ).fetchone()
+        repository.close()
+        self.assertEqual(control, (0, 0))
+        self.assertEqual(work, ("failed", "provider"))
+
     def test_repeated_extraction_currentness_drift_requests_rediscovery(
         self,
     ) -> None:

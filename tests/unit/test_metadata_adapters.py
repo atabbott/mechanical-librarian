@@ -1612,7 +1612,7 @@ class ProviderAdapterTests(unittest.TestCase):
         def unavailable(_: httpx.Request) -> httpx.Response:
             nonlocal dispatches
             dispatches += 1
-            return httpx.Response(504)
+            return httpx.Response(503, headers={"retry-after": "7"})
 
         exhausted = HardcoverMetadataProvider(
             "catalogue",
@@ -1627,6 +1627,7 @@ class ProviderAdapterTests(unittest.TestCase):
         )
         self.assertEqual(3, dispatches)
         self.assertEqual("exhausted", exhausted.attempt_records[-1].outcome)
+        self.assertEqual(7.0, exhausted.attempt_records[-1].delay_seconds)
 
     def test_hardcover_recovers_at_every_permitted_retry_ordinal(
         self,

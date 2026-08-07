@@ -269,6 +269,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     ]
                     requests = 0
                     library_requests = 0
+                    finished = False
 
                     def library_page(route) -> None:
                         response = route.fetch()
@@ -291,8 +292,12 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         route.fulfill(status=200, json=payload)
 
                     def preparation(route) -> None:
-                        nonlocal requests
-                        state, checked, ready = responses[min(requests, len(responses) - 1)]
+                        nonlocal requests, finished
+                        state, checked, ready = (
+                            ("completed", 1, 1)
+                            if finished
+                            else responses[min(requests, len(responses) - 1)]
+                        )
                         requests += 1
                         route.fulfill(
                             status=200,
@@ -392,6 +397,13 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     )
                     lens_link = page.locator('.lenses a[aria-current="page"]')
                     lens_link.focus()
+                    activity.click()
+                    activity_region.get_by_role("button", name="Close").focus()
+                    finished = True
+                    activity.wait_for(state="hidden", timeout=8_000)
+                    self.assertTrue(
+                        lens_link.evaluate("node => node === document.activeElement")
+                    )
                     self.assertGreaterEqual(requests, len(responses))
                     self.assertGreaterEqual(library_requests, 2)
                     self.assertEqual(navigations, [])
