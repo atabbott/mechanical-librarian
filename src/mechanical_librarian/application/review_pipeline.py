@@ -528,6 +528,7 @@ class ReviewPreparationSupervisor:
         self._schedule_lock = threading.Lock()
         self._next_schedule_at: int | None = None
         self._schedule_paused = False
+        self._schedule_waiting_for_action = False
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._threads: tuple[threading.Thread, ...] = ()
@@ -565,6 +566,9 @@ class ReviewPreparationSupervisor:
         if self._pipeline.paused():
             raise ReviewPipelineError("paused")
         progress = self._pipeline.request(connection, library)
+        with self._schedule_lock:
+            self._schedule_waiting_for_action = False
+            self._next_schedule_at = None
         self._wake.set()
         return progress
 
@@ -582,6 +586,7 @@ class ReviewPreparationSupervisor:
         with self._schedule_lock:
             self._schedule_paused = paused
             if not paused:
+                self._schedule_waiting_for_action = False
                 self._next_schedule_at = None
         if not paused:
             self._schedule_due()
@@ -599,6 +604,8 @@ class ReviewPreparationSupervisor:
                 return
             if self._schedule_paused:
                 return
+            if self._schedule_waiting_for_action:
+                return
             now = self._clock()
             if self._next_schedule_at is not None and now < self._next_schedule_at:
                 return
@@ -608,9 +615,14 @@ class ReviewPreparationSupervisor:
                 self._next_schedule_at = None
                 return
             next_schedule_at: int | None = None
+            only_actionable_failures = bool(progresses)
             for (connection, library, _), progress in zip(
                 self.libraries, progresses, strict=True
             ):
+                only_actionable_failures = only_actionable_failures and (
+                    progress is not None
+                    and progress.state == "completed_with_failures"
+                )
                 if progress is None or (
                     progress.state == "completed"
                     and now - progress.updated_at >= self._polling_interval_seconds
@@ -627,6 +639,7 @@ class ReviewPreparationSupervisor:
                         else min(next_schedule_at, due_at)
                     )
             self._next_schedule_at = next_schedule_at
+            self._schedule_waiting_for_action = only_actionable_failures
 
     def _run(self, lane: int) -> None:
         while not self._stop.is_set():
@@ -635,8 +648,12 @@ class ReviewPreparationSupervisor:
             try:
                 if lane == 0:
                     self._schedule_due()
-                while not self._stop.is_set() and self._pipeline.run_next():
-                    pass
+                while not self._stop.is_set():
+                    advanced = self._pipeline.run_next()
+                    if lane == 0:
+                        self._schedule_due()
+                    if not advanced:
+                        break
             except ReviewPipelineError:
                 continue
 

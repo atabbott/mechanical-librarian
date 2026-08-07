@@ -81,7 +81,8 @@ The suite covers:
   bounded third-attempt crash recovery, completed-ledger inert recovery, and a fixed
   two-lane proof that one slow work cannot impose a library-wide stage barrier;
   automatic first-start and interval admission, durable pause/resume, explicit
-  terminal retry, cross-library ageing and reserved-new-work fairness, bounded
+  terminal retry, action-woken terminal-failure scheduling, deadline admission
+  between bounded work batches, cross-library ageing and reserved-new-work fairness, bounded
   circuit recovery, canonical material-source fingerprints including root-cover
   field presence and raw-state distinctions, one validated repository open per
   claimed stage, atomic output-plus-transition-plus-next-claim crash recovery,

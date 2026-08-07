@@ -32,7 +32,10 @@
   nonzero test failure.
   Transient lane and final-attempt `Retry-After` values
   extend only the transient circuit; paused retry and disappearing activity
-  retain truthful controls and visible keyboard focus. (#475, #473)
+  retain truthful controls and visible keyboard focus. Stable terminal failures
+  wait without repeated repository validation until an owner action, while the
+  scheduling lane rechecks automatic deadlines between bounded work batches so
+  a large backlog cannot starve another library's interval scan. (#475, #473)
 
 - Add owner-requested progressive library preparation to the authenticated
   review surface. Exact-current catalogue, report, ProposalSet, and ReviewCase

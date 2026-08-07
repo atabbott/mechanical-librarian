@@ -1287,6 +1287,75 @@ class ReviewPipelineSchedulingTests(unittest.TestCase):
         supervisor._schedule_due()
         self.assertEqual(pipeline.status_calls, 4)
 
+    def test_terminal_failures_wait_for_owner_action_without_idle_status_reads(
+        self,
+    ) -> None:
+        clock = [100]
+        pipeline = _ScheduledPipeline()
+        for connection, library, _ in pipeline.libraries:
+            pipeline.progresses[(connection, library)] = PipelineProgress(
+                "review_scan_" + "c" * 64,
+                connection,
+                library,
+                "completed_with_failures",
+                1,
+                1,
+                0,
+                1,
+                False,
+                100,
+            )
+        supervisor = ReviewPreparationSupervisor(
+            pipeline, polling_interval_seconds=60, clock=lambda: clock[0]
+        )
+
+        supervisor._schedule_due()
+        clock[0] = 1_000_000
+        supervisor._schedule_due()
+        supervisor._schedule_due()
+        self.assertEqual(pipeline.status_calls, 1)
+
+        supervisor.retry("primary", "fiction")
+        supervisor._schedule_due()
+        self.assertEqual(pipeline.status_calls, 2)
+
+    def test_lane_zero_rechecks_due_deadline_between_bounded_work_batches(
+        self,
+    ) -> None:
+        clock = [159]
+        pipeline = _ScheduledPipeline()
+        for connection, library, _ in pipeline.libraries:
+            pipeline.progresses[(connection, library)] = PipelineProgress(
+                "review_scan_" + "d" * 64,
+                connection,
+                library,
+                "completed",
+                1,
+                1,
+                1,
+                0,
+                False,
+                100,
+            )
+        supervisor = ReviewPreparationSupervisor(
+            pipeline, polling_interval_seconds=60, clock=lambda: clock[0]
+        )
+        supervisor._schedule_due()
+        self.assertEqual(pipeline.requests, [])
+
+        def run_next() -> bool:
+            clock[0] = 160
+            supervisor._stop.set()
+            return True
+
+        pipeline.run_next = run_next  # type: ignore[attr-defined]
+        supervisor._wake.set()
+        supervisor._run(0)
+        self.assertEqual(
+            pipeline.requests,
+            [("primary", "fiction"), ("primary", "non-fiction")],
+        )
+
     def test_retry_is_limited_to_terminal_actionable_failure(self) -> None:
         pipeline = _ScheduledPipeline()
         supervisor = ReviewPreparationSupervisor(pipeline)
