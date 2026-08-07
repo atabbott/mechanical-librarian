@@ -1186,6 +1186,8 @@ def _run(
         or readers_stuck
         or returncode != 0
     ):
+        if reason == "installed_test_suite_failed" and stderr:
+            sys.stderr.buffer.write(stderr)
         raise QualificationFailure(reason)
     return subprocess.CompletedProcess(
         args=command,
