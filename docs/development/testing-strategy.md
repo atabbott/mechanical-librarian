@@ -41,7 +41,8 @@ The suite covers:
 - authenticated, CSRF-bound review preparation requests and value-free compact
   progress; persisted request coalescing, exact-schema restart recovery,
   isolated progressive first-refresh catalogue baselines, one-snapshot
-  aggregate activity status, item-scoped currentness across unrelated library
+  aggregate activity status, one-lane retained-deadline scheduling, discarded
+  superseded Library refresh responses, item-scoped currentness across unrelated library
   refreshes, complete successful scans before absence
   tombstones or ineligible retirements, failed-scan staged-retirement discard,
   reappearance/readmission, synchronized shared provider pacing, Linux
@@ -57,7 +58,9 @@ The suite covers:
   two-lane proof that one slow work cannot impose a library-wide stage barrier;
   automatic first-start and interval admission, durable pause/resume, explicit
   terminal retry, cross-library ageing and reserved-new-work fairness, bounded
-  circuit recovery, canonical material-source fingerprints, and an exact
+  circuit recovery, canonical material-source fingerprints including root-cover
+  field presence and raw-state distinctions, one validated repository open per
+  claimed stage, and an exact
   installed-`review-serve` 1,000-work three-library first-start, forced-restart,
   authenticated-progress, memory-ceiling, and zero-write resource proof;
 

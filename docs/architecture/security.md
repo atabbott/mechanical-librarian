@@ -53,7 +53,12 @@ across the two lanes. A stale catalogue baseline is rebuilt progressively per
 successfully observed library, isolating unavailable connections; later work
 validates its exact item and revision against the latest generation. The
 authenticated activity projection reads all library progress and pause state
-from one validated repository snapshot. Staged absence and ineligibility transitions
+from one validated repository snapshot. Only one worker lane evaluates automatic
+scan admission, using that aggregate snapshot and a retained next deadline rather
+than repeated per-library integrity validation. A claimed stage retains its
+already-validated repository connection, without an open transaction, until its
+separate durable transition; external work still occurs outside SQLite write
+transactions. Staged absence and ineligibility transitions
 require one final confirmation discovery; failed rediscovery makes queued child
 work unclaimable. Final pipeline publication also requires the
 target to remain singular. External target, media, cover, and artifact

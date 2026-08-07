@@ -133,6 +133,22 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
         second = catalogue_entry("primary", _library(), None, summary, explicit_null)
         self.assertNotEqual(first.source_fingerprint, second.source_fingerprint)
 
+    def test_cover_field_presence_and_raw_state_change_source_fingerprint(self) -> None:
+        summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+        absent = object()
+        fingerprints = []
+        for cover in (absent, None, "", 7, "/cover/item-1"):
+            detail = _item()
+            detail["media"]["ebookFile"]["metadata"]["mtimeMs"] = 1
+            if cover is not absent:
+                detail["coverPath"] = cover
+            fingerprints.append(
+                catalogue_entry(
+                    "primary", _library(), None, summary, detail
+                ).source_fingerprint
+            )
+        self.assertEqual(len(set(fingerprints)), len(fingerprints))
+
     def test_item_revision_protects_cover_bytes_without_a_cover_revision(self) -> None:
         baseline = _item()
         baseline["coverPath"] = "/cover/item-1"

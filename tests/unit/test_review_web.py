@@ -895,6 +895,8 @@ class ReviewWebTests(unittest.TestCase):
         self.assertIn('.workspace-tab[aria-current="page"][href]', script)
         self.assertIn(".workspace-tab[href]", script)
         self.assertIn('new Event("review-preparation-change")', script)
+        self.assertIn("libraryRefreshGeneration", script)
+        self.assertIn("generation !== libraryRefreshGeneration", script)
         self.assertIn("refreshedList.replaceChildren", script)
         self.assertIn("replacement.focus({preventScroll: true})", script)
         self.assertNotIn("Automatically handled", script)

@@ -9,9 +9,12 @@
   eligible retry controls, including per-library scan. The path remains
   decision-only and write-free. Material-source reuse prefers stable media
   revisions and conservatively falls back to the item revision for unversioned
-  EPUB or cover bytes while retaining absent-versus-null field state. Initial
+  EPUB or cover bytes while retaining absent, null, empty, malformed, and value
+  states for reviewed metadata and the root cover field. Initial
   catalogue preparation is isolated per library, and compact activity reads one
-  aggregate repository snapshot. Transient lane and final-attempt `Retry-After` values
+  aggregate repository snapshot; one supervisor lane schedules from that same
+  bounded snapshot and a retained deadline. Superseded Library refresh responses
+  cannot replace newer exact-current results. Transient lane and final-attempt `Retry-After` values
   extend only the transient circuit; paused retry and disappearing activity
   retain truthful controls and visible keyboard focus. (#475, #473)
 

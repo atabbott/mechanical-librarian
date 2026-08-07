@@ -643,7 +643,11 @@ if (libraryRoot) {
     workspace.append(list, preview);
     libraryRoot.replaceChildren(top, tools, workspace);
     let currentLibraryProjection = libraryProjection(data);
-    const refreshLibrary = () => load(`/api/v1/library?${new URLSearchParams(location.search)}`).then(updated => {
+    let libraryRefreshGeneration = 0;
+    const refreshLibrary = () => {
+      const generation = ++libraryRefreshGeneration;
+      return load(`/api/v1/library?${new URLSearchParams(location.search)}`).then(updated => {
+      if (generation !== libraryRefreshGeneration) return;
       const updatedProjection = libraryProjection(updated);
       if (updatedProjection === currentLibraryProjection) return;
       currentLibraryProjection = updatedProjection;
@@ -688,7 +692,8 @@ if (libraryRoot) {
         if (replacement) replacement.focus({preventScroll: true});
         else { region.tabIndex = -1; region.focus({preventScroll: true}); }
       }
-    });
+      });
+    };
     addEventListener("review-preparation-change", refreshLibrary);
     libraryRoot.focus({preventScroll: true});
   }).catch(() => failPage(libraryRoot));

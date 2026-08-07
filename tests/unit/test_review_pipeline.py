@@ -1170,12 +1170,23 @@ class _ScheduledPipeline:
         self.progresses = {}
         self.requests = []
         self.is_paused = False
+        self.status_calls = 0
 
     def paused(self):
         return self.is_paused
 
     def progress(self, connection, library):
         return self.progresses.get((connection, library))
+
+    def status(self):
+        self.status_calls += 1
+        return (
+            tuple(
+                self.progresses.get((connection, library))
+                for connection, library, _ in self.libraries
+            ),
+            self.is_paused,
+        )
 
     def request(self, connection, library):
         self.requests.append((connection, library))
@@ -1194,6 +1205,7 @@ class ReviewPipelineSchedulingTests(unittest.TestCase):
         )
         supervisor._schedule_due()
         self.assertEqual(pipeline.requests, [("primary", "fiction"), ("primary", "non-fiction")])
+        self.assertEqual(pipeline.status_calls, 1)
         pipeline.requests.clear()
         for connection, library, _ in pipeline.libraries:
             pipeline.progresses[(connection, library)] = PipelineProgress(
@@ -1211,14 +1223,19 @@ class ReviewPipelineSchedulingTests(unittest.TestCase):
         clock[0] = 159
         supervisor._schedule_due()
         self.assertEqual(pipeline.requests, [])
+        self.assertEqual(pipeline.status_calls, 2)
+        supervisor._schedule_due()
+        self.assertEqual(pipeline.status_calls, 2)
         clock[0] = 160
         supervisor._schedule_due()
         self.assertEqual(len(pipeline.requests), 2)
+        self.assertEqual(pipeline.status_calls, 3)
         pipeline.requests.clear()
         pipeline.is_paused = True
         clock[0] = 220
         supervisor._schedule_due()
         self.assertEqual(pipeline.requests, [])
+        self.assertEqual(pipeline.status_calls, 4)
 
     def test_retry_is_limited_to_terminal_actionable_failure(self) -> None:
         pipeline = _ScheduledPipeline()

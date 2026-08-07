@@ -159,6 +159,10 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
         ),
         None,
     )
+    cover_field = {
+        "present": "coverPath" in detail,
+        "value": detail.get("coverPath"),
+    }
     media_revision = {
         name: metadata_file.get(name)
         for name in ("mtimeMs", "mtime", "modifiedAt", "lastModified")
@@ -178,7 +182,10 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
                 "schema": "audiobookshelf-review-source-v1",
                 "identity": {"item_id": item_id, "library_id": library.library_id},
                 "metadata": reviewed_fields,
-                "cover_reference": cover_reference,
+                "cover": {
+                    "field": cover_field,
+                    "selected_reference": cover_reference,
+                },
                 "media": {
                     "file_identity": file_identity,
                     "has_audio": has_audio,
