@@ -19,6 +19,7 @@ from scripts.qualify_exact_artifact import (
     QualificationFailure,
     _decode_stdout,
     _proposal_identifier,
+    _valid_shadow_decisions,
     _qualification_environment,
     _review_probe_epub,
     _run,
@@ -29,6 +30,14 @@ from scripts.qualify_exact_artifact import (
 
 
 class ExactArtifactQualificationTests(unittest.TestCase):
+    def test_installed_probe_accepts_identity_reordered_fixed_decisions(self) -> None:
+        decisions = [
+            {"destination": destination}
+            for destination in ("language", "title", "isbn")
+        ]
+        self.assertTrue(_valid_shadow_decisions(decisions))
+        self.assertFalse(_valid_shadow_decisions(decisions[:2]))
+        self.assertFalse(_valid_shadow_decisions([{ "destination": "title" }] * 3))
     def test_installed_probe_requires_the_current_proposal_policy(self) -> None:
         proposal = {
             "policy_version": "fixed-conservative-v6",

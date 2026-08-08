@@ -124,6 +124,7 @@ def _server(
     key: Path,
     port: int,
     report=None,
+    policy_libraries=(),
 ):
     repository = open_repository(
         database,
@@ -147,6 +148,7 @@ def _server(
         ),
         clock=lambda: 1_000,
         close_repository=True,
+        policy_libraries=policy_libraries,
     )
     server = uvicorn.Server(
         uvicorn.Config(
@@ -252,12 +254,27 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                 context = browser.new_context(ignore_https_errors=True)
                 page = context.new_page()
                 _capture_errors(page, errors)
-                with _server(database=database, hash_path=hash_path, certificate=certificate, key=key, port=port, report=_manual_report()) as (origin, _):
+                with _server(database=database, hash_path=hash_path, certificate=certificate, key=key, port=port, report=_manual_report(), policy_libraries=(("ebooks", None),)) as (origin, _):
                     _login(page, origin)
                     page.goto(f"{origin}/policy")
                     page.get_by_role("heading", name="Choose how prepared metadata reaches you").wait_for()
                     self.assertEqual("title_and_subtitle", page.locator('select[name="option-title_layout"]').input_value())
                     self.assertEqual("ask", page.locator('select[name="destination-tags"]').input_value())
+                    self.assertTrue(page.locator('select[name="destination-tags"] option[value="automatic"]').is_disabled())
+                    self.assertEqual("unsupported", page.locator('select[name="destination-explicit"]').input_value())
+                    page.locator("#policy-name").fill("<hostile draft>")
+                    page.locator('select[name="option-date_precision"]').select_option("full_date")
+                    page.get_by_role("button", name="Validate").click()
+                    page.get_by_text("Valid draft:").wait_for()
+                    page.get_by_role("button", name="Create immutable draft").click()
+                    page.get_by_text("Immutable draft created:").wait_for()
+                    policy_id = page.locator("#policy-status").inner_text().split("Immutable draft created: ")[1].split(".")[0]
+                    read = page.request.get(f"{origin}/api/v1/metadata-policy/drafts/{policy_id}")
+                    self.assertEqual(200, read.status)
+                    self.assertEqual(policy_id, read.json()["policy_id"])
+                    page.get_by_role("button", name="Preview effects").click()
+                    page.get_by_text(re.compile(r"ebooks: date_precision; 1 current unapplied item"), exact=False).wait_for()
+                    self.assertNotIn("<hostile draft>", page.locator("#policy-status").inner_html())
                     page.set_viewport_size({"width": 1440, "height": 900})
                     self.assertEqual("sticky", page.locator(".policy-chapters").evaluate("node => getComputedStyle(node).position"))
                     page.locator('.policy-chapters a[href="#descriptions"]').click()
