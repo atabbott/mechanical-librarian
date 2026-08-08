@@ -163,7 +163,7 @@ The suite covers:
   field presence and raw-state distinctions, one validated repository open per
   claimed stage, atomic output-plus-transition-plus-next-claim crash recovery,
   report-publication provider disposition, no-case admission completion, indexed
-  aged and recent claim ordering, atomic proposal-plus-admission recovery, and
+  aged and recent claim ordering, and
   an exact installed-`review-serve` 45-work three-library first-start,
   forced-restart, authenticated-progress, completion, and zero-write proof in
   the required gate. The explicit slow tier repeats the complete behavioral

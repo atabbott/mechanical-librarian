@@ -169,15 +169,6 @@ class ReviewPipelineRepository(Protocol):
 
     def rollback_review_pipeline_output(self) -> None: ...
 
-    def complete_review_pipeline_proposal(
-        self,
-        action: PipelineAction,
-        proposal_set_id: str,
-        review_case_id: str | None,
-        completed_at: int,
-        claim_next: bool,
-    ) -> PipelineAction | None: ...
-
     def complete_review_discovery(
         self,
         action: PipelineAction,
@@ -415,15 +406,7 @@ class ReviewPreparationPipeline:
                     raise ReviewPipelineError("state")
                 repository.begin_review_pipeline_output()
                 output_transaction = True
-                proposal_set_id = self._propose(repository, action.report_id)
-                _, review_case_id = self._admit(repository, proposal_set_id)
-                return repository.complete_review_pipeline_proposal(
-                    action,
-                    proposal_set_id,
-                    review_case_id,
-                    self._clock(),
-                    claim_next,
-                )
+                output_id = self._propose(repository, action.report_id)
             elif action.stage == "admission":
                 if action.proposal_set_id is None:
                     raise ReviewPipelineError("state")

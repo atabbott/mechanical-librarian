@@ -23,8 +23,6 @@
   provider disposition is checkpointed with report publication, and admission
   without a review case completes without a no-op projection stage. The report
   checkpoint may claim the next fair action in the same durable transaction.
-  Local deterministic proposal evaluation and admission share one atomic action;
-  rollback requeues that already-durable action without an intermediate commit.
   Required exact-wheel qualification continuously proves the installed restart
   workflow over a representative 45-item, three-library cohort; the complete
   1,000-item workload and memory ceiling remain an explicit exact-head slow tier,

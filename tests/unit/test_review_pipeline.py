@@ -794,7 +794,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             clock=lambda: 20,
         )
         pipeline.request("primary", "ebooks")
-        self.assertEqual(sum(pipeline.run_next(1) for _ in range(5)), 5)
+        self.assertEqual(sum(pipeline.run_next(1) for _ in range(6)), 6)
         self.assertFalse(pipeline.run_next(1))
         progress = pipeline.progress("primary", "ebooks")
         assert progress is not None
@@ -1202,14 +1202,6 @@ class _ConcurrentRepository:
 
     def rollback_review_pipeline_output(self):
         pass
-
-    def complete_review_pipeline_proposal(
-        self, action, proposal_set_id, review_case_id, completed_at, claim_next
-    ):
-        self.advance_review_pipeline_action(
-            action, proposal_set_id, completed_at, claim_next
-        )
-        return None
 
     def advance_review_pipeline_action(self, action, output_id, completed_at, claim_next=False):
         with self.lock:
