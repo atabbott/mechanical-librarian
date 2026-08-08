@@ -36,6 +36,7 @@ from mechanical_librarian.application.shadow_reviews import (
     inspect_shadow_review,
     preview_shadow_review,
 )
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
 from mechanical_librarian.application.failure_diagnostics import (
     FailureCategory,
     FailureComponent,
@@ -1817,6 +1818,19 @@ class ShadowReviewTests(unittest.TestCase):
         repository.publish_proposal(proposal)
         admitted = json.loads(repository.admit_review_case(proposal))
         return repository, admitted["review_case_id"]
+
+    def test_override_policy_shadow_request_replays_and_reads_advice(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            report = _report()
+            resolved = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library, {"options": {"date_precision": "full_date"}, "destinations": {}})
+            proposal = evaluate_report(report, resolved.resolved_id)
+            repository.publish(report, lambda: True)
+            repository.publish_proposal(proposal)
+            case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+            execute_shadow_review(repository, case_id, _identity(), _Runner(), claimant=(9001, "11"))
+            self.assertEqual("available", repository.get_review_model_advice(case_id)["state"])
+            repository.close()
 
     def test_preview_is_sanitized_and_has_no_persistence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
