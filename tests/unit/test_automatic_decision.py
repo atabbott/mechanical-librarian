@@ -15,6 +15,7 @@ class AutomaticDecisionTests(unittest.TestCase):
             policy_generation=1, rule_id="shadow_rule_" + "1" * 64, policy_category="title_layout",
             policy_option="preserve", qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
             source_outcome_id="shadow_outcome_" + "3" * 64, occurred_at=1,
+            bundle_id="automatic_bundle_" + "4" * 64,
         )
         self.assertEqual("automatic_policy", value.to_data()["origin"])
         self.assertEqual("candidate", value.outcome)
@@ -29,6 +30,7 @@ class AutomaticDecisionTests(unittest.TestCase):
                 policy_generation=1, rule_id="shadow_rule_" + "1" * 64, policy_category="title_layout",
                 policy_option="preserve", qualification_manifest_sha256="2" * 64,
                 source_outcome_id="shadow_outcome_" + "3" * 64, occurred_at=1,
+                bundle_id="automatic_bundle_" + "4" * 64,
             )
 
     def test_unqualified_imprint_cannot_create_authority(self) -> None:
@@ -41,6 +43,7 @@ class AutomaticDecisionTests(unittest.TestCase):
                 policy_generation=1, rule_id="shadow_rule_" + "1" * 64, policy_category="publisher_preference",
                 policy_option="imprint", qualification_manifest_sha256="2" * 64,
                 source_outcome_id="shadow_outcome_" + "3" * 64, occurred_at=1,
+                bundle_id=None,
             )
 
     def test_safety_state_fails_closed_per_category_and_globally(self) -> None:

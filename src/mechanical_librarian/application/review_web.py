@@ -212,11 +212,17 @@ class InspectCurrentReviewCase:
             report = MetadataReport.from_json(snapshot.report_document)
             if report.report_id != case.report_id:
                 raise ReviewWebError("unavailable")
-            decisions = {
-                decision.destination: decision
-                for document in snapshot.decision_documents
-                for decision in (HumanDecision.from_json(document),)
-            }
+            decisions: dict[str, HumanDecision] = {}
+            automatic: dict[str, dict[str, object]] = {}
+            for document in snapshot.decision_documents:
+                value = json.loads(document)
+                if type(value) is not dict:
+                    raise ReviewWebError("unavailable")
+                if value.get("origin") == "automatic_policy":
+                    automatic[str(value["destination"])] = value
+                else:
+                    decision = HumanDecision.from_json(document)
+                    decisions[decision.destination] = decision
         except ReviewWebError:
             raise
         except Exception as error:
@@ -242,6 +248,7 @@ class InspectCurrentReviewCase:
             reasons = result["reasons"]
             assert type(reasons) is list
             decision = decisions.get(destination)
+            automatic_decision = automatic.get(destination)
             fields.append(
                 {
                     "current": target_fields[destination],
@@ -251,7 +258,8 @@ class InspectCurrentReviewCase:
                     "human_decision": (
                         None if decision is None else _decision_projection(decision)
                     ),
-                    "needs_attention": decision is None and _needs_attention(proposal),
+                    "automatic_decision": automatic_decision,
+                    "needs_attention": decision is None and automatic_decision is None and _needs_attention(proposal),
                     "notices": reasons,
                     "proposed_values": [
                         alternative["value"] for alternative in alternatives
@@ -785,9 +793,13 @@ def _library_item(
     case, report = _case_and_report(case_document, report_document)
     decisions = set()
     for document in decision_documents:
-        decision = HumanDecision.from_json(document)
-        decision.validate_for(case)
-        decisions.add(decision.destination)
+        value = json.loads(document)
+        if type(value) is dict and value.get("origin") == "automatic_policy":
+            decisions.add(str(value["destination"]))
+        else:
+            decision = HumanDecision.from_json(document)
+            decision.validate_for(case)
+            decisions.add(decision.destination)
     attention = [
         value
         for value in case.proposals

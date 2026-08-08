@@ -76,6 +76,7 @@ class AutomaticDecision:
     policy_option: str
     qualification_manifest_sha256: str
     source_outcome_id: str
+    bundle_id: str | None
     idempotency_digest: str
     occurred_at: int
 
@@ -86,7 +87,7 @@ class AutomaticDecision:
         outcome: str, candidate_id: str | None, resolved_policy_id: str,
         policy_generation: int, rule_id: str, policy_category: str,
         policy_option: str, qualification_manifest_sha256: str,
-        source_outcome_id: str, occurred_at: int,
+        source_outcome_id: str, bundle_id: str | None, occurred_at: int,
     ) -> "AutomaticDecision":
         core = {"candidate_id": candidate_id, "destination": destination,
             "outcome": outcome, "policy_category": policy_category,
@@ -95,7 +96,7 @@ class AutomaticDecision:
             "qualification_manifest_sha256": qualification_manifest_sha256,
             "report_id": report_id, "resolved_policy_id": resolved_policy_id,
             "review_case_id": review_case_id, "rule_id": rule_id,
-            "source_outcome_id": source_outcome_id,
+            "source_outcome_id": source_outcome_id, "bundle_id": bundle_id,
             "target_fingerprint": target_fingerprint}
         return cls("automatic_decision_" + _digest({**core, "occurred_at": occurred_at}),
             **core, idempotency_digest=_digest(core), occurred_at=occurred_at)
@@ -120,13 +121,16 @@ class AutomaticDecision:
             or re.fullmatch(r"resolved_policy_[0-9a-f]{64}", self.resolved_policy_id) is None
             or self.qualification_manifest_sha256 != F19A_QUALIFICATION_MANIFEST_SHA256
             or f"{self.policy_category}:{self.policy_option}" not in QUALIFIED_POLICY_OPTIONS
+            or (self.policy_category in {"title_layout", "date_precision"}
+                and (type(self.bundle_id) is not str or re.fullmatch(r"automatic_bundle_[0-9a-f]{64}", self.bundle_id) is None))
+            or (self.policy_category not in {"title_layout", "date_precision"} and self.bundle_id is not None)
         ):
             raise AutomaticDecisionError("invalid")
         if self.decision_id != "automatic_decision_" + _digest({**self._core(), "occurred_at": self.occurred_at}) or self.idempotency_digest != _digest(self._core()):
             raise AutomaticDecisionError("invalid")
 
     def _core(self) -> dict[str, object]:
-        return {"candidate_id": self.candidate_id, "destination": self.destination, "outcome": self.outcome, "policy_category": self.policy_category, "policy_generation": self.policy_generation, "policy_option": self.policy_option, "proposal_id": self.proposal_id, "proposal_set_id": self.proposal_set_id, "qualification_manifest_sha256": self.qualification_manifest_sha256, "report_id": self.report_id, "resolved_policy_id": self.resolved_policy_id, "review_case_id": self.review_case_id, "rule_id": self.rule_id, "source_outcome_id": self.source_outcome_id, "target_fingerprint": self.target_fingerprint}
+        return {"bundle_id": self.bundle_id, "candidate_id": self.candidate_id, "destination": self.destination, "outcome": self.outcome, "policy_category": self.policy_category, "policy_generation": self.policy_generation, "policy_option": self.policy_option, "proposal_id": self.proposal_id, "proposal_set_id": self.proposal_set_id, "qualification_manifest_sha256": self.qualification_manifest_sha256, "report_id": self.report_id, "resolved_policy_id": self.resolved_policy_id, "review_case_id": self.review_case_id, "rule_id": self.rule_id, "source_outcome_id": self.source_outcome_id, "target_fingerprint": self.target_fingerprint}
 
     def to_data(self) -> dict[str, object]:
         return {"decision_id": self.decision_id, **self._core(), "idempotency_digest": self.idempotency_digest, "occurred_at": self.occurred_at, "origin": "automatic_policy", "schema_version": "automatic-decision-v1"}

@@ -95,11 +95,22 @@ class _DecisionProjection(_ClosedModel):
     target_fingerprint: str
 
 
+class _AutomaticDecisionProjection(_ClosedModel):
+    decision_id: str
+    destination: str
+    occurred_at: int
+    outcome: str
+    proposal_id: str
+    review_case_id: str
+    target_fingerprint: str
+
+
 class _ReviewField(_ClosedModel):
     current: _TargetField
     deterministic_disposition: str
     destination: str
     human_decision: _DecisionProjection | None
+    automatic_decision: _AutomaticDecisionProjection | None
     manual_required: bool
     needs_attention: bool
     notices: list[str]

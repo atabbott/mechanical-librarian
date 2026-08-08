@@ -184,7 +184,7 @@ _METADATA_POLICY_TRANSITIONS_SQL = (
     "transition_id TEXT PRIMARY KEY NOT NULL CHECK(transition_id GLOB 'policy_transition_[0-9a-f]*' AND length(transition_id)=82), "
     "from_policy_id TEXT NOT NULL REFERENCES metadata_policy_drafts(policy_id), "
     "to_policy_id TEXT NOT NULL REFERENCES metadata_policy_drafts(policy_id), "
-    "generation INTEGER NOT NULL UNIQUE CHECK(generation>=2), "
+    "generation INTEGER NOT NULL UNIQUE CHECK(generation>=1), "
     "state TEXT NOT NULL CHECK(state IN ('processing','completed','completed_with_failures')), "
     "total INTEGER NOT NULL CHECK(total>=0), acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(acknowledged IN (0,1)), "
     "created_at INTEGER NOT NULL CHECK(created_at>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=created_at))"
@@ -2917,7 +2917,24 @@ class SQLiteMetadataReportRepository:
             # derived inside this same exact-current transaction, never by a
             # later queue or apply worker.
             if state[1] == "automatic":
-                self._record_automatic_outcomes(outcome, evaluated_at)
+                try:
+                    self._record_automatic_outcomes(outcome, evaluated_at)
+                except AutomaticDecisionError as error:
+                    # The outcome and any candidate rows share this transaction.
+                    # Roll them back before recording a durable fail-closed
+                    # safety state; the unresolved fields remain human work.
+                    self._connection.rollback()
+                    current = self.automatic_safety_state()
+                    message = str(error)
+                    category = message.removeprefix("category:") if message.startswith("category:") else None
+                    if category:
+                        categories = dict(current.category_suspensions)
+                        categories[category] = "automatic_admission_failed"
+                        safety = AutomaticSafetyState(current.paused, current.global_suspension, tuple(sorted(categories.items())))
+                    else:
+                        safety = AutomaticSafetyState(current.paused, "automatic_authority_failed", current.category_suspensions)
+                    self.set_automatic_safety_state(safety, evaluated_at)
+                    return serialized
             if owns_transaction:
                 self._connection.commit()
             return serialized
@@ -2957,34 +2974,35 @@ class SQLiteMetadataReportRepository:
         """Append eligible dispositions, leaving paused/suspended work human."""
         safety = self.automatic_safety_state()
         automatic_dispositions = {"candidate", "keep_current", "ignore"}
-        publication = tuple(
-            field for field in outcome.outcomes
-            if field.policy_category == "date_precision"
-        )
-        # The qualification manifest admits publication as one paired bundle,
-        # not two independently authoritative fields.  Admission is all-or-
-        # human before any row is appended, and this caller's transaction
-        # makes the pair atomic with the normal human-race uniqueness check.
-        publication_ready = (
-            len(publication) == 2
-            and {field.destination for field in publication}
-            == {"publishedDate", "publishedYear"}
-            and all(field.disposition in automatic_dispositions for field in publication)
-        )
+        required_bundles = {
+            "title_layout": ("title", "subtitle", "series"),
+            "date_precision": ("publishedDate", "publishedYear"),
+        }
+        bundle_ids: dict[str, str] = {}
+        for category, destinations in required_bundles.items():
+            members = tuple(
+                field for field in outcome.outcomes
+                if field.policy_category == category and field.destination in destinations
+            )
+            if (
+                len(members) != len(destinations)
+                or {field.destination for field in members} != set(destinations)
+                or any(field.disposition not in automatic_dispositions for field in members)
+                or len({field.combination_ids for field in members}) != 1
+                or not members[0].combination_ids
+            ):
+                continue
+            bundle_ids[category] = "automatic_bundle_" + hashlib.sha256(
+                _canonical_json({"category": category, "combination_ids": list(members[0].combination_ids)}).encode("utf-8")
+            ).hexdigest()
+        decisions: list[AutomaticDecision] = []
         for field in outcome.outcomes:
             if (
                 field.disposition not in automatic_dispositions
                 or field.policy_category is None
                 or field.policy_option is None
                 or not safety.permits(field.policy_category)
-                or (
-                    field.policy_category == "title_layout"
-                    and not field.combination_ids
-                )
-                or (
-                    field.policy_category == "date_precision"
-                    and not publication_ready
-                )
+                or (field.policy_category in required_bundles and field.policy_category not in bundle_ids)
             ):
                 continue
             try:
@@ -3004,12 +3022,17 @@ class SQLiteMetadataReportRepository:
                     policy_option=field.policy_option,
                     qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
                     source_outcome_id=field.outcome_id,
+                    bundle_id=bundle_ids.get(field.policy_category),
                     occurred_at=occurred_at,
                 )
-            except AutomaticDecisionError:
-                # A field outside the sealed envelope is unresolved human work,
-                # never a partial authority failure.
-                continue
+            except AutomaticDecisionError as error:
+                raise AutomaticDecisionError(
+                    "category:" + str(field.policy_category)
+                ) from error
+            decisions.append(decision)
+        # Complete validation precedes every insert: an authority defect cannot
+        # leave a subset of a multi-field bundle durable.
+        for decision in decisions:
             existing = self._connection.execute(
                 "SELECT document FROM automatic_decisions WHERE idempotency_digest=?",
                 (decision.idempotency_digest,),
@@ -3704,6 +3727,21 @@ class SQLiteMetadataReportRepository:
                 ) != row[:10]:
                     raise MetadataReportError("human decision is invalid")
                 documents.append(decision.to_json())
+            automatic_rows = self._connection.execute(
+                "SELECT document FROM automatic_decisions WHERE review_case_id=? "
+                "ORDER BY occurred_at,decision_id",
+                (review_case_id,),
+            ).fetchall()
+            for (document,) in automatic_rows:
+                decision = json.loads(document)
+                if (
+                    type(decision) is not dict
+                    or decision.get("schema_version") != "automatic-decision-v1"
+                    or decision.get("origin") != "automatic_policy"
+                    or decision.get("review_case_id") != review_case_id
+                ):
+                    raise MetadataReportError("automatic decision is invalid")
+                documents.append(document)
             return tuple(documents)
         except (sqlite3.Error, HumanDecisionError, TypeError) as error:
             raise MetadataReportError("human decision is unavailable") from error
@@ -3782,6 +3820,12 @@ class SQLiteMetadataReportRepository:
                 (decision.review_case_id, decision.destination),
             ).fetchone()
             if existing is not None:
+                raise HumanDecisionError("already_decided")
+            automatic = self._connection.execute(
+                "SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
+                (decision.review_case_id, decision.destination),
+            ).fetchone()
+            if automatic is not None:
                 raise HumanDecisionError("already_decided")
             selected = _canonical_json(decision.selected_value)
             self._connection.execute(
@@ -3899,6 +3943,24 @@ class SQLiteMetadataReportRepository:
             field = next((value for value in source.outcomes if value.outcome_id == decision.source_outcome_id), None)
             if field is None or (field.disposition != decision.outcome) or any((field.proposal_id != decision.proposal_id, field.destination != decision.destination, field.rule_id != decision.rule_id, field.policy_category != decision.policy_category, field.policy_option != decision.policy_option)):
                 raise AutomaticDecisionError("stale")
+            if decision.policy_category in {"title_layout", "date_precision"}:
+                required = ("title", "subtitle", "series") if decision.policy_category == "title_layout" else ("publishedDate", "publishedYear")
+                members = tuple(
+                    value for value in source.outcomes
+                    if value.policy_category == decision.policy_category
+                    and value.destination in required
+                )
+                expected_bundle = "automatic_bundle_" + hashlib.sha256(
+                    _canonical_json({"category": decision.policy_category, "combination_ids": list(field.combination_ids)}).encode("utf-8")
+                ).hexdigest()
+                if (
+                    len(members) != len(required)
+                    or {value.destination for value in members} != set(required)
+                    or len({value.combination_ids for value in members}) != 1
+                    or not field.combination_ids
+                    or decision.bundle_id != expected_bundle
+                ):
+                    raise AutomaticDecisionError("bundle_identity")
             if self.current_resolved_policy_id(json.loads(case["case"])["target"]["library"]) != decision.resolved_policy_id:
                 raise AutomaticDecisionError("stale")
             self._connection.execute(
@@ -5070,6 +5132,13 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             )
             connection.execute(_METADATA_POLICY_RESOLUTIONS_SQL)
             connection.execute(_METADATA_POLICY_TRANSITIONS_SQL)
+            bootstrap_transition_id = "policy_transition_" + hashlib.sha256(
+                ("automatic-bootstrap-v1:" + builtin_policy.policy_id).encode("utf-8")
+            ).hexdigest()
+            connection.execute(
+                "INSERT INTO metadata_policy_transitions(transition_id,from_policy_id,to_policy_id,generation,state,total,acknowledged,created_at,updated_at) VALUES(?,?,?,1,'completed',0,1,0,0)",
+                (bootstrap_transition_id, builtin_policy.policy_id, builtin_policy.policy_id),
+            )
             connection.execute(_REVIEW_CASES_SQL)
             connection.execute(_REVIEW_POINTERS_SQL)
             connection.execute(_REVIEW_TRANSITIONS_SQL)

@@ -107,6 +107,50 @@
         "title": "_AttentionResponse",
         "type": "object"
       },
+      "_AutomaticDecisionProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "target_fingerprint": {
+            "title": "Target Fingerprint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision_id",
+          "destination",
+          "occurred_at",
+          "outcome",
+          "proposal_id",
+          "review_case_id",
+          "target_fingerprint"
+        ],
+        "title": "_AutomaticDecisionProjection",
+        "type": "object"
+      },
       "_AutomaticSafetyResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1415,6 +1459,16 @@
       "_ReviewField": {
         "additionalProperties": false,
         "properties": {
+          "automatic_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_AutomaticDecisionProjection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "current": {
             "$ref": "#/components/schemas/_TargetField"
           },
@@ -1486,6 +1540,7 @@
           "deterministic_disposition",
           "destination",
           "human_decision",
+          "automatic_decision",
           "manual_required",
           "needs_attention",
           "notices",
