@@ -456,9 +456,10 @@ def _policy_problem(error: MetadataPolicyError) -> str:
     }.get(str(error), "policy_validation")
 
 
-def _require_qualified_policy_destinations(profile: MetadataPolicyProfile) -> None:
-    if any(destination == "automatic" for _, destination in profile.destinations):
-        raise HTTPException(422, detail={"code": "policy_automatic_unqualified"})
+def _require_permitted_policy_destinations(
+    profile: MetadataPolicyProfile, notebook: PolicyNotebook
+) -> None:
+    notebook.validate(profile)
 
 
 class _BodyLimitMiddleware:
@@ -708,12 +709,14 @@ def create_review_app(
         _require_session(sessions, ml_session, x_csrf_token)
         try:
             candidate = MetadataPolicyProfile.create(payload.name, payload.options, payload.destinations)
-            _require_qualified_policy_destinations(candidate)
+            _require_permitted_policy_destinations(candidate, notebook)
             profile = notebook.create(candidate.name, dict(candidate.options), dict(candidate.destinations))
             policy_id = profile.policy_id
         except MetadataPolicyError as error:
             raise HTTPException(422, detail={"code": _policy_problem(error)}) from None
-        except MetadataPolicyApplicationError:
+        except MetadataPolicyApplicationError as error:
+            if str(error) == "policy automatic unqualified":
+                raise _policy_application_http_error(error) from None
             raise HTTPException(503, detail={"code": "persistence"}) from None
         except ReviewWebError:
             raise HTTPException(422, detail={"code": "policy_validation"}) from None
@@ -761,14 +764,16 @@ def create_review_app(
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 
-    @app.post("/api/v1/metadata-policy/validate", response_model=_PolicyProfileResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422)})
+    @app.post("/api/v1/metadata-policy/validate", response_model=_PolicyProfileResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
     def validate_metadata_policy(payload: _PolicyDraftRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyProfileResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
             profile = MetadataPolicyProfile.create(payload.name, payload.options, payload.destinations)
-            _require_qualified_policy_destinations(profile)
+            _require_permitted_policy_destinations(profile, notebook)
         except MetadataPolicyError as error:
             raise HTTPException(422, detail={"code": _policy_problem(error)}) from None
+        except MetadataPolicyApplicationError as error:
+            raise _policy_application_http_error(error) from None
         return _PolicyProfileResponse(
             policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data())
         )
@@ -789,12 +794,12 @@ def create_review_app(
         _require_session(sessions, ml_session, x_csrf_token)
         try:
             profile = MetadataPolicyProfile.create(payload.name, payload.options, payload.destinations)
-            _require_qualified_policy_destinations(profile)
+            _require_permitted_policy_destinations(profile, notebook)
             preview = notebook.preview(profile)
         except MetadataPolicyError as error:
             raise HTTPException(422, detail={"code": _policy_problem(error)}) from None
-        except MetadataPolicyApplicationError:
-            raise HTTPException(422, detail={"code": "policy_validation"}) from None
+        except MetadataPolicyApplicationError as error:
+            raise _policy_application_http_error(error) from None
         return _PolicyPreviewResponse(policy_id=profile.policy_id, libraries=[_PolicyImpactResponse(affected_categories=list(item.affected_categories), current_unapplied_count=item.current_unapplied_count, library=item.library, resolved_policy_id=item.resolved_policy_id) for item in preview.libraries])
 
     @app.post("/api/v1/metadata-policy/activate", response_model=_PolicyActivationResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 413, 422, 503)})

@@ -20,6 +20,15 @@ It grants no authority. While Preview is active, the existing projection stage
 computes the exact F19 decision set for a newly eligible exact-current case and
 atomically persists one immutable `shadow-outcome-set-v1`.
 
+Automatic is accepted as policy intent only while the stored posture is exactly
+`preview`. Review rejects validation, draft creation, and preview with the
+stable `policy_automatic_unqualified` problem; draft persistence and activation
+also recheck the posture in their immediate transactions. A resolved Preview
+profile retains Automatic for outcome observation, but human proposal admission
+replaces only Automatic destinations with Ask. Existing Ask, Ignore, and
+Unsupported destinations are unchanged. The qualified Automatic set remains
+empty, so activation grants no decision authority.
+
 The outcome binds the exact case, report, proposal set, target fingerprint,
 resolved policy/profile/generation, source decision set and catalogue, fixed
 decision policy, policy category/option/destination, action, candidate,
@@ -34,6 +43,11 @@ transaction. A stale evaluation publishes nothing and requeues the already
 persisted work row through the existing pipeline seam, including when that sole
 row is running the obsolete projection. It does not create another scheduler
 or queue.
+
+The ordinary AI packet continues to exclude `policy_ignored` proposals. The
+deterministic F19 persistence projection alone includes those already-immutable
+proposals so it can record the closed Ignore disposition without changing the
+human queue or external-review packet.
 
 Authenticated history and the policy notebook expose Preview outcomes
 separately from human decisions and model advice. The sample accepts at most 50

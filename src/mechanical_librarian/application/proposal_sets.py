@@ -14,7 +14,12 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalValueError,
     evaluate_report,
 )
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, ResolvedMetadataPolicy, resolve_policy
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    ResolvedMetadataPolicy,
+    human_review_destinations,
+    resolve_policy,
+)
 
 
 class ProposalSetError(RuntimeError):
@@ -61,7 +66,9 @@ class CreateProposalSet:
             proposal_set = evaluate_report(
                 report,
                 policy if type(policy) is str else policy.resolved_id,
-                None if type(policy) is str else dict(policy.destinations),
+                None
+                if type(policy) is str
+                else human_review_destinations(policy),
             )
             if self._require_current(report) is not True:
                 raise ProposalSetError("proposal report is stale")

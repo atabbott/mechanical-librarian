@@ -550,7 +550,7 @@ apply or write capability.
 | Outcome | Issue | Demonstrable result | Planning state |
 | --- | --- | --- | --- |
 | F17a Continuous review | #473–#475 | Three libraries continuously reconcile through the bounded persisted review pipeline with compact shared activity and restart-safe controls. | Delivered. |
-| F09p Policy notebook | #343, #476–#477 | The selected B notebook persists reviewed drafts and atomically cuts over one exact generation while Automatic remains unavailable. | Delivered. |
+| F09p Policy notebook | #343, #476–#477 | The selected B notebook persists reviewed drafts and atomically cuts over one exact generation; #478 additionally permits Automatic only as non-authoritative Preview intent while Review and decision authority remain unavailable. | Delivered. |
 | F19a Preview observations | #444, #478–#479 | Deterministic outcomes accumulate non-authoritatively in Preview before a separately qualified decision-only posture can be considered. | #478 persists Preview outcomes; activation remains #479. |
 
 Issue #478 is deliberately non-activating: `review | preview` is the complete

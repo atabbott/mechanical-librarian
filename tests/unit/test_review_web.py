@@ -627,6 +627,22 @@ class ReviewWebTests(unittest.TestCase):
             },
             state.json(),
         )
+        active = self.client.get("/api/v1/metadata-policy/state").json()
+        automatic_payload = active["profile"]
+        del automatic_payload["schema_version"]
+        automatic_payload["name"] = "Preview automatic intent"
+        automatic_payload["destinations"]["title_layout"] = "automatic"
+        for endpoint in ("validate", "drafts", "preview"):
+            rejected = self.client.post(
+                f"/api/v1/metadata-policy/{endpoint}",
+                headers=headers,
+                json=automatic_payload,
+            )
+            self.assertEqual(422, rejected.status_code, rejected.text)
+            self.assertEqual(
+                "policy_automatic_unqualified",
+                rejected.json()["error"]["code"],
+            )
         denied = self.client.post(
             "/api/v1/metadata-policy/shadow/enter", headers=self.origin
         )
@@ -636,6 +652,39 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual("preview", entered.json()["posture"])
         self.assertEqual("none", entered.json()["authority"])
+        validated = self.client.post(
+            "/api/v1/metadata-policy/validate",
+            headers=headers,
+            json=automatic_payload,
+        )
+        self.assertEqual(200, validated.status_code, validated.text)
+        created = self.client.post(
+            "/api/v1/metadata-policy/drafts",
+            headers=headers,
+            json=automatic_payload,
+        )
+        self.assertEqual(201, created.status_code, created.text)
+        policy_id = created.json()["policy_id"]
+        previewed = self.client.post(
+            "/api/v1/metadata-policy/preview",
+            headers=headers,
+            json=automatic_payload,
+        )
+        self.assertEqual(200, previewed.status_code, previewed.text)
+        activated = self.client.post(
+            "/api/v1/metadata-policy/activate",
+            headers=headers,
+            json={
+                "policy_id": policy_id,
+                "expected_active_policy_id": active["policy_id"],
+            },
+        )
+        self.assertEqual(200, activated.status_code, activated.text)
+        self.assertEqual(
+            "automatic",
+            self.client.get("/api/v1/metadata-policy/state")
+            .json()["profile"]["destinations"]["title_layout"],
+        )
         sample = self.client.get(
             "/api/v1/metadata-policy/shadow/outcomes?limit=10"
         )

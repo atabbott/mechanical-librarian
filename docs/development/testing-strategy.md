@@ -148,7 +148,12 @@ The suite covers:
   for the current report without publishing an outcome. The protected browser
   proves owner/CSRF entry, unchanged Library work, non-confirmable leave impact,
   the selected B notebook, sticky desktop chapters, visible pinned compact
-  mobile selector, responsive width, and non-authoritative language;
+  mobile selector, responsive width, and non-authoritative language. The matrix
+  also proves Review rejects Automatic with a stable problem, Preview permits
+  its full supported policy workflow, only Automatic becomes Ask for human
+  admission, default AI packets still exclude ignored proposals, and the F19
+  projection records every one of the seven dispositions. A persisted non-empty
+  browser sample must render without stray `undefined` text or page errors;
 
 - authenticated, CSRF-bound review preparation requests and value-free compact
   progress; persisted request coalescing, exact-schema restart recovery,

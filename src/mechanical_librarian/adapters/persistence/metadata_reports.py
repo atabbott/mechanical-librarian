@@ -52,7 +52,13 @@ from mechanical_librarian.domain.metadata_report import (
     REPORT_SCHEMA,
     ReportValueError,
 )
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyError, MetadataPolicyProfile, ResolvedMetadataPolicy, resolve_policy
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyError,
+    MetadataPolicyProfile,
+    ResolvedMetadataPolicy,
+    human_review_destinations,
+    resolve_policy,
+)
 from mechanical_librarian.domain.proposal_set import (
     POLICY_VERSION,
     ProposalSet,
@@ -2062,7 +2068,7 @@ class SQLiteMetadataReportRepository:
                         != evaluate_report(
                             report,
                             current_policy.resolved_id,
-                            dict(current_policy.destinations),
+                            human_review_destinations(current_policy),
                         ).to_json()
                     )
                 )
@@ -2138,7 +2144,7 @@ class SQLiteMetadataReportRepository:
                     proposal_set.resolved_policy_id,
                     None
                     if current_policy is None
-                    else dict(current_policy.destinations),
+                    else human_review_destinations(current_policy),
                 ).to_json()
             ):
                 raise ReviewAdmissionIncompatibleError
@@ -2650,6 +2656,103 @@ class SQLiteMetadataReportRepository:
         else:
             self._restart_metadata_policy_work(row[0], "proposal", pointer[0], updated_at)
 
+    def _persisted_shadow_packet_source(
+        self,
+        review_case_id: str,
+        *,
+        include_policy_ignored: bool = False,
+    ) -> tuple[ReviewCase, ShadowReviewPacket]:
+        case_row = self._connection.execute(
+            "SELECT document FROM review_cases WHERE review_case_id=?",
+            (review_case_id,),
+        ).fetchone()
+        if case_row is None or type(case_row[0]) is not str:
+            raise MetadataReportError("shadow outcome source is unavailable")
+        case = ReviewCase.from_json(case_row[0])
+        proposal_row = self._connection.execute(
+            "SELECT proposal_set_id,report_id,policy_version,document FROM proposal_sets "
+            "WHERE proposal_set_id=?",
+            (case.proposal_set_id,),
+        ).fetchone()
+        report_row = self._connection.execute(
+            "SELECT report_id,connection_name,library_name,item_id,file_identity,"
+            "content_digest,schema_version,document_digest,document "
+            "FROM metadata_reports WHERE report_id=?",
+            (case.report_id,),
+        ).fetchone()
+        if proposal_row is None or report_row is None:
+            raise MetadataReportError("shadow outcome source is unavailable")
+        proposal = ProposalSet.from_json(_validate_proposal_row(proposal_row))
+        report = MetadataReport.from_json(_validate_report_row(report_row))
+        return case, ShadowReviewPacket.create(
+            case,
+            proposal,
+            report,
+            include_policy_ignored=include_policy_ignored,
+        )
+
+    def _validate_shadow_outcome_row(
+        self, row: tuple[object, ...] | sqlite3.Row
+    ) -> tuple[str, int]:
+        if len(row) != 8:
+            raise MetadataReportError("shadow outcome persistence is invalid")
+        outcome = ShadowOutcomeSet.from_json(row[7])
+        if (
+            type(row[6]) is not int
+            or row[6] < 0
+            or (
+                outcome.outcome_set_id,
+                outcome.review_case_id,
+                outcome.report_id,
+                outcome.proposal_set_id,
+                outcome.resolved_policy_id,
+                outcome.source_decision_set_id,
+            )
+            != row[:6]
+        ):
+            raise MetadataReportError("shadow outcome persistence is invalid")
+        case, packet = self._persisted_shadow_packet_source(
+            outcome.review_case_id, include_policy_ignored=True
+        )
+        library = case.target["library"]
+        if type(library) is not str:
+            raise MetadataReportError("shadow outcome persistence is invalid")
+        resolution = self._connection.execute(
+            "SELECT document FROM metadata_policy_resolutions "
+            "WHERE generation=? AND library_name=?",
+            (outcome.policy_generation, library),
+        ).fetchone()
+        if resolution is None and outcome.policy_generation == 1:
+            draft = self._connection.execute(
+                "SELECT document FROM metadata_policy_drafts WHERE policy_id=?",
+                (outcome.policy_profile_id,),
+            ).fetchone()
+            if draft is None or type(draft[0]) is not str:
+                raise MetadataReportError("shadow outcome persistence is invalid")
+            policy = resolve_policy(
+                MetadataPolicyProfile.from_data(json.loads(draft[0])), library
+            )
+        else:
+            if resolution is None or type(resolution[0]) is not str:
+                raise MetadataReportError("shadow outcome persistence is invalid")
+            policy = ResolvedMetadataPolicy.from_data(json.loads(resolution[0]))
+            if policy.canonical_json != resolution[0]:
+                raise MetadataReportError("shadow outcome persistence is invalid")
+        if (
+            policy.profile_id != outcome.policy_profile_id
+            or policy.resolved_id != outcome.resolved_policy_id
+        ):
+            raise MetadataReportError("shadow outcome persistence is invalid")
+        expected = ShadowOutcomeSet.create(
+            case,
+            decide_shadow_packet(packet),
+            policy,
+            outcome.policy_generation,
+        )
+        if expected.to_json() != row[7]:
+            raise MetadataReportError("shadow outcome persistence is invalid")
+        return expected.to_json(), row[6]
+
     def persist_shadow_outcome(
         self, review_case_id: str, evaluated_at: int
     ) -> str:
@@ -2684,7 +2787,9 @@ class SQLiteMetadataReportRepository:
                 if owns_transaction:
                     self._connection.commit()
                 return "inactive"
-            case, packet = self._shadow_packet_source(review_case_id)
+            case, packet = self._shadow_packet_source(
+                review_case_id, include_policy_ignored=True
+            )
             library = case.target["library"]
             if type(library) is not str:
                 raise MetadataReportError("shadow outcome source is invalid")
@@ -2700,11 +2805,15 @@ class SQLiteMetadataReportRepository:
             )
             serialized = outcome.to_json()
             existing = self._connection.execute(
-                "SELECT document FROM shadow_decision_outcomes WHERE outcome_set_id=?",
+                "SELECT outcome_set_id,review_case_id,report_id,proposal_set_id,"
+                "resolved_policy_id,source_decision_set_id,evaluated_at,document "
+                "FROM shadow_decision_outcomes WHERE outcome_set_id=?",
                 (outcome.outcome_set_id,),
             ).fetchone()
-            if existing is not None and existing != (serialized,):
-                raise MetadataReportError("shadow outcome identity conflicts")
+            if existing is not None:
+                stored, _ = self._validate_shadow_outcome_row(existing)
+                if stored != serialized:
+                    raise MetadataReportError("shadow outcome identity conflicts")
             if existing is None:
                 self._connection.execute(
                     "INSERT INTO shadow_decision_outcomes(outcome_set_id,review_case_id,"
@@ -2750,15 +2859,21 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("shadow outcome sample is unavailable")
         try:
             rows = self._connection.execute(
-                "SELECT document,evaluated_at FROM shadow_decision_outcomes "
+                "SELECT outcome_set_id,review_case_id,report_id,proposal_set_id,"
+                "resolved_policy_id,source_decision_set_id,evaluated_at,document "
+                "FROM shadow_decision_outcomes "
                 "ORDER BY evaluated_at DESC,outcome_set_id DESC LIMIT ?",
                 (limit,),
             ).fetchall()
-            return tuple(
-                (ShadowOutcomeSet.from_json(row[0]).to_json(), row[1])
-                for row in rows
-            )
-        except (sqlite3.Error, ShadowOutcomeError) as error:
+            return tuple(self._validate_shadow_outcome_row(row) for row in rows)
+        except (
+            sqlite3.Error,
+            MetadataPolicyError,
+            ReviewCaseValueError,
+            ShadowOutcomeError,
+            TypeError,
+            ValueError,
+        ) as error:
             raise MetadataReportError("shadow outcome sample is unavailable") from error
 
     def create_metadata_policy_draft(self, document: str) -> str:
@@ -2768,6 +2883,21 @@ class SQLiteMetadataReportRepository:
             if profile.canonical_json != document:
                 raise MetadataPolicyError("policy document is not canonical")
             self._connection.execute("BEGIN IMMEDIATE")
+            posture = self._connection.execute(
+                "SELECT posture FROM metadata_policy_state WHERE singleton=1"
+            ).fetchone()
+            if posture is None or posture[0] not in {"review", "preview"}:
+                raise MetadataReportError("metadata policy posture is unavailable")
+            if (
+                any(
+                    destination == "automatic"
+                    for _, destination in profile.destinations
+                )
+                and posture[0] != "preview"
+            ):
+                raise MetadataReportError(
+                    "metadata policy automatic intent is unqualified outside preview"
+                )
             self._connection.execute(
                 "INSERT OR IGNORE INTO metadata_policy_drafts(policy_id,document) VALUES(?,?)",
                 (profile.policy_id, document),
@@ -2780,8 +2910,17 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("metadata policy draft is unavailable")
             self._connection.commit()
             return profile.policy_id
-        except (MetadataPolicyError, ValueError, TypeError, sqlite3.Error) as error:
-            self._connection.rollback()
+        except (
+            MetadataReportError,
+            MetadataPolicyError,
+            ValueError,
+            TypeError,
+            sqlite3.Error,
+        ) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
             raise MetadataReportError("metadata policy draft is unavailable") from error
 
     def get_metadata_policy_draft(self, policy_id: str) -> str:
@@ -2973,9 +3112,9 @@ class SQLiteMetadataReportRepository:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             state = self._connection.execute(
-                "SELECT active_policy_id,generation FROM metadata_policy_state WHERE singleton=1"
+                "SELECT active_policy_id,generation,posture FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
-            if state is None:
+            if state is None or state[2] not in {"review", "preview"}:
                 raise MetadataReportError("metadata policy activation is stale")
             if state[0] != expected_active_policy_id:
                 replay = self._connection.execute(
@@ -3020,8 +3159,14 @@ class SQLiteMetadataReportRepository:
             profile = MetadataPolicyProfile.from_data(json.loads(draft[0]))
             if profile.policy_id != policy_id or profile.canonical_json != draft[0]:
                 raise MetadataReportError("metadata policy draft is unavailable")
-            if any(destination == "automatic" for _, destination in profile.destinations):
-                raise MetadataReportError("metadata policy activation is unqualified")
+            automatic_intent = any(
+                destination == "automatic"
+                for _, destination in profile.destinations
+            )
+            if automatic_intent and state[2] != "preview":
+                raise MetadataReportError(
+                    "metadata policy automatic intent is unqualified outside preview"
+                )
             generation = state[1] + 1
             material = f"metadata-policy-transition-v1\0{state[0]}\0{policy_id}\0{generation}"
             transition_id = "policy_transition_" + hashlib.sha256(material.encode()).hexdigest()
@@ -3039,7 +3184,13 @@ class SQLiteMetadataReportRepository:
                     or resolved.library != library
                     or resolved.resolved_id != resolved_id
                     or resolved.canonical_json != document
-                    or any(value == "automatic" for _, value in resolved.destinations)
+                    or (
+                        any(
+                            value == "automatic"
+                            for _, value in resolved.destinations
+                        )
+                        and state[2] != "preview"
+                    )
                 ):
                     raise MetadataReportError("metadata policy resolution is invalid")
                 parsed_resolutions.append((library, resolved_id, document))
@@ -3541,7 +3692,9 @@ class SQLiteMetadataReportRepository:
                 (review_case_id, limit),
             ).fetchall()
             shadow_rows = self._connection.execute(
-                "SELECT outcome_set_id,evaluated_at,document FROM shadow_decision_outcomes "
+                "SELECT outcome_set_id,review_case_id,report_id,proposal_set_id,"
+                "resolved_policy_id,source_decision_set_id,evaluated_at,document "
+                "FROM shadow_decision_outcomes "
                 "WHERE review_case_id=? ORDER BY evaluated_at DESC,outcome_set_id DESC LIMIT ?",
                 (review_case_id, limit),
             ).fetchall()
@@ -3579,12 +3732,11 @@ class SQLiteMetadataReportRepository:
                     raise MetadataReportError("review history is invalid")
                 events.append((row[6], row[0], value))
             for row in shadow_rows:
-                outcome = ShadowOutcomeSet.from_json(row[2])
+                document, evaluated_at = self._validate_shadow_outcome_row(row)
+                outcome = ShadowOutcomeSet.from_json(document)
                 if (
                     outcome.outcome_set_id != row[0]
                     or outcome.review_case_id != review_case_id
-                    or type(row[1]) is not int
-                    or row[1] < 0
                 ):
                     raise MetadataReportError("review history is invalid")
                 dispositions: dict[str, int] = {}
@@ -3594,13 +3746,13 @@ class SQLiteMetadataReportRepository:
                     )
                 events.append(
                     (
-                        row[1],
+                        evaluated_at,
                         row[0],
                         {
                             "authority": "none",
                             "dispositions": dispositions,
                             "kind": "shadow_preview_recorded",
-                            "occurred_at": row[1],
+                            "occurred_at": evaluated_at,
                             "origin": "policy_preview",
                             "outcome_set_id": row[0],
                             "review_case_id": review_case_id,
@@ -4105,7 +4257,10 @@ class SQLiteMetadataReportRepository:
         return self._shadow_packet_source(review_case_id)[1]
 
     def _shadow_packet_source(
-        self, review_case_id: str
+        self,
+        review_case_id: str,
+        *,
+        include_policy_ignored: bool = False,
     ) -> tuple[ReviewCase, ShadowReviewPacket]:
         reopened = json.loads(self.get_review_case(review_case_id))
         if (
@@ -4114,23 +4269,10 @@ class SQLiteMetadataReportRepository:
             or type(reopened.get("case")) is not dict
         ):
             raise ReviewAdmissionStaleError
-        case = ReviewCase.create_from_data(reopened["case"])
-        proposal_row = self._connection.execute(
-            "SELECT proposal_set_id,report_id,policy_version,document FROM proposal_sets "
-            "WHERE proposal_set_id=?",
-            (case.proposal_set_id,),
-        ).fetchone()
-        report_row = self._connection.execute(
-            "SELECT report_id,connection_name,library_name,item_id,file_identity,"
-            "content_digest,schema_version,document_digest,document "
-            "FROM metadata_reports WHERE report_id=?",
-            (case.report_id,),
-        ).fetchone()
-        if proposal_row is None or report_row is None:
-            raise MetadataReportError("shadow review source is unavailable")
-        proposal = ProposalSet.from_json(_validate_proposal_row(proposal_row))
-        report = MetadataReport.from_json(_validate_report_row(report_row))
-        return case, ShadowReviewPacket.create(case, proposal, report)
+        return self._persisted_shadow_packet_source(
+            review_case_id,
+            include_policy_ignored=include_policy_ignored,
+        )
 
     def _policy_destinations_for(
         self, report: MetadataReport, proposal: ProposalSet
@@ -4155,7 +4297,7 @@ class SQLiteMetadataReportRepository:
             or resolved.resolved_id != proposal.resolved_policy_id
         ):
             raise MetadataReportError("proposal policy resolution is unavailable")
-        return dict(resolved.destinations)
+        return human_review_destinations(resolved)
 
     def _validated_shadow_request(
         self, review_request_id: str

@@ -46,6 +46,13 @@ restart delivery replay one identity. A stale case, report, proposal, target,
 or policy generation publishes nothing and safely requeues the existing current
 work row.
 
+After entry, Automatic can be selected in the notebook as explicit
+non-authoritative Preview intent. The supported validate, immutable-draft,
+effects-preview, and activation flow retains that intent, while human admission
+treats only Automatic categories as Ask and preserves configured Ask, Ignore,
+and Unsupported behavior. Review posture rejects Automatic intent, and no
+Automatic category is qualified to decide anything.
+
 The notebook shows a compact authenticated sample and case history records a
 separate non-authoritative event. Samples accept a limit from 1 through 50 and
 remain under one MiB at the maximum legal citation/combination cardinality.

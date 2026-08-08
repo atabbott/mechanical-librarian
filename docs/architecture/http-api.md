@@ -61,6 +61,12 @@ Metadata-policy Preview adds four owner-authenticated operations:
 - `GET /api/v1/metadata-policy/shadow/outcomes?limit=1..50` returns a bounded,
   one-MiB maximum sample of closed identity-rich outcome documents.
 
+While posture is `preview`, the existing policy validate, draft-create,
+preview, and activate operations accept Automatic as non-authoritative intent.
+In `review`, the first three reject it with `422
+policy_automatic_unqualified`; persistence also rechecks posture atomically.
+Automatic remains absent from qualified authority.
+
 There is no leave commit, cursor, automatic-decision, queue, apply, target, or
 write operation. Shadow history events are a separate typed variant from human
 decision events and model advice. Malformed persistence fails the complete

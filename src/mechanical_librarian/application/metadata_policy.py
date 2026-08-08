@@ -170,9 +170,22 @@ class PolicyNotebook:
         except Exception as error:
             raise MetadataPolicyApplicationError("active policy is unavailable") from error
 
+    def validate(self, profile: MetadataPolicyProfile) -> MetadataPolicyProfile:
+        """Allow Automatic intent only inside the non-authoritative Preview posture."""
+        if type(profile) is not MetadataPolicyProfile:
+            raise MetadataPolicyApplicationError("policy validation is invalid")
+        if (
+            any(destination == "automatic" for _, destination in profile.destinations)
+            and self.shadow_state()["posture"] != "preview"
+        ):
+            raise MetadataPolicyApplicationError("policy automatic unqualified")
+        return profile
+
     def create(self, name: object, options: object, destinations: object) -> MetadataPolicyProfile:
         try:
-            profile = MetadataPolicyProfile.create(name, options, destinations)
+            profile = self.validate(
+                MetadataPolicyProfile.create(name, options, destinations)
+            )
             policy_id = self._repository.create_metadata_policy_draft(profile.canonical_json)
             if policy_id != profile.policy_id:
                 raise MetadataPolicyApplicationError("policy draft is unavailable")
@@ -180,6 +193,10 @@ class PolicyNotebook:
         except MetadataPolicyApplicationError:
             raise
         except Exception as error:
+            if "automatic intent is unqualified" in str(error):
+                raise MetadataPolicyApplicationError(
+                    "policy automatic unqualified"
+                ) from error
             raise MetadataPolicyApplicationError("policy draft is unavailable") from error
 
     def read(self, policy_id: object) -> MetadataPolicyProfile:
@@ -196,7 +213,12 @@ class PolicyNotebook:
             raise MetadataPolicyApplicationError("policy draft is unavailable") from error
 
     def preview(self, profile: MetadataPolicyProfile) -> PolicyPreview:
-        return preview_policy(profile, self._libraries, self._overrides, self._repository)
+        return preview_policy(
+            self.validate(profile),
+            self._libraries,
+            self._overrides,
+            self._repository,
+        )
 
     def shadow_state(self) -> dict[str, object]:
         try:
@@ -318,9 +340,7 @@ class PolicyNotebook:
             or activated_at < 0
         ):
             raise MetadataPolicyApplicationError("policy activation is invalid")
-        profile = self.read(policy_id)
-        if any(value == "automatic" for _, value in profile.destinations):
-            raise MetadataPolicyApplicationError("policy activation is unqualified")
+        profile = self.validate(self.read(policy_id))
         try:
             resolutions = tuple(
                 (

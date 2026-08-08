@@ -7,13 +7,19 @@ import json
 import re
 from dataclasses import dataclass
 
-from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
+from mechanical_librarian.domain.metadata_policy import (
+    OPTION_CATALOGUE,
+    ResolvedMetadataPolicy,
+)
+from mechanical_librarian.domain.metadata_report import TargetDestination
+from mechanical_librarian.domain.proposal_set import MAX_BIBLIOGRAPHIC_COMBINATIONS
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_decision import (
     DECISION_POLICY_SHA256,
     DECISION_POLICY_VERSION,
     ShadowDecisionSet,
 )
+from mechanical_librarian.domain.shadow_review import MAX_CITATIONS
 
 
 SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v1"
@@ -21,11 +27,20 @@ MAX_SHADOW_OUTCOME_BYTES = 1_048_576
 
 _POLICY_CATEGORY_BY_DESTINATION = {
     "authors": "contributor_names",
+    "narrators": "contributor_names",
     "language": "language_rendering",
     "publishedDate": "date_precision",
     "publishedYear": "date_precision",
     "publisher": "publisher_preference",
     "title": "title_layout",
+    "subtitle": "title_layout",
+    "genres": "genres",
+    "tags": "tags",
+    "description": "description_fill",
+    "isbn": "isbn_form",
+    "cover": "cover_order",
+    "asin": "asin",
+    "explicit": "explicit",
 }
 _DISPOSITIONS = frozenset(
     {"abstention", "candidate", "conflict", "ignore", "keep_current", "manual", "unsupported"}
@@ -95,19 +110,44 @@ class ShadowFieldOutcome:
         }
 
     def __post_init__(self) -> None:
+        expected_category = _POLICY_CATEGORY_BY_DESTINATION.get(self.destination)
+        expected_disposition = (
+            "ignore"
+            if self.policy_destination == "ignore"
+            else "manual"
+            if self.policy_destination == "ask"
+            else "unsupported"
+            if self.policy_destination == "unsupported"
+            else "candidate"
+            if self.candidate_id is not None
+            else "keep_current"
+            if self.reason_code == "unique_supported_preservation"
+            else "conflict"
+            if self.reason_code in _CONFLICT_REASONS
+            else "unsupported"
+            if self.reason_code == "unsupported_destination"
+            else "abstention"
+        )
         if (
             re.fullmatch(r"shadow_outcome_[0-9a-f]{64}", self.outcome_id) is None
             or re.fullmatch(r"review_proposal_[0-9a-f]{64}", self.proposal_id) is None
-            or type(self.destination) is not str
-            or not self.destination
+            or self.destination not in {value.value for value in TargetDestination}
+            or self.policy_category != expected_category
             or (
-                self.policy_category is not None
-                and self.policy_category not in _POLICY_CATEGORY_BY_DESTINATION.values()
+                expected_category is None
+                and (
+                    self.destination != "series"
+                    or self.policy_option is not None
+                    or self.policy_destination != "unsupported"
+                )
             )
-            or (self.policy_option is not None and type(self.policy_option) is not str)
+            or (
+                expected_category is not None
+                and self.policy_option not in OPTION_CATALOGUE[expected_category]
+            )
             or self.policy_destination not in {"ask", "automatic", "ignore", "unsupported"}
-            or ((self.policy_category is None) != (self.policy_destination == "unsupported"))
             or self.disposition not in _DISPOSITIONS
+            or self.disposition != expected_disposition
             or re.fullmatch(r"action_[0-9a-f]{64}", self.action_id) is None
             or (
                 self.candidate_id is not None
@@ -124,8 +164,19 @@ class ShadowFieldOutcome:
             is None
             or self.citation_ids != tuple(sorted(set(self.citation_ids)))
             or self.combination_ids != tuple(sorted(set(self.combination_ids)))
-            or any(type(value) is not str or not value for value in self.citation_ids)
-            or any(type(value) is not str or not value for value in self.combination_ids)
+            or len(self.citation_ids) > MAX_CITATIONS
+            or len(self.combination_ids) > MAX_BIBLIOGRAPHIC_COMBINATIONS
+            or any(
+                type(value) is not str
+                or re.fullmatch(r"(?:local|provider)_[0-9a-f]{64}", value) is None
+                for value in self.citation_ids
+            )
+            or any(
+                type(value) is not str
+                or re.fullmatch(r"bibliographic_combination_[0-9a-f]{64}", value)
+                is None
+                for value in self.combination_ids
+            )
             or self.reason_code not in _REASON_CODES
             or self.outcome_id != "shadow_outcome_" + _digest(self._identity_data())
         ):
@@ -325,7 +376,35 @@ class ShadowOutcomeSet:
             or type(self.outcomes) is not tuple
             or not self.outcomes
             or any(type(value) is not ShadowFieldOutcome for value in self.outcomes)
+            or len({value.destination for value in self.outcomes})
+            != len(self.outcomes)
             or len({value.proposal_id for value in self.outcomes}) != len(self.outcomes)
+            or any(
+                value.rule_id
+                != "shadow_rule_"
+                + _digest(
+                    {
+                        "category": value.policy_category,
+                        "decision_policy_sha256": DECISION_POLICY_SHA256,
+                        "decision_policy_version": DECISION_POLICY_VERSION,
+                        "destination": value.policy_destination,
+                        "option": value.policy_option,
+                    }
+                )
+                or value.qualification_candidate_id
+                != "qualification_candidate_"
+                + _digest(
+                    {
+                        "action_id": value.action_id,
+                        "candidate_id": value.candidate_id,
+                        "catalogue_sha256": self.catalogue_sha256,
+                        "citation_ids": list(value.citation_ids),
+                        "combination_ids": list(value.combination_ids),
+                        "rule_id": value.rule_id,
+                    }
+                )
+                for value in self.outcomes
+            )
             or self.outcome_set_id != "shadow_outcome_set_" + _digest(self._identity_data())
         ):
             raise ShadowOutcomeError("shadow outcome set is invalid")
@@ -372,7 +451,14 @@ class ShadowOutcomeSet:
                 raw["catalogue_sha256"], fields, raw["schema_version"],
                 raw["posture"], raw["authority"],
             )
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError, ShadowOutcomeError) as error:
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            RecursionError,
+            json.JSONDecodeError,
+            ShadowOutcomeError,
+        ) as error:
             raise ShadowOutcomeError("shadow outcome document is invalid") from error
         if set(raw) != set(result.to_data()) or result.to_json() != serialized:
             raise ShadowOutcomeError("shadow outcome document is invalid")

@@ -17,6 +17,7 @@ from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     MetadataPolicyProfile,
     OPTION_CATALOGUE,
+    QUALIFIED_AUTOMATIC,
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
@@ -51,6 +52,48 @@ class MetadataPolicyActivationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.directory.cleanup()
+
+    def test_automatic_intent_is_atomic_preview_only_and_never_authoritative(self) -> None:
+        repository = open_repository(self.path)
+        destinations = {
+            category: "unsupported" if category == "explicit" else "ask"
+            for category in OPTION_CATALOGUE
+        }
+        destinations["title_layout"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "Preview automatic intent", dict(DEFAULT_OPTIONS), destinations
+        )
+        with self.assertRaisesRegex(
+            MetadataReportError, "automatic intent is unqualified"
+        ):
+            repository.create_metadata_policy_draft(profile.canonical_json)
+        self.assertEqual(
+            (0,),
+            repository._connection.execute(
+                "SELECT COUNT(*) FROM metadata_policy_drafts WHERE policy_id=?",
+                (profile.policy_id,),
+            ).fetchone(),
+        )
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        resolved = resolve_policy(profile, "ebooks")
+        transition = repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            (("ebooks", resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        assert transition is not None
+        self.assertEqual("completed", transition.state)
+        self.assertEqual("preview", repository.shadow_posture())
+        self.assertEqual(
+            "automatic",
+            dict(repository.current_resolved_metadata_policy("ebooks").destinations)[
+                "title_layout"
+            ],
+        )
+        self.assertEqual(frozenset(), QUALIFIED_AUTOMATIC)
+        repository.close()
 
     def _current_case_with_completed_work(self, path: Path | None = None):
         repository = open_repository(self.path if path is None else path)

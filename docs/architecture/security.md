@@ -591,3 +591,11 @@ outcome and reuses the current pipeline row. Outcome/history reads validate the
 whole append-only document before returning anything and cap the requested
 sample at 50 and the encoded projection at one MiB. They never construct target
 or apply clients. Leave-Preview is impact-only and has no confirmation command.
+
+Automatic policy intent is accepted only after the authenticated owner enters
+Preview, and both draft persistence and activation recheck that stored posture
+inside their transactions. Human admission substitutes Ask only for Automatic
+categories; it preserves explicit Ask, Ignore, and Unsupported choices. The
+qualified Automatic set is empty and all persisted outcomes declare authority
+`none`. Only the deterministic F19 projection includes exact `policy_ignored`
+proposals; the external-review packet remains unchanged.
