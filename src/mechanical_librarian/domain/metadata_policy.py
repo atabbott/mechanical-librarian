@@ -49,9 +49,13 @@ DEFAULT_OPTIONS: Final = {
     "explicit": "unsupported",
 }
 
-# Current qualification deliberately has no automatic destination.  This is
-# data rather than a hidden fallback so previews can explain availability.
-QUALIFIED_AUTOMATIC: Final[frozenset[str]] = frozenset()
+# The shipped qualification envelope is deliberately closed.  This is a
+# category-level availability hint for the notebook; authority is admitted
+# only by the exact option/bundle manifest in ``automatic_decision``.
+QUALIFIED_AUTOMATIC: Final[frozenset[str]] = frozenset({
+    "title_layout", "date_precision", "language_rendering",
+    "contributor_names", "publisher_preference",
+})
 _POLICY_ID: Final = re.compile(r"^policy_[0-9a-f]{64}$")
 
 
@@ -121,7 +125,16 @@ class MetadataPolicyProfile:
 
     @classmethod
     def builtin(cls) -> "MetadataPolicyProfile":
-        return cls.create("Built-in policy", DEFAULT_OPTIONS, {field: "ask" if field != "explicit" else "unsupported" for field in OPTION_CATALOGUE})
+        # A clean installation enters decision-only automatic handling for
+        # exactly the sealed defaults. Everything outside that envelope stays
+        # an explicit human-review preference.
+        return cls.create("Built-in policy", DEFAULT_OPTIONS, {
+            field: (
+                "automatic" if field in QUALIFIED_AUTOMATIC else
+                "unsupported" if field == "explicit" else "ask"
+            )
+            for field in OPTION_CATALOGUE
+        })
 
     @classmethod
     def create(

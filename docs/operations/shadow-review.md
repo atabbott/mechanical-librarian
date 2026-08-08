@@ -46,21 +46,23 @@ restart delivery replay one identity. A stale case, report, proposal, target,
 or policy generation publishes nothing and safely requeues the existing current
 work row.
 
-After entry, Automatic can be selected in the notebook as explicit
-non-authoritative Preview intent. The supported validate, immutable-draft,
-effects-preview, and activation flow retains that intent, while human admission
-treats only Automatic categories as Ask and preserves configured Ask, Ignore,
-and Unsupported behavior. Review posture rejects Automatic intent, and no
-Automatic category is qualified to decide anything.
+The F19a qualification envelope now makes the built-in qualified defaults
+decision-only automatic on a clean schema. Preview remains non-authoritative;
+the owner may confirm its exact qualified profile back to automatic handling.
+The notebook exposes active/draft status, owner pause, durable category/global
+suspension, and explicit recovery. Paused or suspended outcomes are retained as
+ordinary human Attention, not silently discarded. Imprint and every option
+outside the sealed aggregate manifest remain non-automatic.
 
 The notebook shows a compact authenticated sample and case history records a
 separate non-authoritative event. Samples accept a limit from 1 through 50 and
 remain under one MiB at the maximum legal citation/combination cardinality.
-Library and Attention membership remain the human queue. **Preview leaving**
-only reports affected categories and current unapplied counts; this version
-cannot confirm a transition out of Preview. It creates no decision, apply plan,
-target/media/artifact write, provider access, or second scheduler. See
-[ADR-0035](../architecture/decisions/0035-persist-non-authoritative-policy-preview-outcomes.md).
+Library and Attention retain unresolved fields only; mixed cases expose a
+collapsed, inspectable **Handled automatically** summary and chronological
+origin-labelled history. The feature creates no apply plan, target/media/artifact
+write, provider access, or second scheduler. See
+[ADR-0035](../architecture/decisions/0035-persist-non-authoritative-policy-preview-outcomes.md)
+and [ADR-0036](../architecture/decisions/0036-qualified-decision-only-automatic-policy.md).
 
 ## Qualification profile
 

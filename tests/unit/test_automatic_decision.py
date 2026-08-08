@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from mechanical_librarian.domain.automatic_decision import AutomaticDecision, AutomaticDecisionError, AutomaticSafetyState, F19A_QUALIFICATION_MANIFEST_SHA256
+from mechanical_librarian.domain.automatic_decision import AutomaticDecision, AutomaticDecisionError, AutomaticSafetyState, F19A_QUALIFICATION_MANIFEST_SHA256, QUALIFIED_POLICY_OPTIONS
 
 
 class AutomaticDecisionTests(unittest.TestCase):
@@ -47,3 +47,6 @@ class AutomaticDecisionTests(unittest.TestCase):
         self.assertFalse(AutomaticSafetyState(False, None, (("title_layout", "safety"),)).permits("title_layout"))
         self.assertFalse(AutomaticSafetyState(False, "identity", ()).permits("date_precision"))
         self.assertFalse(AutomaticSafetyState(True, None, ()).permits("date_precision"))
+
+    def test_qualification_manifest_defers_imprint(self) -> None:
+        self.assertNotIn("publisher_preference:imprint", QUALIFIED_POLICY_OPTIONS)

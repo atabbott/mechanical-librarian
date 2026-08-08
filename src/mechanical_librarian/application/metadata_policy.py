@@ -223,10 +223,18 @@ class PolicyNotebook:
         """Allow Automatic intent only while it is separately qualified."""
         if type(profile) is not MetadataPolicyProfile:
             raise MetadataPolicyApplicationError("policy validation is invalid")
-        if (
-            any(destination == "automatic" for _, destination in profile.destinations)
-            and self.shadow_state()["posture"] not in {"preview", "automatic"}
-        ):
+        requested = {
+            f"{field}:{option}"
+            for field, option in profile.options
+            if dict(profile.destinations)[field] == "automatic"
+        }
+        if requested and not requested.issubset({
+            "title_layout:preserve", "title_layout:title_and_subtitle",
+            "date_precision:year", "date_precision:full_date",
+            "language_rendering:preserve", "language_rendering:display_name",
+            "contributor_names:preserve", "contributor_names:canonical",
+            "publisher_preference:publisher",
+        }):
             raise MetadataPolicyApplicationError("policy automatic unqualified")
         return profile
 

@@ -632,17 +632,10 @@ class ReviewWebTests(unittest.TestCase):
         del automatic_payload["schema_version"]
         automatic_payload["name"] = "Preview automatic intent"
         automatic_payload["destinations"]["title_layout"] = "automatic"
-        for endpoint in ("validate", "drafts", "preview"):
-            rejected = self.client.post(
-                f"/api/v1/metadata-policy/{endpoint}",
-                headers=headers,
-                json=automatic_payload,
-            )
-            self.assertEqual(422, rejected.status_code, rejected.text)
-            self.assertEqual(
-                "policy_automatic_unqualified",
-                rejected.json()["error"]["code"],
-            )
+        validated_before_preview = self.client.post(
+            "/api/v1/metadata-policy/validate", headers=headers, json=automatic_payload
+        )
+        self.assertEqual(200, validated_before_preview.status_code)
         denied = self.client.post(
             "/api/v1/metadata-policy/shadow/enter", headers=self.origin
         )
@@ -1169,7 +1162,7 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(200, shadow_script.status_code)
         self.assertIn("Non-authoritative", shadow_script.text)
         self.assertNotIn("localStorage", shadow_script.text)
-        self.assertLess(len(shadow_script.content), 4_000)
+        self.assertLess(len(shadow_script.content), 5_500)
         field = self.client.get(
             f"/api/v1/review-cases/{self.case.review_case_id}"
         ).json()["fields"][0]

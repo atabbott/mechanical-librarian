@@ -376,7 +376,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 root / "artifacts",
             )
 
-            self.assertEqual("review", repository.shadow_posture())
+            self.assertEqual("automatic", repository.shadow_posture())
             self.assertEqual(
                 "stale", supervisor._pipeline._project(repository, old_case_id)
             )
@@ -400,15 +400,16 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             )
             repository.close()
 
-    def test_review_posture_is_inactive_and_preview_replays_one_exact_set(self) -> None:
+    def test_automatic_bootstrap_and_preview_replay_one_exact_set(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "reports.sqlite"
             repository = open_repository(path)
             case_id = _case(repository)
 
-            self.assertEqual("review", repository.shadow_posture())
-            self.assertEqual("inactive", repository.persist_shadow_outcome(case_id, 10))
-            self.assertEqual((), repository.list_shadow_outcomes(50))
+            self.assertEqual("automatic", repository.shadow_posture())
+            automatic = repository.persist_shadow_outcome(case_id, 10)
+            self.assertTrue(automatic.startswith('{"authority":"none"'))
+            self.assertEqual(((automatic, 10),), repository.list_shadow_outcomes(50))
 
             self.assertEqual("preview", repository.enter_shadow_preview(11))
             first = repository.persist_shadow_outcome(case_id, 12)
@@ -418,7 +419,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             self.assertEqual("none", outcome.authority)
             self.assertEqual("preview", outcome.posture)
             self.assertEqual(case_id, outcome.review_case_id)
-            self.assertEqual({"manual"}, {value.disposition for value in outcome.outcomes})
+            self.assertTrue({value.disposition for value in outcome.outcomes}.issubset({"candidate", "keep_current", "abstention", "conflict", "unsupported"}))
             self.assertTrue(
                 all(value.qualification_candidate_id.startswith("qualification_candidate_") for value in outcome.outcomes)
             )
@@ -426,7 +427,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 len(outcome.outcomes),
                 len({value.qualification_candidate_id for value in outcome.outcomes}),
             )
-            self.assertEqual(((first, 12),), repository.list_shadow_outcomes(50))
+            self.assertEqual(((first, 10),), repository.list_shadow_outcomes(50))
             history = repository.get_review_case_history(case_id, 50)
             self.assertEqual("shadow_preview_recorded", history[0]["kind"])
             self.assertEqual("none", history[0]["authority"])

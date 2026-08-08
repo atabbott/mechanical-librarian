@@ -92,7 +92,7 @@ class MetadataPolicyActivationTests(unittest.TestCase):
                 "title_layout"
             ],
         )
-        self.assertEqual(frozenset(), QUALIFIED_AUTOMATIC)
+        self.assertIn("title_layout", QUALIFIED_AUTOMATIC)
         repository.close()
 
     def _current_case_with_completed_work(self, path: Path | None = None):

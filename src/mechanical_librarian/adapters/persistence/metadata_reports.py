@@ -2956,12 +2956,35 @@ class SQLiteMetadataReportRepository:
     ) -> None:
         """Append eligible dispositions, leaving paused/suspended work human."""
         safety = self.automatic_safety_state()
+        automatic_dispositions = {"candidate", "keep_current", "ignore"}
+        publication = tuple(
+            field for field in outcome.outcomes
+            if field.policy_category == "date_precision"
+        )
+        # The qualification manifest admits publication as one paired bundle,
+        # not two independently authoritative fields.  Admission is all-or-
+        # human before any row is appended, and this caller's transaction
+        # makes the pair atomic with the normal human-race uniqueness check.
+        publication_ready = (
+            len(publication) == 2
+            and {field.destination for field in publication}
+            == {"publishedDate", "publishedYear"}
+            and all(field.disposition in automatic_dispositions for field in publication)
+        )
         for field in outcome.outcomes:
             if (
-                field.disposition not in {"candidate", "keep_current", "ignore"}
+                field.disposition not in automatic_dispositions
                 or field.policy_category is None
                 or field.policy_option is None
                 or not safety.permits(field.policy_category)
+                or (
+                    field.policy_category == "title_layout"
+                    and not field.combination_ids
+                )
+                or (
+                    field.policy_category == "date_precision"
+                    and not publication_ready
+                )
             ):
                 continue
             try:
@@ -5042,7 +5065,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             )
             connection.execute(_METADATA_POLICY_STATE_SQL)
             connection.execute(
-                "INSERT INTO metadata_policy_state(singleton,active_policy_id,generation,activated_at,posture) VALUES(1,?,1,0,'review')",
+                "INSERT INTO metadata_policy_state(singleton,active_policy_id,generation,activated_at,posture) VALUES(1,?,1,0,'automatic')",
                 (builtin_policy.policy_id,),
             )
             connection.execute(_METADATA_POLICY_RESOLUTIONS_SQL)

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Qualified metadata-policy defaults now create immutable, decision-only
+  automatic dispositions for the sealed F19a envelope. Preview, owner pause,
+  durable safety suspension, and explicit recovery keep unresolved or
+  suspended fields in human Attention. This adds no apply, target, media, or
+  production-service write capability.
+
+## Unreleased
+
 - Add an explicit metadata-policy Preview posture that records immutable,
   non-authoritative F19 outcomes as newly eligible exact-current cases pass the
   existing background projection stage. Outcomes bind exact policy, rule,
