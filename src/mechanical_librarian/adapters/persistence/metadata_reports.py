@@ -78,6 +78,11 @@ from mechanical_librarian.domain.shadow_review import (
     ShadowReviewResult,
     ShadowReviewValueError,
 )
+from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
+from mechanical_librarian.domain.shadow_outcome import (
+    ShadowOutcomeError,
+    ShadowOutcomeSet,
+)
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -151,7 +156,8 @@ _METADATA_POLICY_STATE_SQL = (
     "CREATE TABLE metadata_policy_state ("
     "singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
     "active_policy_id TEXT NOT NULL REFERENCES metadata_policy_drafts(policy_id), "
-    "generation INTEGER NOT NULL CHECK(generation>=1), activated_at INTEGER NOT NULL CHECK(activated_at>=0))"
+    "generation INTEGER NOT NULL CHECK(generation>=1), activated_at INTEGER NOT NULL CHECK(activated_at>=0), "
+    "posture TEXT NOT NULL CHECK(posture IN ('review','preview')))"
 )
 _METADATA_POLICY_RESOLUTIONS_SQL = (
     "CREATE TABLE metadata_policy_resolutions ("
@@ -371,6 +377,16 @@ _SHADOW_OUTCOMES_SQL = (
     "CHECK((kind='result' AND result_document IS NOT NULL AND failure_document IS NULL) OR "
     "(kind='failure' AND result_document IS NULL AND failure_document IS NOT NULL)))"
 )
+_SHADOW_DECISION_OUTCOMES_SQL = (
+    "CREATE TABLE shadow_decision_outcomes ("
+    "outcome_set_id TEXT PRIMARY KEY NOT NULL CHECK(outcome_set_id GLOB 'shadow_outcome_set_[0-9a-f]*' AND length(outcome_set_id)=83), "
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), "
+    "resolved_policy_id TEXT NOT NULL CHECK(resolved_policy_id GLOB 'resolved_policy_[0-9a-f]*' AND length(resolved_policy_id)=80), "
+    "source_decision_set_id TEXT NOT NULL, evaluated_at INTEGER NOT NULL CHECK(evaluated_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 1048576))"
+)
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
     "BEGIN SELECT RAISE(ABORT, 'metadata reports are append-only'); END"
@@ -411,6 +427,8 @@ _SHADOW_DISPATCH_NO_UPDATE_SQL = "CREATE TRIGGER shadow_review_dispatches_no_upd
 _SHADOW_DISPATCH_NO_DELETE_SQL = "CREATE TRIGGER shadow_review_dispatches_no_delete BEFORE DELETE ON shadow_review_dispatches BEGIN SELECT RAISE(ABORT, 'shadow review dispatches are append-only'); END"
 _SHADOW_OUTCOME_NO_UPDATE_SQL = "CREATE TRIGGER shadow_review_outcomes_no_update BEFORE UPDATE ON shadow_review_outcomes BEGIN SELECT RAISE(ABORT, 'shadow review outcomes are append-only'); END"
 _SHADOW_OUTCOME_NO_DELETE_SQL = "CREATE TRIGGER shadow_review_outcomes_no_delete BEFORE DELETE ON shadow_review_outcomes BEGIN SELECT RAISE(ABORT, 'shadow review outcomes are append-only'); END"
+_SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL = "CREATE TRIGGER shadow_decision_outcomes_no_update BEFORE UPDATE ON shadow_decision_outcomes BEGIN SELECT RAISE(ABORT, 'shadow decision outcomes are append-only'); END"
+_SHADOW_DECISION_OUTCOME_NO_DELETE_SQL = "CREATE TRIGGER shadow_decision_outcomes_no_delete BEFORE DELETE ON shadow_decision_outcomes BEGIN SELECT RAISE(ABORT, 'shadow decision outcomes are append-only'); END"
 
 
 class _LinuxDirectoryChain:
@@ -2562,6 +2580,187 @@ class SQLiteMetadataReportRepository:
             self._connection.rollback()
             raise MetadataReportError("review login is unavailable") from error
 
+    def shadow_posture(self) -> str:
+        """Return the closed global posture without implying authority."""
+        try:
+            row = self._connection.execute(
+                "SELECT posture FROM metadata_policy_state WHERE singleton=1"
+            ).fetchone()
+            if row is None or row[0] not in {"review", "preview"}:
+                raise MetadataReportError("shadow posture is unavailable")
+            return row[0]
+        except sqlite3.Error as error:
+            raise MetadataReportError("shadow posture is unavailable") from error
+
+    def enter_shadow_preview(self, updated_at: int) -> str:
+        """Enter the non-authoritative Preview posture idempotently."""
+        if type(updated_at) is not int or updated_at < 0:
+            raise MetadataReportError("shadow posture request is invalid")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT posture FROM metadata_policy_state WHERE singleton=1"
+            ).fetchone()
+            if row is None or row[0] not in {"review", "preview"}:
+                raise MetadataReportError("shadow posture is unavailable")
+            self._connection.execute(
+                "UPDATE metadata_policy_state SET posture='preview' WHERE singleton=1"
+            )
+            self._connection.commit()
+            return "preview"
+        except (sqlite3.Error, MetadataReportError) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("shadow posture persistence failed") from error
+
+    def _schedule_current_shadow_work(
+        self, case: ReviewCase, updated_at: int
+    ) -> None:
+        """Reuse an existing current pipeline row; never create a scheduler."""
+        lineage = (
+            case.target["connection"],
+            case.target["library"],
+            case.target["item"],
+        )
+        pointer = self._connection.execute(
+            "SELECT report_id,review_case_id FROM current_review_case_lineages "
+            "WHERE connection_name=? AND library_name=? AND item_id=?",
+            lineage,
+        ).fetchone()
+        if pointer is None or (
+            pointer[0] == case.report_id and pointer[1] == case.review_case_id
+        ):
+            return
+        row = self._connection.execute(
+            "SELECT work_id,report_id,review_case_id FROM review_preparation_work "
+            "WHERE connection_name=? AND library_name=? AND item_id=? "
+            "ORDER BY updated_at DESC,work_id DESC LIMIT 1",
+            lineage,
+        ).fetchone()
+        if row is None:
+            return
+        if pointer[1] is not None and row[2] == pointer[1] and row[1] == pointer[0]:
+            self._connection.execute(
+                "UPDATE review_preparation_work SET stage='projection',state='queued',"
+                "attempt=0,recovery_attempt=0,failure_code=NULL,updated_at=? WHERE work_id=?",
+                (updated_at, row[0]),
+            )
+        else:
+            self._restart_metadata_policy_work(row[0], "proposal", pointer[0], updated_at)
+
+    def persist_shadow_outcome(
+        self, review_case_id: str, evaluated_at: int
+    ) -> str:
+        """Atomically publish or replay one exact Preview decision set."""
+        if (
+            type(review_case_id) is not str
+            or re.fullmatch(r"review_case_[0-9a-f]{64}", review_case_id) is None
+            or type(evaluated_at) is not int
+            or evaluated_at < 0
+        ):
+            raise MetadataReportError("shadow outcome request is invalid")
+        owns_transaction = not self._connection.in_transaction
+        case_for_recovery: ReviewCase | None = None
+        try:
+            if owns_transaction:
+                self._connection.execute("BEGIN IMMEDIATE")
+            raw_case = self._connection.execute(
+                "SELECT document FROM review_cases WHERE review_case_id=?",
+                (review_case_id,),
+            ).fetchone()
+            if raw_case is None:
+                raise MetadataReportError("shadow outcome source is unavailable")
+            case_for_recovery = ReviewCase.from_json(raw_case[0])
+            state = self._connection.execute(
+                "SELECT s.generation,s.posture,d.document FROM metadata_policy_state s "
+                "JOIN metadata_policy_drafts d ON d.policy_id=s.active_policy_id "
+                "WHERE s.singleton=1"
+            ).fetchone()
+            if state is None or state[1] not in {"review", "preview"}:
+                raise MetadataReportError("shadow posture is unavailable")
+            if state[1] == "review":
+                if owns_transaction:
+                    self._connection.commit()
+                return "inactive"
+            case, packet = self._shadow_packet_source(review_case_id)
+            library = case.target["library"]
+            if type(library) is not str:
+                raise MetadataReportError("shadow outcome source is invalid")
+            policy = self.current_resolved_metadata_policy(library)
+            if policy is None and state[0] == 1:
+                policy = resolve_policy(
+                    MetadataPolicyProfile.from_data(json.loads(state[2])), library
+                )
+            if policy is None:
+                raise MetadataReportError("shadow policy is unavailable")
+            outcome = ShadowOutcomeSet.create(
+                case, decide_shadow_packet(packet), policy, state[0]
+            )
+            serialized = outcome.to_json()
+            existing = self._connection.execute(
+                "SELECT document FROM shadow_decision_outcomes WHERE outcome_set_id=?",
+                (outcome.outcome_set_id,),
+            ).fetchone()
+            if existing is not None and existing != (serialized,):
+                raise MetadataReportError("shadow outcome identity conflicts")
+            if existing is None:
+                self._connection.execute(
+                    "INSERT INTO shadow_decision_outcomes(outcome_set_id,review_case_id,"
+                    "report_id,proposal_set_id,resolved_policy_id,source_decision_set_id,"
+                    "evaluated_at,document) VALUES(?,?,?,?,?,?,?,?)",
+                    (
+                        outcome.outcome_set_id,
+                        outcome.review_case_id,
+                        outcome.report_id,
+                        outcome.proposal_set_id,
+                        outcome.resolved_policy_id,
+                        outcome.source_decision_set_id,
+                        evaluated_at,
+                        serialized,
+                    ),
+                )
+            if owns_transaction:
+                self._connection.commit()
+            return serialized
+        except ReviewAdmissionStaleError:
+            if case_for_recovery is not None:
+                self._schedule_current_shadow_work(case_for_recovery, evaluated_at)
+            if owns_transaction:
+                self._connection.commit()
+            return "stale"
+        except (
+            sqlite3.Error,
+            MetadataReportError,
+            MetadataPolicyError,
+            ReviewCaseValueError,
+            ShadowOutcomeError,
+        ) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("shadow outcome persistence failed") from error
+
+    def list_shadow_outcomes(
+        self, limit: int
+    ) -> tuple[tuple[str, int], ...]:
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise MetadataReportError("shadow outcome sample is unavailable")
+        try:
+            rows = self._connection.execute(
+                "SELECT document,evaluated_at FROM shadow_decision_outcomes "
+                "ORDER BY evaluated_at DESC,outcome_set_id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return tuple(
+                (ShadowOutcomeSet.from_json(row[0]).to_json(), row[1])
+                for row in rows
+            )
+        except (sqlite3.Error, ShadowOutcomeError) as error:
+            raise MetadataReportError("shadow outcome sample is unavailable") from error
+
     def create_metadata_policy_draft(self, document: str) -> str:
         """Persist an exact canonical draft; there is intentionally no update."""
         try:
@@ -3341,6 +3540,11 @@ class SQLiteMetadataReportRepository:
                 "WHERE review_case_id=? ORDER BY occurred_at DESC,event_id DESC LIMIT ?",
                 (review_case_id, limit),
             ).fetchall()
+            shadow_rows = self._connection.execute(
+                "SELECT outcome_set_id,evaluated_at,document FROM shadow_decision_outcomes "
+                "WHERE review_case_id=? ORDER BY evaluated_at DESC,outcome_set_id DESC LIMIT ?",
+                (review_case_id, limit),
+            ).fetchall()
             transitions = [
                 {
                     "checkpoint": row[1],
@@ -3350,7 +3554,7 @@ class SQLiteMetadataReportRepository:
                 }
                 for row in transition_rows
             ]
-            events = []
+            events: list[tuple[int, str, dict[str, object]]] = []
             for row in event_rows:
                 value = json.loads(row[7])
                 if type(value) is not dict or set(value) != {
@@ -3373,9 +3577,48 @@ class SQLiteMetadataReportRepository:
                     value["occurred_at"],
                 ) != row[:7]:
                     raise MetadataReportError("review history is invalid")
-                events.append(value)
-            return tuple((events + transitions)[:limit])
-        except (sqlite3.Error, TypeError, ValueError, json.JSONDecodeError) as error:
+                events.append((row[6], row[0], value))
+            for row in shadow_rows:
+                outcome = ShadowOutcomeSet.from_json(row[2])
+                if (
+                    outcome.outcome_set_id != row[0]
+                    or outcome.review_case_id != review_case_id
+                    or type(row[1]) is not int
+                    or row[1] < 0
+                ):
+                    raise MetadataReportError("review history is invalid")
+                dispositions: dict[str, int] = {}
+                for field in outcome.outcomes:
+                    dispositions[field.disposition] = (
+                        dispositions.get(field.disposition, 0) + 1
+                    )
+                events.append(
+                    (
+                        row[1],
+                        row[0],
+                        {
+                            "authority": "none",
+                            "dispositions": dispositions,
+                            "kind": "shadow_preview_recorded",
+                            "occurred_at": row[1],
+                            "origin": "policy_preview",
+                            "outcome_set_id": row[0],
+                            "review_case_id": review_case_id,
+                            "schema_version": "shadow-preview-history-event-v1",
+                        },
+                    )
+                )
+            ordered_events = [
+                value for _, _, value in sorted(events, reverse=True)
+            ]
+            return tuple((ordered_events + transitions)[:limit])
+        except (
+            sqlite3.Error,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+            ShadowOutcomeError,
+        ) as error:
             raise MetadataReportError("review history is unavailable") from error
 
     def preview_shadow_packet(self, review_case_id: str) -> ShadowReviewPacket:
@@ -4376,7 +4619,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             )
             connection.execute(_METADATA_POLICY_STATE_SQL)
             connection.execute(
-                "INSERT INTO metadata_policy_state(singleton,active_policy_id,generation,activated_at) VALUES(1,?,1,0)",
+                "INSERT INTO metadata_policy_state(singleton,active_policy_id,generation,activated_at,posture) VALUES(1,?,1,0,'review')",
                 (builtin_policy.policy_id,),
             )
             connection.execute(_METADATA_POLICY_RESOLUTIONS_SQL)
@@ -4402,6 +4645,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_SHADOW_ATTEMPTS_SQL)
             connection.execute(_SHADOW_DISPATCHES_SQL)
             connection.execute(_SHADOW_OUTCOMES_SQL)
+            connection.execute(_SHADOW_DECISION_OUTCOMES_SQL)
             connection.execute(_NO_UPDATE_SQL)
             connection.execute(_COVER_NO_UPDATE_SQL)
             connection.execute(_COVER_NO_DELETE_SQL)
@@ -4425,6 +4669,8 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_SHADOW_DISPATCH_NO_DELETE_SQL)
             connection.execute(_SHADOW_OUTCOME_NO_UPDATE_SQL)
             connection.execute(_SHADOW_OUTCOME_NO_DELETE_SQL)
+            connection.execute(_SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL)
+            connection.execute(_SHADOW_DECISION_OUTCOME_NO_DELETE_SQL)
             connection.execute(_NO_DELETE_SQL)
             connection.commit()
         _validate_schema(connection)
@@ -4738,6 +4984,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_shadow_review_dispatches_1", None),
         ("index", "sqlite_autoindex_shadow_review_outcomes_1", None),
         ("index", "sqlite_autoindex_shadow_review_requests_1", None),
+        ("index", "sqlite_autoindex_shadow_decision_outcomes_1", None),
         ("table", "current_metadata_reports", _CURRENT_SQL),
         ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
         ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
@@ -4763,6 +5010,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "shadow_review_dispatches", _SHADOW_DISPATCHES_SQL),
         ("table", "shadow_review_outcomes", _SHADOW_OUTCOMES_SQL),
         ("table", "shadow_review_requests", _SHADOW_REQUESTS_SQL),
+        ("table", "shadow_decision_outcomes", _SHADOW_DECISION_OUTCOMES_SQL),
         ("trigger", "metadata_report_cover_references_no_delete", _COVER_NO_DELETE_SQL),
         ("trigger", "metadata_report_cover_references_no_update", _COVER_NO_UPDATE_SQL),
         ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL),
@@ -4787,6 +5035,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("trigger", "shadow_review_outcomes_no_update", _SHADOW_OUTCOME_NO_UPDATE_SQL),
         ("trigger", "shadow_review_requests_no_delete", _SHADOW_REQUEST_NO_DELETE_SQL),
         ("trigger", "shadow_review_requests_no_update", _SHADOW_REQUEST_NO_UPDATE_SQL),
+        ("trigger", "shadow_decision_outcomes_no_delete", _SHADOW_DECISION_OUTCOME_NO_DELETE_SQL),
+        ("trigger", "shadow_decision_outcomes_no_update", _SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL),
     ))
     if objects != expected_objects or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")

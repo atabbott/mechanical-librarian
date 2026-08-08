@@ -468,6 +468,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                     ("review_preparation_scans",),
                     ("review_preparation_work",),
                     ("review_sessions",),
+                    ("shadow_decision_outcomes",),
                     ("shadow_review_attempts",),
                     ("shadow_review_dispatches",),
                     ("shadow_review_outcomes",),

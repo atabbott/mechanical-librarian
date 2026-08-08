@@ -47,7 +47,7 @@ def _shell(*, title: str, active: str, main: str, csrf_token: str | None) -> str
   {'' if csrf_token is None else '<section id="activity-popover" class="activity-popover" aria-label="Background activity" hidden></section>'}
   <p class="visually-hidden" id="theme-status" role="status" aria-live="polite"></p>
   <script src="/assets/review.js" defer></script>
-  {'' if active != "policy" else '<script src="/assets/policy.js" defer></script>'}
+  {'' if active != "policy" else '<script src="/assets/policy.js" defer></script><script src="/assets/shadow-policy.js" defer></script>'}
 </body>
 </html>"""
 
@@ -136,7 +136,7 @@ def policy_html(csrf_token: str) -> str:
       <section id="identity" class="policy-card"><p class="eyebrow">Active policy</p><h2>Calm, conservative defaults</h2><div id="policy-active" aria-live="polite"><p>Loading active policy…</p></div><div id="policy-transition" class="policy-transition" aria-live="polite"></div></section>
       <section id="bibliography" class="policy-card"><h2>Draft before activation</h2><p>A draft is immutable and versioned. Review its exact effects before the separate activation command becomes available.</p><form id="policy-draft"><label for="policy-name">Draft name</label><input id="policy-name" maxlength="80" required value="Policy draft"><div id="policy-fields"></div><div class="policy-actions"><button class="secondary-button" type="submit" data-action="validate">Validate</button><button class="primary-button" type="submit" data-action="create">Create immutable draft</button><button class="secondary-button" type="submit" data-action="preview">Preview effects</button><button id="policy-activate" class="primary-button" type="button" disabled>Activate reviewed draft</button></div><p id="policy-status" role="status"></p></form></section>
       <section id="descriptions" class="policy-card"><h2>Per-library effects</h2><p>Configured sparse overrides are resolved with the global draft. Preview names every affected category and current unapplied count.</p><div id="policy-preview" aria-live="polite"></div></section>
-      <section id="availability" class="policy-card"><h2>Qualification availability</h2><p>Automatic is unavailable until qualified. Ask me and Ignore remain manual-only. Explicit is unsupported.</p><p>Activation creates no automatic decision, apply plan, target write, or media write.</p></section>
+      <section id="availability" class="policy-card"><h2>Qualification availability</h2><p>Automatic is unavailable until qualified. Ask me and Ignore remain manual-only. Explicit is unsupported.</p><p>Activation creates no automatic decision, apply plan, target write, or media write.</p><div class="shadow-preview" aria-labelledby="shadow-preview-title"><p class="eyebrow">Advanced · non-authoritative</p><h3 id="shadow-preview-title">Preview deterministic outcomes</h3><p id="shadow-posture" role="status">Loading Preview posture…</p><div class="policy-actions"><button id="shadow-enter" class="secondary-button" type="button">Enter Preview</button><button id="shadow-leave-preview" class="secondary-button" type="button">Preview leaving</button></div><div id="shadow-leave-impact" aria-live="polite"></div><div id="shadow-sample" class="shadow-sample" aria-live="polite"></div></div></section>
       </div>
     </div>
   </section>
@@ -379,6 +379,11 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .policy-actions .primary-button { width: auto; padding: 0 14px; }
 .policy-transition:not(:empty) { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-strong); font-size: .68rem; }
 .policy-transition button { margin-left: 8px; }
+.shadow-preview { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
+.shadow-preview h3 { margin-bottom: 6px; }
+.shadow-sample { display: grid; gap: 7px; margin-top: 14px; }
+.shadow-sample article { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-strong); }
+.shadow-sample article p { margin: 3px 0 0; color: var(--ink-soft); font-size: .66rem; }
 .policy-chapter-select { display: none; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -921,7 +926,7 @@ if (root) {
     if (evidence.next_cursor) { const more = element("button", "Load more evidence", "secondary-button"); more.type = "button"; let cursor = evidence.next_cursor; const status = element("p", ""); status.setAttribute("role", "status"); more.addEventListener("click", async () => { more.disabled = true; status.setAttribute("role", "status"); status.textContent = "Loading more evidence…"; try { const page = await load(`/api/v1/review-cases/${id}/evidence?limit=50&cursor=${encodeURIComponent(cursor)}`); appendEvidence(page.items); cursor = page.next_cursor; if (cursor) { more.disabled = false; status.textContent = `Loaded ${page.items.length} more evidence item(s).`; } else { more.remove(); status.textContent = "All referenced evidence is shown."; } } catch { more.disabled = false; status.setAttribute("role", "alert"); status.textContent = "More evidence could not be loaded. Try again."; } }); ledgerInner.append(more, status); }
     ledger.append(ledgerInner); content.append(ledger);
     const historyDetails = element("details", null, "history"); historyDetails.append(element("summary", `Current-case history (${history.items.length})`)); const historyInner = element("div", null, "details-inner");
-    history.items.forEach((item, index) => { const row = element("div", null, "history-row"); const text = item.kind==='human_decision_recorded' ? `${item.occurred_at}. ${item.destination}: ${item.outcome} by ${item.actor}` : `${item.checkpoint}. ${friendly(item.kind)}: ${item.reason}`; row.append(element("span", String(index + 1)), element("span", text)); historyInner.append(row); });
+    history.items.forEach((item, index) => { const row = element("div", null, "history-row"); const text = item.kind==='human_decision_recorded' ? `${item.occurred_at}. ${item.destination}: ${item.outcome} by ${item.actor}` : item.kind==='shadow_preview_recorded' ? `${item.occurred_at}. Preview outcome recorded · non-authoritative · ${Object.entries(item.dispositions).map(([name,count])=>`${friendly(name)} ${count}`).join(" · ")}` : `${item.checkpoint}. ${friendly(item.kind)}: ${item.reason}`; row.append(element("span", String(index + 1)), element("span", text)); historyInner.append(row); });
     historyDetails.append(historyInner); content.append(historyDetails);
     shell.append(sidebar, content); root.replaceChildren(shell);
     const stripPosition = Number.parseInt(parameters.get("strip") || "0", 10); if (Number.isSafeInteger(stripPosition) && stripPosition >= 0) strip.scrollLeft = stripPosition;
@@ -958,5 +963,20 @@ POLICY_JS = "\n".join(line.strip() for line in r"""
   form.addEventListener("input",()=>{activate.disabled=true;});
   activate.onclick=async()=>{ if(!draftId || !activeId) return; activate.disabled=true; status.textContent="Activating reviewed draft…"; try { const value=await call("/api/v1/metadata-policy/activate","POST",{policy_id:draftId,expected_active_policy_id:activeId}); activeId=value.policy_id; draftId=null; document.querySelector("#policy-active").replaceChildren(node("p",`${data().name} is active.`),node("p",`Active policy ID: ${value.policy_id}`)); render(value.transition); status.textContent=value.transition ? `Policy activated: ${value.transition.completed}/${value.transition.total}.` : "Already active; nothing changed."; } catch(error) { status.textContent=`Not activated (${error.problem || "unavailable"}). Refresh and review.`; }};
   chapterSelect?.addEventListener("change", event=>{ const target=document.querySelector(`#${CSS.escape(event.target.value)}`); if(target) target.tabIndex=-1; target?.scrollIntoView({block:"start"}); target?.focus({preventScroll:true}); });
+})();
+""".splitlines())
+
+
+SHADOW_POLICY_JS = "\n".join(line.strip() for line in r"""
+(() => {
+  const posture=document.querySelector("#shadow-posture"), enter=document.querySelector("#shadow-enter"), leave=document.querySelector("#shadow-leave-preview"), impact=document.querySelector("#shadow-leave-impact"), sample=document.querySelector("#shadow-sample");
+  if(!posture) return;
+  const node=(tag,text)=>{const value=document.createElement(tag); value.textContent=text; return value;};
+  const call=async(url,method="GET")=>{const send=()=>fetch(url,{method,headers:method === "GET" ? {} : {"x-csrf-token":pageCsrf}}); let response=await send(); if(method !== "GET" && response.status === 403) {pageCsrf=await refreshPageCsrf(); response=await send();} const value=await response.json().catch(()=>null); if(!response.ok) throw new Error(); return value;};
+  const renderSample=value=>{sample.replaceChildren(); if(!value.items.length){sample.append(node("p","No Preview outcomes have been recorded yet.")); return;} for(const item of value.items){const card=node("article"), counts=Object.entries(item.outcomes.reduce((all,field)=>{all[field.disposition]=(all[field.disposition]||0)+1; return all;},{})).map(([name,count])=>`${name.replaceAll("_"," ")}: ${count}`).join(" · "); card.append(node("strong",`${item.outcomes.length} field outcome${item.outcomes.length === 1 ? "" : "s"}`),node("p",counts),node("p","Non-authoritative · exact policy and evidence identities retained")); sample.append(card);}};
+  const render=async value=>{posture.textContent=value.posture === "preview" ? "Preview is on. New exact-current cases record non-authoritative outcomes; human work is unchanged." : "Human review is active. Preview records nothing until explicitly entered."; enter.disabled=value.posture === "preview"; leave.disabled=value.posture !== "preview"; renderSample(await call("/api/v1/metadata-policy/shadow/outcomes?limit=10"));};
+  call("/api/v1/metadata-policy/shadow").then(render).catch(()=>{posture.textContent="Preview posture is unavailable."; enter.disabled=true; leave.disabled=true;});
+  enter.onclick=async()=>{enter.disabled=true; posture.textContent="Entering Preview…"; try{await render(await call("/api/v1/metadata-policy/shadow/enter","POST"));}catch{posture.textContent="Preview was not entered. Human review is unchanged."; enter.disabled=false;}};
+  leave.onclick=async()=>{leave.disabled=true; try{const value=await call("/api/v1/metadata-policy/shadow/leave-preview"), lines=value.libraries.map(item=>node("p",`${item.library}: ${item.affected_categories.join(", ") || "no automatic categories"}; ${item.current_unapplied_count} current unapplied item(s).`)); impact.replaceChildren(node("p","Leaving Preview cannot be confirmed in this version. Qualified decision-only mode is unavailable."),...lines);}catch{impact.replaceChildren(node("p","The leave-Preview impact could not be loaded."));}finally{leave.disabled=false;}};
 })();
 """.splitlines())

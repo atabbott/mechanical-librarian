@@ -88,6 +88,8 @@ class _Repository:
         builtin = MetadataPolicyProfile.builtin()
         self.active_policy_id = builtin.policy_id
         self.policy_transition = None
+        self.shadow_mode = "review"
+        self.shadow_outcomes: tuple[tuple[str, int], ...] = ()
 
     def current_unapplied_count(self, library: str) -> int:
         self.policy_count_calls.append(library)
@@ -136,6 +138,16 @@ class _Repository:
 
     def current_resolved_policy_id(self, library):
         return resolve_policy(MetadataPolicyProfile.from_data(json.loads(self.active_metadata_policy())), library).resolved_id
+
+    def shadow_posture(self):
+        return self.shadow_mode
+
+    def enter_shadow_preview(self, updated_at):
+        self.shadow_mode = "preview"
+        return self.shadow_mode
+
+    def list_shadow_outcomes(self, limit):
+        return self.shadow_outcomes[:limit]
 
     def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
         self.failures = [value for value in self.failures if value >= now - window_seconds]
@@ -599,6 +611,46 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(before[0], self.repository.decisions)
         self.assertEqual(1, len(self.repository.policy_documents))
         self.assertEqual([], self.repository.policy_count_calls)
+
+    def test_shadow_posture_and_sample_are_authenticated_non_authoritative(self) -> None:
+        anonymous = self.client.get("/api/v1/metadata-policy/shadow")
+        self.assertEqual(401, anonymous.status_code)
+        login = self._login()
+        headers = {**self.origin, "X-CSRF-Token": login["csrf_token"]}
+        state = self.client.get("/api/v1/metadata-policy/shadow")
+        self.assertEqual(
+            {
+                "authority": "none",
+                "can_leave_preview": False,
+                "posture": "review",
+                "schema_version": "shadow-posture-v1",
+            },
+            state.json(),
+        )
+        denied = self.client.post(
+            "/api/v1/metadata-policy/shadow/enter", headers=self.origin
+        )
+        self.assertEqual(403, denied.status_code)
+        entered = self.client.post(
+            "/api/v1/metadata-policy/shadow/enter", headers=headers
+        )
+        self.assertEqual("preview", entered.json()["posture"])
+        self.assertEqual("none", entered.json()["authority"])
+        sample = self.client.get(
+            "/api/v1/metadata-policy/shadow/outcomes?limit=10"
+        )
+        self.assertEqual("shadow-outcome-sample-v1", sample.json()["schema_version"])
+        self.assertEqual([], sample.json()["items"])
+        leaving = self.client.get(
+            "/api/v1/metadata-policy/shadow/leave-preview"
+        )
+        self.assertTrue(leaving.json()["confirmation_required"])
+        self.assertFalse(leaving.json()["can_confirm"])
+        self.assertEqual("preview", self.repository.shadow_mode)
+        self.assertEqual(
+            "qualified_decision_only_unavailable",
+            leaving.json()["requested_posture"],
+        )
 
     def test_policy_draft_persistence_failure_is_unavailable_not_validation(self) -> None:
         login = self._login()
@@ -1064,6 +1116,11 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(200, policy_script.status_code)
         self.assertIn("policy-draft", policy_script.text)
         self.assertLess(len(policy_script.content), 8_000)
+        shadow_script = self.client.get("/assets/shadow-policy.js")
+        self.assertEqual(200, shadow_script.status_code)
+        self.assertIn("Non-authoritative", shadow_script.text)
+        self.assertNotIn("localStorage", shadow_script.text)
+        self.assertLess(len(shadow_script.content), 4_000)
         field = self.client.get(
             f"/api/v1/review-cases/{self.case.review_case_id}"
         ).json()["fields"][0]
@@ -1246,6 +1303,10 @@ class ReviewWebTests(unittest.TestCase):
                 ("post", "/api/v1/metadata-policy/drafts"),
                 ("get", "/api/v1/metadata-policy/drafts/{policy_id}"),
                 ("post", "/api/v1/metadata-policy/preview"),
+                ("get", "/api/v1/metadata-policy/shadow"),
+                ("post", "/api/v1/metadata-policy/shadow/enter"),
+                ("get", "/api/v1/metadata-policy/shadow/leave-preview"),
+                ("get", "/api/v1/metadata-policy/shadow/outcomes"),
                 ("get", "/api/v1/metadata-policy/state"),
                 ("get", "/api/v1/metadata-policy/transition"),
                 (

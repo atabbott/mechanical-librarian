@@ -179,8 +179,19 @@ class _HistoryDecisionItem(_ClosedModel):
     schema_version: Literal["human-decision-event-v1"]
 
 
+class _HistoryShadowItem(_ClosedModel):
+    authority: Literal["none"]
+    dispositions: dict[str, int]
+    kind: Literal["shadow_preview_recorded"]
+    occurred_at: int
+    origin: Literal["policy_preview"]
+    outcome_set_id: str
+    review_case_id: str
+    schema_version: Literal["shadow-preview-history-event-v1"]
+
+
 class _HistoryResponse(_ClosedModel):
-    items: list[_HistoryTransitionItem | _HistoryDecisionItem]
+    items: list[_HistoryTransitionItem | _HistoryDecisionItem | _HistoryShadowItem]
     next_cursor: str | None
     review_case_id: str
     schema_version: str
@@ -339,6 +350,81 @@ class _PolicyActivationResponse(_ClosedModel):
     policy_id: str
     transition: _PolicyTransitionResponse | None
     schema_version: Literal["metadata-policy-activation-v1"] = "metadata-policy-activation-v1"
+
+
+class _ShadowPostureResponse(_ClosedModel):
+    authority: Literal["none"]
+    can_leave_preview: Literal[False]
+    posture: Literal["review", "preview"]
+    schema_version: Literal["shadow-posture-v1"]
+
+
+class _ShadowLeaveImpact(_ClosedModel):
+    affected_categories: list[str]
+    current_unapplied_count: int
+    library: str
+
+
+class _ShadowLeaveResponse(_ClosedModel):
+    authority: Literal["none"]
+    can_confirm: Literal[False]
+    confirmation_required: Literal[True]
+    libraries: list[_ShadowLeaveImpact]
+    posture: Literal["review", "preview"]
+    requested_posture: Literal["qualified_decision_only_unavailable"]
+    schema_version: Literal["shadow-posture-leave-preview-v1"]
+
+
+class _ShadowFieldOutcomeResponse(_ClosedModel):
+    action_id: str
+    candidate_id: str | None
+    citation_ids: list[str]
+    combination_ids: list[str]
+    destination: str
+    disposition: Literal[
+        "abstention",
+        "candidate",
+        "conflict",
+        "ignore",
+        "keep_current",
+        "manual",
+        "unsupported",
+    ]
+    outcome_id: str
+    policy_category: str | None
+    policy_destination: Literal["ask", "automatic", "ignore", "unsupported"]
+    policy_option: str | None
+    proposal_id: str
+    qualification_candidate_id: str
+    reason_code: str
+    rule_id: str
+
+
+class _ShadowOutcomeSetResponse(_ClosedModel):
+    authority: Literal["none"]
+    catalogue_sha256: str
+    decision_policy_sha256: str
+    decision_policy_version: str
+    evaluated_at: int
+    outcome_set_id: str
+    outcomes: list[_ShadowFieldOutcomeResponse]
+    policy_generation: int
+    policy_profile_id: str
+    posture: Literal["preview"]
+    proposal_set_id: str
+    report_id: str
+    resolved_policy_id: str
+    review_case_id: str
+    schema_version: Literal["shadow-outcome-set-v1"]
+    source_decision_set_id: str
+    target_fingerprint: str
+
+
+class _ShadowSampleResponse(_ClosedModel):
+    authority: Literal["none"]
+    items: list[_ShadowOutcomeSetResponse]
+    next_cursor: None
+    schema_version: Literal["shadow-outcome-sample-v1"]
 
 
 def _policy_transition_response(value: PolicyTransition) -> _PolicyTransitionResponse:
@@ -642,6 +728,38 @@ def create_review_app(
         return _PolicyProfileResponse(
             policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data())
         )
+
+    @app.get("/api/v1/metadata-policy/shadow", response_model=_ShadowPostureResponse, responses={status: {"model": _ErrorResponse} for status in (401, 503)})
+    def shadow_posture(ml_session: str = Depends(authenticated_session_cookie)) -> _ShadowPostureResponse:
+        _require_session(sessions, ml_session)
+        try:
+            return _ShadowPostureResponse.model_validate(notebook.shadow_state())
+        except MetadataPolicyApplicationError:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+
+    @app.post("/api/v1/metadata-policy/shadow/enter", response_model=_ShadowPostureResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)})
+    def enter_shadow_preview(ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _ShadowPostureResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            return _ShadowPostureResponse.model_validate(notebook.enter_preview(clock()))
+        except MetadataPolicyApplicationError:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+
+    @app.get("/api/v1/metadata-policy/shadow/leave-preview", response_model=_ShadowLeaveResponse, responses={status: {"model": _ErrorResponse} for status in (401, 503)})
+    def preview_leave_shadow(ml_session: str = Depends(authenticated_session_cookie)) -> _ShadowLeaveResponse:
+        _require_session(sessions, ml_session)
+        try:
+            return _ShadowLeaveResponse.model_validate(notebook.preview_leave())
+        except MetadataPolicyApplicationError:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+
+    @app.get("/api/v1/metadata-policy/shadow/outcomes", response_model=_ShadowSampleResponse, responses={status: {"model": _ErrorResponse} for status in (401, 422, 503)})
+    def shadow_outcome_sample(limit: int = Query(default=20, ge=1, le=50), ml_session: str = Depends(authenticated_session_cookie)) -> _ShadowSampleResponse:
+        _require_session(sessions, ml_session)
+        try:
+            return _ShadowSampleResponse.model_validate(notebook.shadow_sample(limit))
+        except MetadataPolicyApplicationError:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
 
     @app.post("/api/v1/metadata-policy/validate", response_model=_PolicyProfileResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422)})
     def validate_metadata_policy(payload: _PolicyDraftRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyProfileResponse:
@@ -1080,6 +1198,12 @@ def create_review_app(
     def policy_js() -> Response:
         return Response(review_frontend.POLICY_JS, media_type="text/javascript")
 
+    @app.get("/assets/shadow-policy.js", include_in_schema=False)
+    def shadow_policy_js() -> Response:
+        return Response(
+            review_frontend.SHADOW_POLICY_JS, media_type="text/javascript"
+        )
+
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, error: HTTPException) -> JSONResponse:
         detail = error.detail
@@ -1212,6 +1336,22 @@ class _SerializedReviewRepository:
     def create_metadata_policy_draft(self, document: str) -> str:
         with self._lock:
             return self._repository.create_metadata_policy_draft(document)
+
+    def shadow_posture(self) -> str:
+        with self._lock:
+            if not hasattr(self._repository, "shadow_posture"):
+                return "review"
+            return self._repository.shadow_posture()
+
+    def enter_shadow_preview(self, updated_at: int) -> str:
+        with self._lock:
+            return self._repository.enter_shadow_preview(updated_at)
+
+    def list_shadow_outcomes(self, limit: int) -> tuple[tuple[str, int], ...]:
+        with self._lock:
+            if not hasattr(self._repository, "list_shadow_outcomes"):
+                return ()
+            return self._repository.list_shadow_outcomes(limit)
 
     def get_metadata_policy_draft(self, policy_id: str) -> str:
         with self._lock:

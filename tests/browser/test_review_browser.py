@@ -262,6 +262,27 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertEqual("ask", page.locator('select[name="destination-tags"]').input_value())
                     self.assertTrue(page.locator('select[name="destination-tags"] option[value="automatic"]').is_disabled())
                     self.assertEqual("unsupported", page.locator('select[name="destination-explicit"]').input_value())
+                    page.get_by_text("Human review is active.", exact=False).wait_for()
+                    before_preview = page.request.get(
+                        f"{origin}/api/v1/library?lens=all&limit=10"
+                    ).json()
+                    page.get_by_role("button", name="Enter Preview").click()
+                    page.get_by_text("Preview is on.", exact=False).wait_for()
+                    self.assertTrue(
+                        page.get_by_role("button", name="Enter Preview").is_disabled()
+                    )
+                    after_preview = page.request.get(
+                        f"{origin}/api/v1/library?lens=all&limit=10"
+                    ).json()
+                    self.assertEqual(before_preview, after_preview)
+                    page.get_by_role("button", name="Preview leaving").click()
+                    page.get_by_text(
+                        "Leaving Preview cannot be confirmed", exact=False
+                    ).wait_for()
+                    self.assertEqual(
+                        0,
+                        page.get_by_role("button", name=re.compile("confirm", re.I)).count(),
+                    )
                     stale_rotation = page.request.get(f"{origin}/library")
                     self.assertEqual(200, stale_rotation.status)
                     page.locator("#policy-name").fill("<hostile draft>")
@@ -345,6 +366,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertEqual("Effects", page.locator("#policy-chapter-select").input_value() and page.locator("#policy-chapter-select option:checked").inner_text())
                     page.set_viewport_size({"width": 390, "height": 844})
                     self.assertEqual("sticky", page.locator(".policy-chapters").evaluate("node => getComputedStyle(node).position"))
+                    self.assertEqual("block", page.locator("#policy-chapter-select").evaluate("node => getComputedStyle(node).display"))
                     self.assertLessEqual(page.locator(".policy-content").evaluate("node => node.scrollWidth"), 390)
                     self.assertLessEqual(page.locator("body").evaluate("node => node.scrollWidth"), 390)
                     page.get_by_label("Policy chapter", exact=True).select_option("availability")

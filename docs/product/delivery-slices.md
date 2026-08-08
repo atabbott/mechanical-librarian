@@ -540,6 +540,23 @@ remain deferred to #195.
 | Immutable exact-version decision | #449 | One exact field decision is persisted idempotently and reproduced after restart without automatic, apply, or write authority. | Delivered by #449. |
 | Browser activation | #450, #455 | The complete decision-first round trip passes the installed-artifact gates and faithfully presents variant M in light/dark modes at 1440, 884, 390, and 320 CSS pixels. | Activated by #450; visual contract restored by #455. |
 
+## Delivery checkpoint 0.12.0: quiet background metadata decisions
+
+This checkpoint progressively composes continuous report-only review, versioned
+policy, and deterministic qualification observations. Human Library and
+Attention hierarchy remains authoritative throughout; it adds no metadata
+apply or write capability.
+
+| Outcome | Issue | Demonstrable result | Planning state |
+| --- | --- | --- | --- |
+| F17a Continuous review | #473–#475 | Three libraries continuously reconcile through the bounded persisted review pipeline with compact shared activity and restart-safe controls. | Delivered. |
+| F09p Policy notebook | #343, #476–#477 | The selected B notebook persists reviewed drafts and atomically cuts over one exact generation while Automatic remains unavailable. | Delivered. |
+| F19a Preview observations | #444, #478–#479 | Deterministic outcomes accumulate non-authoritatively in Preview before a separately qualified decision-only posture can be considered. | #478 persists Preview outcomes; activation remains #479. |
+
+Issue #478 is deliberately non-activating: `review | preview` is the complete
+posture set for this increment, leave is impact-only, and qualification
+observations never reduce human work or become decisions.
+
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit
