@@ -1253,6 +1253,18 @@ class _SerializedReviewRepository:
                 return None
             return self._repository.current_resolved_metadata_policy(library)
 
+    def metadata_policy_resolution_for_preview(self, library: str):
+        with self._lock:
+            if hasattr(
+                self._repository, "metadata_policy_resolution_for_preview"
+            ):
+                return self._repository.metadata_policy_resolution_for_preview(
+                    library
+                )
+            if not hasattr(self._repository, "current_resolved_metadata_policy"):
+                return None
+            return self._repository.current_resolved_metadata_policy(library)
+
 
 def _request_matches_origin(request: Request, configuration: ReviewWebConfiguration) -> bool:
     host = request.headers.get("host", "")

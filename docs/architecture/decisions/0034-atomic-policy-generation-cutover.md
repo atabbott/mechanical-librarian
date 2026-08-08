@@ -26,11 +26,20 @@ manual evaluator result; `Ignore` produces a typed, non-actionable
 `policy_ignored` result. Unqualified `Automatic` cannot be activated and does
 not grant decision or write authority.
 
+Generation one binds an exact configured sparse override on first loaded use;
+the stored resolution is then authoritative and conflicting configuration is
+rejected. After activation, a newly configured library may be represented in
+read-only preview, but proposal execution remains unavailable until the next
+explicit activation persists that library's resolution.
+
 Policy-independent extraction and provider work may finish. Later policy-bound
 stages are rewound to proposal evaluation from the same immutable report and
 eligible evidence. Missing work becomes a durable typed transition failure and
 can be explicitly retried if F17a later supplies the work; no provider is
-reacquired solely for cutover.
+reacquired solely for cutover. Existing terminal extraction/provider work is
+restarted at its safe stage during activation, and atomic extraction publication
+updates the fixed transition when its report is stale or its provider
+disposition is terminal.
 
 ## Consequences
 

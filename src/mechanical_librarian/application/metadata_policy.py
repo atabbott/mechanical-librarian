@@ -82,6 +82,8 @@ class PolicyImpactRepository(Protocol):
 
     def current_resolved_metadata_policy(self, library: str) -> ResolvedMetadataPolicy | None: ...
 
+    def metadata_policy_resolution_for_preview(self, library: str) -> ResolvedMetadataPolicy | None: ...
+
 
 def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], overrides: dict[str, dict[str, object]], repository: PolicyImpactRepository) -> PolicyPreview:
     if type(profile) is not MetadataPolicyProfile or type(libraries) is not tuple or libraries != tuple(sorted(set(libraries))):
@@ -96,7 +98,9 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
                 else MetadataPolicyProfile.builtin().canonical_json
             )
             persisted_active = (
-                repository.current_resolved_metadata_policy(library)
+                repository.metadata_policy_resolution_for_preview(library)
+                if hasattr(repository, "metadata_policy_resolution_for_preview")
+                else repository.current_resolved_metadata_policy(library)
                 if hasattr(repository, "current_resolved_metadata_policy")
                 else None
             )

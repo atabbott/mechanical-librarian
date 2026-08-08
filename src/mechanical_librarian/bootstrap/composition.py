@@ -808,8 +808,6 @@ def admit_review_case_loaded(
 
 def _current_resolved_policy(configuration, repository, library: str):
     persisted = repository.current_resolved_metadata_policy(library)
-    if persisted is not None:
-        return persisted
     profile = MetadataPolicyProfile.from_data(
         json.loads(repository.active_metadata_policy())
     )
@@ -819,7 +817,19 @@ def _current_resolved_policy(configuration, repository, library: str):
     )
     if configured is None:
         raise ReviewCaseError("configuration")
-    return resolve_policy(profile, library, configured.policy_override)
+    configured_resolution = resolve_policy(
+        profile, library, configured.policy_override
+    )
+    if persisted is not None:
+        if persisted != configured_resolution:
+            raise ReviewCaseError("configuration")
+        return persisted
+    bound_id = repository.bind_initial_metadata_policy_resolution(
+        configured_resolution.canonical_json
+    )
+    if bound_id != configured_resolution.resolved_id:
+        raise ReviewCaseError("configuration")
+    return configured_resolution
 
 
 def create_review_pipeline(

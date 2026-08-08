@@ -1680,6 +1680,41 @@ class SQLiteMetadataReportRepository:
             ).rowcount
         if updated != 1:
             raise MetadataReportError("review preparation state changed")
+        transition_row = self._connection.execute(
+            "SELECT transition_id,report_id FROM metadata_policy_transition_items "
+            "WHERE work_id=? AND state='pending'",
+            (action.action_id,),
+        ).fetchone()
+        if transition_row is not None:
+            work_state = self._connection.execute(
+                "SELECT state FROM review_preparation_work WHERE work_id=?",
+                (action.action_id,),
+            ).fetchone()
+            failure_code = (
+                "stale"
+                if report_id != transition_row[1]
+                else (
+                    "failed"
+                    if work_state is not None
+                    and work_state[0] in {"failed", "stale"}
+                    else None
+                )
+            )
+            if failure_code is not None:
+                self._connection.execute(
+                    "UPDATE metadata_policy_transition_items SET state='failed',"
+                    "failure_code=?,updated_at=? WHERE transition_id=? AND work_id=? "
+                    "AND state='pending'",
+                    (
+                        failure_code,
+                        completed_at,
+                        transition_row[0],
+                        action.action_id,
+                    ),
+                )
+                self._refresh_metadata_policy_transition(
+                    transition_row[0], completed_at
+                )
         if provider_failure_code == "transient":
             self._connection.execute(
                 "UPDATE review_preparation_control SET "
@@ -1990,18 +2025,18 @@ class SQLiteMetadataReportRepository:
             policy_generation = self._connection.execute(
                 "SELECT generation FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
-            current_policy = (
-                self.current_resolved_metadata_policy(report.target.library)
-                if policy_generation is not None and policy_generation[0] > 1
-                else None
+            current_policy = self.current_resolved_metadata_policy(
+                report.target.library
+            )
+            policy_is_bound = current_policy is not None or (
+                policy_generation is not None and policy_generation[0] > 1
             )
             if (
                 report.report_id != proposal_set.report_id
                 or report.target.fingerprint != proposal_set.target_fingerprint
                 or current != (proposal_set.report_id,)
                 or (
-                    policy_generation is not None
-                    and policy_generation[0] > 1
+                    policy_is_bound
                     and (
                         current_policy is None
                         or proposal_set.resolved_policy_id != current_policy.resolved_id
@@ -2073,10 +2108,8 @@ class SQLiteMetadataReportRepository:
             generation = self._connection.execute(
                 "SELECT generation FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
-            current_policy = (
-                self.current_resolved_metadata_policy(report.target.library)
-                if generation is not None and generation[0] > 1
-                else None
+            current_policy = self.current_resolved_metadata_policy(
+                report.target.library
             )
             if (
                 proposal_set.report_id != report.report_id
@@ -2092,8 +2125,7 @@ class SQLiteMetadataReportRepository:
             ):
                 raise ReviewAdmissionIncompatibleError
             if (
-                generation is not None
-                and generation[0] > 1
+                (current_policy is not None or (generation is not None and generation[0] > 1))
                 and (
                     current_policy is None
                     or proposal_set.resolved_policy_id != current_policy.resolved_id
@@ -2610,6 +2642,16 @@ class SQLiteMetadataReportRepository:
     def current_resolved_metadata_policy(
         self, library: str
     ) -> ResolvedMetadataPolicy | None:
+        return self._metadata_policy_resolution(library, allow_missing=False)
+
+    def metadata_policy_resolution_for_preview(
+        self, library: str
+    ) -> ResolvedMetadataPolicy | None:
+        return self._metadata_policy_resolution(library, allow_missing=True)
+
+    def _metadata_policy_resolution(
+        self, library: str, *, allow_missing: bool
+    ) -> ResolvedMetadataPolicy | None:
         if type(library) is not str or not library:
             raise MetadataReportError("active metadata policy is unavailable")
         try:
@@ -2622,7 +2664,7 @@ class SQLiteMetadataReportRepository:
             if row is None:
                 raise MetadataReportError("active metadata policy is unavailable")
             if row[1] is None:
-                if row[0] == 1:
+                if row[0] == 1 or allow_missing:
                     return None
                 raise MetadataReportError("active metadata policy resolution is unavailable")
             resolved = ResolvedMetadataPolicy.from_data(json.loads(row[2]))
@@ -2637,6 +2679,72 @@ class SQLiteMetadataReportRepository:
             raise
         except (MetadataPolicyError, ValueError, TypeError, sqlite3.Error) as error:
             raise MetadataReportError("active metadata policy is unavailable") from error
+
+    def bind_initial_metadata_policy_resolution(self, document: str) -> str:
+        """Bind one exact configured resolution while generation one is active."""
+        try:
+            resolved = ResolvedMetadataPolicy.from_data(json.loads(document))
+            if resolved.canonical_json != document:
+                raise MetadataPolicyError("policy resolution is not canonical")
+            self._connection.execute("BEGIN IMMEDIATE")
+            state = self._connection.execute(
+                "SELECT s.generation,s.active_policy_id,d.document "
+                "FROM metadata_policy_state s JOIN metadata_policy_drafts d "
+                "ON d.policy_id=s.active_policy_id WHERE s.singleton=1"
+            ).fetchone()
+            if state is None or state[0] != 1 or resolved.profile_id != state[1]:
+                raise MetadataReportError(
+                    "active metadata policy resolution is unavailable"
+                )
+            profile = MetadataPolicyProfile.from_data(json.loads(state[2]))
+            if profile.policy_id != resolved.profile_id:
+                raise MetadataReportError(
+                    "active metadata policy resolution is unavailable"
+                )
+            self._connection.execute(
+                "INSERT OR IGNORE INTO metadata_policy_resolutions("
+                "generation,library_name,resolved_policy_id,document) VALUES(1,?,?,?)",
+                (resolved.library, resolved.resolved_id, document),
+            )
+            stored = self._connection.execute(
+                "SELECT resolved_policy_id,document FROM metadata_policy_resolutions "
+                "WHERE generation=1 AND library_name=?",
+                (resolved.library,),
+            ).fetchone()
+            if stored != (resolved.resolved_id, document):
+                raise MetadataReportError(
+                    "active metadata policy resolution is unavailable"
+                )
+            self._connection.commit()
+            return resolved.resolved_id
+        except (MetadataReportError, MetadataPolicyError, sqlite3.Error, TypeError, ValueError) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError(
+                "active metadata policy resolution is unavailable"
+            ) from error
+
+    def _restart_metadata_policy_work(
+        self,
+        work_id: str,
+        work_stage: str,
+        report_id: str,
+        updated_at: int,
+    ) -> None:
+        restart_stage = "extraction" if work_stage == "extraction" else "proposal"
+        self._connection.execute(
+            "UPDATE review_preparation_work SET stage=?,state='queued',attempt=0,"
+            "recovery_attempt=0,report_id=?,proposal_set_id=NULL,review_case_id=NULL,"
+            "failure_code=NULL,updated_at=? WHERE work_id=?",
+            (
+                restart_stage,
+                None if restart_stage == "extraction" else report_id,
+                updated_at,
+                work_id,
+            ),
+        )
 
     def activate_metadata_policy(
         self,
@@ -2778,12 +2886,18 @@ class SQLiteMetadataReportRepository:
                     if work[2] == "provider" and work[4] != report_id:
                         item_state = "failed"
                         failure = "stale"
-                    elif work[2] not in {"extraction", "provider"}:
-                        if work[4] != report_id:
-                            raise MetadataReportError("metadata policy cohort evidence changed")
-                        self._connection.execute(
-                            "UPDATE review_preparation_work SET stage='proposal',state='queued',attempt=0,recovery_attempt=0,proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL,updated_at=? WHERE work_id=?",
-                            (activated_at, work[0]),
+                    elif work[2] not in {"extraction", "provider"} or work[3] in {
+                        "failed",
+                        "stale",
+                    }:
+                        if work[4] != report_id and not (
+                            work[2] == "extraction" and work[4] is None
+                        ):
+                            raise MetadataReportError(
+                                "metadata policy cohort evidence changed"
+                            )
+                        self._restart_metadata_policy_work(
+                            work[0], work[2], report_id, activated_at
                         )
                     self._connection.execute(
                         "UPDATE review_preparation_scans SET state='processing',updated_at=? WHERE scan_id=?",
@@ -2865,9 +2979,10 @@ class SQLiteMetadataReportRepository:
                         "SELECT stage,state,report_id FROM review_preparation_work WHERE work_id=?",
                         (work_id,),
                     ).fetchone()
-                    if existing_work is None or (
-                        existing_work[0] != "extraction"
-                        and existing_work[2] != report_id
+                    if existing_work is None or existing_work[2] not in (
+                        {None, report_id}
+                        if existing_work[0] == "extraction"
+                        else {report_id}
                     ):
                         work_id = None
                     else:
@@ -2878,17 +2993,8 @@ class SQLiteMetadataReportRepository:
                     "extraction",
                     "provider",
                 }:
-                    restart_stage = (
-                        "extraction" if work_stage == "extraction" else "proposal"
-                    )
-                    self._connection.execute(
-                        "UPDATE review_preparation_work SET stage=?,state='queued',attempt=0,recovery_attempt=0,report_id=?,proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL,updated_at=? WHERE work_id=?",
-                        (
-                            restart_stage,
-                            None if restart_stage == "extraction" else report_id,
-                            retried_at,
-                            work_id,
-                        ),
+                    self._restart_metadata_policy_work(
+                        work_id, work_stage, report_id, retried_at
                     )
                 self._connection.execute(
                     "UPDATE metadata_policy_transition_items SET work_id=?,state='pending',failure_code=NULL,updated_at=? WHERE transition_id=? AND connection_name=? AND library_name=? AND item_id=?",

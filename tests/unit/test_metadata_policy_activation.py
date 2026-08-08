@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
+    SQLiteMetadataReportRepository,
     open_repository,
 )
 from mechanical_librarian.domain.metadata_policy import (
@@ -20,6 +23,8 @@ from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDe
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
+from mechanical_librarian.application.metadata_policy import PolicyNotebook
+from mechanical_librarian.bootstrap import composition
 from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report
 from tests.unit.test_shadow_reviews import _identity
 
@@ -437,6 +442,188 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         self.assertEqual(("extraction", None), (action.stage, action.report_id))
         reopened.close()
 
+    def test_activation_restarts_preexisting_terminal_early_work(self) -> None:
+        for stage, expected_stage, expected_report in (
+            ("extraction", "extraction", None),
+            ("provider", "proposal", "fixed"),
+        ):
+            with self.subTest(stage=stage):
+                path = Path(self.directory.name) / f"terminal-{stage}.sqlite"
+                repository, report, _, _ = self._current_case_with_completed_work(path)
+                repository._connection.execute(
+                    "UPDATE review_preparation_work SET stage=?,state='failed',"
+                    "attempt=3,recovery_attempt=2,report_id=?,proposal_set_id=NULL,"
+                    "review_case_id=NULL,failure_code='failed',updated_at=24",
+                    (stage, None if stage == "extraction" else report.report_id),
+                )
+                repository._connection.execute(
+                    "UPDATE review_preparation_scans SET state='processing',updated_at=24"
+                )
+                repository._connection.commit()
+                draft = _draft()
+                repository.create_metadata_policy_draft(draft.canonical_json)
+                resolved = resolve_policy(draft, report.target.library)
+
+                transition = repository.activate_metadata_policy(
+                    draft.policy_id,
+                    MetadataPolicyProfile.builtin().policy_id,
+                    ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+                    25,
+                )
+                assert transition is not None
+                self.assertEqual(("processing", 0, 1), (transition.state, transition.failed, transition.total))
+                action = repository.claim_review_pipeline_action(26)
+                assert action is not None
+                self.assertEqual(expected_stage, action.stage)
+                self.assertEqual(
+                    None if expected_report is None else report.report_id,
+                    action.report_id,
+                )
+                repository.close()
+
+    def test_atomic_extraction_callback_updates_fixed_transition_failure(self) -> None:
+        for outcome in ("stale", "provider"):
+            with self.subTest(outcome=outcome):
+                path = Path(self.directory.name) / f"callback-{outcome}.sqlite"
+                repository, report, _, _ = self._current_case_with_completed_work(path)
+                repository._connection.execute(
+                    "UPDATE review_preparation_work SET stage='extraction',state='queued',"
+                    "attempt=0,recovery_attempt=0,report_id=NULL,proposal_set_id=NULL,"
+                    "review_case_id=NULL,failure_code=NULL,updated_at=24"
+                )
+                repository._connection.execute(
+                    "UPDATE review_preparation_scans SET state='processing',updated_at=24"
+                )
+                repository._connection.commit()
+                draft = _draft()
+                repository.create_metadata_policy_draft(draft.canonical_json)
+                resolved = resolve_policy(draft, report.target.library)
+                transition = repository.activate_metadata_policy(
+                    draft.policy_id,
+                    MetadataPolicyProfile.builtin().policy_id,
+                    ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+                    25,
+                )
+                assert transition is not None
+                extraction = repository.claim_review_pipeline_action(26)
+                assert extraction is not None
+                published = (
+                    _report("Changed title", "c", "d")
+                    if outcome == "stale"
+                    else report
+                )
+                repository.publish(
+                    published,
+                    lambda: True,
+                    None,
+                    lambda value, exact: value.complete_review_extraction_publication(
+                        extraction,
+                        exact.report_id,
+                        27,
+                        provider_failure_code=(
+                            "provider" if outcome == "provider" else None
+                        ),
+                    ),
+                )
+                failed = repository.metadata_policy_transition()
+                assert failed is not None
+                self.assertEqual(("completed_with_failures", 1), (failed.state, failed.failed))
+                self.assertEqual(
+                    "stale" if outcome == "stale" else "failed",
+                    repository._connection.execute(
+                        "SELECT failure_code FROM metadata_policy_transition_items"
+                    ).fetchone()[0],
+                )
+                repository.close()
+
+    def test_new_library_preview_can_establish_next_generation_resolution(self) -> None:
+        repository = open_repository(self.path)
+        first = _draft()
+        repository.create_metadata_policy_draft(first.canonical_json)
+        first_resolution = resolve_policy(first, "first")
+        transition = repository.activate_metadata_policy(
+            first.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            (("first", first_resolution.resolved_id, first_resolution.canonical_json),),
+            10,
+        )
+        assert transition is not None
+        self.assertEqual("completed", transition.state)
+        second = MetadataPolicyProfile.create(
+            "Expanded policy",
+            {**dict(first.options), "language_rendering": "preserve"},
+            dict(first.destinations),
+        )
+        repository.create_metadata_policy_draft(second.canonical_json)
+        notebook = PolicyNotebook(repository, ("first", "second"), {})
+
+        preview = notebook.preview(second)
+        self.assertEqual(("first", "second"), tuple(item.library for item in preview.libraries))
+        configuration = SimpleNamespace(
+            libraries=(SimpleNamespace(name="second", policy_override=None),)
+        )
+        with self.assertRaises(MetadataReportError):
+            composition._current_resolved_policy(
+                configuration, repository, "second"
+            )
+        activation = notebook.activate(second.policy_id, first.policy_id, 11)
+        assert activation.transition is not None
+        self.assertEqual(3, activation.transition.generation)
+        persisted = repository.current_resolved_metadata_policy("second")
+        assert persisted is not None
+        self.assertEqual(second.policy_id, persisted.profile_id)
+        repository.close()
+
+    def test_generation_one_configured_override_binds_and_replays_through_admission(self) -> None:
+        repository = open_repository(self.path)
+        report = _report()
+        repository.publish(report, lambda: True)
+        override = {
+            "options": {},
+            "destinations": {"tags": "ignore"},
+        }
+        configuration = SimpleNamespace(
+            libraries=(
+                SimpleNamespace(
+                    name=report.target.library,
+                    policy_override=override,
+                ),
+            )
+        )
+        resolved = composition._current_resolved_policy(
+            configuration, repository, report.target.library
+        )
+        proposal = evaluate_report(
+            report, resolved.resolved_id, dict(resolved.destinations)
+        )
+
+        repository.publish_proposal(proposal)
+        admitted = json.loads(repository.admit_review_case(proposal))
+        self.assertEqual("admitted", admitted["status"])
+        tags = next(
+            result
+            for result in proposal.results
+            if result.destination is TargetDestination.TAGS
+        )
+        self.assertEqual((ProposalOutcome.INELIGIBLE, ("policy_ignored",)), (tags.outcome, tags.reasons))
+        persisted = repository.current_resolved_metadata_policy(
+            report.target.library
+        )
+        self.assertEqual(resolved, persisted)
+        changed_configuration = SimpleNamespace(
+            libraries=(
+                SimpleNamespace(
+                    name=report.target.library,
+                    policy_override={"options": {}, "destinations": {"tags": "ask"}},
+                ),
+            )
+        )
+        with self.assertRaises(composition.ReviewCaseError):
+            composition._current_resolved_policy(
+                changed_configuration, repository, report.target.library
+            )
+        repository.close()
+
     def test_activation_and_human_decision_commit_orderings_are_atomic(self) -> None:
         decision_first_path = Path(self.directory.name) / "decision-first.sqlite"
         decision_writer, report, _, case_id = self._current_case_with_completed_work(
@@ -445,7 +632,13 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         decision = self._human_decision(
             decision_writer, case_id, "decision-before-activation-0001"
         )
-        activator = open_repository(decision_first_path, create=False)
+        activator = SQLiteMetadataReportRepository(
+            sqlite3.connect(
+                decision_first_path,
+                check_same_thread=False,
+                isolation_level=None,
+            )
+        )
         draft = _draft()
         decision_writer.create_metadata_policy_draft(draft.canonical_json)
         resolved = resolve_policy(draft, report.target.library)
@@ -486,7 +679,13 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         stale_decision = self._human_decision(
             stale_writer, case_id, "decision-after-activation-0001"
         )
-        activator = open_repository(activation_first_path, create=False)
+        activator = SQLiteMetadataReportRepository(
+            sqlite3.connect(
+                activation_first_path,
+                check_same_thread=False,
+                isolation_level=None,
+            )
+        )
         draft = _draft()
         stale_writer.create_metadata_policy_draft(draft.canonical_json)
         resolved = resolve_policy(draft, report.target.library)

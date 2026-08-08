@@ -396,7 +396,10 @@ is processing, exact response replay, consecutive generation gating,
 exact-current cohort exclusion, stale old-policy publication, historical
 resolved-destination replay, progressive completion, missing F17a linkage,
 actual terminal extraction/provider failure and safe stage-specific retry, and
-transition-scoped acknowledgement. Generated
+transition-scoped acknowledgement. Regression coverage also binds configured
+generation-one overrides through admission, keeps new-library preview separate
+from fail-closed proposal execution, restarts pre-existing terminal work, and
+checks atomic extraction-publication transition failure. Generated
 OpenAPI and the authenticated browser flow cover activation and transition
 routes; exact installed-artifact qualification remains report-only and verifies
 no target, media, or artifact writes.
