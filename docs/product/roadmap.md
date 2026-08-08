@@ -327,6 +327,12 @@ F17a now delivers decision-only continuous review preparation, bounded polling,
 fair persisted work admission, restart recovery, and compact owner activity.
 Guarded apply composition and release publication remain separate outcomes.
 
+The completed 0.12 checkpoint also provides a sealed, decision-only automatic
+policy posture after Preview qualification. Its automatic outcomes are durable
+and origin-labelled, while pause, category/global suspension, and explicit
+recovery route work back to human Attention. It has no apply, target, media,
+or artifact write authority.
+
 - Enable persisted scheduled unattended processing with polling as the
   authoritative reconciliation path.
 - Keep notification-assisted reconciliation and summary enhancements deferred

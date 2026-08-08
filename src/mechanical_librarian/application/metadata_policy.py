@@ -417,6 +417,15 @@ class PolicyNotebook:
                     resolve_policy(profile, library, self._overrides.get(library)),
                 )
             )
+            requested = {
+                f"{category}:{dict(resolved.options)[category]}"
+                for _, _, document in resolutions
+                for resolved in (ResolvedMetadataPolicy.from_data(json.loads(document)),)
+                for category, destination in resolved.destinations
+                if destination == "automatic"
+            }
+            if not requested.issubset(QUALIFIED_POLICY_OPTIONS):
+                raise MetadataPolicyApplicationError("policy automatic unqualified")
             transition = self._repository.activate_metadata_policy(
                 policy_id, expected_active_policy_id, resolutions, activated_at
             )

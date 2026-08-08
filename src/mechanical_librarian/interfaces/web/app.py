@@ -96,13 +96,28 @@ class _DecisionProjection(_ClosedModel):
 
 
 class _AutomaticDecisionProjection(_ClosedModel):
+    candidate_id: str | None
     decision_id: str
     destination: str
     occurred_at: int
     outcome: str
     proposal_id: str
     review_case_id: str
+    selected_value: _ProposedValue | None
     target_fingerprint: str
+
+
+class _AutomaticPauseRequest(_ClosedModel):
+    paused: bool
+
+
+class _AutomaticRecoveryRequest(_ClosedModel):
+    category: StrictStr | None
+
+
+class _AutomaticSuspendRequest(_ClosedModel):
+    category: StrictStr | None = None
+    reason: StrictStr = Field(min_length=1, max_length=256)
 
 
 class _ReviewField(_ClosedModel):
@@ -795,13 +810,10 @@ def create_review_app(
         return _automatic_safety_response()
 
     @app.post("/api/v1/metadata-policy/automatic-safety/pause", response_model=_AutomaticSafetyResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
-    async def set_automatic_pause(request: Request, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _AutomaticSafetyResponse:
+    def set_automatic_pause(payload: _AutomaticPauseRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _AutomaticSafetyResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            body = await request.json()
-            if type(body) is not dict or set(body) != {"paused"} or type(body["paused"]) is not bool:
-                raise ValueError
-            automatic_safety.pause(body["paused"], clock())
+            automatic_safety.pause(payload.paused, clock())
             return _automatic_safety_response()
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
@@ -809,14 +821,11 @@ def create_review_app(
             raise HTTPException(422, detail={"code": "request"}) from None
 
     @app.post("/api/v1/metadata-policy/automatic-safety/recover", response_model=_AutomaticSafetyResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
-    async def recover_automatic_safety(request: Request, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _AutomaticSafetyResponse:
+    def recover_automatic_safety(payload: _AutomaticRecoveryRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _AutomaticSafetyResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            body = await request.json()
-            category = body.get("category") if type(body) is dict and set(body) == {"category"} else None
-            if category is not None and (type(category) is not str or not category):
-                raise ValueError
-            if type(body) is not dict or set(body) != {"category"}:
+            category = payload.category
+            if category is not None and not category:
                 raise ValueError
             automatic_safety.recover(clock(), category)
             return _automatic_safety_response()
@@ -826,13 +835,12 @@ def create_review_app(
             raise HTTPException(422, detail={"code": "request"}) from None
 
     @app.post("/api/v1/metadata-policy/automatic-safety/suspend", response_model=_AutomaticSafetyResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
-    async def suspend_automatic_safety(request: Request, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _AutomaticSafetyResponse:
+    def suspend_automatic_safety(payload: _AutomaticSuspendRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _AutomaticSafetyResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            body = await request.json()
-            if type(body) is not dict or set(body) not in ({"reason"}, {"reason", "category"}) or type(body.get("reason")) is not str or not body["reason"] or ("category" in body and (type(body["category"]) is not str or not body["category"])):
+            if payload.category is not None and not payload.category:
                 raise ValueError
-            automatic_safety.suspend(body["reason"], clock(), body.get("category"))
+            automatic_safety.suspend(payload.reason, clock(), payload.category)
             return _automatic_safety_response()
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None

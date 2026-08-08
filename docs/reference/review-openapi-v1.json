@@ -110,6 +110,17 @@
       "_AutomaticDecisionProjection": {
         "additionalProperties": false,
         "properties": {
+          "candidate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
           "decision_id": {
             "title": "Decision Id",
             "type": "string"
@@ -134,21 +145,68 @@
             "title": "Review Case Id",
             "type": "string"
           },
+          "selected_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "target_fingerprint": {
             "title": "Target Fingerprint",
             "type": "string"
           }
         },
         "required": [
+          "candidate_id",
           "decision_id",
           "destination",
           "occurred_at",
           "outcome",
           "proposal_id",
           "review_case_id",
+          "selected_value",
           "target_fingerprint"
         ],
         "title": "_AutomaticDecisionProjection",
+        "type": "object"
+      },
+      "_AutomaticPauseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "paused"
+        ],
+        "title": "_AutomaticPauseRequest",
+        "type": "object"
+      },
+      "_AutomaticRecoveryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          }
+        },
+        "required": [
+          "category"
+        ],
+        "title": "_AutomaticRecoveryRequest",
         "type": "object"
       },
       "_AutomaticSafetyResponse": {
@@ -183,6 +241,33 @@
           "category_suspensions"
         ],
         "title": "_AutomaticSafetyResponse",
+        "type": "object"
+      },
+      "_AutomaticSuspendRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "reason": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "_AutomaticSuspendRequest",
         "type": "object"
       },
       "_CaseDetailResponse": {
@@ -2445,6 +2530,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_AutomaticPauseRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -2529,6 +2624,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_AutomaticRecoveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -2613,6 +2718,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_AutomaticSuspendRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {

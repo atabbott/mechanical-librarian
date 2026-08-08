@@ -34,6 +34,10 @@ _POLICY_CATEGORY_BY_DESTINATION = {
     "publisher": "publisher_preference",
     "title": "title_layout",
     "subtitle": "title_layout",
+    # Series is the third member of the atomic bibliographic tuple.  It has
+    # no independently configurable policy category, so it inherits the
+    # qualified title-layout policy rather than being silently unsupported.
+    "series": "title_layout",
     "genres": "genres",
     "tags": "tags",
     "description": "description_fill",

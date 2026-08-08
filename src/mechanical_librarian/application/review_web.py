@@ -228,7 +228,7 @@ class InspectCurrentReviewCase:
                             "decision_id", "destination", "occurred_at", "outcome",
                             "proposal_id", "review_case_id", "target_fingerprint",
                         )
-                    }
+                    } | {"candidate_id": value.get("candidate_id")}
                 else:
                     decision = HumanDecision.from_json(document)
                     decisions[decision.destination] = decision
@@ -258,6 +258,19 @@ class InspectCurrentReviewCase:
             assert type(reasons) is list
             decision = decisions.get(destination)
             automatic_decision = automatic.get(destination)
+            if automatic_decision is not None:
+                candidate_id = automatic_decision.get("candidate_id")
+                selected = next(
+                    (alternative["value"] for alternative in alternatives
+                     if alternative["alternative_id"] == candidate_id),
+                    None,
+                )
+                if automatic_decision["outcome"] == "candidate" and selected is None:
+                    raise ReviewWebError("unavailable")
+                automatic_decision = {
+                    **automatic_decision,
+                    "selected_value": selected,
+                }
             fields.append(
                 {
                     "current": target_fields[destination],

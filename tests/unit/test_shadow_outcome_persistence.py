@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import MetadataReportError, open_repository
 from mechanical_librarian.application.metadata_policy import (
     MAX_SHADOW_SAMPLE_RESPONSE_BYTES,
     PolicyNotebook,
@@ -35,6 +35,7 @@ from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError, AutomaticSafetyState
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source,
@@ -198,6 +199,7 @@ def _synthetic_automatic_tuple(repository, case_id: str, category: str):
             disposition="candidate",
             policy_category=category,
             policy_option=option,
+            policy_destination="automatic",
             destination=destination,
             combination_ids=shared,
             proposal_id="review_proposal_" + f"{index:064x}",
@@ -521,6 +523,26 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                     "UPDATE shadow_decision_outcomes SET evaluated_at=99"
                 )
             connection.close()
+
+    def test_preview_reconciliation_failure_rolls_back_the_posture_and_automatic_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            repository._record_automatic_outcomes(
+                _synthetic_automatic_tuple(repository, case_id, "title_layout"), 2
+            )
+            with patch.object(
+                repository,
+                "activate_metadata_policy",
+                side_effect=MetadataReportError("reconciliation failed"),
+            ):
+                with self.assertRaisesRegex(MetadataReportError, "reconciliation failed"):
+                    repository.enter_shadow_preview(3)
+            self.assertEqual("automatic", repository.shadow_posture())
+            self.assertEqual((3,), repository._connection.execute(
+                "SELECT COUNT(*) FROM automatic_decisions"
+            ).fetchone())
+            repository.close()
 
     def test_automatic_safety_update_preserves_a_caller_transaction_and_restart(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -868,6 +890,59 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM automatic_decisions"
             ).fetchone())
             repository.close()
+
+    def test_nonautomatic_policy_destination_never_constructs_an_automatic_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            ignored = SimpleNamespace(
+                outcomes=(SimpleNamespace(
+                    disposition="candidate", policy_category="tags", policy_option="catalogue",
+                    policy_destination="ignore", destination="tags", combination_ids=(),
+                    proposal_id="review_proposal_" + "a" * 64,
+                    candidate_id="alternative_" + "b" * 64,
+                    rule_id="shadow_rule_" + "c" * 64,
+                    outcome_id="shadow_outcome_" + "d" * 64,
+                ),),
+                review_case_id=case_id,
+                report_id=ReviewCase.create_from_data(json.loads(repository.get_review_case(case_id))["case"]).report_id,
+                proposal_set_id=ReviewCase.create_from_data(json.loads(repository.get_review_case(case_id))["case"]).proposal_set_id,
+                target_fingerprint=ReviewCase.create_from_data(json.loads(repository.get_review_case(case_id))["case"]).target_fingerprint,
+                resolved_policy_id=repository.current_resolved_policy_id("ebooks"),
+                policy_generation=1,
+            )
+            repository._record_automatic_outcomes(ignored, 2)
+            self.assertEqual((0,), repository._connection.execute(
+                "SELECT COUNT(*) FROM automatic_decisions"
+            ).fetchone())
+            self.assertEqual(AutomaticSafetyState(False, None, ()), repository.automatic_safety_state())
+            repository.close()
+
+    def test_paused_or_category_suspended_automatic_tuple_remains_in_every_attention_projection(self) -> None:
+        for safety in (
+            AutomaticSafetyState(True, None, ()),
+            AutomaticSafetyState(False, None, (("title_layout", "admission_failed"),)),
+        ):
+            with self.subTest(safety=safety), tempfile.TemporaryDirectory() as temporary:
+                repository = open_repository(Path(temporary) / "reports.sqlite")
+                case_id = _case(repository)
+                repository.set_automatic_safety_state(safety, 1)
+                repository._record_automatic_outcomes(
+                    _synthetic_automatic_tuple(repository, case_id, "title_layout"), 2
+                )
+                self.assertEqual((0,), repository._connection.execute(
+                    "SELECT COUNT(*) FROM automatic_decisions"
+                ).fetchone())
+                detail = InspectCurrentReviewCase(repository).run(case_id)
+                title = next(field for field in detail["fields"] if field["destination"] == "title")
+                self.assertTrue(title["needs_attention"])
+                library = repository.read_review_library(None, 50, 0, True)
+                self.assertEqual(1, library.total)
+                self.assertEqual(1, library.attention_total)
+                attention = repository.read_review_attention(None, 50, 0)
+                self.assertEqual(1, attention.total)
+                self.assertEqual("title", attention.rows[0][2])
+                repository.close()
 
     def test_bootstrap_transition_acknowledgement_is_durable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

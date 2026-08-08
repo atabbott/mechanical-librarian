@@ -765,7 +765,8 @@ class ReviewWebTests(unittest.TestCase):
                 "review_case_id": self.case.review_case_id,
                 "proposal_id": self.case.proposals[0]["proposal_id"],
                 "destination": "title",
-                "outcome": "candidate",
+                "outcome": "keep_current",
+                "candidate_id": None,
                 "occurred_at": 7,
                 "target_fingerprint": self.case.target_fingerprint,
                 "report_id": "report_" + "b" * 64,
@@ -783,14 +784,28 @@ class ReviewWebTests(unittest.TestCase):
         self.assertFalse(field["needs_attention"])
         self.assertEqual(
             {
-                "decision_id", "destination", "occurred_at", "outcome",
+                "candidate_id", "decision_id", "destination", "occurred_at", "outcome",
                 "proposal_id", "review_case_id", "target_fingerprint",
+                "selected_value",
             },
             set(field["automatic_decision"]),
         )
         self.assertNotIn("actor", field["automatic_decision"])
-        self.assertNotIn("selected_value", field["automatic_decision"])
+        self.assertEqual("keep_current", field["automatic_decision"]["outcome"])
+        self.assertIsNone(field["automatic_decision"]["candidate_id"])
+        self.assertIsNone(field["automatic_decision"]["selected_value"])
         self.assertNotIn("qualification_manifest_sha256", field["automatic_decision"])
+
+    def test_automatic_safety_bodies_are_closed_before_control_access(self) -> None:
+        login = self._login()
+        headers = {**self.origin, "X-CSRF-Token": login["csrf_token"]}
+        for path, payload in (
+            ("/api/v1/metadata-policy/automatic-safety/pause", {"paused": True, "extra": True}),
+            ("/api/v1/metadata-policy/automatic-safety/recover", {"category": None, "extra": True}),
+            ("/api/v1/metadata-policy/automatic-safety/suspend", {"reason": "test", "extra": True}),
+        ):
+            response = self.client.post(path, headers=headers, json=payload)
+            self.assertEqual(422, response.status_code)
 
     def test_login_case_evidence_history_and_logout_round_trip(self) -> None:
         login = self._login()
@@ -1356,6 +1371,15 @@ class ReviewWebTests(unittest.TestCase):
                 if schema.get("type") == "object"
             )
         )
+        for path, schema in (
+            ("/api/v1/metadata-policy/automatic-safety/pause", "_AutomaticPauseRequest"),
+            ("/api/v1/metadata-policy/automatic-safety/recover", "_AutomaticRecoveryRequest"),
+            ("/api/v1/metadata-policy/automatic-safety/suspend", "_AutomaticSuspendRequest"),
+        ):
+            self.assertEqual(
+                {"$ref": f"#/components/schemas/{schema}"},
+                expected["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"],
+            )
         self.assertNotIn(str(self.hash_path).encode(), first.content)
         self.assertNotIn(b"correct horse", first.content)
         decision_operation = expected["paths"][

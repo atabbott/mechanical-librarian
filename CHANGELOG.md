@@ -8,8 +8,6 @@
   suspended fields in human Attention. This adds no apply, target, media, or
   production-service write capability.
 
-## Unreleased
-
 - Add an explicit metadata-policy Preview posture that records immutable,
   non-authoritative F19 outcomes as newly eligible exact-current cases pass the
   existing background projection stage. Outcomes bind exact policy, rule,

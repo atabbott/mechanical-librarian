@@ -18,6 +18,16 @@ The initial production profile is **decisive non-destructive**:
 
 The reference deployment may accept a measurable correction or override rate in exchange for a much smaller queue. Public defaults must expose this tradeoff plainly and allow a user to begin in shadow mode.
 
+## Current decision-only qualification boundary
+
+The 0.12 automatic posture is limited to the sealed F19a qualification
+envelope. It records immutable, origin-labelled automatic decisions only; it
+does not apply a plan or write target metadata, media, artifacts, or a
+production service. Preview remains non-authoritative. Owner pause, global or
+category suspension, and explicit recovery fail closed by retaining would-be
+automatic work in human Attention. Any field, option, or policy revision outside
+that exact envelope remains human-routed until separately qualified.
+
 ## Availability before curation
 
 Ingestion and consumption do not wait for metadata curation.

@@ -24,7 +24,7 @@ from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDe
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
-from mechanical_librarian.application.metadata_policy import PolicyNotebook
+from mechanical_librarian.application.metadata_policy import MetadataPolicyApplicationError, PolicyNotebook
 from mechanical_librarian.bootstrap import composition
 from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report
 from tests.unit.test_shadow_reviews import _identity
@@ -162,6 +162,26 @@ class MetadataPolicyActivationTests(unittest.TestCase):
                 6,
                 reconcile_current=True,
             )
+        repository.close()
+
+    def test_library_override_cannot_turn_an_unqualified_option_automatic(self) -> None:
+        repository = open_repository(self.path)
+        destinations = {
+            category: "unsupported" if category == "explicit" else "ask"
+            for category in OPTION_CATALOGUE
+        }
+        destinations["publisher_preference"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "Qualified base option", dict(DEFAULT_OPTIONS), destinations
+        )
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        notebook = PolicyNotebook(
+            repository,
+            ("ebooks",),
+            {"ebooks": {"options": {"publisher_preference": "imprint"}, "destinations": {}}},
+        )
+        with self.assertRaisesRegex(MetadataPolicyApplicationError, "automatic unqualified"):
+            notebook.activate(profile.policy_id, MetadataPolicyProfile.builtin().policy_id, 2)
         repository.close()
 
     def _current_case_with_completed_work(self, path: Path | None = None):

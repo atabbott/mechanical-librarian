@@ -910,7 +910,8 @@ if (root) {
       for (const field of resolved) {
         const row = element("section", null, "resolved-field");
         const usesProposed = field.deterministic_disposition === "use_proposed_value" && field.proposed_values.length;
-        const outcomeValue = field.human_decision?.outcome === "accept" ? field.human_decision.selected_value : usesProposed ? field.proposed_values.map(value => value.value) : field.current.value;
+        const automaticCandidate = field.automatic_decision?.outcome === "candidate" ? field.automatic_decision.selected_value : null;
+        const outcomeValue = field.human_decision?.outcome === "accept" ? field.human_decision.selected_value : automaticCandidate ?? (usesProposed ? field.proposed_values.map(value => value.value) : field.current.value);
         row.append(element("h3", field.destination), element("p", `${friendly(field.deterministic_disposition)} · Current: ${format(field.current.value)} · Outcome value: ${format(outcomeValue)}`));
         if (field.human_decision) row.append(element("p", `Human decision: ${friendly(field.human_decision.outcome)} by ${field.human_decision.actor}.`, "decision-recorded"));
         if (field.automatic_decision) row.append(element("p", `Handled automatically: ${friendly(field.automatic_decision.outcome)} · policy origin.`, "decision-recorded"));
