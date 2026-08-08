@@ -132,10 +132,12 @@ def policy_html(csrf_token: str) -> str:
         <label class="visually-hidden" for="policy-chapter-select">Policy chapter</label><select id="policy-chapter-select" class="policy-chapter-select"><option value="identity">Identity</option><option value="bibliography">Draft</option><option value="descriptions">Effects</option><option value="availability">Availability</option></select>
         <a href="#identity">Identity</a><a href="#bibliography">Draft</a><a href="#descriptions">Effects</a><a href="#availability">Availability</a>
       </nav>
+      <div class="policy-content">
       <section id="identity" class="policy-card"><p class="eyebrow">Active · built-in</p><h2>Calm, conservative defaults</h2><div id="policy-active" aria-live="polite"><p>Loading active policy…</p></div></section>
       <section id="bibliography" class="policy-card"><h2>Draft before activation</h2><p>A draft is immutable and versioned. It can be validated and previewed, but cannot become active in this view.</p><form id="policy-draft"><label for="policy-name">Draft name</label><input id="policy-name" maxlength="80" required value="Policy draft"><div id="policy-fields"></div><div class="policy-actions"><button class="secondary-button" type="submit" data-action="validate">Validate</button><button class="primary-button" type="submit" data-action="create">Create immutable draft</button><button class="secondary-button" type="submit" data-action="preview">Preview effects</button></div><p id="policy-status" role="status"></p></form></section>
       <section id="descriptions" class="policy-card"><h2>Per-library effects</h2><p>Configured sparse overrides are resolved with the global draft. Preview names every affected category and current unapplied count.</p><div id="policy-preview" aria-live="polite"></div></section>
       <section id="availability" class="policy-card"><h2>Qualification availability</h2><p>Automatic is unavailable until qualified. Ask me and Ignore remain manual-only. Explicit is unsupported.</p></section>
+      </div>
     </div>
   </section>
 </main>""",
@@ -363,6 +365,7 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .policy-page { max-width: 1080px; margin: 0 auto; }
 .policy-page .lede { max-width: 720px; color: var(--ink-soft); }
 .policy-notebook { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 18px; margin-top: 26px; }
+.policy-content { min-width: 0; }
 .policy-chapters { position: sticky; top: 132px; align-self: start; display: grid; gap: 3px; padding: 9px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .policy-chapters a { padding: 10px; border-radius: 8px; color: var(--ink-soft); font-weight: 750; text-decoration: none; }
 .policy-chapters a:focus-visible, .policy-chapters a:hover { background: var(--surface-strong); color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
