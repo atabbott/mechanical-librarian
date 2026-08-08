@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add closed, canonical metadata-policy draft and sparse per-library preview
+  contracts. The built-in policy stays active; preview creates no activation,
+  queue authority, decision, apply, or target/media write capability.
+
 - Activate bounded continuous review reconciliation in the supported container:
   first-start and interval scans coalesce through the persisted two-lane
   pipeline, fair claims and provider circuit state survive restart, and the

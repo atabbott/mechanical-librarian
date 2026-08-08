@@ -348,6 +348,17 @@
           "title": "Name",
           "type": "string"
         },
+        "policy_override": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PolicyOverrideInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "provider_connections": {
           "items": {
             "pattern": "^[a-z][a-z0-9_-]{0,63}$",
@@ -438,6 +449,34 @@
         "read_only"
       ],
       "title": "MountInput",
+      "type": "object"
+    },
+    "PolicyOverrideInput": {
+      "additionalProperties": false,
+      "description": "Sparse, read-only deviations from the built-in policy profile.",
+      "properties": {
+        "destinations": {
+          "default": {},
+          "patternProperties": {
+            "^[a-z][a-z0-9_-]{0,63}$": {
+              "type": "string"
+            }
+          },
+          "title": "Destinations",
+          "type": "object"
+        },
+        "options": {
+          "default": {},
+          "patternProperties": {
+            "^[a-z][a-z0-9_-]{0,63}$": {
+              "type": "string"
+            }
+          },
+          "title": "Options",
+          "type": "object"
+        }
+      },
+      "title": "PolicyOverrideInput",
       "type": "object"
     },
     "ProviderInput": {

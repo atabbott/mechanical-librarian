@@ -312,6 +312,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
                 report_id=report.report_id,
                 target_fingerprint=report.target.fingerprint,
                 results=(result, *base.results[1:]),
+                resolved_policy_id=base.resolved_policy_id,
             )
             repository._connection.execute(
                 "INSERT INTO proposal_sets("
@@ -350,6 +351,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
                 report_id=report.report_id,
                 target_fingerprint="f" * 64,
                 results=exact.results,
+                resolved_policy_id=exact.resolved_policy_id,
             )
             repository._connection.execute(
                 "INSERT INTO proposal_sets("

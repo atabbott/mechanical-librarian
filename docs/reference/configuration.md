@@ -81,6 +81,16 @@ provider names are unique. Each library refers to exactly one target connection
 and lists its provider connections explicitly; duplicate references are
 invalid. List order has no priority meaning and is canonicalized by name.
 
+## Sparse policy overrides
+
+The built-in metadata policy needs no configuration. A library may instead
+declare a read-only, sparse `policy_override` with only the named `options` and
+`destinations` it differs on. Both maps use the closed policy catalogue; unknown
+or removed fields fail configuration loading rather than silently becoming Ask
+me or Ignore. The application never rewrites this configuration. `automatic`
+is accepted as stated intent but remains unavailable until a separately
+qualified policy can consume it; `explicit` is always `unsupported`.
+
 An ebook library requires a named read-only mount. Audiobook libraries may
 coexist and use `mount: null`, but `metadata-report` rejects their items before
 parser/provider/publication activity.

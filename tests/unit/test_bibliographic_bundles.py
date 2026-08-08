@@ -632,6 +632,7 @@ class BibliographicBundleTests(unittest.TestCase):
             report_id=with_relationships.report_id,
             target_fingerprint=with_relationships.target_fingerprint,
             results=with_relationships.results,
+            resolved_policy_id=with_relationships.resolved_policy_id,
         )
 
         self.assertNotEqual(
@@ -961,6 +962,7 @@ class BibliographicBundleTests(unittest.TestCase):
             report_id=proposal.report_id,
             target_fingerprint=proposal.target_fingerprint,
             results=proposal.results,
+            resolved_policy_id=proposal.resolved_policy_id,
         )
         self.assertNotEqual(
             proposal.proposal_set_id,

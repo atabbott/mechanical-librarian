@@ -55,10 +55,12 @@ def _navigation(active: str) -> str:
     library = ' aria-current="page"' if active == "library" else ""
     attention = ' aria-current="page"' if active == "attention" else ""
     detail = ' aria-current="page"' if active == "detail" else ""
+    policy = ' aria-current="page"' if active == "policy" else ""
     return f"""<nav class="workspace-navigation" aria-label="Review workspace">
   <div class="workspace-navigation-inner">
     <a class="workspace-tab" href="/library"{library}>Library</a>
     <a class="workspace-tab attention-tab" href="/attention"{attention}>Attention</a>
+    <a class="workspace-tab" href="/policy"{policy}>Policy</a>
     <span class="workspace-tab detail-tab"{detail}>Detail</span>
     <span class="workspace-context">Human exception review · exact-current records</span>
   </div>
@@ -108,6 +110,31 @@ def attention_html(csrf_token: str) -> str:
         main="""<main id="workspace" class="prototype-shell">
   <section id="attention" class="attention-page" tabindex="-1">
     <p class="loading" role="status"><span aria-hidden="true"></span> Loading bounded attention queue…</p>
+  </section>
+</main>""",
+    )
+
+
+def policy_html(csrf_token: str) -> str:
+    """The selected B notebook is intentionally a policy-only surface."""
+    return _shell(
+        title="Metadata policy",
+        active="policy",
+        csrf_token=csrf_token,
+        main="""<main id="workspace" class="prototype-shell">
+  <section class="policy-page" aria-labelledby="policy-title" tabindex="-1">
+    <p class="eyebrow">Metadata policy · B notebook</p>
+    <h1 id="policy-title">Choose how prepared metadata reaches you</h1>
+    <p class="lede">The built-in policy is active. Draft previews are read-only: they do not alter evidence, proposals, the queue, or your library.</p>
+    <div class="policy-notebook" aria-label="Policy notebook">
+      <nav class="policy-chapters" aria-label="Policy chapters">
+        <a href="#identity">Identity</a><a href="#bibliography">Bibliography</a><a href="#descriptions">Descriptions</a><a href="#availability">Availability</a>
+      </nav>
+      <section id="identity" class="policy-card"><p class="eyebrow">Active · built-in</p><h2>Calm, conservative defaults</h2><p>Title, date, contributors, language, publisher, identifiers, genres, tags, description, cover order, and Explicit use named options only.</p></section>
+      <section id="bibliography" class="policy-card"><h2>Draft before activation</h2><p>A draft is immutable and versioned. It can be validated and previewed, but cannot become active in this view.</p></section>
+      <section id="descriptions" class="policy-card"><h2>Per-library effects</h2><p>Configured sparse overrides are resolved with the global draft. Preview names every affected category and current unapplied count.</p></section>
+      <section id="availability" class="policy-card"><h2>Qualification availability</h2><p>Automatic is unavailable until qualified. Ask me and Ignore remain manual-only. Explicit is unsupported.</p></section>
+    </div>
   </section>
 </main>""",
     )
@@ -331,6 +358,15 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .primary-button { width: 100%; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent); color: var(--on-accent); cursor: pointer; font-weight: 800; }
 #login-status { min-height: 24px; margin: 9px 0 0; color: var(--danger); }
 
+.policy-page { max-width: 1080px; margin: 0 auto; }
+.policy-page .lede { max-width: 720px; color: var(--ink-soft); }
+.policy-notebook { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 18px; margin-top: 26px; }
+.policy-chapters { position: sticky; top: 132px; align-self: start; display: grid; gap: 3px; padding: 9px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.policy-chapters a { padding: 10px; border-radius: 8px; color: var(--ink-soft); font-weight: 750; text-decoration: none; }
+.policy-chapters a:focus-visible, .policy-chapters a:hover { background: var(--surface-strong); color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
+.policy-card { margin-bottom: 12px; padding: clamp(18px, 3vw, 30px); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
+.policy-card h2 { margin-top: 0; }
+
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 
@@ -341,6 +377,8 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
   .case-sidebar { padding: 20px; }
   .field-navigation { display: flex; overflow-x: auto; padding-bottom: 5px; }
   .field-navigation a { flex: 0 0 auto; min-width: 170px; }
+  .policy-notebook { grid-template-columns: 1fr; }
+  .policy-chapters { position: sticky; top: 118px; grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; }
 }
 
 @media (max-width: 700px) {

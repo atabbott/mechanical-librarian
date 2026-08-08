@@ -49,6 +49,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationSupervisor,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyError, MetadataPolicyProfile
 from mechanical_librarian.interfaces.web import review_frontend
 
 
@@ -278,6 +279,17 @@ class _DecisionAcknowledgement(_DecisionProjection):
     schema_version: str
 
 
+class _PolicyDraftRequest(_ClosedModel):
+    name: StrictStr = Field(min_length=1, max_length=80)
+    options: dict[StrictStr, StrictStr] = Field(max_length=16)
+    destinations: dict[StrictStr, StrictStr] = Field(max_length=16)
+
+
+class _PolicyDraftResponse(_ClosedModel):
+    policy_id: str
+    schema_version: Literal["metadata-policy-profile-v1"] = "metadata-policy-profile-v1"
+
+
 class _BodyLimitMiddleware:
     def __init__(
         self,
@@ -298,10 +310,11 @@ class _BodyLimitMiddleware:
                 path,
             )
         )
-        if scope["type"] != "http" or not (is_login or is_decision):
+        is_policy_draft = path == "/api/v1/metadata-policy/drafts"
+        if scope["type"] != "http" or not (is_login or is_decision or is_policy_draft):
             await self._app(scope, receive, send)
             return
-        maximum = self._maximum_bytes if is_login else self._decision_maximum_bytes
+        maximum = self._maximum_bytes if is_login else (16_384 if is_policy_draft else self._decision_maximum_bytes)
         declared = next(
             (
                 value
@@ -501,6 +514,27 @@ def create_review_app(
         response.delete_cookie(_COOKIE_NAME, path="/", secure=True, httponly=True, samesite="strict")
         response.status_code = 204
         return response
+
+    @app.post(
+        "/api/v1/metadata-policy/drafts",
+        response_model=_PolicyDraftResponse,
+        status_code=201,
+        responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)},
+    )
+    def create_metadata_policy_draft(
+        payload: _PolicyDraftRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PolicyDraftResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            profile = MetadataPolicyProfile.create(payload.name, payload.options, payload.destinations)
+            policy_id = serialized_repository.create_metadata_policy_draft(profile.canonical_json)
+        except (MetadataPolicyError, ReviewWebError):
+            raise HTTPException(422, detail={"code": "invalid"}) from None
+        except Exception:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        return _PolicyDraftResponse(policy_id=policy_id)
 
     @app.get(
         "/api/v1/review-cases/{review_case_id}",
@@ -850,6 +884,14 @@ def create_review_app(
         assert ml_session is not None
         return HTMLResponse(review_frontend.attention_html(browser_csrf(ml_session)))
 
+    @app.get("/policy", include_in_schema=False)
+    def policy_page(
+        ml_session: str | None = Cookie(default=None),
+    ) -> HTMLResponse:
+        _require_session(sessions, ml_session)
+        assert ml_session is not None
+        return HTMLResponse(review_frontend.policy_html(browser_csrf(ml_session)))
+
     @app.get("/assets/review.css", include_in_schema=False)
     def review_css() -> Response:
         return Response(review_frontend.REVIEW_CSS, media_type="text/css")
@@ -982,6 +1024,14 @@ class _SerializedReviewRepository:
     def record_human_decision(self, decision: HumanDecision) -> str:
         with self._lock:
             return self._repository.record_human_decision(decision)
+
+    def create_metadata_policy_draft(self, document: str) -> str:
+        with self._lock:
+            return self._repository.create_metadata_policy_draft(document)
+
+    def get_metadata_policy_draft(self, policy_id: str) -> str:
+        with self._lock:
+            return self._repository.get_metadata_policy_draft(policy_id)
 
 
 def _request_matches_origin(request: Request, configuration: ReviewWebConfiguration) -> bool:

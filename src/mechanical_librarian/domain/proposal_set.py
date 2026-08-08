@@ -48,7 +48,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 
 
-PROPOSAL_SCHEMA = "proposal-set-v3"
+PROPOSAL_SCHEMA = "proposal-set-v4"
 POLICY_VERSION = "fixed-conservative-v6"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
@@ -700,6 +700,7 @@ class ProposalSet:
     report_id: str
     target_fingerprint: str
     results: tuple[ProposalResult, ...]
+    resolved_policy_id: str
     bibliographic_combinations: tuple[BibliographicCombination, ...] = ()
     schema_version: str = PROPOSAL_SCHEMA
     policy_version: str = POLICY_VERSION
@@ -711,6 +712,7 @@ class ProposalSet:
             or _DIGEST.fullmatch(self.target_fingerprint) is None
             or self.schema_version != PROPOSAL_SCHEMA
             or self.policy_version != POLICY_VERSION
+            or re.fullmatch(r"resolved_policy_[0-9a-f]{64}", self.resolved_policy_id) is None
             or type(self.results) is not tuple
             or tuple(value.destination for value in self.results)
             != tuple(TargetDestination)
@@ -769,6 +771,7 @@ class ProposalSet:
         report_id: str,
         target_fingerprint: str,
         results: tuple[ProposalResult, ...],
+        resolved_policy_id: str,
         bibliographic_combinations: tuple[BibliographicCombination, ...] = (),
     ) -> Self:
         combinations = tuple(
@@ -783,6 +786,7 @@ class ProposalSet:
                     report_id,
                     target_fingerprint,
                     results,
+                    resolved_policy_id,
                     combinations,
                 )
             ).encode("utf-8")
@@ -792,6 +796,7 @@ class ProposalSet:
             report_id,
             target_fingerprint,
             results,
+            resolved_policy_id,
             combinations,
         )
 
@@ -803,6 +808,7 @@ class ProposalSet:
             self.report_id,
             self.target_fingerprint,
             self.results,
+            self.resolved_policy_id,
             self.bibliographic_combinations,
         )
 
@@ -855,7 +861,7 @@ class _Observed:
     date_precision: DatePrecision | None = None
 
 
-def evaluate_report(report: MetadataReport) -> ProposalSet:
+def evaluate_report(report: MetadataReport, resolved_policy_id: str | None = None) -> ProposalSet:
     """Evaluate one exact report without I/O, configuration, or provider calls."""
     if type(report) is not MetadataReport:
         raise ProposalValueError("proposal report is invalid")
@@ -910,10 +916,16 @@ def evaluate_report(report: MetadataReport) -> ProposalSet:
         if result.alternatives:
             results[destination] = _bibliographic_unresolved(result)
     ordered = tuple(results[value] for value in TargetDestination)
+    if resolved_policy_id is None:
+        # The production default is a real resolved built-in profile for this
+        # exact report library.  Higher layers pass an explicit resolved id.
+        from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
+        resolved_policy_id = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library).resolved_id
     return ProposalSet.create(
         report_id=report.report_id,
         target_fingerprint=report.target.fingerprint,
         results=ordered,
+        resolved_policy_id=resolved_policy_id,
         bibliographic_combinations=combinations,
     )
 
@@ -2566,10 +2578,12 @@ def _proposal_data(
     report_id: str,
     target_fingerprint: str,
     results: tuple[ProposalResult, ...],
+    resolved_policy_id: str,
     bibliographic_combinations: tuple[BibliographicCombination, ...],
 ) -> dict[str, object]:
     return {
         "policy_version": POLICY_VERSION,
+        "resolved_policy_id": resolved_policy_id,
         "relationships": {
             "bibliographic_combinations": [
                 value.to_data()
@@ -2591,6 +2605,7 @@ def _proposal_from_data(raw: object) -> ProposalSet:
         raw,
         {
             "policy_version",
+            "resolved_policy_id",
             "relationships",
             "report",
             "results",
@@ -2621,6 +2636,7 @@ def _proposal_from_data(raw: object) -> ProposalSet:
         report_id=report["report_id"],
         target_fingerprint=report["target_fingerprint"],
         results=results,
+        resolved_policy_id=root["resolved_policy_id"],
         bibliographic_combinations=combinations,
     )
     if (

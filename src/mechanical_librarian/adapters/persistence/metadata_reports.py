@@ -51,6 +51,7 @@ from mechanical_librarian.domain.metadata_report import (
     REPORT_SCHEMA,
     ReportValueError,
 )
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyError, MetadataPolicyProfile
 from mechanical_librarian.domain.proposal_set import (
     POLICY_VERSION,
     ProposalSet,
@@ -131,6 +132,19 @@ _PROPOSAL_SETS_SQL = (
     + POLICY_VERSION
     + "'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152))"
+)
+_METADATA_POLICY_DRAFTS_SQL = (
+    "CREATE TABLE metadata_policy_drafts ("
+    "policy_id TEXT PRIMARY KEY NOT NULL CHECK (policy_id GLOB 'policy_[0-9a-f]*' AND length(policy_id)=71), "
+    "document TEXT NOT NULL CHECK (typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 16384))"
+)
+_METADATA_POLICY_DRAFT_NO_UPDATE_SQL = (
+    "CREATE TRIGGER metadata_policy_drafts_no_update BEFORE UPDATE ON metadata_policy_drafts "
+    "BEGIN SELECT RAISE(ABORT,'immutable metadata policy draft'); END"
+)
+_METADATA_POLICY_DRAFT_NO_DELETE_SQL = (
+    "CREATE TRIGGER metadata_policy_drafts_no_delete BEFORE DELETE ON metadata_policy_drafts "
+    "BEGIN SELECT RAISE(ABORT,'immutable metadata policy draft'); END"
 )
 _REVIEW_CASES_SQL = (
     "CREATE TABLE review_cases ("
@@ -2372,6 +2386,43 @@ class SQLiteMetadataReportRepository:
             self._connection.rollback()
             raise MetadataReportError("review login is unavailable") from error
 
+    def create_metadata_policy_draft(self, document: str) -> str:
+        """Persist an exact canonical draft; there is intentionally no update."""
+        try:
+            profile = MetadataPolicyProfile.from_data(json.loads(document))
+            if profile.canonical_json != document:
+                raise MetadataPolicyError("policy document is not canonical")
+            self._connection.execute("BEGIN IMMEDIATE")
+            self._connection.execute(
+                "INSERT OR IGNORE INTO metadata_policy_drafts(policy_id,document) VALUES(?,?)",
+                (profile.policy_id, document),
+            )
+            row = self._connection.execute(
+                "SELECT document FROM metadata_policy_drafts WHERE policy_id=?",
+                (profile.policy_id,),
+            ).fetchone()
+            if row != (document,):
+                raise MetadataReportError("metadata policy draft is unavailable")
+            self._connection.commit()
+            return profile.policy_id
+        except (MetadataPolicyError, ValueError, TypeError, sqlite3.Error) as error:
+            self._connection.rollback()
+            raise MetadataReportError("metadata policy draft is unavailable") from error
+
+    def get_metadata_policy_draft(self, policy_id: str) -> str:
+        try:
+            row = self._connection.execute(
+                "SELECT document FROM metadata_policy_drafts WHERE policy_id=?", (policy_id,)
+            ).fetchone()
+            if row is None or type(row[0]) is not str:
+                raise MetadataReportError("metadata policy draft is unavailable")
+            profile = MetadataPolicyProfile.from_data(json.loads(row[0]))
+            if profile.policy_id != policy_id or profile.canonical_json != row[0]:
+                raise MetadataReportError("metadata policy draft is unavailable")
+            return row[0]
+        except (MetadataPolicyError, ValueError, TypeError, sqlite3.Error) as error:
+            raise MetadataReportError("metadata policy draft is unavailable") from error
+
     def create_review_session(
         self,
         session_digest: str,
@@ -3640,6 +3691,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_COVER_ARTIFACT_INDEX_SQL)
             connection.execute(_COVER_PREVIEW_INDEX_SQL)
             connection.execute(_PROPOSAL_SETS_SQL)
+            connection.execute(_METADATA_POLICY_DRAFTS_SQL)
             connection.execute(_REVIEW_CASES_SQL)
             connection.execute(_REVIEW_POINTERS_SQL)
             connection.execute(_REVIEW_TRANSITIONS_SQL)
@@ -3665,6 +3717,8 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_COVER_NO_DELETE_SQL)
             connection.execute(_PROPOSAL_NO_UPDATE_SQL)
             connection.execute(_PROPOSAL_NO_DELETE_SQL)
+            connection.execute(_METADATA_POLICY_DRAFT_NO_UPDATE_SQL)
+            connection.execute(_METADATA_POLICY_DRAFT_NO_DELETE_SQL)
             connection.execute(_REVIEW_NO_UPDATE_SQL)
             connection.execute(_REVIEW_NO_DELETE_SQL)
             connection.execute(_REVIEW_TRANSITION_NO_UPDATE_SQL)
@@ -3964,6 +4018,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_human_decisions_3", None),
         ("index", "sqlite_autoindex_metadata_reports_1", None),
         ("index", "sqlite_autoindex_metadata_reports_2", None),
+        ("index", "sqlite_autoindex_metadata_policy_drafts_1", None),
         ("index", "sqlite_autoindex_proposal_sets_1", None),
         ("index", "sqlite_autoindex_review_cases_1", None),
         ("index", "sqlite_autoindex_review_case_transitions_1", None),
@@ -3996,6 +4051,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "human_decisions", _HUMAN_DECISIONS_SQL),
         ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
         ("table", "metadata_reports", _REPORTS_SQL),
+        ("table", "metadata_policy_drafts", _METADATA_POLICY_DRAFTS_SQL),
         ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
         ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
         ("table", "review_cases", _REVIEW_CASES_SQL),
@@ -4013,6 +4069,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("trigger", "metadata_report_cover_references_no_update", _COVER_NO_UPDATE_SQL),
         ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL),
         ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL),
+        ("trigger", "metadata_policy_drafts_no_delete", _METADATA_POLICY_DRAFT_NO_DELETE_SQL),
+        ("trigger", "metadata_policy_drafts_no_update", _METADATA_POLICY_DRAFT_NO_UPDATE_SQL),
         ("trigger", "human_decision_events_no_delete", _HUMAN_DECISION_EVENT_NO_DELETE_SQL),
         ("trigger", "human_decision_events_no_update", _HUMAN_DECISION_EVENT_NO_UPDATE_SQL),
         ("trigger", "human_decisions_no_delete", _HUMAN_DECISION_NO_DELETE_SQL),

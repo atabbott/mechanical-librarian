@@ -1072,6 +1072,7 @@ class ReviewWebTests(unittest.TestCase):
             {
                 ("get", "/api/v1/attention"),
                 ("get", "/api/v1/library"),
+                ("post", "/api/v1/metadata-policy/drafts"),
                 ("get", "/api/v1/review-preparation"),
                 ("get", "/api/v1/review-cases/{review_case_id}"),
                 ("get", "/api/v1/review-cases/{review_case_id}/evidence"),

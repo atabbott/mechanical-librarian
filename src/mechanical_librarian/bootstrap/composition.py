@@ -110,6 +110,7 @@ from mechanical_librarian.application.shadow_reviews import (
     preview_shadow_review,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
 from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.review_case import ReviewAdmissionResult
 from mechanical_librarian.domain.cover_evidence import (
@@ -760,6 +761,15 @@ def create_proposal_set_loaded(
         return CreateProposalSet(
             repository,
             current,
+            lambda report: resolve_policy(
+                MetadataPolicyProfile.builtin(),
+                report.target.library,
+                next(
+                    library.policy_override
+                    for library in configuration.libraries
+                    if library.name == report.target.library
+                ),
+            ).resolved_id,
         ).run(report_id)
     finally:
         repository.close()

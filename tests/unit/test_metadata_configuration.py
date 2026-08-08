@@ -106,6 +106,23 @@ class MetadataConfigurationTests(unittest.TestCase):
         self.assertEqual(mount.name, "books")
         self.assertEqual([value.name for value in providers], ["first", "second"])
 
+    def test_sparse_read_only_policy_override_is_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = _source(root)
+            source["libraries"][0]["policy_override"] = {
+                "options": {"date_precision": "full_date"},
+                "destinations": {"tags": "ignore"},
+            }
+            path = root / "config.json"
+            path.write_text(json.dumps(source), encoding="utf-8")
+            configuration = load_configuration_file(path)
+            self.assertEqual("full_date", configuration.libraries[0].policy_override["options"]["date_precision"])
+            source["libraries"][0]["policy_override"]["options"] = {"removed": "value"}
+            path.write_text(json.dumps(source), encoding="utf-8")
+            with self.assertRaises(ConfigurationError):
+                load_configuration_file(path)
+
     def test_duplicate_reference_unknown_field_and_implicit_old_schema_fail(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
