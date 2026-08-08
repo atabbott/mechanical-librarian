@@ -538,6 +538,16 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(1, len(self.repository.policy_documents))
         self.assertEqual([], self.repository.policy_count_calls)
 
+    def test_policy_draft_persistence_failure_is_unavailable_not_validation(self) -> None:
+        login = self._login()
+        headers = {**self.origin, "X-CSRF-Token": login["csrf_token"]}
+        payload = self.client.get("/api/v1/metadata-policy/state").json()["profile"]
+        del payload["schema_version"]
+        self.repository.create_metadata_policy_draft = Mock(side_effect=RuntimeError)
+        response = self.client.post("/api/v1/metadata-policy/drafts", headers=headers, json=payload)
+        self.assertEqual(503, response.status_code)
+        self.assertEqual("persistence", response.json()["error"]["code"])
+
     def test_trust_boundary_failures_match_declared_api_statuses(self) -> None:
         bad_host = self.client.get(
             f"/api/v1/review-cases/{self.case.review_case_id}",
@@ -1105,6 +1115,10 @@ class ReviewWebTests(unittest.TestCase):
             )
         )
         self.assertEqual(first.json(), expected)
+        self.assertIn(
+            "413",
+            expected["paths"]["/api/v1/metadata-policy/drafts"]["post"]["responses"],
+        )
         schemas = expected["components"]["schemas"]
         self.assertNotIn("HTTPValidationError", schemas)
         self.assertTrue(
