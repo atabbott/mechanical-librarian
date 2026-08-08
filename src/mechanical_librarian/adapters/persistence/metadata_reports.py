@@ -3172,15 +3172,14 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             if posture is None or posture[0] not in {"review", "preview", "automatic"}:
                 raise MetadataReportError("metadata policy posture is unavailable")
-            if (
-                any(
-                    destination == "automatic"
-                    for _, destination in profile.destinations
-                )
-                and posture[0] != "preview"
-            ):
+            requested_automatic = {
+                f"{category}:{dict(profile.options)[category]}"
+                for category, destination in profile.destinations
+                if destination == "automatic"
+            }
+            if not requested_automatic.issubset(QUALIFIED_POLICY_OPTIONS):
                 raise MetadataReportError(
-                    "metadata policy automatic intent is unqualified outside preview"
+                    "metadata policy automatic intent is unqualified"
                 )
             self._connection.execute(
                 "INSERT OR IGNORE INTO metadata_policy_drafts(policy_id,document) VALUES(?,?)",

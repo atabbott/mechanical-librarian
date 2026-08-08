@@ -53,7 +53,7 @@ class MetadataPolicyActivationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.directory.cleanup()
 
-    def test_automatic_intent_is_atomic_preview_only_and_never_authoritative(self) -> None:
+    def test_qualified_automatic_intent_is_persistable_and_unqualified_intent_is_rejected(self) -> None:
         repository = open_repository(self.path)
         destinations = {
             category: "unsupported" if category == "explicit" else "ask"
@@ -63,17 +63,15 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         profile = MetadataPolicyProfile.create(
             "Preview automatic intent", dict(DEFAULT_OPTIONS), destinations
         )
-        with self.assertRaisesRegex(
-            MetadataReportError, "automatic intent is unqualified"
-        ):
-            repository.create_metadata_policy_draft(profile.canonical_json)
-        self.assertEqual(
-            (0,),
-            repository._connection.execute(
-                "SELECT COUNT(*) FROM metadata_policy_drafts WHERE policy_id=?",
-                (profile.policy_id,),
-            ).fetchone(),
+        self.assertEqual(profile.policy_id, repository.create_metadata_policy_draft(profile.canonical_json))
+        unqualified_options = dict(DEFAULT_OPTIONS)
+        unqualified_options["publisher_preference"] = "imprint"
+        unqualified = MetadataPolicyProfile.create(
+            "Unqualified automatic intent", unqualified_options,
+            {**destinations, "publisher_preference": "automatic"},
         )
+        with self.assertRaisesRegex(MetadataReportError, "automatic intent is unqualified"):
+            repository.create_metadata_policy_draft(unqualified.canonical_json)
         repository.enter_shadow_preview(1)
         repository.create_metadata_policy_draft(profile.canonical_json)
         resolved = resolve_policy(profile, "ebooks")

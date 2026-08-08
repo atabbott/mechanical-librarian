@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
@@ -32,6 +33,8 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope, LocalClaim
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError, AutomaticSafetyState
+from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
+from mechanical_librarian.domain.review_case import ReviewCase
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source,
@@ -173,6 +176,72 @@ def _maximum_reference_outcome(repository) -> ShadowOutcomeSet:
         base,
         outcome_set_id="shadow_outcome_set_" + _digest(identity),
         outcomes=tuple(fields),
+    )
+
+
+def _synthetic_automatic_tuple(repository, case_id: str, category: str):
+    """A value-free qualified projection packet for persistence race coverage.
+
+    The production projection is separately tested from real reports above.  This
+    small packet isolates the append-only admission boundary without importing a
+    corpus value or manufacturing a metadata write.
+    """
+    case = ReviewCase.create_from_data(json.loads(repository.get_review_case(case_id))["case"])
+    members, option = (
+        (("title", "subtitle", "series"), "title_and_subtitle")
+        if category == "title_layout"
+        else (("publishedDate", "publishedYear"), "full_date")
+    )
+    shared = ("bibliographic_combination_" + "a" * 64,)
+    fields = tuple(
+        SimpleNamespace(
+            disposition="candidate",
+            policy_category=category,
+            policy_option=option,
+            destination=destination,
+            combination_ids=shared,
+            proposal_id="review_proposal_" + f"{index:064x}",
+            candidate_id="alternative_" + f"{index + 16:064x}",
+            rule_id="shadow_rule_" + f"{index + 32:064x}",
+            outcome_id="shadow_outcome_" + f"{index + 48:064x}",
+        )
+        for index, destination in enumerate(members)
+    )
+    policy_id = repository.current_resolved_policy_id(case.target["library"])
+    assert policy_id is not None
+    generation = repository._connection.execute(
+        "SELECT generation FROM metadata_policy_state WHERE singleton=1"
+    ).fetchone()[0]
+    return SimpleNamespace(
+        outcomes=fields,
+        review_case_id=case_id,
+        report_id=case.report_id,
+        proposal_set_id=case.proposal_set_id,
+        target_fingerprint=case.target_fingerprint,
+        resolved_policy_id=policy_id,
+        policy_generation=generation,
+    )
+
+
+def _human_title_decision(repository, case_id: str, occurred_at: int) -> HumanDecision:
+    case = ReviewCase.create_from_data(json.loads(repository.get_review_case(case_id))["case"])
+    proposal = next(value for value in case.proposals if value["destination"] == "title")
+    result = proposal["result"]
+    assert isinstance(result, dict)
+    alternatives = result.get("alternatives")
+    assert isinstance(alternatives, list) and alternatives
+    selected = alternatives[0]["value"]
+    assert isinstance(selected, dict)
+    return HumanDecision.create(
+        case,
+        proposal_id=proposal["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination="title",
+        actor="owner",
+        outcome="accept",
+        selected_value=selected,
+        idempotency_key="synthetic-human-title-key-0001",
+        occurred_at=occurred_at,
     )
 
 
@@ -715,6 +784,105 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             repository._connection.execute("BEGIN IMMEDIATE")
             repository._connection.rollback()
             repository.close()
+
+    def test_human_and_automatic_winners_are_mutually_exclusive_without_suspension(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            repository.record_human_decision(_human_title_decision(repository, case_id, 1))
+            repository._record_automatic_outcomes(
+                _synthetic_automatic_tuple(repository, case_id, "title_layout"), 2
+            )
+            self.assertEqual(
+                (1, 0),
+                tuple(
+                    repository._connection.execute(
+                        "SELECT (SELECT COUNT(*) FROM human_decisions),"
+                        "(SELECT COUNT(*) FROM automatic_decisions)"
+                    ).fetchone()
+                ),
+            )
+            self.assertEqual(AutomaticSafetyState(False, None, ()), repository.automatic_safety_state())
+            repository.close()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            repository._record_automatic_outcomes(
+                _synthetic_automatic_tuple(repository, case_id, "title_layout"), 2
+            )
+            with self.assertRaisesRegex(HumanDecisionError, "already_decided"):
+                repository.record_human_decision(_human_title_decision(repository, case_id, 3))
+            self.assertEqual((0, 3), tuple(repository._connection.execute(
+                "SELECT (SELECT COUNT(*) FROM human_decisions),(SELECT COUNT(*) FROM automatic_decisions)"
+            ).fetchone()))
+            repository.close()
+
+    def test_automatic_tuple_replay_is_exact_and_date_and_title_bundles_are_atomic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports.sqlite"
+            repository = open_repository(path)
+            case_id = _case(repository)
+            title = _synthetic_automatic_tuple(repository, case_id, "title_layout")
+            dates = _synthetic_automatic_tuple(repository, case_id, "date_precision")
+            repository._record_automatic_outcomes(title, 7)
+            first = repository.get_review_case_decisions(case_id)
+            repository._record_automatic_outcomes(title, 99)
+            repository._record_automatic_outcomes(dates, 8)
+            documents = tuple(json.loads(value) for value in repository.get_review_case_decisions(case_id))
+            self.assertEqual(first, repository.get_review_case_decisions(case_id)[:3])
+            self.assertEqual(5, len(documents))
+            for destinations in (("title", "subtitle", "series"), ("publishedDate", "publishedYear")):
+                bundle = [value for value in documents if value["destination"] in destinations]
+                self.assertEqual(set(destinations), {value["destination"] for value in bundle})
+                self.assertEqual(1, len({value["bundle_id"] for value in bundle}))
+            repository.close()
+            reopened = open_repository(path)
+            self.assertEqual(tuple(value["decision_id"] for value in documents), tuple(
+                json.loads(value)["decision_id"] for value in reopened.get_review_case_decisions(case_id)
+            ))
+            reopened.close()
+
+    def test_incoherent_automatic_tuple_suspends_only_its_category_and_safety_recovery_restores_admission(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            incoherent = _synthetic_automatic_tuple(repository, case_id, "title_layout")
+            incoherent.outcomes[1].combination_ids = ("bibliographic_combination_" + "b" * 64,)
+            with self.assertRaisesRegex(AutomaticDecisionError, "category:title_layout"):
+                repository._record_automatic_outcomes(incoherent, 3)
+            repository.set_automatic_safety_state(
+                AutomaticSafetyState(False, None, (("title_layout", "automatic_admission_failed"),)), 4
+            )
+            repository._record_automatic_outcomes(
+                _synthetic_automatic_tuple(repository, case_id, "title_layout"), 5
+            )
+            self.assertEqual((0,), repository._connection.execute(
+                "SELECT COUNT(*) FROM automatic_decisions"
+            ).fetchone())
+            repository.set_automatic_safety_state(AutomaticSafetyState(False, None, ()), 6)
+            repository._record_automatic_outcomes(
+                _synthetic_automatic_tuple(repository, case_id, "title_layout"), 7
+            )
+            self.assertEqual((3,), repository._connection.execute(
+                "SELECT COUNT(*) FROM automatic_decisions"
+            ).fetchone())
+            repository.close()
+
+    def test_bootstrap_transition_acknowledgement_is_durable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports.sqlite"
+            repository = open_repository(path)
+            transition = repository.metadata_policy_transition()
+            assert transition is not None
+            acknowledged = repository.acknowledge_metadata_policy_transition(transition.transition_id, 4)
+            self.assertTrue(acknowledged.acknowledged)
+            repository.close()
+            reopened = open_repository(path)
+            persisted = reopened.metadata_policy_transition()
+            assert persisted is not None
+            self.assertTrue(persisted.acknowledged)
+            reopened.close()
 
 
 if __name__ == "__main__":
