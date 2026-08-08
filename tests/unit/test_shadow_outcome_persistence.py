@@ -47,6 +47,47 @@ def _case(repository):
     return admitted["review_case_id"]
 
 
+def _running_projection(repository, case_id: str) -> str:
+    case = json.loads(repository.get_review_case(case_id))["case"]
+    scan_id = "review_scan_" + ("1" * 64)
+    work_id = "review_work_" + ("2" * 64)
+    repository._connection.execute(
+        "INSERT INTO review_preparation_scans(scan_id,connection_name,library_name,"
+        "library_id,producer_fingerprint,state,requested_at,updated_at,"
+        "catalogue_generation,catalogue_fingerprint,total) "
+        "VALUES(?,?,?,?,?,'processing',1,1,1,?,1)",
+        (scan_id, "primary", "ebooks", "library-1", "3" * 64, "4" * 64),
+    )
+    repository._connection.execute(
+        "INSERT INTO review_preparation_work(work_id,scan_id,ordinal,connection_name,"
+        "library_name,library_id,item_id,file_identity,source_revision,"
+        "source_fingerprint,producer_fingerprint,catalogue_generation,"
+        "catalogue_fingerprint,stage,state,attempt,recovery_attempt,report_id,"
+        "proposal_set_id,review_case_id,failure_code,updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'projection','running',1,0,?,?,?,NULL,1)",
+        (
+            work_id,
+            scan_id,
+            0,
+            "primary",
+            "ebooks",
+            "library-1",
+            "item-1",
+            case["file_identity"],
+            1,
+            "5" * 64,
+            "3" * 64,
+            1,
+            "4" * 64,
+            case["report_id"],
+            case["proposal_set_id"],
+            case_id,
+        ),
+    )
+    repository._connection.commit()
+    return work_id
+
+
 def _digest(value: object) -> str:
     serialized = json.dumps(
         value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
@@ -66,6 +107,22 @@ def _preview_automatic_profile() -> MetadataPolicyProfile:
     )
     return MetadataPolicyProfile.create(
         "Preview automatic intent", dict(DEFAULT_OPTIONS), destinations
+    )
+
+
+def _pipeline_configuration() -> ApplicationConfiguration:
+    return ApplicationConfiguration(
+        (
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/run/target-token"
+            ),
+        ),
+        (LibraryConfiguration("ebooks", "primary", "library-1", "book", None, ()),),
+        (),
+        (),
+        review=ReviewWebConfiguration(
+            "https://review.example.invalid", "/run/owner-password"
+        ),
     )
 
 
@@ -275,21 +332,8 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             repository = open_repository(database)
             case_id = _case(repository)
             repository.enter_shadow_preview(1)
-            configuration = ApplicationConfiguration(
-                (
-                    TargetConnectionConfiguration(
-                        "primary", "https://example.invalid", "/run/target-token"
-                    ),
-                ),
-                (LibraryConfiguration("ebooks", "primary", "library-1", "book", None, ()),),
-                (),
-                (),
-                review=ReviewWebConfiguration(
-                    "https://review.example.invalid", "/run/owner-password"
-                ),
-            )
             supervisor = composition.create_review_pipeline(
-                configuration,
+                _pipeline_configuration(),
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
@@ -310,6 +354,50 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 "stale", supervisor._pipeline._project(repository, case_id)
             )
             self.assertEqual(1, len(repository.list_shadow_outcomes(50)))
+            repository.close()
+
+    def test_review_posture_composed_stale_projection_restarts_instead_of_completing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            old_case_id = _case(repository)
+            old_case = json.loads(repository.get_review_case(old_case_id))["case"]
+            work_id = _running_projection(repository, old_case_id)
+            current_report = _report("Current title")
+            repository.publish(current_report, lambda: True, old_case["report_id"])
+            current_proposal = evaluate_report(current_report)
+            repository.publish_proposal(current_proposal)
+            repository.admit_review_case(current_proposal)
+            supervisor = composition.create_review_pipeline(
+                _pipeline_configuration(),
+                database,
+                root / "catalogue.sqlite",
+                root / "artifacts",
+            )
+
+            self.assertEqual("review", repository.shadow_posture())
+            self.assertEqual(
+                "stale", supervisor._pipeline._project(repository, old_case_id)
+            )
+            self.assertEqual(
+                "stale", supervisor._pipeline._project(repository, old_case_id)
+            )
+            self.assertEqual(
+                ("proposal", "queued", current_report.report_id, None, None),
+                repository._connection.execute(
+                    "SELECT stage,state,report_id,proposal_set_id,review_case_id "
+                    "FROM review_preparation_work WHERE work_id=?",
+                    (work_id,),
+                ).fetchone(),
+            )
+            self.assertEqual((), repository.list_shadow_outcomes(50))
+            self.assertEqual(
+                (1,),
+                repository._connection.execute(
+                    "SELECT COUNT(*) FROM review_preparation_work"
+                ).fetchone(),
+            )
             repository.close()
 
     def test_review_posture_is_inactive_and_preview_replays_one_exact_set(self) -> None:
@@ -479,52 +567,27 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             )
             repository.close()
 
-    def test_stale_running_projection_restarts_the_same_row_for_current_report(self) -> None:
+    def test_report_only_currentness_race_restarts_the_same_projection_row(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             repository = open_repository(Path(temporary) / "reports.sqlite")
             old_case_id = _case(repository)
             old_case = json.loads(repository.get_review_case(old_case_id))["case"]
+            work_id = _running_projection(repository, old_case_id)
             current_report = _report("Current title")
             repository.publish(
                 current_report, lambda: True, old_case["report_id"]
             )
-            current_proposal = evaluate_report(current_report)
-            repository.publish_proposal(current_proposal)
-            current_case_id = json.loads(
-                repository.admit_review_case(current_proposal)
-            )["review_case_id"]
             connection = repository._connection
-            scan_id = "review_scan_" + ("1" * 64)
-            work_id = "review_work_" + ("2" * 64)
-            connection.execute(
-                "INSERT INTO review_preparation_scans(scan_id,connection_name,library_name,library_id,producer_fingerprint,state,requested_at,updated_at,catalogue_generation,catalogue_fingerprint,total) VALUES(?,?,?,?,?,'processing',1,1,1,?,1)",
-                (scan_id, "primary", "ebooks", "library-1", "3" * 64, "4" * 64),
-            )
-            connection.execute(
-                "INSERT INTO review_preparation_work(work_id,scan_id,ordinal,connection_name,library_name,library_id,item_id,file_identity,source_revision,source_fingerprint,producer_fingerprint,catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,report_id,proposal_set_id,review_case_id,failure_code,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'projection','running',1,0,?,?,?,NULL,1)",
-                (
-                    work_id,
-                    scan_id,
-                    0,
-                    "primary",
-                    "ebooks",
-                    "library-1",
-                    "item-1",
-                    old_case["file_identity"],
-                    1,
-                    "5" * 64,
-                    "3" * 64,
-                    1,
-                    "4" * 64,
-                    old_case["report_id"],
-                    old_case["proposal_set_id"],
-                    old_case_id,
-                ),
-            )
-            connection.commit()
             repository.enter_shadow_preview(2)
 
+            self.assertEqual(
+                (old_case["report_id"], old_case_id),
+                connection.execute(
+                    "SELECT report_id,review_case_id FROM current_review_case_lineages"
+                ).fetchone(),
+            )
             self.assertEqual("stale", repository.persist_shadow_outcome(old_case_id, 3))
+            self.assertEqual("stale", repository.persist_shadow_outcome(old_case_id, 4))
             self.assertEqual((), repository.list_shadow_outcomes(50))
             self.assertEqual(
                 ("proposal", "queued", current_report.report_id, None, None),
@@ -533,7 +596,49 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                     (work_id,),
                 ).fetchone(),
             )
-            self.assertNotEqual(old_case_id, current_case_id)
+            self.assertEqual(
+                (1,),
+                connection.execute(
+                    "SELECT COUNT(*) FROM review_preparation_work"
+                ).fetchone(),
+            )
+            repository.close()
+
+    def test_stale_recovery_currentness_failure_rolls_back_owned_transaction(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            old_case_id = _case(repository)
+            old_case = json.loads(repository.get_review_case(old_case_id))["case"]
+            work_id = _running_projection(repository, old_case_id)
+            current_report = _report("Current title")
+            repository.publish(current_report, lambda: True, old_case["report_id"])
+            repository._connection.execute(
+                "UPDATE current_metadata_reports SET report_id=?",
+                (old_case["report_id"],),
+            )
+            repository._connection.commit()
+
+            with self.assertRaisesRegex(
+                Exception, "shadow outcome currentness is unavailable"
+            ):
+                repository.persist_shadow_outcome(old_case_id, 3)
+            self.assertFalse(repository._connection.in_transaction)
+            self.assertEqual(
+                (
+                    "projection",
+                    "running",
+                    old_case["report_id"],
+                    old_case["proposal_set_id"],
+                    old_case_id,
+                ),
+                repository._connection.execute(
+                    "SELECT stage,state,report_id,proposal_set_id,review_case_id "
+                    "FROM review_preparation_work WHERE work_id=?",
+                    (work_id,),
+                ).fetchone(),
+            )
+            repository._connection.execute("BEGIN IMMEDIATE")
+            repository._connection.rollback()
             repository.close()
 
 

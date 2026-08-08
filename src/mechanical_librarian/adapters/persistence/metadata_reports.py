@@ -2630,13 +2630,33 @@ class SQLiteMetadataReportRepository:
             case.target["library"],
             case.target["item"],
         )
-        pointer = self._connection.execute(
-            "SELECT report_id,review_case_id FROM current_review_case_lineages "
-            "WHERE connection_name=? AND library_name=? AND item_id=?",
+        current = self._connection.execute(
+            "SELECT l.report_id,f.report_id,c.report_id,c.review_case_id "
+            "FROM current_metadata_report_lineages l "
+            "JOIN metadata_reports m ON m.report_id=l.report_id "
+            "LEFT JOIN current_metadata_reports f ON "
+            "f.connection_name=l.connection_name AND "
+            "f.library_name=l.library_name AND f.item_id=l.item_id AND "
+            "f.file_identity=m.file_identity "
+            "LEFT JOIN current_review_case_lineages c ON "
+            "c.connection_name=l.connection_name AND "
+            "c.library_name=l.library_name AND c.item_id=l.item_id "
+            "WHERE l.connection_name=? AND l.library_name=? AND l.item_id=?",
             lineage,
         ).fetchone()
-        if pointer is None or (
-            pointer[0] == case.report_id and pointer[1] == case.review_case_id
+        if (
+            current is None
+            or type(current[0]) is not str
+            or current[0] != current[1]
+            or (current[2] is not None and type(current[2]) is not str)
+            or (current[3] is not None and type(current[3]) is not str)
+        ):
+            raise MetadataReportError("shadow outcome currentness is unavailable")
+        current_report_id, _, review_report_id, review_case_id = current
+        if (
+            current_report_id == case.report_id
+            and review_report_id == case.report_id
+            and review_case_id == case.review_case_id
         ):
             return
         row = self._connection.execute(
@@ -2647,14 +2667,21 @@ class SQLiteMetadataReportRepository:
         ).fetchone()
         if row is None:
             return
-        if pointer[1] is not None and row[2] == pointer[1] and row[1] == pointer[0]:
+        if (
+            review_case_id is not None
+            and review_report_id == current_report_id
+            and row[2] == review_case_id
+            and row[1] == current_report_id
+        ):
             self._connection.execute(
                 "UPDATE review_preparation_work SET stage='projection',state='queued',"
                 "attempt=0,recovery_attempt=0,failure_code=NULL,updated_at=? WHERE work_id=?",
                 (updated_at, row[0]),
             )
         else:
-            self._restart_metadata_policy_work(row[0], "proposal", pointer[0], updated_at)
+            self._restart_metadata_policy_work(
+                row[0], "proposal", current_report_id, updated_at
+            )
 
     def _persisted_shadow_packet_source(
         self,
@@ -2776,6 +2803,7 @@ class SQLiteMetadataReportRepository:
             if raw_case is None:
                 raise MetadataReportError("shadow outcome source is unavailable")
             case_for_recovery = ReviewCase.from_json(raw_case[0])
+            self._require_shadow_case_current(review_case_id)
             state = self._connection.execute(
                 "SELECT s.generation,s.posture,d.document FROM metadata_policy_state s "
                 "JOIN metadata_policy_drafts d ON d.policy_id=s.active_policy_id "
@@ -2787,7 +2815,7 @@ class SQLiteMetadataReportRepository:
                 if owns_transaction:
                     self._connection.commit()
                 return "inactive"
-            case, packet = self._shadow_packet_source(
+            case, packet = self._persisted_shadow_packet_source(
                 review_case_id, include_policy_ignored=True
             )
             library = case.target["library"]
@@ -2834,11 +2862,22 @@ class SQLiteMetadataReportRepository:
                 self._connection.commit()
             return serialized
         except ReviewAdmissionStaleError:
-            if case_for_recovery is not None:
-                self._schedule_current_shadow_work(case_for_recovery, evaluated_at)
-            if owns_transaction:
-                self._connection.commit()
-            return "stale"
+            try:
+                if case_for_recovery is not None:
+                    self._schedule_current_shadow_work(
+                        case_for_recovery, evaluated_at
+                    )
+                if owns_transaction:
+                    self._connection.commit()
+                return "stale"
+            except (sqlite3.Error, MetadataReportError) as error:
+                if self._connection.in_transaction:
+                    self._connection.rollback()
+                if isinstance(error, MetadataReportError):
+                    raise
+                raise MetadataReportError(
+                    "shadow outcome persistence failed"
+                ) from error
         except (
             sqlite3.Error,
             MetadataReportError,
@@ -4262,6 +4301,13 @@ class SQLiteMetadataReportRepository:
         *,
         include_policy_ignored: bool = False,
     ) -> tuple[ReviewCase, ShadowReviewPacket]:
+        self._require_shadow_case_current(review_case_id)
+        return self._persisted_shadow_packet_source(
+            review_case_id,
+            include_policy_ignored=include_policy_ignored,
+        )
+
+    def _require_shadow_case_current(self, review_case_id: str) -> None:
         reopened = json.loads(self.get_review_case(review_case_id))
         if (
             type(reopened) is not dict
@@ -4269,10 +4315,6 @@ class SQLiteMetadataReportRepository:
             or type(reopened.get("case")) is not dict
         ):
             raise ReviewAdmissionStaleError
-        return self._persisted_shadow_packet_source(
-            review_case_id,
-            include_policy_ignored=include_policy_ignored,
-        )
 
     def _policy_destinations_for(
         self, report: MetadataReport, proposal: ProposalSet
