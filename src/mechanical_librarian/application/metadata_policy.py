@@ -8,7 +8,10 @@ from typing import Protocol
 
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyError, MetadataPolicyProfile, OPTION_CATALOGUE, ResolvedMetadataPolicy, resolve_policy
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
-from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
+from mechanical_librarian.domain.automatic_decision import (
+    AutomaticSafetyState,
+    QUALIFIED_POLICY_OPTIONS,
+)
 
 
 MAX_SHADOW_SAMPLE_RESPONSE_BYTES = 1_048_576
@@ -228,13 +231,7 @@ class PolicyNotebook:
             for field, option in profile.options
             if dict(profile.destinations)[field] == "automatic"
         }
-        if requested and not requested.issubset({
-            "title_layout:preserve", "title_layout:title_and_subtitle",
-            "date_precision:year", "date_precision:full_date",
-            "language_rendering:preserve", "language_rendering:display_name",
-            "contributor_names:preserve", "contributor_names:canonical",
-            "publisher_preference:publisher",
-        }):
+        if requested and not requested.issubset(QUALIFIED_POLICY_OPTIONS):
             raise MetadataPolicyApplicationError("policy automatic unqualified")
         return profile
 

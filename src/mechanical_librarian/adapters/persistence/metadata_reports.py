@@ -3445,11 +3445,15 @@ class SQLiteMetadataReportRepository:
             profile = MetadataPolicyProfile.from_data(json.loads(draft[0]))
             if profile.policy_id != policy_id or profile.canonical_json != draft[0]:
                 raise MetadataReportError("metadata policy draft is unavailable")
-            automatic_intent = any(
-                destination == "automatic"
-                for _, destination in profile.destinations
-            )
-            if automatic_intent and state[2] != "preview":
+            automatic_options = {
+                f"{category}:{dict(profile.options)[category]}"
+                for category, destination in profile.destinations
+                if destination == "automatic"
+            }
+            if automatic_options and (
+                state[2] not in {"preview", "automatic"}
+                or not automatic_options.issubset(QUALIFIED_POLICY_OPTIONS)
+            ):
                 raise MetadataReportError(
                     "metadata policy automatic intent is unqualified outside preview"
                 )
@@ -3475,7 +3479,14 @@ class SQLiteMetadataReportRepository:
                             value == "automatic"
                             for _, value in resolved.destinations
                         )
-                        and state[2] != "preview"
+                        and (
+                            state[2] not in {"preview", "automatic"}
+                            or not {
+                                f"{category}:{dict(resolved.options)[category]}"
+                                for category, destination in resolved.destinations
+                                if destination == "automatic"
+                            }.issubset(QUALIFIED_POLICY_OPTIONS)
+                        )
                     )
                 ):
                     raise MetadataReportError("metadata policy resolution is invalid")

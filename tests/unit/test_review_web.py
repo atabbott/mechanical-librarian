@@ -1535,6 +1535,14 @@ class ReviewWebTests(unittest.TestCase):
         self.assertNotIn("innerHTML", script)
         self.assertIn("item.kind==='human_decision_recorded'", script)
         self.assertIn("${item.destination}: ${item.outcome} by ${item.actor}", script)
+        library_preview_copy = (
+            "Human and automatic decisions are immutable and origin-labelled. "
+            "This workspace never writes to your target library."
+        )
+        self.assertEqual(script.count(library_preview_copy), 2)
+        self.assertNotIn(
+            "Each decision is recorded as an immutable human outcome.", script
+        )
 
     def test_attention_first_library_lenses_queue_and_cursor_binding(self) -> None:
         providers = tuple(

@@ -93,6 +93,77 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         self.assertIn("title_layout", QUALIFIED_AUTOMATIC)
         repository.close()
 
+    def test_automatic_posture_accepts_only_exact_qualified_resolutions(self) -> None:
+        repository = open_repository(self.path)
+        destinations = {
+            category: "unsupported" if category == "explicit" else "ask"
+            for category in OPTION_CATALOGUE
+        }
+        destinations["title_layout"] = "automatic"
+        first = MetadataPolicyProfile.create(
+            "First qualified automatic policy", dict(DEFAULT_OPTIONS), destinations
+        )
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(first.canonical_json)
+        first_resolved = resolve_policy(first, "ebooks")
+        first_transition = repository.activate_metadata_policy(
+            first.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            (("ebooks", first_resolved.resolved_id, first_resolved.canonical_json),),
+            2,
+        )
+        assert first_transition is not None
+        self.assertEqual("automatic", repository.activate_qualified_automatic(3))
+
+        second = MetadataPolicyProfile.create(
+            "Second qualified automatic policy",
+            {**dict(DEFAULT_OPTIONS), "date_precision": "full_date"},
+            {**destinations, "date_precision": "automatic"},
+        )
+        repository.create_metadata_policy_draft(second.canonical_json)
+        second_resolved = resolve_policy(second, "ebooks")
+        transition = repository.activate_metadata_policy(
+            second.policy_id,
+            first.policy_id,
+            (("ebooks", second_resolved.resolved_id, second_resolved.canonical_json),),
+            4,
+        )
+        self.assertIsNotNone(transition)
+        self.assertEqual(
+            transition,
+            repository.activate_metadata_policy(
+                second.policy_id,
+                first.policy_id,
+                (("ebooks", second_resolved.resolved_id, second_resolved.canonical_json),),
+                4,
+            ),
+        )
+        with self.assertRaisesRegex(MetadataReportError, "stale"):
+            repository.activate_metadata_policy(
+                first.policy_id,
+                first.policy_id,
+                (("ebooks", first_resolved.resolved_id, first_resolved.canonical_json),),
+                5,
+            )
+
+        unqualified = resolve_policy(
+            second,
+            "ebooks",
+            {
+                "options": {"publisher_preference": "imprint"},
+                "destinations": {"publisher_preference": "automatic"},
+            },
+        )
+        with self.assertRaisesRegex(MetadataReportError, "resolution is invalid"):
+            repository.activate_metadata_policy(
+                second.policy_id,
+                second.policy_id,
+                (("ebooks", unqualified.resolved_id, unqualified.canonical_json),),
+                6,
+                reconcile_current=True,
+            )
+        repository.close()
+
     def _current_case_with_completed_work(self, path: Path | None = None):
         repository = open_repository(self.path if path is None else path)
         report = _report()
