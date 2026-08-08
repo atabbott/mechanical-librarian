@@ -765,13 +765,9 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         )]
         extracted: list[str] = []
 
-        def publish_report(_, __: PipelineAction, ___: bool):
+        def publish_report(repository, __: PipelineAction, ___: bool):
             extracted.append(report.report_id)
-            repository = open_repository(self.path)
-            try:
-                repository.publish(report, lambda: True)
-            finally:
-                repository.close()
+            repository.publish(report, lambda: True)
             return report.report_id, False
 
         def publish_proposal(repository, __: str) -> str:
@@ -845,13 +841,9 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         ]
         report = _report()
 
-        def publish_report(_, __: PipelineAction, ___: bool) -> str:
+        def publish_report(repository, __: PipelineAction, ___: bool) -> str:
             extracted.append(report.report_id)
-            repository = open_repository(self.path)
-            try:
-                repository.publish(report, lambda: True)
-            finally:
-                repository.close()
+            repository.publish(report, lambda: True)
             return report.report_id, False
 
         pipeline = ReviewPreparationPipeline(
@@ -928,13 +920,11 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         extracted: list[str] = []
         provider_calls = 0
 
-        def publish_report(_, __: PipelineAction, ___: bool) -> tuple[str, bool]:
+        def publish_report(
+            repository, __: PipelineAction, ___: bool
+        ) -> tuple[str, bool]:
             extracted.append(report.report_id)
-            repository = open_repository(self.path)
-            try:
-                repository.publish(report, lambda: True)
-            finally:
-                repository.close()
+            repository.publish(report, lambda: True)
             return report.report_id, False
 
         def unavailable(_, __: str) -> tuple[ProviderStatus, ...]:
