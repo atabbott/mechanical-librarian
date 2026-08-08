@@ -47,6 +47,13 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
 )
+from mechanical_librarian.domain.automatic_decision import (
+    AutomaticDecision,
+    AutomaticDecisionError,
+    AutomaticSafetyState,
+    F19A_QUALIFICATION_MANIFEST_SHA256,
+    QUALIFIED_POLICY_OPTIONS,
+)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     REPORT_SCHEMA,
@@ -163,7 +170,7 @@ _METADATA_POLICY_STATE_SQL = (
     "singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
     "active_policy_id TEXT NOT NULL REFERENCES metadata_policy_drafts(policy_id), "
     "generation INTEGER NOT NULL CHECK(generation>=1), activated_at INTEGER NOT NULL CHECK(activated_at>=0), "
-    "posture TEXT NOT NULL CHECK(posture IN ('review','preview')))"
+    "posture TEXT NOT NULL CHECK(posture IN ('review','preview','automatic')))"
 )
 _METADATA_POLICY_RESOLUTIONS_SQL = (
     "CREATE TABLE metadata_policy_resolutions ("
@@ -303,6 +310,23 @@ _HUMAN_DECISION_EVENTS_SQL = (
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536))"
 )
+_AUTOMATIC_DECISIONS_SQL = (
+    "CREATE TABLE automatic_decisions ("
+    "decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'automatic_decision_[0-9a-f]*' AND length(decision_id)=83), "
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "destination TEXT NOT NULL CHECK(length(destination) BETWEEN 1 AND 64), "
+    "idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64 AND idempotency_digest NOT GLOB '*[^0-9a-f]*'), "
+    "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536), "
+    "UNIQUE(review_case_id,destination))"
+)
+_AUTOMATIC_SAFETY_SQL = (
+    "CREATE TABLE automatic_safety_state ("
+    "singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
+    "paused INTEGER NOT NULL CHECK(paused IN (0,1)), "
+    "global_suspension TEXT, category_suspensions_document TEXT NOT NULL, "
+    "updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
+)
 _CURRENT_REVIEW_FROM_SQL = (
     "FROM current_review_case_lineages c "
     "JOIN review_cases rc ON rc.review_case_id=c.review_case_id "
@@ -331,6 +355,9 @@ _REVIEW_FIELD_ATTENTION_SQL = (
     "IN ('title','subtitle','series') AND "
     + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
     + ")) AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
+    "WHERE decision.review_case_id=rc.review_case_id "
+    "AND decision.destination=json_extract(result.value,'$.destination')) "
+    "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
     "AND decision.destination=json_extract(result.value,'$.destination'))"
 )
@@ -425,6 +452,8 @@ _HUMAN_DECISION_NO_UPDATE_SQL = "CREATE TRIGGER human_decisions_no_update BEFORE
 _HUMAN_DECISION_NO_DELETE_SQL = "CREATE TRIGGER human_decisions_no_delete BEFORE DELETE ON human_decisions BEGIN SELECT RAISE(ABORT, 'human decisions are append-only'); END"
 _HUMAN_DECISION_EVENT_NO_UPDATE_SQL = "CREATE TRIGGER human_decision_events_no_update BEFORE UPDATE ON human_decision_events BEGIN SELECT RAISE(ABORT, 'human decision events are append-only'); END"
 _HUMAN_DECISION_EVENT_NO_DELETE_SQL = "CREATE TRIGGER human_decision_events_no_delete BEFORE DELETE ON human_decision_events BEGIN SELECT RAISE(ABORT, 'human decision events are append-only'); END"
+_AUTOMATIC_DECISION_NO_UPDATE_SQL = "CREATE TRIGGER automatic_decisions_no_update BEFORE UPDATE ON automatic_decisions BEGIN SELECT RAISE(ABORT, 'automatic decisions are append-only'); END"
+_AUTOMATIC_DECISION_NO_DELETE_SQL = "CREATE TRIGGER automatic_decisions_no_delete BEFORE DELETE ON automatic_decisions BEGIN SELECT RAISE(ABORT, 'automatic decisions are append-only'); END"
 _SHADOW_REQUEST_NO_UPDATE_SQL = "CREATE TRIGGER shadow_review_requests_no_update BEFORE UPDATE ON shadow_review_requests BEGIN SELECT RAISE(ABORT, 'shadow review requests are append-only'); END"
 _SHADOW_REQUEST_NO_DELETE_SQL = "CREATE TRIGGER shadow_review_requests_no_delete BEFORE DELETE ON shadow_review_requests BEGIN SELECT RAISE(ABORT, 'shadow review requests are append-only'); END"
 _SHADOW_ATTEMPT_NO_UPDATE_SQL = "CREATE TRIGGER shadow_review_attempts_no_update BEFORE UPDATE ON shadow_review_attempts BEGIN SELECT RAISE(ABORT, 'shadow review attempts are append-only'); END"
@@ -2592,7 +2621,7 @@ class SQLiteMetadataReportRepository:
             row = self._connection.execute(
                 "SELECT posture FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
-            if row is None or row[0] not in {"review", "preview"}:
+            if row is None or row[0] not in {"review", "preview", "automatic"}:
                 raise MetadataReportError("shadow posture is unavailable")
             return row[0]
         except sqlite3.Error as error:
@@ -2607,7 +2636,7 @@ class SQLiteMetadataReportRepository:
             row = self._connection.execute(
                 "SELECT posture FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
-            if row is None or row[0] not in {"review", "preview"}:
+            if row is None or row[0] not in {"review", "preview", "automatic"}:
                 raise MetadataReportError("shadow posture is unavailable")
             self._connection.execute(
                 "UPDATE metadata_policy_state SET posture='preview' WHERE singleton=1"
@@ -2620,6 +2649,31 @@ class SQLiteMetadataReportRepository:
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("shadow posture persistence failed") from error
+
+    def activate_qualified_automatic(self, updated_at: int) -> str:
+        """Confirm Preview only when every requested automatic option is sealed."""
+        if type(updated_at) is not int or updated_at < 0:
+            raise MetadataReportError("automatic posture request is invalid")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT s.posture,d.document FROM metadata_policy_state s JOIN metadata_policy_drafts d ON d.policy_id=s.active_policy_id WHERE s.singleton=1"
+            ).fetchone()
+            if row is None or row[0] != "preview":
+                raise MetadataReportError("automatic posture confirmation is unavailable")
+            policy = MetadataPolicyProfile.from_data(json.loads(row[1]))
+            requested = {f"{field}:{option}" for field, option in policy.options if dict(policy.destinations)[field] == "automatic"}
+            if not requested or not requested.issubset(QUALIFIED_POLICY_OPTIONS):
+                raise MetadataReportError("automatic posture qualification is unavailable")
+            self._connection.execute("UPDATE metadata_policy_state SET posture='automatic' WHERE singleton=1")
+            self._connection.commit()
+            return "automatic"
+        except (sqlite3.Error, MetadataReportError, MetadataPolicyError, ValueError, TypeError) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("automatic posture persistence failed") from error
 
     def _schedule_current_shadow_work(
         self, case: ReviewCase, updated_at: int
@@ -2809,7 +2863,7 @@ class SQLiteMetadataReportRepository:
                 "JOIN metadata_policy_drafts d ON d.policy_id=s.active_policy_id "
                 "WHERE s.singleton=1"
             ).fetchone()
-            if state is None or state[1] not in {"review", "preview"}:
+            if state is None or state[1] not in {"review", "preview", "automatic"}:
                 raise MetadataReportError("shadow posture is unavailable")
             if state[1] == "review":
                 if owns_transaction:
@@ -2858,6 +2912,12 @@ class SQLiteMetadataReportRepository:
                         serialized,
                     ),
                 )
+            # Preview remains an immutable observation even once it has become
+            # the input to decision-only automatic handling.  Decisions are
+            # derived inside this same exact-current transaction, never by a
+            # later queue or apply worker.
+            if state[1] == "automatic":
+                self._record_automatic_outcomes(outcome, evaluated_at)
             if owns_transaction:
                 self._connection.commit()
             return serialized
@@ -2890,6 +2950,65 @@ class SQLiteMetadataReportRepository:
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("shadow outcome persistence failed") from error
+
+    def _record_automatic_outcomes(
+        self, outcome: ShadowOutcomeSet, occurred_at: int
+    ) -> None:
+        """Append eligible dispositions, leaving paused/suspended work human."""
+        safety = self.automatic_safety_state()
+        for field in outcome.outcomes:
+            if (
+                field.disposition not in {"candidate", "keep_current", "ignore"}
+                or field.policy_category is None
+                or field.policy_option is None
+                or not safety.permits(field.policy_category)
+            ):
+                continue
+            try:
+                decision = AutomaticDecision.create(
+                    review_case_id=outcome.review_case_id,
+                    report_id=outcome.report_id,
+                    proposal_set_id=outcome.proposal_set_id,
+                    proposal_id=field.proposal_id,
+                    target_fingerprint=outcome.target_fingerprint,
+                    destination=field.destination,
+                    outcome=field.disposition,
+                    candidate_id=field.candidate_id,
+                    resolved_policy_id=outcome.resolved_policy_id,
+                    policy_generation=outcome.policy_generation,
+                    rule_id=field.rule_id,
+                    policy_category=field.policy_category,
+                    policy_option=field.policy_option,
+                    qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
+                    source_outcome_id=field.outcome_id,
+                    occurred_at=occurred_at,
+                )
+            except AutomaticDecisionError:
+                # A field outside the sealed envelope is unresolved human work,
+                # never a partial authority failure.
+                continue
+            existing = self._connection.execute(
+                "SELECT document FROM automatic_decisions WHERE idempotency_digest=?",
+                (decision.idempotency_digest,),
+            ).fetchone()
+            if existing is not None:
+                # The event timestamp is deliberately not part of the replay
+                # key; a later projection retry must reproduce the immutable
+                # authority fact rather than manufacture a second decision.
+                continue
+            conflict = self._connection.execute(
+                "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
+                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
+                (decision.review_case_id, decision.destination,
+                 decision.review_case_id, decision.destination),
+            ).fetchone()
+            if conflict is not None:
+                raise AutomaticDecisionError("already_decided")
+            self._connection.execute(
+                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
+                (decision.decision_id, decision.review_case_id, decision.destination,
+                 decision.idempotency_digest, decision.occurred_at, decision.to_json()),
+            )
 
     def list_shadow_outcomes(
         self, limit: int
@@ -2925,7 +3044,7 @@ class SQLiteMetadataReportRepository:
             posture = self._connection.execute(
                 "SELECT posture FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
-            if posture is None or posture[0] not in {"review", "preview"}:
+            if posture is None or posture[0] not in {"review", "preview", "automatic"}:
                 raise MetadataReportError("metadata policy posture is unavailable")
             if (
                 any(
@@ -3153,7 +3272,7 @@ class SQLiteMetadataReportRepository:
             state = self._connection.execute(
                 "SELECT active_policy_id,generation,posture FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
-            if state is None or state[2] not in {"review", "preview"}:
+            if state is None or state[2] not in {"review", "preview", "automatic"}:
                 raise MetadataReportError("metadata policy activation is stale")
             if state[0] != expected_active_policy_id:
                 replay = self._connection.execute(
@@ -3712,6 +3831,97 @@ class SQLiteMetadataReportRepository:
             self._connection.rollback()
             raise MetadataReportError("human decision persistence failed") from error
 
+    def record_automatic_decision(self, decision: AutomaticDecision) -> str:
+        """Append one exact-current qualified automatic disposition atomically."""
+        if type(decision) is not AutomaticDecision:
+            raise MetadataReportError("automatic decision persistence failed")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            replay = self._connection.execute(
+                "SELECT document FROM automatic_decisions WHERE idempotency_digest=?",
+                (decision.idempotency_digest,),
+            ).fetchone()
+            if replay is not None:
+                if replay != (decision.to_json(),):
+                    raise AutomaticDecisionError("idempotency_conflict")
+                self._connection.commit()
+                return decision.to_json()
+            posture = self._connection.execute(
+                "SELECT posture FROM metadata_policy_state WHERE singleton=1"
+            ).fetchone()
+            # The persistence seam is intentionally inert until the complete
+            # policy-control/suspension composition admits active posture.
+            if posture != ("automatic",):
+                raise AutomaticDecisionError("unavailable")
+            if not self.automatic_safety_state().permits(decision.policy_category):
+                raise AutomaticDecisionError("suspended")
+            case = json.loads(self.get_review_case(decision.review_case_id))
+            if type(case) is not dict or case.get("current") is not True:
+                raise AutomaticDecisionError("stale")
+            existing = self._connection.execute(
+                "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
+                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
+                (decision.review_case_id, decision.destination, decision.review_case_id, decision.destination),
+            ).fetchone()
+            if existing is not None:
+                raise AutomaticDecisionError("already_decided")
+            outcome = self._connection.execute(
+                "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? AND report_id=? "
+                "AND proposal_set_id=? AND resolved_policy_id=?",
+                (decision.review_case_id, decision.report_id, decision.proposal_set_id, decision.resolved_policy_id),
+            ).fetchone()
+            if outcome is None:
+                raise AutomaticDecisionError("stale")
+            source = ShadowOutcomeSet.from_json(outcome[0])
+            field = next((value for value in source.outcomes if value.outcome_id == decision.source_outcome_id), None)
+            if field is None or (field.disposition != decision.outcome) or any((field.proposal_id != decision.proposal_id, field.destination != decision.destination, field.rule_id != decision.rule_id, field.policy_category != decision.policy_category, field.policy_option != decision.policy_option)):
+                raise AutomaticDecisionError("stale")
+            if self.current_resolved_policy_id(json.loads(case["case"])["target"]["library"]) != decision.resolved_policy_id:
+                raise AutomaticDecisionError("stale")
+            self._connection.execute(
+                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
+                (decision.decision_id, decision.review_case_id, decision.destination, decision.idempotency_digest, decision.occurred_at, decision.to_json()),
+            )
+            if self._binding is not None:
+                self._binding.require_current()
+            self._connection.commit()
+            return decision.to_json()
+        except AutomaticDecisionError:
+            self._connection.rollback()
+            raise
+        except (sqlite3.Error, MetadataReportError, ShadowOutcomeError, TypeError, ValueError, json.JSONDecodeError) as error:
+            self._connection.rollback()
+            raise MetadataReportError("automatic decision persistence failed") from error
+
+    def automatic_safety_state(self) -> AutomaticSafetyState:
+        try:
+            row = self._connection.execute("SELECT paused,global_suspension,category_suspensions_document FROM automatic_safety_state WHERE singleton=1").fetchone()
+            if row is None:
+                raise MetadataReportError("automatic safety state is unavailable")
+            categories = json.loads(row[2])
+            return AutomaticSafetyState(bool(row[0]), row[1], tuple(tuple(value) for value in categories))
+        except (sqlite3.Error, TypeError, ValueError, json.JSONDecodeError, AutomaticDecisionError) as error:
+            raise MetadataReportError("automatic safety state is unavailable") from error
+
+    def set_automatic_safety_state(self, state: AutomaticSafetyState, updated_at: int) -> None:
+        if type(state) is not AutomaticSafetyState or type(updated_at) is not int or updated_at < 0:
+            raise MetadataReportError("automatic safety state is invalid")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            changed = self._connection.execute(
+                "UPDATE automatic_safety_state SET paused=?,global_suspension=?,category_suspensions_document=?,updated_at=? WHERE singleton=1",
+                (int(state.paused), state.global_suspension, _canonical_json([list(value) for value in state.category_suspensions]), updated_at),
+            ).rowcount
+            if changed != 1:
+                raise MetadataReportError("automatic safety state is unavailable")
+            self._connection.commit()
+        except (sqlite3.Error, MetadataReportError) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("automatic safety state is unavailable") from error
+
     def get_review_case_history(
         self, review_case_id: str, limit: int
     ) -> tuple[dict[str, object], ...]:
@@ -3735,6 +3945,11 @@ class SQLiteMetadataReportRepository:
                 "resolved_policy_id,source_decision_set_id,evaluated_at,document "
                 "FROM shadow_decision_outcomes "
                 "WHERE review_case_id=? ORDER BY evaluated_at DESC,outcome_set_id DESC LIMIT ?",
+                (review_case_id, limit),
+            ).fetchall()
+            automatic_rows = self._connection.execute(
+                "SELECT decision_id,destination,occurred_at,document FROM automatic_decisions "
+                "WHERE review_case_id=? ORDER BY occurred_at DESC,decision_id DESC LIMIT ?",
                 (review_case_id, limit),
             ).fetchall()
             transitions = [
@@ -3798,6 +4013,30 @@ class SQLiteMetadataReportRepository:
                             "schema_version": "shadow-preview-history-event-v1",
                         },
                     )
+                )
+            for decision_id, destination, occurred_at, document in automatic_rows:
+                value = json.loads(document)
+                if (
+                    type(value) is not dict
+                    or value.get("schema_version") != "automatic-decision-v1"
+                    or value.get("origin") != "automatic_policy"
+                    or value.get("decision_id") != decision_id
+                    or value.get("review_case_id") != review_case_id
+                    or value.get("destination") != destination
+                    or value.get("occurred_at") != occurred_at
+                ):
+                    raise MetadataReportError("review history is invalid")
+                events.append(
+                    (occurred_at, decision_id, {
+                        "decision_id": decision_id,
+                        "destination": destination,
+                        "kind": "automatic_decision_recorded",
+                        "occurred_at": occurred_at,
+                        "origin": "automatic_policy",
+                        "outcome": value["outcome"],
+                        "review_case_id": review_case_id,
+                        "schema_version": "automatic-decision-history-event-v1",
+                    })
                 )
             ordered_events = [
                 value for _, _, value in sorted(events, reverse=True)
@@ -4825,6 +5064,9 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_REVIEW_LOGIN_FAILURES_SQL)
             connection.execute(_HUMAN_DECISIONS_SQL)
             connection.execute(_HUMAN_DECISION_EVENTS_SQL)
+            connection.execute(_AUTOMATIC_DECISIONS_SQL)
+            connection.execute(_AUTOMATIC_SAFETY_SQL)
+            connection.execute("INSERT INTO automatic_safety_state(singleton,paused,global_suspension,category_suspensions_document,updated_at) VALUES(1,0,NULL,'[]',0)")
             connection.execute(_SHADOW_REQUESTS_SQL)
             connection.execute(_SHADOW_ATTEMPTS_SQL)
             connection.execute(_SHADOW_DISPATCHES_SQL)
@@ -4845,6 +5087,8 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_HUMAN_DECISION_NO_DELETE_SQL)
             connection.execute(_HUMAN_DECISION_EVENT_NO_UPDATE_SQL)
             connection.execute(_HUMAN_DECISION_EVENT_NO_DELETE_SQL)
+            connection.execute(_AUTOMATIC_DECISION_NO_UPDATE_SQL)
+            connection.execute(_AUTOMATIC_DECISION_NO_DELETE_SQL)
             connection.execute(_SHADOW_REQUEST_NO_UPDATE_SQL)
             connection.execute(_SHADOW_REQUEST_NO_DELETE_SQL)
             connection.execute(_SHADOW_ATTEMPT_NO_UPDATE_SQL)
@@ -5136,6 +5380,9 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_human_decisions_1", None),
         ("index", "sqlite_autoindex_human_decisions_2", None),
         ("index", "sqlite_autoindex_human_decisions_3", None),
+        ("index", "sqlite_autoindex_automatic_decisions_1", None),
+        ("index", "sqlite_autoindex_automatic_decisions_2", None),
+        ("index", "sqlite_autoindex_automatic_decisions_3", None),
         ("index", "sqlite_autoindex_metadata_reports_1", None),
         ("index", "sqlite_autoindex_metadata_reports_2", None),
         ("index", "sqlite_autoindex_metadata_policy_drafts_1", None),
@@ -5174,6 +5421,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
         ("table", "human_decision_events", _HUMAN_DECISION_EVENTS_SQL),
         ("table", "human_decisions", _HUMAN_DECISIONS_SQL),
+        ("table", "automatic_decisions", _AUTOMATIC_DECISIONS_SQL),
+        ("table", "automatic_safety_state", _AUTOMATIC_SAFETY_SQL),
         ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
         ("table", "metadata_reports", _REPORTS_SQL),
         ("table", "metadata_policy_drafts", _METADATA_POLICY_DRAFTS_SQL),
@@ -5205,6 +5454,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("trigger", "human_decision_events_no_update", _HUMAN_DECISION_EVENT_NO_UPDATE_SQL),
         ("trigger", "human_decisions_no_delete", _HUMAN_DECISION_NO_DELETE_SQL),
         ("trigger", "human_decisions_no_update", _HUMAN_DECISION_NO_UPDATE_SQL),
+        ("trigger", "automatic_decisions_no_delete", _AUTOMATIC_DECISION_NO_DELETE_SQL),
+        ("trigger", "automatic_decisions_no_update", _AUTOMATIC_DECISION_NO_UPDATE_SQL),
         ("trigger", "proposal_sets_no_delete", _PROPOSAL_NO_DELETE_SQL),
         ("trigger", "proposal_sets_no_update", _PROPOSAL_NO_UPDATE_SQL),
         ("trigger", "review_case_transitions_no_delete", _REVIEW_TRANSITION_NO_DELETE_SQL),

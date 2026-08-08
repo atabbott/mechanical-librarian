@@ -33,7 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
-from mechanical_librarian.application.metadata_policy import MetadataPolicyApplicationError, PolicyNotebook, PolicyTransition
+from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls, MetadataPolicyApplicationError, PolicyNotebook, PolicyTransition
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     CurrentReviewCaseSnapshot,
@@ -190,8 +190,19 @@ class _HistoryShadowItem(_ClosedModel):
     schema_version: Literal["shadow-preview-history-event-v1"]
 
 
+class _HistoryAutomaticItem(_ClosedModel):
+    decision_id: str
+    destination: str
+    kind: Literal["automatic_decision_recorded"]
+    occurred_at: int
+    origin: Literal["automatic_policy"]
+    outcome: Literal["candidate", "keep_current", "ignore"]
+    review_case_id: str
+    schema_version: Literal["automatic-decision-history-event-v1"]
+
+
 class _HistoryResponse(_ClosedModel):
-    items: list[_HistoryTransitionItem | _HistoryDecisionItem | _HistoryShadowItem]
+    items: list[_HistoryTransitionItem | _HistoryDecisionItem | _HistoryShadowItem | _HistoryAutomaticItem]
     next_cursor: str | None
     review_case_id: str
     schema_version: str
@@ -353,10 +364,16 @@ class _PolicyActivationResponse(_ClosedModel):
 
 
 class _ShadowPostureResponse(_ClosedModel):
-    authority: Literal["none"]
+    authority: Literal["none", "decision_only"]
     can_leave_preview: Literal[False]
-    posture: Literal["review", "preview"]
+    posture: Literal["review", "preview", "automatic"]
     schema_version: Literal["shadow-posture-v1"]
+
+
+class _AutomaticSafetyResponse(_ClosedModel):
+    paused: bool
+    global_suspension: str | None
+    category_suspensions: dict[str, str]
 
 
 class _ShadowLeaveImpact(_ClosedModel):
@@ -564,6 +581,7 @@ def create_review_app(
     browse = BrowseReviewLibrary(serialized_repository)
     overrides = {name: value for name, value in policy_libraries if value is not None}
     notebook = PolicyNotebook(serialized_repository, tuple(name for name, _ in policy_libraries), overrides)
+    automatic_safety = AutomaticSafetyControls(serialized_repository)
     origin = urlsplit(configuration.canonical_origin)
 
     @asynccontextmanager
@@ -747,6 +765,69 @@ def create_review_app(
             return _ShadowPostureResponse.model_validate(notebook.enter_preview(clock()))
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
+
+    @app.post("/api/v1/metadata-policy/shadow/confirm-automatic", response_model=_ShadowPostureResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)})
+    def confirm_automatic(ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _ShadowPostureResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            return _ShadowPostureResponse.model_validate(notebook.confirm_automatic(clock()))
+        except MetadataPolicyApplicationError:
+            raise HTTPException(422, detail={"code": "automatic_unavailable"}) from None
+
+    def _automatic_safety_response() -> _AutomaticSafetyResponse:
+        state = automatic_safety.state()
+        return _AutomaticSafetyResponse(paused=state.paused, global_suspension=state.global_suspension, category_suspensions=dict(state.category_suspensions))
+
+    @app.get("/api/v1/metadata-policy/automatic-safety", response_model=_AutomaticSafetyResponse)
+    def automatic_safety_state(ml_session: str = Depends(authenticated_session_cookie)) -> _AutomaticSafetyResponse:
+        _require_session(sessions, ml_session)
+        return _automatic_safety_response()
+
+    @app.post("/api/v1/metadata-policy/automatic-safety/pause", response_model=_AutomaticSafetyResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
+    async def set_automatic_pause(request: Request, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _AutomaticSafetyResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            body = await request.json()
+            if type(body) is not dict or set(body) != {"paused"} or type(body["paused"]) is not bool:
+                raise ValueError
+            automatic_safety.pause(body["paused"], clock())
+            return _automatic_safety_response()
+        except MetadataPolicyApplicationError:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        except Exception:
+            raise HTTPException(422, detail={"code": "request"}) from None
+
+    @app.post("/api/v1/metadata-policy/automatic-safety/recover", response_model=_AutomaticSafetyResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
+    async def recover_automatic_safety(request: Request, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _AutomaticSafetyResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            body = await request.json()
+            category = body.get("category") if type(body) is dict and set(body) == {"category"} else None
+            if category is not None and (type(category) is not str or not category):
+                raise ValueError
+            if type(body) is not dict or set(body) != {"category"}:
+                raise ValueError
+            automatic_safety.recover(clock(), category)
+            return _automatic_safety_response()
+        except MetadataPolicyApplicationError:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        except Exception:
+            raise HTTPException(422, detail={"code": "request"}) from None
+
+    @app.post("/api/v1/metadata-policy/automatic-safety/suspend", response_model=_AutomaticSafetyResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
+    async def suspend_automatic_safety(request: Request, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _AutomaticSafetyResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            body = await request.json()
+            if type(body) is not dict or set(body) not in ({"reason"}, {"reason", "category"}) or type(body.get("reason")) is not str or not body["reason"] or ("category" in body and (type(body["category"]) is not str or not body["category"])):
+                raise ValueError
+            automatic_safety.suspend(body["reason"], clock(), body.get("category"))
+            return _automatic_safety_response()
+        except MetadataPolicyApplicationError:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        except Exception:
+            raise HTTPException(422, detail={"code": "request"}) from None
+
 
     @app.get("/api/v1/metadata-policy/shadow/leave-preview", response_model=_ShadowLeaveResponse, responses={status: {"model": _ErrorResponse} for status in (401, 503)})
     def preview_leave_shadow(ml_session: str = Depends(authenticated_session_cookie)) -> _ShadowLeaveResponse:
@@ -1351,6 +1432,18 @@ class _SerializedReviewRepository:
     def enter_shadow_preview(self, updated_at: int) -> str:
         with self._lock:
             return self._repository.enter_shadow_preview(updated_at)
+
+    def activate_qualified_automatic(self, updated_at: int) -> str:
+        with self._lock:
+            return self._repository.activate_qualified_automatic(updated_at)
+
+    def automatic_safety_state(self):
+        with self._lock:
+            return self._repository.automatic_safety_state()
+
+    def set_automatic_safety_state(self, state, updated_at: int) -> None:
+        with self._lock:
+            self._repository.set_automatic_safety_state(state, updated_at)
 
     def list_shadow_outcomes(self, limit: int) -> tuple[tuple[str, int], ...]:
         with self._lock:

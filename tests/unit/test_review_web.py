@@ -1354,8 +1354,13 @@ class ReviewWebTests(unittest.TestCase):
                 ("post", "/api/v1/metadata-policy/preview"),
                 ("get", "/api/v1/metadata-policy/shadow"),
                 ("post", "/api/v1/metadata-policy/shadow/enter"),
+                ("post", "/api/v1/metadata-policy/shadow/confirm-automatic"),
                 ("get", "/api/v1/metadata-policy/shadow/leave-preview"),
                 ("get", "/api/v1/metadata-policy/shadow/outcomes"),
+                ("get", "/api/v1/metadata-policy/automatic-safety"),
+                ("post", "/api/v1/metadata-policy/automatic-safety/pause"),
+                ("post", "/api/v1/metadata-policy/automatic-safety/recover"),
+                ("post", "/api/v1/metadata-policy/automatic-safety/suspend"),
                 ("get", "/api/v1/metadata-policy/state"),
                 ("get", "/api/v1/metadata-policy/transition"),
                 (
