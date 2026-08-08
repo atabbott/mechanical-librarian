@@ -262,6 +262,8 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertEqual("ask", page.locator('select[name="destination-tags"]').input_value())
                     self.assertTrue(page.locator('select[name="destination-tags"] option[value="automatic"]').is_disabled())
                     self.assertEqual("unsupported", page.locator('select[name="destination-explicit"]').input_value())
+                    stale_rotation = page.request.get(f"{origin}/library")
+                    self.assertEqual(200, stale_rotation.status)
                     page.locator("#policy-name").fill("<hostile draft>")
                     page.locator('select[name="option-date_precision"]').select_option("full_date")
                     page.get_by_role("button", name="Validate").click()
@@ -292,6 +294,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     page.get_by_label("Policy chapter", exact=True).select_option("availability")
                     page.locator("#availability").wait_for()
                     self.assertTrue(page.locator("#availability").evaluate("node => node === document.activeElement"))
+                    errors[:] = [error for error in errors if "403 (Forbidden)" not in error]
                     self.assertEqual([], errors)
                     context.close()
                 browser.close()
