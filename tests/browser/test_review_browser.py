@@ -124,6 +124,7 @@ def _server(
     key: Path,
     port: int,
     report=None,
+    policy_libraries=(),
 ):
     repository = open_repository(
         database,
@@ -147,6 +148,7 @@ def _server(
         ),
         clock=lambda: 1_000,
         close_repository=True,
+        policy_libraries=policy_libraries,
     )
     server = uvicorn.Server(
         uvicorn.Config(
@@ -235,6 +237,69 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         verify_playwright_browser()
+
+    def test_policy_notebook_initializes_active_draft_and_responsive_navigation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.chmod(root, 0o700)
+            hash_path = root / "owner.hash"
+            hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+            os.chmod(hash_path, 0o600)
+            certificate, key = _certificate(root)
+            database = root / "application.sqlite3"
+            port = _unused_port()
+            errors: list[str] = []
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                context = browser.new_context(ignore_https_errors=True)
+                page = context.new_page()
+                _capture_errors(page, errors)
+                with _server(database=database, hash_path=hash_path, certificate=certificate, key=key, port=port, report=_manual_report(), policy_libraries=(("ebooks", None),)) as (origin, _):
+                    _login(page, origin)
+                    page.goto(f"{origin}/policy")
+                    page.get_by_role("heading", name="Choose how prepared metadata reaches you").wait_for()
+                    self.assertEqual("title_and_subtitle", page.locator('select[name="option-title_layout"]').input_value())
+                    self.assertEqual("ask", page.locator('select[name="destination-tags"]').input_value())
+                    self.assertTrue(page.locator('select[name="destination-tags"] option[value="automatic"]').is_disabled())
+                    self.assertEqual("unsupported", page.locator('select[name="destination-explicit"]').input_value())
+                    stale_rotation = page.request.get(f"{origin}/library")
+                    self.assertEqual(200, stale_rotation.status)
+                    page.locator("#policy-name").fill("<hostile draft>")
+                    page.locator('select[name="option-date_precision"]').select_option("full_date")
+                    page.get_by_role("button", name="Validate").click()
+                    page.get_by_text("Valid draft:").wait_for()
+                    page.get_by_role("button", name="Create immutable draft").click()
+                    page.get_by_text("Immutable draft created:").wait_for()
+                    policy_id = page.locator("#policy-status").inner_text().split("Immutable draft created: ")[1].split(".")[0]
+                    read = page.request.get(f"{origin}/api/v1/metadata-policy/drafts/{policy_id}")
+                    self.assertEqual(200, read.status)
+                    self.assertEqual(policy_id, read.json()["policy_id"])
+                    page.get_by_role("button", name="Preview effects").click()
+                    page.get_by_text(re.compile(r"ebooks: date_precision; 1 current unapplied item"), exact=False).wait_for()
+                    self.assertNotIn("<hostile draft>", page.locator("#policy-status").inner_html())
+                    page.set_viewport_size({"width": 1440, "height": 900})
+                    self.assertEqual("sticky", page.locator(".policy-chapters").evaluate("node => getComputedStyle(node).position"))
+                    desktop = page.locator(".policy-content").bounding_box()
+                    chapters = page.locator(".policy-chapters").bounding_box()
+                    assert desktop is not None and chapters is not None
+                    self.assertGreater(desktop["width"], 700)
+                    self.assertLessEqual(chapters["width"], 190)
+                    self.assertGreater(desktop["x"], chapters["x"] + chapters["width"])
+                    page.locator('.policy-chapters a[href="#descriptions"]').click()
+                    self.assertEqual("Effects", page.locator("#policy-chapter-select").input_value() and page.locator("#policy-chapter-select option:checked").inner_text())
+                    page.set_viewport_size({"width": 390, "height": 844})
+                    self.assertEqual("sticky", page.locator(".policy-chapters").evaluate("node => getComputedStyle(node).position"))
+                    self.assertLessEqual(page.locator(".policy-content").evaluate("node => node.scrollWidth"), 390)
+                    self.assertLessEqual(page.locator("body").evaluate("node => node.scrollWidth"), 390)
+                    page.get_by_label("Policy chapter", exact=True).select_option("availability")
+                    page.locator("#availability").wait_for()
+                    self.assertTrue(page.locator("#availability").evaluate("node => node === document.activeElement"))
+                    expected_403 = [error for error in errors if "403 (Forbidden)" in error]
+                    self.assertEqual(1, len(expected_403))
+                    errors.remove(expected_403[0])
+                    self.assertEqual([], errors)
+                    context.close()
+                browser.close()
 
     def test_preparation_progress_refreshes_library_without_navigation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

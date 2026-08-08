@@ -5,7 +5,7 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v5` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v22` plus `proposal-set-v3` under
+  `metadata-report-v22` plus `proposal-set-v4` under
   `fixed-conservative-v6`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v5`,
   `shadow-review-request-v9`, `shadow-review-result-v2`,

@@ -47,6 +47,7 @@ def _shell(*, title: str, active: str, main: str, csrf_token: str | None) -> str
   {'' if csrf_token is None else '<section id="activity-popover" class="activity-popover" aria-label="Background activity" hidden></section>'}
   <p class="visually-hidden" id="theme-status" role="status" aria-live="polite"></p>
   <script src="/assets/review.js" defer></script>
+  {'' if active != "policy" else '<script src="/assets/policy.js" defer></script>'}
 </body>
 </html>"""
 
@@ -55,10 +56,12 @@ def _navigation(active: str) -> str:
     library = ' aria-current="page"' if active == "library" else ""
     attention = ' aria-current="page"' if active == "attention" else ""
     detail = ' aria-current="page"' if active == "detail" else ""
+    policy = ' aria-current="page"' if active == "policy" else ""
     return f"""<nav class="workspace-navigation" aria-label="Review workspace">
   <div class="workspace-navigation-inner">
     <a class="workspace-tab" href="/library"{library}>Library</a>
     <a class="workspace-tab attention-tab" href="/attention"{attention}>Attention</a>
+    <a class="workspace-tab" href="/policy"{policy}>Policy</a>
     <span class="workspace-tab detail-tab"{detail}>Detail</span>
     <span class="workspace-context">Human exception review · exact-current records</span>
   </div>
@@ -108,6 +111,34 @@ def attention_html(csrf_token: str) -> str:
         main="""<main id="workspace" class="prototype-shell">
   <section id="attention" class="attention-page" tabindex="-1">
     <p class="loading" role="status"><span aria-hidden="true"></span> Loading bounded attention queue…</p>
+  </section>
+</main>""",
+    )
+
+
+def policy_html(csrf_token: str) -> str:
+    """The selected B notebook is intentionally a policy-only surface."""
+    return _shell(
+        title="Metadata policy",
+        active="policy",
+        csrf_token=csrf_token,
+        main="""<main id="workspace" class="prototype-shell">
+  <section class="policy-page" aria-labelledby="policy-title" tabindex="-1">
+    <p class="eyebrow">Metadata policy · B notebook</p>
+    <h1 id="policy-title">Choose how prepared metadata reaches you</h1>
+    <p class="lede">The built-in policy is active. Draft previews are read-only: they do not alter evidence, proposals, the queue, or your library.</p>
+    <div class="policy-notebook" aria-label="Policy notebook">
+      <nav class="policy-chapters" aria-label="Policy chapters">
+        <label class="visually-hidden" for="policy-chapter-select">Policy chapter</label><select id="policy-chapter-select" class="policy-chapter-select"><option value="identity">Identity</option><option value="bibliography">Draft</option><option value="descriptions">Effects</option><option value="availability">Availability</option></select>
+        <a href="#identity">Identity</a><a href="#bibliography">Draft</a><a href="#descriptions">Effects</a><a href="#availability">Availability</a>
+      </nav>
+      <div class="policy-content">
+      <section id="identity" class="policy-card"><p class="eyebrow">Active · built-in</p><h2>Calm, conservative defaults</h2><div id="policy-active" aria-live="polite"><p>Loading active policy…</p></div></section>
+      <section id="bibliography" class="policy-card"><h2>Draft before activation</h2><p>A draft is immutable and versioned. It can be validated and previewed, but cannot become active in this view.</p><form id="policy-draft"><label for="policy-name">Draft name</label><input id="policy-name" maxlength="80" required value="Policy draft"><div id="policy-fields"></div><div class="policy-actions"><button class="secondary-button" type="submit" data-action="validate">Validate</button><button class="primary-button" type="submit" data-action="create">Create immutable draft</button><button class="secondary-button" type="submit" data-action="preview">Preview effects</button></div><p id="policy-status" role="status"></p></form></section>
+      <section id="descriptions" class="policy-card"><h2>Per-library effects</h2><p>Configured sparse overrides are resolved with the global draft. Preview names every affected category and current unapplied count.</p><div id="policy-preview" aria-live="polite"></div></section>
+      <section id="availability" class="policy-card"><h2>Qualification availability</h2><p>Automatic is unavailable until qualified. Ask me and Ignore remain manual-only. Explicit is unsupported.</p></section>
+      </div>
+    </div>
   </section>
 </main>""",
     )
@@ -331,6 +362,23 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .primary-button { width: 100%; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent); color: var(--on-accent); cursor: pointer; font-weight: 800; }
 #login-status { min-height: 24px; margin: 9px 0 0; color: var(--danger); }
 
+.policy-page { max-width: 1080px; margin: 0 auto; }
+.policy-page .lede { max-width: 720px; color: var(--ink-soft); }
+.policy-notebook { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 18px; margin-top: 26px; }
+.policy-content { min-width: 0; }
+.policy-chapters { position: sticky; top: 132px; align-self: start; display: grid; gap: 3px; padding: 9px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.policy-chapters a { padding: 10px; border-radius: 8px; color: var(--ink-soft); font-weight: 750; text-decoration: none; }
+.policy-chapters a:focus-visible, .policy-chapters a:hover { background: var(--surface-strong); color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
+.policy-card { margin-bottom: 12px; padding: clamp(18px, 3vw, 30px); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
+.policy-card h2 { margin-top: 0; }
+.policy-card input, .policy-card select { width: 100%; padding: 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface-strong); color: var(--ink); }
+.policy-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }
+.policy-field { padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); }
+.policy-field label { display: block; margin-bottom: 4px; font-size: .72rem; font-weight: 800; }
+.policy-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.policy-actions .primary-button { width: auto; padding: 0 14px; }
+.policy-chapter-select { display: none; }
+
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 
@@ -341,6 +389,8 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
   .case-sidebar { padding: 20px; }
   .field-navigation { display: flex; overflow-x: auto; padding-bottom: 5px; }
   .field-navigation a { flex: 0 0 auto; min-width: 170px; }
+  .policy-notebook { grid-template-columns: 1fr; }
+  .policy-chapters { position: sticky; top: 118px; grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; }
 }
 
 @media (max-width: 700px) {
@@ -356,6 +406,10 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
   .workspace-navigation-inner { min-height: 54px; padding: 6px 10px; }
   .workspace-tab { min-height: 40px; padding: 0 10px; font-size: .64rem; }
   .workspace-context { display: none; }
+  .policy-chapters { display: block; padding: 0; border: 0; background: transparent; }
+  .policy-chapters a { display: none; }
+  .policy-chapter-select { display: block; min-height: 44px; }
+  .policy-fields { grid-template-columns: 1fr; }
   .prototype-shell { padding: 14px 10px 80px; }
   .page-heading { grid-template-columns: 1fr; }
   .count-cluster { width: 100%; }
@@ -383,10 +437,11 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
   .search-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
   .search-form label { min-width: 0; }
 }
+
 """
 
 
-REVIEW_JS = r"""
+REVIEW_JS = "\n".join(line.strip() for line in r"""
 const element = (name, text, className) => {
   const value = document.createElement(name);
   if (text !== undefined && text !== null) value.textContent = text;
@@ -875,4 +930,25 @@ if (root) {
     const box = element("section", null, "error-state"); const alert = element("p", "The exact current case could not be loaded. Return to the library and reopen the current case."); alert.setAttribute("role", "alert"); const link = element("a", "Return to library", "recovery"); link.href = "/library"; box.append(element("p", "Exact-current protection", "eyebrow"), element("h1", "Case unavailable"), alert, link); root.replaceChildren(box); root.focus();
   });
 }
-"""
+
+""".splitlines())
+
+
+POLICY_JS = "\n".join(line.strip() for line in r"""
+(() => {
+  const form = document.querySelector("#policy-draft");
+  if (!form) return;
+  const fields = document.querySelector("#policy-fields"), status = document.querySelector("#policy-status"), preview = document.querySelector("#policy-preview");
+  const catalogue = {title_layout:["preserve","title_and_subtitle"],date_precision:["year","full_date"],language_rendering:["preserve","display_name"],contributor_names:["preserve","canonical"],publisher_preference:["publisher","imprint"],genres:["preserve","catalogue"],tags:["preserve","catalogue"],description_fill:["preserve","fill_when_empty"],isbn_form:["preserve","isbn13"],cover_order:["fixed_source_order"],asin:["preserve","canonical_asin"],explicit:["unsupported"]};
+  const node = (tag, text) => { const value=document.createElement(tag); value.textContent=text; return value; };
+  const renderFields = profile => { fields.replaceChildren(); for (const [name, values] of Object.entries(catalogue)) { const row=document.createElement("div"), option=document.createElement("select"), destination=document.createElement("select"), optionId=`policy-option-${name}`, destinationId=`policy-destination-${name}`; row.className="policy-field"; option.id=optionId; destination.id=destinationId; option.name=`option-${name}`; destination.name=`destination-${name}`; option.setAttribute("aria-label", `${name.replaceAll("_"," ")} option`); destination.setAttribute("aria-label", `${name.replaceAll("_"," ")} destination`); values.forEach(value=>option.append(new Option(value,value))); (name === "explicit" ? ["unsupported"] : ["ask","ignore","automatic"]).forEach(value=>{ const choice=new Option(value === "ask" ? "Ask me" : value === "ignore" ? "Ignore" : value === "automatic" ? "Automatic (unqualified)" : "Explicit unsupported",value); choice.disabled=value === "automatic"; destination.append(choice); }); option.value=profile.options[name]; destination.value=profile.destinations[name]; const optionLabel=node("label", `${name.replaceAll("_"," ")} option`); optionLabel.htmlFor=optionId; const destinationLabel=node("label", `${name.replaceAll("_"," ")} destination`); destinationLabel.htmlFor=destinationId; row.append(optionLabel,option,destinationLabel,destination); fields.append(row); } };
+  const data = () => ({name:document.querySelector("#policy-name").value,options:Object.fromEntries(Object.keys(catalogue).map(key=>[key,form.elements[`option-${key}`].value])),destinations:Object.fromEntries(Object.keys(catalogue).map(key=>[key,form.elements[`destination-${key}`].value]))});
+  const call = async (url, method, body) => { const send=()=>fetch(url,{method,headers:method === "GET" ? {} : {"content-type":"application/json","x-csrf-token":pageCsrf},body:body && JSON.stringify(body)}); let response=await send(); if(method !== "GET" && response.status === 403) { pageCsrf=await refreshPageCsrf(); response=await send(); } const value=await response.json().catch(()=>null); if(!response.ok) { const error=new Error(); error.problem=value?.error?.code; throw error; } return value; };
+  const chapters = [...document.querySelectorAll(".policy-chapters a")], chapterSelect=document.querySelector("#policy-chapter-select"), selectChapter = id => { chapters.forEach(link=>link.toggleAttribute("aria-current", link.getAttribute("href") === `#${id}`)); if(chapterSelect) chapterSelect.value=id; };
+  chapters.forEach(link=>link.addEventListener("click", ()=>selectChapter(link.getAttribute("href").slice(1))));
+  const observe = new IntersectionObserver(entries => { const visible=entries.filter(entry=>entry.isIntersecting).sort((a,b)=>b.intersectionRatio-a.intersectionRatio)[0]; if(visible) selectChapter(visible.target.id); }, {rootMargin:"-150px 0px -55% 0px", threshold:[.1,.5]}); document.querySelectorAll(".policy-card").forEach(card=>observe.observe(card));
+  call("/api/v1/metadata-policy/state","GET").then(value=>{ renderFields(value.profile); document.querySelector("#policy-active").replaceChildren(node("p",`${value.profile.name} is active and read-only.`), node("p",`Active policy ID: ${value.policy_id}`)); status.textContent="Draft starts as a separate copy of the active policy."; }).catch(()=>{ status.textContent="The active policy could not be loaded. No draft was created."; });
+  form.addEventListener("submit", async event=>{event.preventDefault(); if(!fields.childElementCount) return; try { const action=event.submitter.dataset.action, value=await call(action === "create" ? "/api/v1/metadata-policy/drafts" : action === "preview" ? "/api/v1/metadata-policy/preview" : "/api/v1/metadata-policy/validate","POST",data()); if(action === "preview") preview.replaceChildren(...(value.libraries.length ? value.libraries.map(item=>node("p",`${item.library}: ${item.affected_categories.join(", ") || "no changed categories"}; ${item.current_unapplied_count} current unapplied item(s).`)) : [node("p","No configured libraries to preview.")])); status.textContent=action === "preview" ? "Read-only preview complete; active policy unchanged." : action === "create" ? `Immutable draft created: ${value.policy_id}. Active policy unchanged.` : `Valid draft: ${value.policy_id}. Active policy unchanged.`; } catch (error) { status.textContent=`The draft could not be processed (${error.problem || "policy_validation"}). Nothing changed.`; }});
+  chapterSelect?.addEventListener("change", event=>{ const target=document.querySelector(`#${CSS.escape(event.target.value)}`); if(target) target.tabIndex=-1; target?.scrollIntoView({block:"start"}); target?.focus({preventScroll:true}); });
+})();
+""".splitlines())

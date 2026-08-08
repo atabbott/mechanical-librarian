@@ -27,12 +27,17 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalValueKind,
     evaluate_report,
 )
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionIncompatibleError,
     ReviewAdmissionResult,
     ReviewCase,
     ReviewCaseValueError,
 )
+from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.review_case import ReviewTransition
 
 
@@ -74,6 +79,42 @@ def _report(
 
 
 class ReviewCasePersistenceTests(unittest.TestCase):
+    def test_partial_human_decision_remains_current_unapplied(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            report = _report()
+            proposal = evaluate_report(report)
+            repository.publish(report, lambda: True)
+            repository.publish_proposal(proposal)
+            case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+            case = ReviewCase.create_from_data(json.loads(repository.get_review_case(case_id))["case"])
+            field = next(value for value in case.proposals if value["result"]["outcome"] == "unresolved_choice")
+            repository.record_human_decision(HumanDecision.create(case, proposal_id=field["proposal_id"], target_fingerprint=case.target_fingerprint, destination=field["destination"], actor="owner", outcome="keep_current", selected_value=None, idempotency_key="partial-count-0001", occurred_at=1_000))
+            self.assertEqual(1, repository.current_unapplied_count("ebooks"))
+            repository.close()
+
+    def test_nondefault_resolved_policy_replays_admits_reopens_and_browses(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            report = _report()
+            resolved = resolve_policy(
+                MetadataPolicyProfile.builtin(),
+                report.target.library,
+                {"options": {"date_precision": "full_date"}, "destinations": {}},
+            )
+            proposal = evaluate_report(report, resolved.resolved_id)
+            original_report = report.to_json()
+            repository.publish(report, lambda: True)
+            repository.publish_proposal(proposal)
+            admitted = json.loads(repository.admit_review_case(proposal))
+            self.assertEqual("admitted", admitted["status"])
+            case = json.loads(repository.get_review_case(admitted["review_case_id"]))
+            self.assertEqual(proposal.proposal_set_id, case["case"]["proposal_set_id"])
+            self.assertEqual(original_report, repository.get(report.report_id))
+            browsed = repository.list_current_review_case_documents(None, 50, 0, None)
+            self.assertEqual(1, len(browsed))
+            repository.close()
+
     def test_case_parser_rejects_duplicate_and_oversized_documents(self) -> None:
         with self.assertRaises(ReviewCaseValueError):
             ReviewCase.from_json('{"schema_version":"review-case-v1","schema_version":"review-case-v1"}')
@@ -312,6 +353,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
                 report_id=report.report_id,
                 target_fingerprint=report.target.fingerprint,
                 results=(result, *base.results[1:]),
+                resolved_policy_id=base.resolved_policy_id,
             )
             repository._connection.execute(
                 "INSERT INTO proposal_sets("
@@ -350,6 +392,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
                 report_id=report.report_id,
                 target_fingerprint="f" * 64,
                 results=exact.results,
+                resolved_policy_id=exact.resolved_policy_id,
             )
             repository._connection.execute(
                 "INSERT INTO proposal_sets("

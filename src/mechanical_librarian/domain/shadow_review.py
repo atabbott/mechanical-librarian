@@ -736,20 +736,22 @@ class ShadowReviewPacket:
 
     @classmethod
     def from_json(
-        cls, serialized: str, source_report: MetadataReport | None = None
+        cls, serialized: str, source_report: MetadataReport | None = None,
+        source_proposal: ProposalSet | None = None,
     ) -> Self:
-        return cls._from_json(serialized, source_report, source_validated=False)
+        return cls._from_json(serialized, source_report, source_proposal, source_validated=False)
 
     @classmethod
     def from_source_validated_json(cls, serialized: str) -> Self:
         """Decode same-process bytes already validated with their source report."""
-        return cls._from_json(serialized, None, source_validated=True)
+        return cls._from_json(serialized, None, None, source_validated=True)
 
     @classmethod
     def _from_json(
         cls,
         serialized: str,
         source_report: MetadataReport | None,
+        source_proposal: ProposalSet | None,
         *,
         source_validated: bool,
     ) -> Self:
@@ -786,16 +788,26 @@ class ShadowReviewPacket:
         if value.to_json() != serialized:
             raise ShadowReviewValueError("shadow-review packet is not canonical")
         if not source_validated:
-            value.validate_source(source_report)
+            value.validate_source(source_report, source_proposal)
         return value
 
-    def validate_source(self, source_report: MetadataReport | None) -> None:
+    def validate_source(self, source_report: MetadataReport | None, source_proposal: ProposalSet | None = None) -> None:
         """Require the exact packet projection of one authoritative report."""
         if type(source_report) is not MetadataReport:
             raise ShadowReviewValueError(
                 "shadow-review authoritative source is unavailable"
             )
-        proposal_set = evaluate_report(source_report)
+        proposal_set = (
+            evaluate_report(source_report)
+            if source_proposal is None
+            else source_proposal
+        )
+        if source_proposal is not None and (
+            source_proposal.report_id != source_report.report_id
+            or source_proposal.to_json()
+            != evaluate_report(source_report, source_proposal.resolved_policy_id).to_json()
+        ):
+            raise ShadowReviewValueError("shadow-review authoritative source is unavailable")
         case = ReviewCase.create(proposal_set, source_report)
         expected = type(self).create(case, proposal_set, source_report)
         if self != expected:
@@ -996,20 +1008,22 @@ class ShadowReviewRequest:
 
     @classmethod
     def from_json(
-        cls, serialized: str, source_report: MetadataReport | None = None
+        cls, serialized: str, source_report: MetadataReport | None = None,
+        source_proposal: ProposalSet | None = None,
     ) -> Self:
-        return cls._from_json(serialized, source_report, source_validated=False)
+        return cls._from_json(serialized, source_report, source_proposal, source_validated=False)
 
     @classmethod
     def from_source_validated_json(cls, serialized: str) -> Self:
         """Decode same-process bytes already validated with their source report."""
-        return cls._from_json(serialized, None, source_validated=True)
+        return cls._from_json(serialized, None, None, source_validated=True)
 
     @classmethod
     def _from_json(
         cls,
         serialized: str,
         source_report: MetadataReport | None,
+        source_proposal: ProposalSet | None,
         *,
         source_validated: bool,
     ) -> Self:
@@ -1035,7 +1049,7 @@ class ShadowReviewRequest:
                 (
                     ShadowReviewPacket.from_source_validated_json(packet_json)
                     if source_validated
-                    else ShadowReviewPacket.from_json(packet_json, source_report)
+                    else ShadowReviewPacket.from_json(packet_json, source_report, source_proposal)
                 ),
                 raw["output_schema"],  # type: ignore[arg-type]
                 raw["output_schema_digest"],  # type: ignore[arg-type]

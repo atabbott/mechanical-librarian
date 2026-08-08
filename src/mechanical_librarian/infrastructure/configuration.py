@@ -154,12 +154,20 @@ class MountInput(_Closed):
     read_only: Literal[True]
 
 
+class PolicyOverrideInput(_Closed):
+    """Sparse, read-only deviations from the built-in policy profile."""
+
+    options: dict[Name, StrictStr] = {}
+    destinations: dict[Name, StrictStr] = {}
+
+
 class LibraryInput(_Closed):
     name: Name
     connection: Name
     library_id: Annotated[StrictStr, Field(min_length=1, max_length=128)]
     mount: Name | None
     provider_connections: Annotated[list[Name], Field(max_length=32)]
+    policy_override: PolicyOverrideInput | None = None
 
 
 class LimitsInput(_Closed):

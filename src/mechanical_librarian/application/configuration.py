@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from ipaddress import ip_address
 from urllib.parse import urlsplit
 
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
+
 
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _CONTACT_EMAIL = re.compile(
@@ -181,6 +183,7 @@ class LibraryConfiguration:
     media_kind: str
     mount: str | None
     provider_connections: tuple[str, ...]
+    policy_override: dict[str, dict[str, str]] | None = None
 
     def __post_init__(self) -> None:
         _name(self.name, "library name")
@@ -198,6 +201,13 @@ class LibraryConfiguration:
             raise ConfigurationError("library provider references are duplicated or invalid")
         for value in self.provider_connections:
             _name(value, "library provider reference")
+        if self.policy_override is not None:
+            if type(self.policy_override) is not dict:
+                raise ConfigurationError("library policy override is invalid")
+            try:
+                resolve_policy(MetadataPolicyProfile.builtin(), self.name, self.policy_override)
+            except Exception as error:
+                raise ConfigurationError("library policy override is invalid") from error
 
 
 @dataclass(frozen=True, slots=True)

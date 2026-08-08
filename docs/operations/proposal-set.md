@@ -25,10 +25,10 @@ mechanical-librarian proposal-set-get \
   --proposal-set-id proposal_set_<64-lowercase-hex-characters>
 ```
 
-Success is exactly one canonical `proposal-set-v3` JSON document plus a
+Success is exactly one canonical `proposal-set-v4` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `fixed-conservative-v6` proposal documents and the exact current
+Only `proposal-set-v4` documents under `fixed-conservative-v6` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, or `fixed-conservative-v5` table shape is incompatible and is rejected before
@@ -38,7 +38,7 @@ parser.
 ## Fixed policy
 
 Every ProposalSet is bound to the exact report ID, derived target fingerprint,
-and fixed policy version. It
+fixed policy version, and resolved policy identity. It
 contains exactly one ordered result for title, subtitle, authors, narrators,
 series, genres, publishedYear, publishedDate, publisher, description, isbn,
 asin, language, explicit, tags, and cover. Each result is one of

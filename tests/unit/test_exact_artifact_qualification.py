@@ -19,6 +19,7 @@ from scripts.qualify_exact_artifact import (
     QualificationFailure,
     _decode_stdout,
     _proposal_identifier,
+    _valid_shadow_decisions,
     _qualification_environment,
     _review_probe_epub,
     _run,
@@ -29,9 +30,18 @@ from scripts.qualify_exact_artifact import (
 
 
 class ExactArtifactQualificationTests(unittest.TestCase):
+    def test_installed_probe_accepts_identity_reordered_fixed_decisions(self) -> None:
+        decisions = [
+            {"destination": destination}
+            for destination in ("language", "title", "isbn")
+        ]
+        self.assertTrue(_valid_shadow_decisions(decisions))
+        self.assertFalse(_valid_shadow_decisions(decisions[:2]))
+        self.assertFalse(_valid_shadow_decisions([{ "destination": "title" }] * 3))
     def test_installed_probe_requires_the_current_proposal_policy(self) -> None:
         proposal = {
             "policy_version": "fixed-conservative-v6",
+            "resolved_policy_id": "resolved_policy_" + "d" * 64,
             "relationships": {
                 "bibliographic_combinations": [],
                 "schema_version": "bibliographic-relationships-v1",
@@ -41,7 +51,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                 "target_fingerprint": "b" * 64,
             },
             "results": [],
-            "schema_version": "proposal-set-v3",
+            "schema_version": "proposal-set-v4",
         }
         identifier = _proposal_identifier(proposal)
         self.assertTrue(identifier.startswith("proposal_set_"))
@@ -50,6 +60,13 @@ class ExactArtifactQualificationTests(unittest.TestCase):
         ]
         self.assertNotEqual(identifier, _proposal_identifier(proposal))
         proposal["policy_version"] = "fixed-conservative-v5"
+        with self.assertRaises(QualificationFailure):
+            _proposal_identifier(proposal)
+        proposal["policy_version"] = "fixed-conservative-v6"
+        proposal["resolved_policy_id"] = "d" * 64
+        with self.assertRaises(QualificationFailure):
+            _proposal_identifier(proposal)
+        proposal["resolved_policy_id"] = 7
         with self.assertRaises(QualificationFailure):
             _proposal_identifier(proposal)
 

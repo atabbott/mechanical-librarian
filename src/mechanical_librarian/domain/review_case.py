@@ -402,6 +402,7 @@ class ReviewCase:
             report_id=proposal.report_id,
             target_fingerprint=proposal.target_fingerprint,
             results=proposal.results,
+            resolved_policy_id=proposal.resolved_policy_id,
         ).proposal_set_id
         bibliographic_destinations = {
             TargetDestination.TITLE.value,

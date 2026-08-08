@@ -51,6 +51,7 @@ from mechanical_librarian.domain.metadata_report import (
     REPORT_SCHEMA,
     ReportValueError,
 )
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyError, MetadataPolicyProfile
 from mechanical_librarian.domain.proposal_set import (
     POLICY_VERSION,
     ProposalSet,
@@ -131,6 +132,19 @@ _PROPOSAL_SETS_SQL = (
     + POLICY_VERSION
     + "'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152))"
+)
+_METADATA_POLICY_DRAFTS_SQL = (
+    "CREATE TABLE metadata_policy_drafts ("
+    "policy_id TEXT PRIMARY KEY NOT NULL CHECK (policy_id GLOB 'policy_[0-9a-f]*' AND length(policy_id)=71), "
+    "document TEXT NOT NULL CHECK (typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 16384))"
+)
+_METADATA_POLICY_DRAFT_NO_UPDATE_SQL = (
+    "CREATE TRIGGER metadata_policy_drafts_no_update BEFORE UPDATE ON metadata_policy_drafts "
+    "BEGIN SELECT RAISE(ABORT,'immutable metadata policy draft'); END"
+)
+_METADATA_POLICY_DRAFT_NO_DELETE_SQL = (
+    "CREATE TRIGGER metadata_policy_drafts_no_delete BEFORE DELETE ON metadata_policy_drafts "
+    "BEGIN SELECT RAISE(ABORT,'immutable metadata policy draft'); END"
 )
 _REVIEW_CASES_SQL = (
     "CREATE TABLE review_cases ("
@@ -1965,7 +1979,8 @@ class SQLiteMetadataReportRepository:
             if (
                 proposal_set.report_id != report.report_id
                 or proposal_set.target_fingerprint != report.target.fingerprint
-                or proposal_set.to_json() != evaluate_report(report).to_json()
+                or proposal_set.to_json()
+                != evaluate_report(report, proposal_set.resolved_policy_id).to_json()
             ):
                 raise ReviewAdmissionIncompatibleError
             if self._connection.execute("SELECT report_id FROM current_metadata_report_lineages WHERE connection_name=? AND library_name=? AND item_id=?", lineage).fetchone() != (report.report_id,):
@@ -2079,7 +2094,8 @@ class SQLiteMetadataReportRepository:
                 proposal.proposal_set_id != case.proposal_set_id
                 or proposal.report_id != case.report_id
                 or proposal.target_fingerprint != case.target_fingerprint
-                or proposal.to_json() != evaluate_report(report).to_json()
+                or proposal.to_json()
+                != evaluate_report(report, proposal.resolved_policy_id).to_json()
                 or report.target.to_data() != case.target
                 or report.target.fingerprint != case.target_fingerprint
                 or report.file.identity != case.file_identity
@@ -2121,8 +2137,8 @@ class SQLiteMetadataReportRepository:
                 return {"results": [], "state": "not_requested"}
             request_id, request_document, kind, result_document = row
             if kind == "result":
-                report = self._source_report_for_review_case(review_case_id)
-                request = ShadowReviewRequest.from_json(request_document, report)
+                report, proposal = self._source_pair_for_review_case(review_case_id)
+                request = ShadowReviewRequest.from_json(request_document, report, proposal)
                 result = ShadowReviewResult.from_json(result_document, request)
                 if result.review_request_id != request_id:
                     raise MetadataReportError("review model advice is invalid")
@@ -2371,6 +2387,59 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             self._connection.rollback()
             raise MetadataReportError("review login is unavailable") from error
+
+    def create_metadata_policy_draft(self, document: str) -> str:
+        """Persist an exact canonical draft; there is intentionally no update."""
+        try:
+            profile = MetadataPolicyProfile.from_data(json.loads(document))
+            if profile.canonical_json != document:
+                raise MetadataPolicyError("policy document is not canonical")
+            self._connection.execute("BEGIN IMMEDIATE")
+            self._connection.execute(
+                "INSERT OR IGNORE INTO metadata_policy_drafts(policy_id,document) VALUES(?,?)",
+                (profile.policy_id, document),
+            )
+            row = self._connection.execute(
+                "SELECT document FROM metadata_policy_drafts WHERE policy_id=?",
+                (profile.policy_id,),
+            ).fetchone()
+            if row != (document,):
+                raise MetadataReportError("metadata policy draft is unavailable")
+            self._connection.commit()
+            return profile.policy_id
+        except (MetadataPolicyError, ValueError, TypeError, sqlite3.Error) as error:
+            self._connection.rollback()
+            raise MetadataReportError("metadata policy draft is unavailable") from error
+
+    def get_metadata_policy_draft(self, policy_id: str) -> str:
+        try:
+            row = self._connection.execute(
+                "SELECT document FROM metadata_policy_drafts WHERE policy_id=?", (policy_id,)
+            ).fetchone()
+            if row is None or type(row[0]) is not str:
+                raise MetadataReportError("metadata policy draft is unavailable")
+            profile = MetadataPolicyProfile.from_data(json.loads(row[0]))
+            if profile.policy_id != policy_id or profile.canonical_json != row[0]:
+                raise MetadataReportError("metadata policy draft is unavailable")
+            return row[0]
+        except (MetadataPolicyError, ValueError, TypeError, sqlite3.Error) as error:
+            raise MetadataReportError("metadata policy draft is unavailable") from error
+
+    def current_unapplied_count(self, library: str) -> int:
+        """Count only current, undecided review cases for one configured library."""
+        if type(library) is not str or not library:
+            raise MetadataReportError("policy preview is unavailable")
+        try:
+            row = self._connection.execute(
+                "SELECT count(*) " + _CURRENT_REVIEW_FROM_SQL +
+                " WHERE c.library_name=?",
+                (library,),
+            ).fetchone()
+            if row is None or type(row[0]) is not int or row[0] < 0:
+                raise MetadataReportError("policy preview is unavailable")
+            return row[0]
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            raise MetadataReportError("policy preview is unavailable") from error
 
     def create_review_session(
         self,
@@ -2744,10 +2813,8 @@ class SQLiteMetadataReportRepository:
                 or type(raw.get("review_case_id")) is not str
             ):
                 raise ShadowReviewValueError("shadow-review request is invalid")
-            report = self._source_report_for_review_case(
-                raw["review_case_id"]
-            )
-            return ShadowReviewRequest.from_json(serialized, report)
+            report, proposal = self._source_pair_for_review_case(raw["review_case_id"])
+            return ShadowReviewRequest.from_json(serialized, report, proposal)
         except MetadataReportError:
             raise
         except (
@@ -3221,9 +3288,8 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("shadow review request is unavailable")
         if row[0] != REQUEST_SCHEMA:
             raise MetadataReportError("shadow review request is invalid")
-        request = ShadowReviewRequest.from_json(
-            row[4], self._source_report_for_review_case(row[1])
-        )
+        report, proposal = self._source_pair_for_review_case(row[1])
+        request = ShadowReviewRequest.from_json(row[4], report, proposal)
         if (
             request.schema_version != row[0]
             or request.review_request_id != review_request_id
@@ -3248,6 +3314,24 @@ class SQLiteMetadataReportRepository:
         if row is None:
             raise MetadataReportError("shadow review source is unavailable")
         return MetadataReport.from_json(_validate_report_row(row))
+
+    def _source_pair_for_review_case(
+        self, review_case_id: str
+    ) -> tuple[MetadataReport, ProposalSet]:
+        row = self._connection.execute(
+            "SELECT r.report_id,r.connection_name,r.library_name,r.item_id,"
+            "r.file_identity,r.content_digest,r.schema_version,r.document_digest,"
+            "r.document,p.proposal_set_id,p.report_id,p.policy_version,p.document "
+            "FROM review_cases c JOIN metadata_reports r ON r.report_id=c.report_id "
+            "JOIN proposal_sets p ON p.proposal_set_id=c.proposal_set_id "
+            "WHERE c.review_case_id=?", (review_case_id,)
+        ).fetchone()
+        if row is None:
+            raise MetadataReportError("shadow review source is unavailable")
+        return (
+            MetadataReport.from_json(_validate_report_row(row[:9])),
+            ProposalSet.from_json(_validate_proposal_row(row[9:])),
+        )
 
     def _request_for_attempt(self, attempt_id: str) -> ShadowReviewRequest:
         row = self._connection.execute(
@@ -3640,6 +3724,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_COVER_ARTIFACT_INDEX_SQL)
             connection.execute(_COVER_PREVIEW_INDEX_SQL)
             connection.execute(_PROPOSAL_SETS_SQL)
+            connection.execute(_METADATA_POLICY_DRAFTS_SQL)
             connection.execute(_REVIEW_CASES_SQL)
             connection.execute(_REVIEW_POINTERS_SQL)
             connection.execute(_REVIEW_TRANSITIONS_SQL)
@@ -3665,6 +3750,8 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_COVER_NO_DELETE_SQL)
             connection.execute(_PROPOSAL_NO_UPDATE_SQL)
             connection.execute(_PROPOSAL_NO_DELETE_SQL)
+            connection.execute(_METADATA_POLICY_DRAFT_NO_UPDATE_SQL)
+            connection.execute(_METADATA_POLICY_DRAFT_NO_DELETE_SQL)
             connection.execute(_REVIEW_NO_UPDATE_SQL)
             connection.execute(_REVIEW_NO_DELETE_SQL)
             connection.execute(_REVIEW_TRANSITION_NO_UPDATE_SQL)
@@ -3964,6 +4051,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_human_decisions_3", None),
         ("index", "sqlite_autoindex_metadata_reports_1", None),
         ("index", "sqlite_autoindex_metadata_reports_2", None),
+        ("index", "sqlite_autoindex_metadata_policy_drafts_1", None),
         ("index", "sqlite_autoindex_proposal_sets_1", None),
         ("index", "sqlite_autoindex_review_cases_1", None),
         ("index", "sqlite_autoindex_review_case_transitions_1", None),
@@ -3996,6 +4084,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "human_decisions", _HUMAN_DECISIONS_SQL),
         ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
         ("table", "metadata_reports", _REPORTS_SQL),
+        ("table", "metadata_policy_drafts", _METADATA_POLICY_DRAFTS_SQL),
         ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
         ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
         ("table", "review_cases", _REVIEW_CASES_SQL),
@@ -4013,6 +4102,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("trigger", "metadata_report_cover_references_no_update", _COVER_NO_UPDATE_SQL),
         ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL),
         ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL),
+        ("trigger", "metadata_policy_drafts_no_delete", _METADATA_POLICY_DRAFT_NO_DELETE_SQL),
+        ("trigger", "metadata_policy_drafts_no_update", _METADATA_POLICY_DRAFT_NO_UPDATE_SQL),
         ("trigger", "human_decision_events_no_delete", _HUMAN_DECISION_EVENT_NO_DELETE_SQL),
         ("trigger", "human_decision_events_no_update", _HUMAN_DECISION_EVENT_NO_UPDATE_SQL),
         ("trigger", "human_decisions_no_delete", _HUMAN_DECISION_NO_DELETE_SQL),
@@ -4084,7 +4175,12 @@ def _validate_review_browse_row(row: object) -> tuple[str, str]:
         or case.target != report.target.to_data()
         or case.target_fingerprint != report.target.fingerprint
         or case.file_identity != report.file.identity
-        or tuple(value.to_data() for value in evaluate_report(report).results)
+        or tuple(
+            value.to_data()
+            for value in evaluate_report(
+                report, ProposalSet.from_json(case.proposal_document).resolved_policy_id
+            ).results
+        )
         != case.results
     ):
         raise MetadataReportError("review browse row disagrees")

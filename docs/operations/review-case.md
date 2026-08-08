@@ -114,6 +114,14 @@ The generated OpenAPI marks the owner session cookie and required mutation
 headers explicitly. Decision attempts for absent case IDs return `404`, while
 invalid sessions return `401`, CSRF mismatches return `403`, and persistence
 outages return `503`. Logout clears the cookie only after revocation succeeds.
+The Policy notebook uses this same authenticated boundary. It initializes a
+separate draft from the read-only built-in active policy; validate, immutable
+create, read, and preview use deterministic versioned responses. Preview lists
+the resolved per-library category delta and current unapplied count but has no
+activation, successor, decision, queue, apply, target, or media-write effect.
+Automatic choices remain visibly unavailable until qualified and Explicit is
+unsupported. Its policy-only script is served separately from the shared
+Library and Attention interaction bundle.
 Authenticated `/library` provides bounded attention-first, all, and
 no-attention-needed lenses; `/attention` contains only exact unresolved/manual
 fields and links to the exact field on detail. Both support bounded search,

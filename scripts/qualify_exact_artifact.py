@@ -665,9 +665,7 @@ def _qualify_review_case_console(
             decision_preview.get("schema_version") != "shadow-decision-set-v1"
             or decision_preview.get("mode") != "qualification_only"
             or decision_preview.get("review_case_id") != case_id
-            or type(decisions) is not list
-            or [value.get("destination") for value in decisions]
-            != ["isbn", "title", "language"]
+            or not _valid_shadow_decisions(decisions)
             or before_database != after_database
             or before_entries
             != tuple(sorted(value.name for value in run_directory.iterdir()))
@@ -902,13 +900,16 @@ def _proposal_identifier(value: dict[str, object]) -> str:
         set(value)
         != {
             "policy_version",
+            "resolved_policy_id",
             "relationships",
             "report",
             "results",
             "schema_version",
         }
-        or value.get("schema_version") != "proposal-set-v3"
+        or value.get("schema_version") != "proposal-set-v4"
         or value.get("policy_version") != "fixed-conservative-v6"
+        or type(value.get("resolved_policy_id")) is not str
+        or re.fullmatch(r"resolved_policy_[0-9a-f]{64}", value["resolved_policy_id"]) is None
         or type(relationships) is not dict
         or set(relationships)
         != {"bibliographic_combinations", "schema_version"}
@@ -919,6 +920,16 @@ def _proposal_identifier(value: dict[str, object]) -> str:
         raise QualificationFailure("installed_review_case_failed")
     serialized = json.dumps(value, sort_keys=True, separators=(",", ":"))
     return "proposal_set_" + hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _valid_shadow_decisions(value: object) -> bool:
+    """Validate the fixed decision set without coupling to proposal identities."""
+    return (
+        type(value) is list
+        and len(value) == 3
+        and all(type(item) is dict and type(item.get("destination")) is str for item in value)
+        and {item["destination"] for item in value} == {"isbn", "title", "language"}
+    )
 
 
 def _review_probe_item(size: int) -> dict[str, object]:

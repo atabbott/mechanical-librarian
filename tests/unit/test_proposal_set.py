@@ -480,6 +480,7 @@ class ProposalSetTests(unittest.TestCase):
         self.assertEqual(
             {
                 "policy_version",
+                "resolved_policy_id",
                 "relationships",
                 "report",
                 "results",
@@ -493,6 +494,7 @@ class ProposalSetTests(unittest.TestCase):
         )
         self.assertEqual("fixed-conservative-v6", POLICY_VERSION)
         self.assertEqual(POLICY_VERSION, proposal_set.policy_version)
+        self.assertRegex(proposal_set.resolved_policy_id, r"^resolved_policy_[0-9a-f]{64}$")
 
     def test_prior_policy_document_is_rejected_and_current_replay_is_exact(
         self,
@@ -513,6 +515,11 @@ class ProposalSetTests(unittest.TestCase):
             ProposalSet.from_json(canonical_json(prior))
         prior = json.loads(current.to_json())
         prior["schema_version"] = "proposal-set-v1"
+        with self.assertRaises(ProposalValueError):
+            ProposalSet.from_json(canonical_json(prior))
+
+        prior = json.loads(current.to_json())
+        del prior["resolved_policy_id"]
         with self.assertRaises(ProposalValueError):
             ProposalSet.from_json(canonical_json(prior))
 

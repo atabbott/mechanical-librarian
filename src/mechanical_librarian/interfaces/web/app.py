@@ -33,6 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.metadata_policy import MetadataPolicyApplicationError, PolicyNotebook
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     CurrentReviewCaseSnapshot,
@@ -49,6 +50,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationSupervisor,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyError, MetadataPolicyProfile
 from mechanical_librarian.interfaces.web import review_frontend
 
 
@@ -278,6 +280,57 @@ class _DecisionAcknowledgement(_DecisionProjection):
     schema_version: str
 
 
+class _PolicyDraftRequest(_ClosedModel):
+    name: StrictStr = Field(min_length=1, max_length=80)
+    options: dict[StrictStr, StrictStr] = Field(max_length=16)
+    destinations: dict[StrictStr, StrictStr] = Field(max_length=16)
+
+
+class _PolicyDraftResponse(_ClosedModel):
+    policy_id: str
+    schema_version: Literal["metadata-policy-profile-v1"] = "metadata-policy-profile-v1"
+
+
+class _PolicyProfile(_ClosedModel):
+    destinations: dict[StrictStr, StrictStr] = Field(max_length=16)
+    name: StrictStr = Field(min_length=1, max_length=80)
+    options: dict[StrictStr, StrictStr] = Field(max_length=16)
+    schema_version: Literal["metadata-policy-profile-v1"]
+
+
+class _PolicyProfileResponse(_ClosedModel):
+    policy_id: str
+    profile: _PolicyProfile
+    schema_version: Literal["metadata-policy-notebook-v1"] = "metadata-policy-notebook-v1"
+
+
+class _PolicyImpactResponse(_ClosedModel):
+    affected_categories: list[str]
+    current_unapplied_count: int
+    library: str
+    resolved_policy_id: str
+
+
+class _PolicyPreviewResponse(_ClosedModel):
+    libraries: list[_PolicyImpactResponse]
+    policy_id: str
+    schema_version: Literal["metadata-policy-preview-v1"] = "metadata-policy-preview-v1"
+
+
+def _policy_problem(error: MetadataPolicyError) -> str:
+    """Translate closed-domain failures without reflecting input values."""
+    return {
+        "policy option is unavailable": "policy_option_unavailable",
+        "policy destination is unavailable": "policy_destination_unavailable",
+        "explicit policy is unsupported": "policy_explicit_unsupported",
+    }.get(str(error), "policy_validation")
+
+
+def _require_qualified_policy_destinations(profile: MetadataPolicyProfile) -> None:
+    if any(destination == "automatic" for _, destination in profile.destinations):
+        raise HTTPException(422, detail={"code": "policy_automatic_unqualified"})
+
+
 class _BodyLimitMiddleware:
     def __init__(
         self,
@@ -298,10 +351,11 @@ class _BodyLimitMiddleware:
                 path,
             )
         )
-        if scope["type"] != "http" or not (is_login or is_decision):
+        is_policy_draft = path in {"/api/v1/metadata-policy/drafts", "/api/v1/metadata-policy/validate", "/api/v1/metadata-policy/preview"}
+        if scope["type"] != "http" or not (is_login or is_decision or is_policy_draft):
             await self._app(scope, receive, send)
             return
-        maximum = self._maximum_bytes if is_login else self._decision_maximum_bytes
+        maximum = self._maximum_bytes if is_login else (16_384 if is_policy_draft else self._decision_maximum_bytes)
         declared = next(
             (
                 value
@@ -359,6 +413,7 @@ def create_review_app(
     clock: Callable[[], int] = lambda: int(time.time()),
     close_repository: bool = False,
     review_preparation: ReviewPreparationSupervisor | None = None,
+    policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
 ) -> FastAPI:
     serialized_repository = _SerializedReviewRepository(repository)
     verifier = _owner_password_verifier(Path(configuration.owner_password_hash_file))
@@ -371,6 +426,8 @@ def create_review_app(
     cases = InspectCurrentReviewCase(serialized_repository)
     decisions = RecordHumanDecision(serialized_repository, clock)
     browse = BrowseReviewLibrary(serialized_repository)
+    overrides = {name: value for name, value in policy_libraries if value is not None}
+    notebook = PolicyNotebook(serialized_repository, tuple(name for name, _ in policy_libraries), overrides)
     origin = urlsplit(configuration.canonical_origin)
 
     @asynccontextmanager
@@ -501,6 +558,77 @@ def create_review_app(
         response.delete_cookie(_COOKIE_NAME, path="/", secure=True, httponly=True, samesite="strict")
         response.status_code = 204
         return response
+
+    @app.post(
+        "/api/v1/metadata-policy/drafts",
+        response_model=_PolicyDraftResponse,
+        status_code=201,
+        responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)},
+    )
+    def create_metadata_policy_draft(
+        payload: _PolicyDraftRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PolicyDraftResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            candidate = MetadataPolicyProfile.create(payload.name, payload.options, payload.destinations)
+            _require_qualified_policy_destinations(candidate)
+            profile = notebook.create(candidate.name, dict(candidate.options), dict(candidate.destinations))
+            policy_id = profile.policy_id
+        except MetadataPolicyError as error:
+            raise HTTPException(422, detail={"code": _policy_problem(error)}) from None
+        except MetadataPolicyApplicationError:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        except ReviewWebError:
+            raise HTTPException(422, detail={"code": "policy_validation"}) from None
+        except Exception:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        return _PolicyDraftResponse(policy_id=policy_id)
+
+    @app.get("/api/v1/metadata-policy/state", response_model=_PolicyProfileResponse, responses={status: {"model": _ErrorResponse} for status in (401, 503)})
+    def metadata_policy_state(ml_session: str = Depends(authenticated_session_cookie)) -> _PolicyProfileResponse:
+        _require_session(sessions, ml_session)
+        profile = notebook.active()
+        return _PolicyProfileResponse(
+            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data())
+        )
+
+    @app.post("/api/v1/metadata-policy/validate", response_model=_PolicyProfileResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422)})
+    def validate_metadata_policy(payload: _PolicyDraftRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyProfileResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            profile = MetadataPolicyProfile.create(payload.name, payload.options, payload.destinations)
+            _require_qualified_policy_destinations(profile)
+        except MetadataPolicyError as error:
+            raise HTTPException(422, detail={"code": _policy_problem(error)}) from None
+        return _PolicyProfileResponse(
+            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data())
+        )
+
+    @app.get("/api/v1/metadata-policy/drafts/{policy_id}", response_model=_PolicyProfileResponse, responses={status: {"model": _ErrorResponse} for status in (401, 404, 422, 503)})
+    def get_metadata_policy_draft(policy_id: str, ml_session: str = Depends(authenticated_session_cookie)) -> _PolicyProfileResponse:
+        _require_session(sessions, ml_session)
+        try:
+            profile = notebook.read(policy_id)
+        except MetadataPolicyApplicationError:
+            raise HTTPException(404, detail={"code": "unavailable"}) from None
+        return _PolicyProfileResponse(
+            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data())
+        )
+
+    @app.post("/api/v1/metadata-policy/preview", response_model=_PolicyPreviewResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
+    def preview_metadata_policy(payload: _PolicyDraftRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyPreviewResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            profile = MetadataPolicyProfile.create(payload.name, payload.options, payload.destinations)
+            _require_qualified_policy_destinations(profile)
+            preview = notebook.preview(profile)
+        except MetadataPolicyError as error:
+            raise HTTPException(422, detail={"code": _policy_problem(error)}) from None
+        except MetadataPolicyApplicationError:
+            raise HTTPException(422, detail={"code": "policy_validation"}) from None
+        return _PolicyPreviewResponse(policy_id=profile.policy_id, libraries=[_PolicyImpactResponse(affected_categories=list(item.affected_categories), current_unapplied_count=item.current_unapplied_count, library=item.library, resolved_policy_id=item.resolved_policy_id) for item in preview.libraries])
 
     @app.get(
         "/api/v1/review-cases/{review_case_id}",
@@ -850,6 +978,14 @@ def create_review_app(
         assert ml_session is not None
         return HTMLResponse(review_frontend.attention_html(browser_csrf(ml_session)))
 
+    @app.get("/policy", include_in_schema=False)
+    def policy_page(
+        ml_session: str | None = Cookie(default=None),
+    ) -> HTMLResponse:
+        _require_session(sessions, ml_session)
+        assert ml_session is not None
+        return HTMLResponse(review_frontend.policy_html(browser_csrf(ml_session)))
+
     @app.get("/assets/review.css", include_in_schema=False)
     def review_css() -> Response:
         return Response(review_frontend.REVIEW_CSS, media_type="text/css")
@@ -858,6 +994,10 @@ def create_review_app(
     def review_js() -> Response:
         return Response(review_frontend.REVIEW_JS, media_type="text/javascript")
 
+    @app.get("/assets/policy.js", include_in_schema=False)
+    def policy_js() -> Response:
+        return Response(review_frontend.POLICY_JS, media_type="text/javascript")
+
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, error: HTTPException) -> JSONResponse:
         detail = error.detail
@@ -865,7 +1005,11 @@ def create_review_app(
         return _error(error.status_code, str(code))
 
     @app.exception_handler(RequestValidationError)
-    async def validation_error(_: Request, __: RequestValidationError) -> JSONResponse:
+    async def validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
+        if request.url.path.startswith("/api/v1/metadata-policy/"):
+            if any(item.get("loc") == ("header", "x-csrf-token") for item in error.errors()):
+                return _error(403, "csrf")
+            return _error(422, "policy_validation")
         return _error(422, "invalid")
 
     return app
@@ -982,6 +1126,18 @@ class _SerializedReviewRepository:
     def record_human_decision(self, decision: HumanDecision) -> str:
         with self._lock:
             return self._repository.record_human_decision(decision)
+
+    def create_metadata_policy_draft(self, document: str) -> str:
+        with self._lock:
+            return self._repository.create_metadata_policy_draft(document)
+
+    def get_metadata_policy_draft(self, policy_id: str) -> str:
+        with self._lock:
+            return self._repository.get_metadata_policy_draft(policy_id)
+
+    def current_unapplied_count(self, library: str) -> int:
+        with self._lock:
+            return self._repository.current_unapplied_count(library)
 
 
 def _request_matches_origin(request: Request, configuration: ReviewWebConfiguration) -> bool:

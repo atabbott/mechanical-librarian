@@ -45,6 +45,7 @@ context and consequences rather than reproducing code.
 | [0029](0029-provider-independent-shadow-decision-preview.md) | accepted | Add a provider-independent, read-only deterministic shadow decision preview |
 | [0030](0030-authenticated-review-web-boundary.md) | accepted | Use one authenticated Python review web boundary |
 | [0031](0031-persisted-review-preparation.md) | accepted | Persist progressive review preparation beside the review boundary |
+| [0033](0033-versioned-policy-draft-preview.md) | accepted | Persist immutable metadata-policy drafts before activation |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.
