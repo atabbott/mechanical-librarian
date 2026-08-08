@@ -41,11 +41,12 @@ class CurrentReviewCaseSnapshot:
     model_advice: dict[str, object]
     decision_documents: tuple[str, ...]
     history: tuple[dict[str, object], ...]
+    automatic_attention_destinations: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class ReviewLibrarySnapshot:
-    rows: tuple[tuple[str, str, tuple[str, ...]], ...]
+    rows: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...]
     total: int
     attention_total: int
 
@@ -212,11 +213,26 @@ class InspectCurrentReviewCase:
             report = MetadataReport.from_json(snapshot.report_document)
             if report.report_id != case.report_id:
                 raise ReviewWebError("unavailable")
-            decisions = {
-                decision.destination: decision
-                for document in snapshot.decision_documents
-                for decision in (HumanDecision.from_json(document),)
-            }
+            decisions: dict[str, HumanDecision] = {}
+            automatic: dict[str, dict[str, object]] = {}
+            for document in snapshot.decision_documents:
+                value = json.loads(document)
+                if type(value) is not dict:
+                    raise ReviewWebError("unavailable")
+                if value.get("origin") == "automatic_policy":
+                    # The durable authority document deliberately contains
+                    # qualification and replay bindings.  The review surface is
+                    # a closed read model, never that document by accident.
+                    automatic[str(value["destination"])] = {
+                        key: value[key]
+                        for key in (
+                            "decision_id", "destination", "occurred_at", "outcome",
+                            "proposal_id", "review_case_id", "target_fingerprint",
+                        )
+                    } | {"candidate_id": value.get("candidate_id")}
+                else:
+                    decision = HumanDecision.from_json(document)
+                    decisions[decision.destination] = decision
         except ReviewWebError:
             raise
         except Exception as error:
@@ -242,6 +258,20 @@ class InspectCurrentReviewCase:
             reasons = result["reasons"]
             assert type(reasons) is list
             decision = decisions.get(destination)
+            automatic_decision = automatic.get(destination)
+            if automatic_decision is not None:
+                candidate_id = automatic_decision.get("candidate_id")
+                selected = next(
+                    (alternative["value"] for alternative in alternatives
+                     if alternative["alternative_id"] == candidate_id),
+                    None,
+                )
+                if automatic_decision["outcome"] == "candidate" and selected is None:
+                    raise ReviewWebError("unavailable")
+                automatic_decision = {
+                    **automatic_decision,
+                    "selected_value": selected,
+                }
             fields.append(
                 {
                     "current": target_fields[destination],
@@ -251,7 +281,8 @@ class InspectCurrentReviewCase:
                     "human_decision": (
                         None if decision is None else _decision_projection(decision)
                     ),
-                    "needs_attention": decision is None and _needs_attention(proposal),
+                    "automatic_decision": automatic_decision,
+                    "needs_attention": decision is None and automatic_decision is None and _needs_attention(proposal, snapshot.automatic_attention_destinations),
                     "notices": reasons,
                     "proposed_values": [
                         alternative["value"] for alternative in alternatives
@@ -482,15 +513,11 @@ class BrowseReviewLibrary:
             snapshot = self._repository.read_review_library(
                 normalized, bounded_limit + 1, offset, attention
             )
-            items = [
-                _library_item(
-                    case_document,
-                    report_document,
-                    decision_documents,
-                )
-                for case_document, report_document, decision_documents
-                in snapshot.rows[:bounded_limit]
-            ]
+            items = []
+            for row in snapshot.rows[:bounded_limit]:
+                case_document, report_document, decision_documents = row[:3]
+                automatic_attention_destinations = row[3] if len(row) == 4 else ()
+                items.append(_library_item(case_document, report_document, decision_documents, automatic_attention_destinations))
         except Exception as error:
             raise ReviewWebError("unavailable") from error
         return {
@@ -765,13 +792,14 @@ def _case_and_report(
         raise ReviewWebError("unavailable") from error
 
 
-def _needs_attention(proposal: dict[str, object]) -> bool:
+def _needs_attention(proposal: dict[str, object], automatic_attention_destinations: tuple[str, ...] = ()) -> bool:
     result = proposal["result"]
     assert type(result) is dict
     reasons = result["reasons"]
     assert type(reasons) is list
     return (
-        result["outcome"] == "unresolved_choice"
+        proposal["destination"] in automatic_attention_destinations
+        or result["outcome"] == "unresolved_choice"
         or proposal["manual_required"] is True
         or "no_safe_bibliographic_combination" in reasons
     )
@@ -781,17 +809,22 @@ def _library_item(
     case_document: str,
     report_document: str,
     decision_documents: tuple[str, ...],
+    automatic_attention_destinations: tuple[str, ...] = (),
 ) -> dict[str, object]:
     case, report = _case_and_report(case_document, report_document)
     decisions = set()
     for document in decision_documents:
-        decision = HumanDecision.from_json(document)
-        decision.validate_for(case)
-        decisions.add(decision.destination)
+        value = json.loads(document)
+        if type(value) is dict and value.get("origin") == "automatic_policy":
+            decisions.add(str(value["destination"]))
+        else:
+            decision = HumanDecision.from_json(document)
+            decision.validate_for(case)
+            decisions.add(decision.destination)
     attention = [
         value
         for value in case.proposals
-        if value["destination"] not in decisions and _needs_attention(value)
+        if value["destination"] not in decisions and _needs_attention(value, automatic_attention_destinations)
     ]
     outcomes = sorted(
         {

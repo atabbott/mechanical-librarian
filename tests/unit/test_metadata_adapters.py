@@ -447,6 +447,8 @@ class MetadataPersistenceTests(unittest.TestCase):
             self.assertEqual(
                 tables,
                 [
+                    ("automatic_decisions",),
+                    ("automatic_safety_state",),
                     ("current_metadata_report_lineages",),
                     ("current_metadata_reports",),
                     ("current_review_case_lineages",),

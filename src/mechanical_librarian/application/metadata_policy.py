@@ -8,6 +8,10 @@ from typing import Protocol
 
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyError, MetadataPolicyProfile, OPTION_CATALOGUE, ResolvedMetadataPolicy, resolve_policy
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from mechanical_librarian.domain.automatic_decision import (
+    AutomaticSafetyState,
+    QUALIFIED_POLICY_OPTIONS,
+)
 
 
 MAX_SHADOW_SAMPLE_RESPONSE_BYTES = 1_048_576
@@ -15,6 +19,53 @@ MAX_SHADOW_SAMPLE_RESPONSE_BYTES = 1_048_576
 
 class MetadataPolicyApplicationError(RuntimeError):
     """A fixed, value-free draft policy failure."""
+
+
+class AutomaticSafetyControls:
+    """Owner-only durable pause/suspension controls; recovery is explicit."""
+
+    def __init__(self, repository: object) -> None:
+        self._repository = repository
+
+    def state(self) -> AutomaticSafetyState:
+        try:
+            return self._repository.automatic_safety_state()
+        except Exception as error:
+            raise MetadataPolicyApplicationError("automatic safety is unavailable") from error
+
+    def pause(self, paused: bool, updated_at: int) -> AutomaticSafetyState:
+        current = self.state()
+        result = AutomaticSafetyState(paused, current.global_suspension, current.category_suspensions)
+        try:
+            self._repository.set_automatic_safety_state(result, updated_at)
+        except Exception as error:
+            raise MetadataPolicyApplicationError("automatic safety is unavailable") from error
+        return result
+
+    def suspend(self, reason: str, updated_at: int, category: str | None = None) -> AutomaticSafetyState:
+        if type(reason) is not str or not reason or (category is not None and (type(category) is not str or not category)):
+            raise MetadataPolicyApplicationError("automatic safety is invalid")
+        current = self.state()
+        categories = dict(current.category_suspensions)
+        if category is None:
+            result = AutomaticSafetyState(current.paused, reason, current.category_suspensions)
+        else:
+            categories[category] = reason
+            result = AutomaticSafetyState(current.paused, current.global_suspension, tuple(sorted(categories.items())))
+        try:
+            self._repository.set_automatic_safety_state(result, updated_at)
+        except Exception as error:
+            raise MetadataPolicyApplicationError("automatic safety is unavailable") from error
+        return result
+
+    def recover(self, updated_at: int, category: str | None = None) -> AutomaticSafetyState:
+        current = self.state()
+        result = AutomaticSafetyState(current.paused, None if category is None else current.global_suspension, tuple(value for value in current.category_suspensions if value[0] != category))
+        try:
+            self._repository.set_automatic_safety_state(result, updated_at)
+        except Exception as error:
+            raise MetadataPolicyApplicationError("automatic safety is unavailable") from error
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +142,7 @@ class PolicyImpactRepository(Protocol):
     def shadow_posture(self) -> str: ...
 
     def enter_shadow_preview(self, updated_at: int) -> str: ...
+    def activate_qualified_automatic(self, updated_at: int) -> str: ...
 
     def list_shadow_outcomes(self, limit: int) -> tuple[tuple[str, int], ...]: ...
 
@@ -171,13 +223,15 @@ class PolicyNotebook:
             raise MetadataPolicyApplicationError("active policy is unavailable") from error
 
     def validate(self, profile: MetadataPolicyProfile) -> MetadataPolicyProfile:
-        """Allow Automatic intent only inside the non-authoritative Preview posture."""
+        """Allow Automatic intent only while it is separately qualified."""
         if type(profile) is not MetadataPolicyProfile:
             raise MetadataPolicyApplicationError("policy validation is invalid")
-        if (
-            any(destination == "automatic" for _, destination in profile.destinations)
-            and self.shadow_state()["posture"] != "preview"
-        ):
+        requested = {
+            f"{field}:{option}"
+            for field, option in profile.options
+            if dict(profile.destinations)[field] == "automatic"
+        }
+        if requested and not requested.issubset(QUALIFIED_POLICY_OPTIONS):
             raise MetadataPolicyApplicationError("policy automatic unqualified")
         return profile
 
@@ -227,10 +281,10 @@ class PolicyNotebook:
                 if hasattr(self._repository, "shadow_posture")
                 else "review"
             )
-            if posture not in {"review", "preview"}:
+            if posture not in {"review", "preview", "automatic"}:
                 raise ValueError
             return {
-                "authority": "none",
+                "authority": "decision_only" if posture == "automatic" else "none",
                 "can_leave_preview": False,
                 "posture": posture,
                 "schema_version": "shadow-posture-v1",
@@ -239,6 +293,16 @@ class PolicyNotebook:
             raise MetadataPolicyApplicationError(
                 "shadow posture is unavailable"
             ) from error
+
+    def confirm_automatic(self, updated_at: object) -> dict[str, object]:
+        if type(updated_at) is not int or updated_at < 0:
+            raise MetadataPolicyApplicationError("automatic posture is invalid")
+        try:
+            if self._repository.activate_qualified_automatic(updated_at) != "automatic":
+                raise ValueError
+            return self.shadow_state()
+        except Exception as error:
+            raise MetadataPolicyApplicationError("automatic posture is unavailable") from error
 
     def enter_preview(self, updated_at: object) -> dict[str, object]:
         if type(updated_at) is not int or updated_at < 0:
@@ -353,6 +417,15 @@ class PolicyNotebook:
                     resolve_policy(profile, library, self._overrides.get(library)),
                 )
             )
+            requested = {
+                f"{category}:{dict(resolved.options)[category]}"
+                for _, _, document in resolutions
+                for resolved in (ResolvedMetadataPolicy.from_data(json.loads(document)),)
+                for category, destination in resolved.destinations
+                if destination == "automatic"
+            }
+            if not requested.issubset(QUALIFIED_POLICY_OPTIONS):
+                raise MetadataPolicyApplicationError("policy automatic unqualified")
             transition = self._repository.activate_metadata_policy(
                 policy_id, expected_active_policy_id, resolutions, activated_at
             )

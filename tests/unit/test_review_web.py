@@ -632,17 +632,10 @@ class ReviewWebTests(unittest.TestCase):
         del automatic_payload["schema_version"]
         automatic_payload["name"] = "Preview automatic intent"
         automatic_payload["destinations"]["title_layout"] = "automatic"
-        for endpoint in ("validate", "drafts", "preview"):
-            rejected = self.client.post(
-                f"/api/v1/metadata-policy/{endpoint}",
-                headers=headers,
-                json=automatic_payload,
-            )
-            self.assertEqual(422, rejected.status_code, rejected.text)
-            self.assertEqual(
-                "policy_automatic_unqualified",
-                rejected.json()["error"]["code"],
-            )
+        validated_before_preview = self.client.post(
+            "/api/v1/metadata-policy/validate", headers=headers, json=automatic_payload
+        )
+        self.assertEqual(200, validated_before_preview.status_code)
         denied = self.client.post(
             "/api/v1/metadata-policy/shadow/enter", headers=self.origin
         )
@@ -759,6 +752,65 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(denied.status_code, 401)
         self.assertEqual(denied.json()["error"]["code"], "unauthorized")
+
+    def test_automatic_detail_uses_a_closed_projection_without_human_commit(self) -> None:
+        # Durable automatic documents carry authority bindings that must never
+        # cross the authenticated case read model.
+        self._login()
+        self.repository.decisions["title"] = json.dumps(
+            {
+                "origin": "automatic_policy",
+                "schema_version": "automatic-decision-v1",
+                "decision_id": "automatic_decision_" + "a" * 64,
+                "review_case_id": self.case.review_case_id,
+                "proposal_id": self.case.proposals[0]["proposal_id"],
+                "destination": "title",
+                "outcome": "candidate",
+                "candidate_id": self.case.proposals[0]["result"]["alternatives"][0]["alternative_id"],
+                "occurred_at": 7,
+                "target_fingerprint": self.case.target_fingerprint,
+                "report_id": "report_" + "b" * 64,
+                "proposal_set_id": "proposal_set_" + "c" * 64,
+                "policy_category": "title_layout",
+                "policy_option": "preserve",
+                "qualification_manifest_sha256": "d" * 64,
+                "idempotency_digest": "e" * 64,
+            }, separators=(",", ":"), sort_keys=True,
+        )
+        detail = self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}")
+        self.assertEqual(200, detail.status_code)
+        field = next(value for value in detail.json()["fields"] if value["destination"] == "title")
+        self.assertIsNone(field["human_decision"])
+        self.assertFalse(field["needs_attention"])
+        self.assertEqual(
+            {
+                "candidate_id", "decision_id", "destination", "occurred_at", "outcome",
+                "proposal_id", "review_case_id", "target_fingerprint",
+                "selected_value",
+            },
+            set(field["automatic_decision"]),
+        )
+        self.assertNotIn("actor", field["automatic_decision"])
+        self.assertEqual("candidate", field["automatic_decision"]["outcome"])
+        self.assertEqual(self.case.proposals[0]["result"]["alternatives"][0]["alternative_id"], field["automatic_decision"]["candidate_id"])
+        self.assertEqual(self.case.proposals[0]["result"]["alternatives"][0]["value"], field["automatic_decision"]["selected_value"])
+        self.assertNotIn("qualification_manifest_sha256", field["automatic_decision"])
+        malformed = json.loads(self.repository.decisions["title"])
+        malformed["candidate_id"] = "alternative_" + "f" * 64
+        self.repository.decisions["title"] = json.dumps(malformed, separators=(",", ":"), sort_keys=True)
+        self.assertEqual(404, self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}").status_code)
+        self.assertIn("automaticCandidate", self.client.get("/assets/review.js").text)
+
+    def test_automatic_safety_bodies_are_closed_before_control_access(self) -> None:
+        login = self._login()
+        headers = {**self.origin, "X-CSRF-Token": login["csrf_token"]}
+        for path, payload in (
+            ("/api/v1/metadata-policy/automatic-safety/pause", {"paused": True, "extra": True}),
+            ("/api/v1/metadata-policy/automatic-safety/recover", {"category": None, "extra": True}),
+            ("/api/v1/metadata-policy/automatic-safety/suspend", {"reason": "test", "extra": True}),
+        ):
+            response = self.client.post(path, headers=headers, json=payload)
+            self.assertEqual(422, response.status_code)
 
     def test_login_case_evidence_history_and_logout_round_trip(self) -> None:
         login = self._login()
@@ -1169,7 +1221,7 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(200, shadow_script.status_code)
         self.assertIn("Non-authoritative", shadow_script.text)
         self.assertNotIn("localStorage", shadow_script.text)
-        self.assertLess(len(shadow_script.content), 4_000)
+        self.assertLess(len(shadow_script.content), 5_500)
         field = self.client.get(
             f"/api/v1/review-cases/{self.case.review_case_id}"
         ).json()["fields"][0]
@@ -1324,6 +1376,15 @@ class ReviewWebTests(unittest.TestCase):
                 if schema.get("type") == "object"
             )
         )
+        for path, schema in (
+            ("/api/v1/metadata-policy/automatic-safety/pause", "_AutomaticPauseRequest"),
+            ("/api/v1/metadata-policy/automatic-safety/recover", "_AutomaticRecoveryRequest"),
+            ("/api/v1/metadata-policy/automatic-safety/suspend", "_AutomaticSuspendRequest"),
+        ):
+            self.assertEqual(
+                {"$ref": f"#/components/schemas/{schema}"},
+                expected["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"],
+            )
         self.assertNotIn(str(self.hash_path).encode(), first.content)
         self.assertNotIn(b"correct horse", first.content)
         decision_operation = expected["paths"][
@@ -1354,8 +1415,13 @@ class ReviewWebTests(unittest.TestCase):
                 ("post", "/api/v1/metadata-policy/preview"),
                 ("get", "/api/v1/metadata-policy/shadow"),
                 ("post", "/api/v1/metadata-policy/shadow/enter"),
+                ("post", "/api/v1/metadata-policy/shadow/confirm-automatic"),
                 ("get", "/api/v1/metadata-policy/shadow/leave-preview"),
                 ("get", "/api/v1/metadata-policy/shadow/outcomes"),
+                ("get", "/api/v1/metadata-policy/automatic-safety"),
+                ("post", "/api/v1/metadata-policy/automatic-safety/pause"),
+                ("post", "/api/v1/metadata-policy/automatic-safety/recover"),
+                ("post", "/api/v1/metadata-policy/automatic-safety/suspend"),
                 ("get", "/api/v1/metadata-policy/state"),
                 ("get", "/api/v1/metadata-policy/transition"),
                 (
@@ -1498,6 +1564,14 @@ class ReviewWebTests(unittest.TestCase):
         self.assertNotIn("innerHTML", script)
         self.assertIn("item.kind==='human_decision_recorded'", script)
         self.assertIn("${item.destination}: ${item.outcome} by ${item.actor}", script)
+        library_preview_copy = (
+            "Human and automatic decisions are immutable and origin-labelled. "
+            "This workspace never writes to your target library."
+        )
+        self.assertEqual(script.count(library_preview_copy), 2)
+        self.assertNotIn(
+            "Each decision is recorded as an immutable human outcome.", script
+        )
 
     def test_attention_first_library_lenses_queue_and_cursor_binding(self) -> None:
         providers = tuple(

@@ -4,6 +4,13 @@ The public suite has four explicit qualification tiers. They retain every
 existing assertion while keeping independent feedback paths parallel and
 diagnosable.
 
+F19a adds focused source proof for clean-schema automatic bootstrap, exact
+qualified option/bundle admission, atomic human/automatic uniqueness,
+restart/idempotency/currentness, pause/suspension/recovery, and the selected
+responsive policy notebook. The private semantic corpus remains private; the
+public manifest is aggregate-only. The complete exact-artifact tier is the
+authoritative cumulative 1,000-work/no-write demonstration.
+
 The fast routine source tier owns unit, focused integration, and static
 architecture behavior:
 

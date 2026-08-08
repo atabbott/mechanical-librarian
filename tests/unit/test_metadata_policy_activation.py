@@ -24,7 +24,7 @@ from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDe
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
-from mechanical_librarian.application.metadata_policy import PolicyNotebook
+from mechanical_librarian.application.metadata_policy import MetadataPolicyApplicationError, PolicyNotebook
 from mechanical_librarian.bootstrap import composition
 from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report
 from tests.unit.test_shadow_reviews import _identity
@@ -53,7 +53,7 @@ class MetadataPolicyActivationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.directory.cleanup()
 
-    def test_automatic_intent_is_atomic_preview_only_and_never_authoritative(self) -> None:
+    def test_qualified_automatic_intent_is_persistable_and_unqualified_intent_is_rejected(self) -> None:
         repository = open_repository(self.path)
         destinations = {
             category: "unsupported" if category == "explicit" else "ask"
@@ -63,17 +63,15 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         profile = MetadataPolicyProfile.create(
             "Preview automatic intent", dict(DEFAULT_OPTIONS), destinations
         )
-        with self.assertRaisesRegex(
-            MetadataReportError, "automatic intent is unqualified"
-        ):
-            repository.create_metadata_policy_draft(profile.canonical_json)
-        self.assertEqual(
-            (0,),
-            repository._connection.execute(
-                "SELECT COUNT(*) FROM metadata_policy_drafts WHERE policy_id=?",
-                (profile.policy_id,),
-            ).fetchone(),
+        self.assertEqual(profile.policy_id, repository.create_metadata_policy_draft(profile.canonical_json))
+        unqualified_options = dict(DEFAULT_OPTIONS)
+        unqualified_options["publisher_preference"] = "imprint"
+        unqualified = MetadataPolicyProfile.create(
+            "Unqualified automatic intent", unqualified_options,
+            {**destinations, "publisher_preference": "automatic"},
         )
+        with self.assertRaisesRegex(MetadataReportError, "automatic intent is unqualified"):
+            repository.create_metadata_policy_draft(unqualified.canonical_json)
         repository.enter_shadow_preview(1)
         repository.create_metadata_policy_draft(profile.canonical_json)
         resolved = resolve_policy(profile, "ebooks")
@@ -92,7 +90,111 @@ class MetadataPolicyActivationTests(unittest.TestCase):
                 "title_layout"
             ],
         )
-        self.assertEqual(frozenset(), QUALIFIED_AUTOMATIC)
+        self.assertIn("title_layout", QUALIFIED_AUTOMATIC)
+        repository.close()
+
+    def test_automatic_posture_accepts_only_exact_qualified_resolutions(self) -> None:
+        repository = open_repository(self.path)
+        destinations = {
+            category: "unsupported" if category == "explicit" else "ask"
+            for category in OPTION_CATALOGUE
+        }
+        destinations["title_layout"] = "automatic"
+        first = MetadataPolicyProfile.create(
+            "First qualified automatic policy", dict(DEFAULT_OPTIONS), destinations
+        )
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(first.canonical_json)
+        first_resolved = resolve_policy(first, "ebooks")
+        first_transition = repository.activate_metadata_policy(
+            first.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            (("ebooks", first_resolved.resolved_id, first_resolved.canonical_json),),
+            2,
+        )
+        assert first_transition is not None
+        self.assertEqual("automatic", repository.activate_qualified_automatic(3))
+
+        second = MetadataPolicyProfile.create(
+            "Second qualified automatic policy",
+            {**dict(DEFAULT_OPTIONS), "date_precision": "full_date"},
+            {**destinations, "date_precision": "automatic"},
+        )
+        repository.create_metadata_policy_draft(second.canonical_json)
+        second_resolved = resolve_policy(second, "ebooks")
+        transition = repository.activate_metadata_policy(
+            second.policy_id,
+            first.policy_id,
+            (("ebooks", second_resolved.resolved_id, second_resolved.canonical_json),),
+            4,
+        )
+        self.assertIsNotNone(transition)
+        self.assertEqual(
+            transition,
+            repository.activate_metadata_policy(
+                second.policy_id,
+                first.policy_id,
+                (("ebooks", second_resolved.resolved_id, second_resolved.canonical_json),),
+                4,
+            ),
+        )
+        with self.assertRaisesRegex(MetadataReportError, "stale"):
+            repository.activate_metadata_policy(
+                first.policy_id,
+                first.policy_id,
+                (("ebooks", first_resolved.resolved_id, first_resolved.canonical_json),),
+                5,
+            )
+
+        unqualified = resolve_policy(
+            second,
+            "ebooks",
+            {
+                "options": {"publisher_preference": "imprint"},
+                "destinations": {"publisher_preference": "automatic"},
+            },
+        )
+        with self.assertRaisesRegex(MetadataReportError, "resolution is invalid"):
+            repository.activate_metadata_policy(
+                second.policy_id,
+                second.policy_id,
+                (("ebooks", unqualified.resolved_id, unqualified.canonical_json),),
+                6,
+                reconcile_current=True,
+            )
+        repository.close()
+
+    def test_library_override_cannot_turn_an_unqualified_option_automatic(self) -> None:
+        repository = open_repository(self.path)
+        destinations = {
+            category: "unsupported" if category == "explicit" else "ask"
+            for category in OPTION_CATALOGUE
+        }
+        destinations["publisher_preference"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "Qualified base option", dict(DEFAULT_OPTIONS), destinations
+        )
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        notebook = PolicyNotebook(
+            repository,
+            ("ebooks",),
+            {"ebooks": {"options": {"publisher_preference": "imprint"}, "destinations": {}}},
+        )
+        with self.assertRaisesRegex(MetadataPolicyApplicationError, "automatic unqualified"):
+            notebook.activate(profile.policy_id, MetadataPolicyProfile.builtin().policy_id, 2)
+        repository.close()
+
+    def test_initial_resolution_binding_rejects_an_unqualified_automatic_override(self) -> None:
+        repository = open_repository(self.path)
+        resolved = resolve_policy(
+            MetadataPolicyProfile.builtin(), "ebooks",
+            {"options": {"publisher_preference": "imprint"}, "destinations": {}},
+        )
+        with self.assertRaisesRegex(MetadataReportError, "unqualified"):
+            repository.bind_initial_metadata_policy_resolution(resolved.canonical_json)
+        self.assertEqual((0,), repository._connection.execute(
+            "SELECT COUNT(*) FROM metadata_policy_resolutions"
+        ).fetchone())
         repository.close()
 
     def _current_case_with_completed_work(self, path: Path | None = None):

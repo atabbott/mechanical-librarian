@@ -2,6 +2,14 @@
 
 ## Authority
 
+Qualified automatic policy is decision-only. Its clean-schema built-in profile
+may append exact-current immutable dispositions only from the sealed aggregate
+F19a manifest; it cannot construct an apply plan or use a target, media, or
+provider-write client. Owner pause and durable category/global suspension fail
+closed to the authenticated human queue, and recovery is an explicit
+CSRF-protected owner action. Private qualification cases, values, and paths are
+not stored in the repository or public API.
+
 The `catalogue` command may make only bounded GET observations of configured ABS
 book libraries and publish a local current generation. Its bearer credential is
 attached only to the configured origin's library, library-items, and item-detail

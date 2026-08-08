@@ -551,11 +551,13 @@ apply or write capability.
 | --- | --- | --- | --- |
 | F17a Continuous review | #473–#475 | Three libraries continuously reconcile through the bounded persisted review pipeline with compact shared activity and restart-safe controls. | Delivered. |
 | F09p Policy notebook | #343, #476–#477 | The selected B notebook persists reviewed drafts and atomically cuts over one exact generation; #478 additionally permits Automatic only as non-authoritative Preview intent while Review and decision authority remain unavailable. | Delivered. |
-| F19a Preview observations | #444, #478–#479 | Deterministic outcomes accumulate non-authoritatively in Preview before a separately qualified decision-only posture can be considered. | #478 persists Preview outcomes; activation remains #479. |
+| F19a Qualified automatic decisions | #444, #478–#479 | Deterministic outcomes accumulate non-authoritatively in Preview before an exact-qualified, decision-only automatic posture records immutable policy outcomes. | Delivered: #478 remains the non-activating Preview increment; #479 activates only the sealed F19a envelope with pause, suspension, explicit recovery, and no apply/write capability. |
 
-Issue #478 is deliberately non-activating: `review | preview` is the complete
-posture set for this increment, leave is impact-only, and qualification
-observations never reduce human work or become decisions.
+Issue #478 is deliberately non-activating: its complete posture set is
+`review | preview`, leave is impact-only, and qualification observations never
+reduce human work or become decisions. #479 separately adds `automatic` only
+for the sealed qualified envelope; it records immutable decision-only outcomes
+and never applies or writes target, media, or artifact state.
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 

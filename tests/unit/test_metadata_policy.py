@@ -96,9 +96,12 @@ class MetadataPolicyTests(unittest.TestCase):
             Repository(),
         )
         self.assertEqual(
-            ("date_precision", "tags"), preview.libraries[0].affected_categories
+            ("title_layout", "date_precision", "language_rendering", "contributor_names", "publisher_preference", "tags"), preview.libraries[0].affected_categories
         )
-        self.assertEqual((), preview.libraries[1].affected_categories)
+        self.assertEqual(
+            ("title_layout", "date_precision", "language_rendering", "contributor_names", "publisher_preference"),
+            preview.libraries[1].affected_categories,
+        )
 
     def test_proposal_binding_is_exact_and_does_not_change_the_profile(self) -> None:
         profile = MetadataPolicyProfile.builtin()

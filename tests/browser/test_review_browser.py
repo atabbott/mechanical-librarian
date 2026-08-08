@@ -268,38 +268,80 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     )
                     policy_heading.wait_for()
                     self.assertEqual("title_and_subtitle", page.locator('select[name="option-title_layout"]').input_value())
+                    self.assertEqual("automatic", page.locator('select[name="destination-title_layout"]').input_value())
                     self.assertEqual("ask", page.locator('select[name="destination-tags"]').input_value())
                     self.assertTrue(page.locator('select[name="destination-tags"] option[value="automatic"]').is_disabled())
+                    self.assertIn("unqualified option", page.locator('select[name="destination-tags"] option[value="automatic"]').inner_text())
                     self.assertEqual("unsupported", page.locator('select[name="destination-explicit"]').input_value())
-                    page.get_by_text("Human review is active.", exact=False).wait_for()
+                    page.locator("#automatic-safety").get_by_text(
+                        "Qualified automatic handling is active", exact=False
+                    ).wait_for()
+                    automatic = page.locator('select[name="destination-title_layout"] option[value="automatic"]')
+                    self.assertFalse(automatic.is_disabled())
+                    self.assertIn("qualified decision-only", automatic.inner_text())
+                    publisher_option = page.locator('select[name="option-publisher_preference"]')
+                    publisher_destination = page.locator('select[name="destination-publisher_preference"]')
+                    self.assertEqual("automatic", publisher_destination.input_value())
+                    publisher_option.select_option("imprint")
+                    self.assertTrue(publisher_destination.locator('option[value="automatic"]').is_disabled())
+                    self.assertIn("unqualified option", publisher_destination.locator('option[value="automatic"]').inner_text())
+                    self.assertEqual("ask", publisher_destination.input_value())
+                    publisher_option.select_option("publisher")
+                    self.assertFalse(publisher_destination.locator('option[value="automatic"]').is_disabled())
+                    self.assertIn("qualified decision-only", publisher_destination.locator('option[value="automatic"]').inner_text())
+                    self.assertTrue(page.get_by_role("button", name="Activate qualified automatic handling").is_disabled())
                     before_preview = page.request.get(
                         f"{origin}/api/v1/library?lens=all&limit=10"
                     ).json()
                     page.get_by_role("button", name="Enter Preview").click()
                     page.get_by_text("Preview is on.", exact=False).wait_for()
-                    automatic = page.locator(
-                        'select[name="destination-title_layout"] option[value="automatic"]'
-                    )
                     self.assertFalse(automatic.is_disabled())
-                    self.assertIn("non-authoritative", automatic.inner_text())
-                    page.locator(
-                        'select[name="destination-title_layout"]'
-                    ).select_option("automatic")
                     self.assertTrue(
                         page.get_by_role("button", name="Enter Preview").is_disabled()
                     )
+                    self.assertTrue(page.get_by_role("button", name="Activate qualified automatic handling").is_enabled())
                     after_preview = page.request.get(
                         f"{origin}/api/v1/library?lens=all&limit=10"
                     ).json()
                     self.assertEqual(before_preview, after_preview)
-                    page.get_by_role("button", name="Preview leaving").click()
-                    page.get_by_text(
-                        "Leaving Preview cannot be confirmed", exact=False
+                    page.get_by_role("button", name="Activate qualified automatic handling").click()
+                    page.locator("#shadow-posture").get_by_text(
+                        "Qualified automatic handling is active", exact=False
                     ).wait_for()
-                    self.assertEqual(
-                        0,
-                        page.get_by_role("button", name=re.compile("confirm", re.I)).count(),
+                    page.get_by_role("button", name="Pause automatic handling").click()
+                    page.get_by_text("Automatic handling is paused", exact=False).wait_for()
+                    page.get_by_role("button", name="Resume automatic handling").click()
+                    page.locator("#automatic-safety").get_by_text(
+                        "Qualified automatic handling is active", exact=False
+                    ).wait_for()
+                    suspended_status = page.evaluate(
+                        """async () => {
+                            const response = await fetch(
+                                "/api/v1/metadata-policy/automatic-safety/suspend",
+                                {
+                                    method: "POST",
+                                    headers: {
+                                        "content-type": "application/json",
+                                        "x-csrf-token": pageCsrf,
+                                    },
+                                    body: JSON.stringify({
+                                        reason: "browser qualification",
+                                        category: "title_layout",
+                                    }),
+                                },
+                            );
+                            return response.status;
+                        }"""
                     )
+                    self.assertEqual(200, suspended_status)
+                    page.reload()
+                    page.get_by_text("Automatic handling suspended for title_layout", exact=False).wait_for()
+                    page.locator("#automatic-category-recovery").get_by_role(
+                        "button", name="Recover title layout suspension"
+                    ).click()
+                    page.locator("#automatic-safety").get_by_text(
+                        "Qualified automatic handling is active", exact=False
+                    ).wait_for()
                     stale_rotation = page.request.get(f"{origin}/library")
                     self.assertEqual(200, stale_rotation.status)
                     page.locator("#policy-name").fill("<hostile draft>")
@@ -317,7 +359,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     preview_line.wait_for()
                     self.assertRegex(
                         preview_line.inner_text(),
-                        r"^ebooks: (?:date_precision, title_layout|title_layout, date_precision); 1 current unapplied item\(s\)\.$",
+                        r"^ebooks: date_precision; 1 current unapplied item\(s\)\.$",
                     )
                     self.assertTrue(page.get_by_role("button", name="Activate reviewed draft").is_enabled())
                     page.get_by_role("button", name="Activate reviewed draft").click()

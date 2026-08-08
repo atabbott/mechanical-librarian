@@ -107,6 +107,169 @@
         "title": "_AttentionResponse",
         "type": "object"
       },
+      "_AutomaticDecisionProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "selected_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_fingerprint": {
+            "title": "Target Fingerprint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "decision_id",
+          "destination",
+          "occurred_at",
+          "outcome",
+          "proposal_id",
+          "review_case_id",
+          "selected_value",
+          "target_fingerprint"
+        ],
+        "title": "_AutomaticDecisionProjection",
+        "type": "object"
+      },
+      "_AutomaticPauseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "paused"
+        ],
+        "title": "_AutomaticPauseRequest",
+        "type": "object"
+      },
+      "_AutomaticRecoveryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          }
+        },
+        "required": [
+          "category"
+        ],
+        "title": "_AutomaticRecoveryRequest",
+        "type": "object"
+      },
+      "_AutomaticSafetyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "category_suspensions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Category Suspensions",
+            "type": "object"
+          },
+          "global_suspension": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Global Suspension"
+          },
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "paused",
+          "global_suspension",
+          "category_suspensions"
+        ],
+        "title": "_AutomaticSafetyResponse",
+        "type": "object"
+      },
+      "_AutomaticSuspendRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "reason": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "_AutomaticSuspendRequest",
+        "type": "object"
+      },
       "_CaseDetailResponse": {
         "additionalProperties": false,
         "properties": {
@@ -444,6 +607,63 @@
         "title": "_EvidenceResponse",
         "type": "object"
       },
+      "_HistoryAutomaticItem": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "kind": {
+            "const": "automatic_decision_recorded",
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "origin": {
+            "const": "automatic_policy",
+            "title": "Origin",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "candidate",
+              "keep_current",
+              "ignore"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "automatic-decision-history-event-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision_id",
+          "destination",
+          "kind",
+          "occurred_at",
+          "origin",
+          "outcome",
+          "review_case_id",
+          "schema_version"
+        ],
+        "title": "_HistoryAutomaticItem",
+        "type": "object"
+      },
       "_HistoryDecisionItem": {
         "additionalProperties": false,
         "properties": {
@@ -520,6 +740,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/_HistoryShadowItem"
+                },
+                {
+                  "$ref": "#/components/schemas/_HistoryAutomaticItem"
                 }
               ]
             },
@@ -1321,6 +1544,16 @@
       "_ReviewField": {
         "additionalProperties": false,
         "properties": {
+          "automatic_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_AutomaticDecisionProjection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "current": {
             "$ref": "#/components/schemas/_TargetField"
           },
@@ -1392,6 +1625,7 @@
           "deterministic_disposition",
           "destination",
           "human_decision",
+          "automatic_decision",
           "manual_required",
           "needs_attention",
           "notices",
@@ -1767,7 +2001,10 @@
         "additionalProperties": false,
         "properties": {
           "authority": {
-            "const": "none",
+            "enum": [
+              "none",
+              "decision_only"
+            ],
             "title": "Authority",
             "type": "string"
           },
@@ -1779,7 +2016,8 @@
           "posture": {
             "enum": [
               "review",
-              "preview"
+              "preview",
+              "automatic"
             ],
             "title": "Posture",
             "type": "string"
@@ -2255,6 +2493,311 @@
         "summary": "Activate Metadata Policy"
       }
     },
+    "/api/v1/metadata-policy/automatic-safety": {
+      "get": {
+        "operationId": "automatic_safety_state_api_v1_metadata_policy_automatic_safety_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_AutomaticSafetyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Automatic Safety State"
+      }
+    },
+    "/api/v1/metadata-policy/automatic-safety/pause": {
+      "post": {
+        "operationId": "set_automatic_pause_api_v1_metadata_policy_automatic_safety_pause_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_AutomaticPauseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_AutomaticSafetyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Set Automatic Pause"
+      }
+    },
+    "/api/v1/metadata-policy/automatic-safety/recover": {
+      "post": {
+        "operationId": "recover_automatic_safety_api_v1_metadata_policy_automatic_safety_recover_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_AutomaticRecoveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_AutomaticSafetyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Recover Automatic Safety"
+      }
+    },
+    "/api/v1/metadata-policy/automatic-safety/suspend": {
+      "post": {
+        "operationId": "suspend_automatic_safety_api_v1_metadata_policy_automatic_safety_suspend_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_AutomaticSuspendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_AutomaticSafetyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Suspend Automatic Safety"
+      }
+    },
     "/api/v1/metadata-policy/drafts": {
       "post": {
         "operationId": "create_metadata_policy_draft_api_v1_metadata_policy_drafts_post",
@@ -2558,6 +3101,80 @@
           }
         ],
         "summary": "Shadow Posture"
+      }
+    },
+    "/api/v1/metadata-policy/shadow/confirm-automatic": {
+      "post": {
+        "operationId": "confirm_automatic_api_v1_metadata_policy_shadow_confirm_automatic_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ShadowPostureResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Confirm Automatic"
       }
     },
     "/api/v1/metadata-policy/shadow/enter": {

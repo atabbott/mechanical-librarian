@@ -7,8 +7,10 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import MetadataReportError, open_repository
 from mechanical_librarian.application.metadata_policy import (
     MAX_SHADOW_SAMPLE_RESPONSE_BYTES,
     PolicyNotebook,
@@ -30,6 +32,10 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope, LocalClaim
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError, AutomaticSafetyState
+from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
+from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source,
@@ -171,6 +177,73 @@ def _maximum_reference_outcome(repository) -> ShadowOutcomeSet:
         base,
         outcome_set_id="shadow_outcome_set_" + _digest(identity),
         outcomes=tuple(fields),
+    )
+
+
+def _synthetic_automatic_tuple(repository, case_id: str, category: str):
+    """A value-free qualified projection packet for persistence race coverage.
+
+    The production projection is separately tested from real reports above.  This
+    small packet isolates the append-only admission boundary without importing a
+    corpus value or manufacturing a metadata write.
+    """
+    case = ReviewCase.create_from_data(json.loads(repository.get_review_case(case_id))["case"])
+    members, option = (
+        (("title", "subtitle", "series"), "title_and_subtitle")
+        if category == "title_layout"
+        else (("publishedDate", "publishedYear"), "full_date")
+    )
+    shared = ("bibliographic_combination_" + "a" * 64,)
+    fields = tuple(
+        SimpleNamespace(
+            disposition="candidate",
+            policy_category=category,
+            policy_option=option,
+            policy_destination="automatic",
+            destination=destination,
+            combination_ids=shared,
+            proposal_id="review_proposal_" + f"{index:064x}",
+            candidate_id="alternative_" + f"{index + 16:064x}",
+            rule_id="shadow_rule_" + f"{index + 32:064x}",
+            outcome_id="shadow_outcome_" + f"{index + 48:064x}",
+        )
+        for index, destination in enumerate(members)
+    )
+    policy_id = repository.current_resolved_policy_id(case.target["library"])
+    assert policy_id is not None
+    generation = repository._connection.execute(
+        "SELECT generation FROM metadata_policy_state WHERE singleton=1"
+    ).fetchone()[0]
+    return SimpleNamespace(
+        outcomes=fields,
+        review_case_id=case_id,
+        report_id=case.report_id,
+        proposal_set_id=case.proposal_set_id,
+        target_fingerprint=case.target_fingerprint,
+        resolved_policy_id=policy_id,
+        policy_generation=generation,
+    )
+
+
+def _human_title_decision(repository, case_id: str, occurred_at: int) -> HumanDecision:
+    case = ReviewCase.create_from_data(json.loads(repository.get_review_case(case_id))["case"])
+    proposal = next(value for value in case.proposals if value["destination"] == "title")
+    result = proposal["result"]
+    assert isinstance(result, dict)
+    alternatives = result.get("alternatives")
+    assert isinstance(alternatives, list) and alternatives
+    selected = alternatives[0]["value"]
+    assert isinstance(selected, dict)
+    return HumanDecision.create(
+        case,
+        proposal_id=proposal["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination="title",
+        actor="owner",
+        outcome="accept",
+        selected_value=selected,
+        idempotency_key="synthetic-human-title-key-0001",
+        occurred_at=occurred_at,
     )
 
 
@@ -376,7 +449,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 root / "artifacts",
             )
 
-            self.assertEqual("review", repository.shadow_posture())
+            self.assertEqual("automatic", repository.shadow_posture())
             self.assertEqual(
                 "stale", supervisor._pipeline._project(repository, old_case_id)
             )
@@ -400,15 +473,21 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             )
             repository.close()
 
-    def test_review_posture_is_inactive_and_preview_replays_one_exact_set(self) -> None:
+    def test_automatic_bootstrap_and_preview_replay_one_exact_set(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "reports.sqlite"
             repository = open_repository(path)
             case_id = _case(repository)
 
-            self.assertEqual("review", repository.shadow_posture())
-            self.assertEqual("inactive", repository.persist_shadow_outcome(case_id, 10))
-            self.assertEqual((), repository.list_shadow_outcomes(50))
+            self.assertEqual("automatic", repository.shadow_posture())
+            bootstrap = repository.metadata_policy_transition()
+            self.assertIsNotNone(bootstrap)
+            assert bootstrap is not None
+            self.assertFalse(bootstrap.acknowledged)
+            self.assertFalse(hasattr(repository, "record_automatic_decision"))
+            automatic = repository.persist_shadow_outcome(case_id, 10)
+            self.assertTrue(automatic.startswith('{"authority":"none"'))
+            self.assertEqual(((automatic, 10),), repository.list_shadow_outcomes(50))
 
             self.assertEqual("preview", repository.enter_shadow_preview(11))
             first = repository.persist_shadow_outcome(case_id, 12)
@@ -418,7 +497,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             self.assertEqual("none", outcome.authority)
             self.assertEqual("preview", outcome.posture)
             self.assertEqual(case_id, outcome.review_case_id)
-            self.assertEqual({"manual"}, {value.disposition for value in outcome.outcomes})
+            self.assertTrue({value.disposition for value in outcome.outcomes}.issubset({"candidate", "keep_current", "abstention", "conflict", "unsupported"}))
             self.assertTrue(
                 all(value.qualification_candidate_id.startswith("qualification_candidate_") for value in outcome.outcomes)
             )
@@ -426,7 +505,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 len(outcome.outcomes),
                 len({value.qualification_candidate_id for value in outcome.outcomes}),
             )
-            self.assertEqual(((first, 12),), repository.list_shadow_outcomes(50))
+            self.assertEqual(((first, 10),), repository.list_shadow_outcomes(50))
             history = repository.get_review_case_history(case_id, 50)
             self.assertEqual("shadow_preview_recorded", history[0]["kind"])
             self.assertEqual("none", history[0]["authority"])
@@ -444,6 +523,93 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                     "UPDATE shadow_decision_outcomes SET evaluated_at=99"
                 )
             connection.close()
+
+    def test_preview_reconciliation_failure_rolls_back_the_posture_and_automatic_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            repository._record_automatic_outcomes(
+                _synthetic_automatic_tuple(repository, case_id, "title_layout"), 2
+            )
+            with patch.object(
+                repository,
+                "activate_metadata_policy",
+                side_effect=MetadataReportError("reconciliation failed"),
+            ):
+                with self.assertRaisesRegex(MetadataReportError, "reconciliation failed"):
+                    repository.enter_shadow_preview(3)
+            self.assertEqual("automatic", repository.shadow_posture())
+            self.assertEqual((3,), repository._connection.execute(
+                "SELECT COUNT(*) FROM automatic_decisions"
+            ).fetchone())
+            repository.close()
+
+    def test_automatic_safety_update_preserves_a_caller_transaction_and_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports.sqlite"
+            repository = open_repository(path)
+            repository._connection.execute("BEGIN IMMEDIATE")
+            repository.set_automatic_safety_state(
+                AutomaticSafetyState(False, None, (("title_layout", "admission_failed"),)), 9
+            )
+            self.assertTrue(repository._connection.in_transaction)
+            repository._connection.commit()
+            repository.close()
+            reopened = open_repository(path)
+            self.assertEqual(
+                AutomaticSafetyState(False, None, (("title_layout", "admission_failed"),)),
+                reopened.automatic_safety_state(),
+            )
+            reopened.close()
+
+    def test_automatic_authority_binding_failure_is_global_and_keeps_shadow_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports.sqlite"
+            repository = open_repository(path)
+            case_id = _case(repository)
+            # The construction seam reports malformed manifest/source/identity
+            # bindings as an authority error. It must fail closed globally,
+            # while the report-only observation survives the savepoint rollback.
+            with patch.object(
+                repository,
+                "_record_automatic_outcomes",
+                side_effect=AutomaticDecisionError("source_binding_invalid"),
+            ):
+                persisted = repository.persist_shadow_outcome(case_id, 9)
+            self.assertTrue(persisted.startswith('{"authority":"none"'))
+            self.assertEqual(
+                "automatic_authority_failed",
+                repository.automatic_safety_state().global_suspension,
+            )
+            self.assertEqual((), repository.automatic_safety_state().category_suspensions)
+            self.assertEqual(((persisted, 9),), repository.list_shadow_outcomes(50))
+            repository.close()
+            reopened = open_repository(path)
+            self.assertEqual(
+                "automatic_authority_failed",
+                reopened.automatic_safety_state().global_suspension,
+            )
+            reopened.close()
+
+    def test_explicit_bundle_safety_failure_is_category_scoped(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            # Category is reserved for the bundle-coherence classifier; it
+            # must not become the fallback for authority-binding failures.
+            with patch.object(
+                repository,
+                "_record_automatic_outcomes",
+                side_effect=AutomaticDecisionError("category:title_layout"),
+            ):
+                repository.persist_shadow_outcome(case_id, 10)
+            safety = repository.automatic_safety_state()
+            self.assertIsNone(safety.global_suspension)
+            self.assertEqual(
+                (("title_layout", "automatic_admission_failed"),),
+                safety.category_suspensions,
+            )
+            repository.close()
 
     def test_shadow_history_orders_human_and_preview_events_by_time(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -640,6 +806,187 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             repository._connection.execute("BEGIN IMMEDIATE")
             repository._connection.rollback()
             repository.close()
+
+    def test_human_and_automatic_winners_are_mutually_exclusive_without_suspension(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            repository.record_human_decision(_human_title_decision(repository, case_id, 1))
+            repository._record_automatic_outcomes(
+                _synthetic_automatic_tuple(repository, case_id, "title_layout"), 2
+            )
+            self.assertEqual(
+                (1, 0),
+                tuple(
+                    repository._connection.execute(
+                        "SELECT (SELECT COUNT(*) FROM human_decisions),"
+                        "(SELECT COUNT(*) FROM automatic_decisions)"
+                    ).fetchone()
+                ),
+            )
+            self.assertEqual(AutomaticSafetyState(False, None, ()), repository.automatic_safety_state())
+            repository.close()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            repository._record_automatic_outcomes(
+                _synthetic_automatic_tuple(repository, case_id, "title_layout"), 2
+            )
+            with self.assertRaisesRegex(HumanDecisionError, "already_decided"):
+                repository.record_human_decision(_human_title_decision(repository, case_id, 3))
+            self.assertEqual((0, 3), tuple(repository._connection.execute(
+                "SELECT (SELECT COUNT(*) FROM human_decisions),(SELECT COUNT(*) FROM automatic_decisions)"
+            ).fetchone()))
+            repository.close()
+
+    def test_automatic_tuple_replay_is_exact_and_date_and_title_bundles_are_atomic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports.sqlite"
+            repository = open_repository(path)
+            case_id = _case(repository)
+            title = _synthetic_automatic_tuple(repository, case_id, "title_layout")
+            dates = _synthetic_automatic_tuple(repository, case_id, "date_precision")
+            repository._record_automatic_outcomes(title, 7)
+            first = repository.get_review_case_decisions(case_id)
+            repository._record_automatic_outcomes(title, 99)
+            repository._record_automatic_outcomes(dates, 8)
+            documents = tuple(json.loads(value) for value in repository.get_review_case_decisions(case_id))
+            self.assertEqual(first, repository.get_review_case_decisions(case_id)[:3])
+            self.assertEqual(5, len(documents))
+            for destinations in (("title", "subtitle", "series"), ("publishedDate", "publishedYear")):
+                bundle = [value for value in documents if value["destination"] in destinations]
+                self.assertEqual(set(destinations), {value["destination"] for value in bundle})
+                self.assertEqual(1, len({value["bundle_id"] for value in bundle}))
+            repository.close()
+            reopened = open_repository(path)
+            self.assertEqual(tuple(value["decision_id"] for value in documents), tuple(
+                json.loads(value)["decision_id"] for value in reopened.get_review_case_decisions(case_id)
+            ))
+            reopened.close()
+
+    def test_incoherent_automatic_tuple_suspends_only_its_category_and_safety_recovery_restores_admission(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            incoherent = _synthetic_automatic_tuple(repository, case_id, "title_layout")
+            incoherent.outcomes[1].combination_ids = ("bibliographic_combination_" + "b" * 64,)
+            with self.assertRaisesRegex(AutomaticDecisionError, "category:title_layout"):
+                repository._record_automatic_outcomes(incoherent, 3)
+            repository.set_automatic_safety_state(
+                AutomaticSafetyState(False, None, (("title_layout", "automatic_admission_failed"),)), 4
+            )
+            repository._record_automatic_outcomes(
+                _synthetic_automatic_tuple(repository, case_id, "title_layout"), 5
+            )
+            self.assertEqual((0,), repository._connection.execute(
+                "SELECT COUNT(*) FROM automatic_decisions"
+            ).fetchone())
+            repository.set_automatic_safety_state(AutomaticSafetyState(False, None, ()), 6)
+            repository._record_automatic_outcomes(
+                _synthetic_automatic_tuple(repository, case_id, "title_layout"), 7
+            )
+            self.assertEqual((3,), repository._connection.execute(
+                "SELECT COUNT(*) FROM automatic_decisions"
+            ).fetchone())
+            repository.close()
+
+    def test_nonautomatic_policy_destination_never_constructs_an_automatic_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            ignored = SimpleNamespace(
+                outcomes=(SimpleNamespace(
+                    disposition="candidate", policy_category="tags", policy_option="catalogue",
+                    policy_destination="ignore", destination="tags", combination_ids=(),
+                    proposal_id="review_proposal_" + "a" * 64,
+                    candidate_id="alternative_" + "b" * 64,
+                    rule_id="shadow_rule_" + "c" * 64,
+                    outcome_id="shadow_outcome_" + "d" * 64,
+                ),),
+                review_case_id=case_id,
+                report_id=ReviewCase.create_from_data(json.loads(repository.get_review_case(case_id))["case"]).report_id,
+                proposal_set_id=ReviewCase.create_from_data(json.loads(repository.get_review_case(case_id))["case"]).proposal_set_id,
+                target_fingerprint=ReviewCase.create_from_data(json.loads(repository.get_review_case(case_id))["case"]).target_fingerprint,
+                resolved_policy_id=repository.current_resolved_policy_id("ebooks"),
+                policy_generation=1,
+            )
+            repository._record_automatic_outcomes(ignored, 2)
+            self.assertEqual((0,), repository._connection.execute(
+                "SELECT COUNT(*) FROM automatic_decisions"
+            ).fetchone())
+            self.assertEqual(AutomaticSafetyState(False, None, ()), repository.automatic_safety_state())
+            repository.close()
+
+    def test_paused_or_category_suspended_automatic_tuple_remains_in_every_attention_projection(self) -> None:
+        local_title = LocalClaim.create(
+            kind=ClaimKind.TITLE, observed="Secret History", canonical="Secret History",
+            excerpt="Secret History", applicability="not_applicable", checksum="not_applicable",
+            applicability_basis="not_applicable", scope=ClaimScope.WORK,
+        )
+        source = _source("catalogue", "edition-1", titles=("Secret History",), subtitle="A Mistborn Novella")
+        report = _bibliographic_report(
+            current_title="secret history", providers=(source,), local_claims=(local_title,)
+        )
+        profile = _preview_automatic_profile()
+
+        def admit(repository):
+            repository.enter_shadow_preview(1)
+            repository.create_metadata_policy_draft(profile.canonical_json)
+            resolved = resolve_policy(profile, report.target.library)
+            repository.activate_metadata_policy(profile.policy_id, MetadataPolicyProfile.builtin().policy_id, ((report.target.library, resolved.resolved_id, resolved.canonical_json),), 2)
+            proposal = evaluate_report(report, resolved.resolved_id, human_review_destinations(resolved))
+            title = next(value for value in proposal.results if value.destination.value == "title")
+            self.assertNotEqual("unresolved_choice", title.to_data()["outcome"])
+            self.assertNotIn("no_safe_bibliographic_combination", title.to_data()["reasons"])
+            repository.publish(report, lambda: True)
+            repository.publish_proposal(proposal)
+            return json.loads(repository.admit_review_case(proposal))["review_case_id"]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            baseline = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = admit(baseline)
+            title = next(field for field in InspectCurrentReviewCase(baseline).run(case_id)["fields"] if field["destination"] == "title")
+            self.assertFalse(title["needs_attention"])
+            baseline.close()
+        for safety in (
+            AutomaticSafetyState(True, None, ()),
+            AutomaticSafetyState(False, None, (("title_layout", "admission_failed"),)),
+            AutomaticSafetyState(False, "authority_failed", ()),
+        ):
+            with self.subTest(safety=safety), tempfile.TemporaryDirectory() as temporary:
+                repository = open_repository(Path(temporary) / "reports.sqlite")
+                case_id = admit(repository)
+                repository.set_automatic_safety_state(safety, 1)
+                repository.persist_shadow_outcome(case_id, 2)
+                self.assertEqual((0,), repository._connection.execute(
+                    "SELECT COUNT(*) FROM automatic_decisions"
+                ).fetchone())
+                detail = InspectCurrentReviewCase(repository).run(case_id)
+                title = next(field for field in detail["fields"] if field["destination"] == "title")
+                self.assertTrue(title["needs_attention"])
+                library = repository.read_review_library(None, 50, 0, True)
+                self.assertEqual(1, library.total)
+                self.assertEqual(1, library.attention_total)
+                attention = repository.read_review_attention(None, 50, 0)
+                self.assertGreaterEqual(attention.total, 1)
+                self.assertIn("title", tuple(row[2] for row in attention.rows))
+                repository.close()
+
+    def test_bootstrap_transition_acknowledgement_is_durable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports.sqlite"
+            repository = open_repository(path)
+            transition = repository.metadata_policy_transition()
+            assert transition is not None
+            acknowledged = repository.acknowledge_metadata_policy_transition(transition.transition_id, 4)
+            self.assertTrue(acknowledged.acknowledged)
+            repository.close()
+            reopened = open_repository(path)
+            persisted = reopened.metadata_policy_transition()
+            assert persisted is not None
+            self.assertTrue(persisted.acknowledged)
+            reopened.close()
 
 
 if __name__ == "__main__":
