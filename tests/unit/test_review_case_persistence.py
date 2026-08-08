@@ -27,6 +27,10 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalValueKind,
     evaluate_report,
 )
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionIncompatibleError,
     ReviewAdmissionResult,
@@ -74,6 +78,28 @@ def _report(
 
 
 class ReviewCasePersistenceTests(unittest.TestCase):
+    def test_nondefault_resolved_policy_replays_admits_reopens_and_browses(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            report = _report()
+            resolved = resolve_policy(
+                MetadataPolicyProfile.builtin(),
+                report.target.library,
+                {"options": {"date_precision": "full_date"}, "destinations": {}},
+            )
+            proposal = evaluate_report(report, resolved.resolved_id)
+            original_report = report.to_json()
+            repository.publish(report, lambda: True)
+            repository.publish_proposal(proposal)
+            admitted = json.loads(repository.admit_review_case(proposal))
+            self.assertEqual("admitted", admitted["status"])
+            case = json.loads(repository.get_review_case(admitted["review_case_id"]))
+            self.assertEqual(proposal.proposal_set_id, case["case"]["proposal_set_id"])
+            self.assertEqual(original_report, repository.get(report.report_id))
+            browsed = repository.list_current_review_case_documents(None, 50, 0, None)
+            self.assertEqual(1, len(browsed))
+            repository.close()
+
     def test_case_parser_rejects_duplicate_and_oversized_documents(self) -> None:
         with self.assertRaises(ReviewCaseValueError):
             ReviewCase.from_json('{"schema_version":"review-case-v1","schema_version":"review-case-v1"}')

@@ -902,13 +902,15 @@ def _proposal_identifier(value: dict[str, object]) -> str:
         set(value)
         != {
             "policy_version",
+            "resolved_policy_id",
             "relationships",
             "report",
             "results",
             "schema_version",
         }
-        or value.get("schema_version") != "proposal-set-v3"
+        or value.get("schema_version") != "proposal-set-v4"
         or value.get("policy_version") != "fixed-conservative-v6"
+        or _SHA256.fullmatch(str(value.get("resolved_policy_id", "")).removeprefix("resolved_policy_")) is None
         or type(relationships) is not dict
         or set(relationships)
         != {"bibliographic_combinations", "schema_version"}

@@ -32,6 +32,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
     def test_installed_probe_requires_the_current_proposal_policy(self) -> None:
         proposal = {
             "policy_version": "fixed-conservative-v6",
+            "resolved_policy_id": "resolved_policy_" + "d" * 64,
             "relationships": {
                 "bibliographic_combinations": [],
                 "schema_version": "bibliographic-relationships-v1",
@@ -41,7 +42,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                 "target_fingerprint": "b" * 64,
             },
             "results": [],
-            "schema_version": "proposal-set-v3",
+            "schema_version": "proposal-set-v4",
         }
         identifier = _proposal_identifier(proposal)
         self.assertTrue(identifier.startswith("proposal_set_"))

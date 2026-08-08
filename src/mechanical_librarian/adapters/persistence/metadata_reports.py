@@ -1979,7 +1979,8 @@ class SQLiteMetadataReportRepository:
             if (
                 proposal_set.report_id != report.report_id
                 or proposal_set.target_fingerprint != report.target.fingerprint
-                or proposal_set.to_json() != evaluate_report(report).to_json()
+                or proposal_set.to_json()
+                != evaluate_report(report, proposal_set.resolved_policy_id).to_json()
             ):
                 raise ReviewAdmissionIncompatibleError
             if self._connection.execute("SELECT report_id FROM current_metadata_report_lineages WHERE connection_name=? AND library_name=? AND item_id=?", lineage).fetchone() != (report.report_id,):
@@ -2093,7 +2094,8 @@ class SQLiteMetadataReportRepository:
                 proposal.proposal_set_id != case.proposal_set_id
                 or proposal.report_id != case.report_id
                 or proposal.target_fingerprint != case.target_fingerprint
-                or proposal.to_json() != evaluate_report(report).to_json()
+                or proposal.to_json()
+                != evaluate_report(report, proposal.resolved_policy_id).to_json()
                 or report.target.to_data() != case.target
                 or report.target.fingerprint != case.target_fingerprint
                 or report.file.identity != case.file_identity
@@ -4158,7 +4160,12 @@ def _validate_review_browse_row(row: object) -> tuple[str, str]:
         or case.target != report.target.to_data()
         or case.target_fingerprint != report.target.fingerprint
         or case.file_identity != report.file.identity
-        or tuple(value.to_data() for value in evaluate_report(report).results)
+        or tuple(
+            value.to_data()
+            for value in evaluate_report(
+                report, ProposalSet.from_json(case.proposal_document).resolved_policy_id
+            ).results
+        )
         != case.results
     ):
         raise MetadataReportError("review browse row disagrees")

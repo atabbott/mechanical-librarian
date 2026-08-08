@@ -22,7 +22,7 @@ product increment.
 
 ## Decision
 
-`proposal-set-v3` adds a separate
+`proposal-set-v4` adds a separate
 `bibliographic-relationships-v1` projection under
 `fixed-conservative-v6`. Every allowed combination explicitly covers title,
 subtitle, and series. A member either references an existing alternative or
@@ -59,7 +59,8 @@ derivation. Per-destination proposal IDs bind the exact result set independently
 of relationship tuples. Duplicate member tuples are forbidden.
 
 ADR-0013 applies: the changed proposal-store policy accepts absent or
-exact-current state only. There is no migration, import, or conversion.
+exact-current state only; `proposal-set-v3` is rejected. There is no migration,
+import, or conversion.
 Prompt, profile policy, provider queries, decisions, writes, release, and
 activation remain out of scope.
 
