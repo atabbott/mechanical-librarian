@@ -2599,6 +2599,26 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                     [record.outcome for record in provider.attempt_records],
                 )
 
+    def test_final_retry_after_is_retained_when_local_attempts_are_exhausted(self) -> None:
+        provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(503, headers={"retry-after": "7"})
+                )
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        self.assertEqual(
+            ProviderStatus.UNAVAILABLE,
+            provider.observe(_isbn_lookup((_isbn(),))).status,
+        )
+        self.assertEqual("exhausted", provider.attempt_records[-1].outcome)
+        self.assertEqual(7.0, provider.attempt_records[-1].delay_seconds)
+
     def test_error_response_bodies_are_charged_before_status_retry(
         self,
     ) -> None:

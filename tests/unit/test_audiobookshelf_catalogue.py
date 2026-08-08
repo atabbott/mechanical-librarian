@@ -87,6 +87,131 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
             entry = catalogue_entry("primary", _library(), None, summary, detail)
             self.assertEqual((entry.has_ebook, entry.classification), expected)
 
+    def test_volatile_activity_fields_do_not_change_catalogue_identity(self) -> None:
+        baseline = _item()
+        baseline["media"]["ebookFile"]["metadata"]["mtimeMs"] = 1
+        active = {
+            **baseline,
+            "updatedAt": 2,
+            "progress": 0.75,
+            "currentTime": 1234,
+            "bookmarks": [{"title": "Later", "time": 1200}],
+            "mediaProgress": {"isFinished": False, "progress": 0.75},
+        }
+        first = catalogue_entry(
+            "primary", _library(), None,
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}, baseline,
+        )
+        second = catalogue_entry(
+            "primary", _library(), None,
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 2}, active,
+        )
+        self.assertEqual(first.source_fingerprint, second.source_fingerprint)
+
+    def test_item_revision_is_fallback_when_material_revision_is_unavailable(self) -> None:
+        baseline = _item()
+        changed = _item()
+        changed["updatedAt"] = 2
+        first = catalogue_entry(
+            "primary", _library(), None,
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}, baseline,
+        )
+        second = catalogue_entry(
+            "primary", _library(), None,
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 2}, changed,
+        )
+        self.assertNotEqual(first.source_fingerprint, second.source_fingerprint)
+
+    def test_invalid_material_revision_retains_item_revision_fallback(self) -> None:
+        summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+        for invalid_revision in (None, -1, "", [], {}):
+            baseline = _item()
+            baseline["media"]["ebookFile"]["metadata"]["mtimeMs"] = invalid_revision
+            changed = _item()
+            changed["updatedAt"] = 2
+            changed["media"]["ebookFile"]["metadata"]["mtimeMs"] = invalid_revision
+            first = catalogue_entry(
+                "primary", _library(), None, summary, baseline
+            )
+            second = catalogue_entry(
+                "primary",
+                _library(),
+                None,
+                {**summary, "updatedAt": 2},
+                changed,
+            )
+            self.assertNotEqual(first.source_fingerprint, second.source_fingerprint)
+
+    def test_reviewed_field_presence_changes_source_fingerprint(self) -> None:
+        summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+        absent = _item()
+        absent["media"]["ebookFile"]["metadata"]["mtimeMs"] = 1
+        explicit_null = _item()
+        explicit_null["media"]["ebookFile"]["metadata"]["mtimeMs"] = 1
+        explicit_null["media"]["metadata"]["subtitle"] = None
+        first = catalogue_entry("primary", _library(), None, summary, absent)
+        second = catalogue_entry("primary", _library(), None, summary, explicit_null)
+        self.assertNotEqual(first.source_fingerprint, second.source_fingerprint)
+
+    def test_cover_field_presence_and_raw_state_change_source_fingerprint(self) -> None:
+        summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+        absent = object()
+        fingerprints = []
+        for cover in (absent, None, "", 7, "/cover/item-1"):
+            detail = _item()
+            detail["media"]["ebookFile"]["metadata"]["mtimeMs"] = 1
+            if cover is not absent:
+                detail["coverPath"] = cover
+            fingerprints.append(
+                catalogue_entry(
+                    "primary", _library(), None, summary, detail
+                ).source_fingerprint
+            )
+        self.assertEqual(len(set(fingerprints)), len(fingerprints))
+
+    def test_item_revision_protects_cover_bytes_without_a_cover_revision(self) -> None:
+        baseline = _item()
+        baseline["coverPath"] = "/cover/item-1"
+        baseline["media"]["ebookFile"]["metadata"]["mtimeMs"] = 1
+        changed = _item()
+        changed["coverPath"] = "/cover/item-1"
+        changed["updatedAt"] = 2
+        changed["media"]["ebookFile"]["metadata"]["mtimeMs"] = 1
+        first = catalogue_entry(
+            "primary", _library(), None,
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}, baseline,
+        )
+        second = catalogue_entry(
+            "primary", _library(), None,
+            {"id": "item-1", "libraryId": "library-1", "updatedAt": 2}, changed,
+        )
+        self.assertNotEqual(first.source_fingerprint, second.source_fingerprint)
+
+    def test_each_material_review_source_dimension_changes_fingerprint(self) -> None:
+        summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+        baseline = _item()
+        original = catalogue_entry("primary", _library(), None, summary, baseline)
+        variants = []
+        for mutation in (
+            {"subtitle": "A subtitle"},
+            {"isbn": "9780000000002"},
+            {"coverPath": "/cover/item-1"},
+        ):
+            detail = _item()
+            if "coverPath" in mutation:
+                detail.update(mutation)
+            else:
+                detail["media"]["metadata"].update(mutation)
+            variants.append(detail)
+        media_revision = _item()
+        media_revision["media"]["ebookFile"]["metadata"]["mtimeMs"] = 2
+        variants.append(media_revision)
+        for detail in variants:
+            self.assertNotEqual(
+                original.source_fingerprint,
+                catalogue_entry("primary", _library(), None, summary, detail).source_fingerprint,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

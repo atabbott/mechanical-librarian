@@ -41,6 +41,28 @@ _TECHNICAL_PROVIDER_FAILURES = frozenset(
         ProviderStatus.QUERY_LIMIT_EXCEEDED,
     }
 )
+_TRANSIENT_PROVIDER_FAILURES = frozenset(
+    {ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE}
+)
+_CONFIGURATION_PROVIDER_FAILURES = frozenset(
+    {ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION}
+)
+
+
+def provider_failure_disposition(
+    statuses: tuple[ProviderStatus, ...],
+) -> tuple[str, bool] | None:
+    failures = _TECHNICAL_PROVIDER_FAILURES.intersection(statuses)
+    if _CONFIGURATION_PROVIDER_FAILURES.intersection(failures):
+        return "configuration", False
+    if _TRANSIENT_PROVIDER_FAILURES.intersection(failures):
+        return "transient", True
+    if failures:
+        return "provider", False
+    return None
+
+
+_provider_failure_disposition = provider_failure_disposition
 
 
 class ReviewPipelineError(RuntimeError):
@@ -62,6 +84,7 @@ class PipelineProgress:
     ready: int
     blocked: int
     rescan_requested: bool
+    updated_at: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +105,7 @@ class PipelineAction:
     report_id: str | None = None
     proposal_set_id: str | None = None
     review_case_id: str | None = None
+    source_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -104,6 +128,9 @@ class PipelineAction:
             or self.source_revision < 0
             or self.catalogue_generation is None
             or self.catalogue_fingerprint is None
+            or type(self.source_fingerprint) is not str
+            or len(self.source_fingerprint) != 64
+            or any(value not in "0123456789abcdef" for value in self.source_fingerprint)
         ):
             raise ReviewPipelineError("state")
 
@@ -122,11 +149,25 @@ class ReviewPipelineRepository(Protocol):
         self, connection: str, library: str
     ) -> PipelineProgress | None: ...
 
+    def review_pipeline_status(
+        self, libraries: tuple[tuple[str, str], ...]
+    ) -> tuple[tuple[PipelineProgress | None, ...], bool]: ...
+
     def recover_review_pipeline(
         self, producers: tuple[tuple[str, str, str, str], ...]
     ) -> None: ...
 
+    def review_pipeline_paused(self) -> bool: ...
+
+    def set_review_pipeline_paused(self, paused: bool, updated_at: int) -> None: ...
+
     def claim_review_pipeline_action(self, claimed_at: int) -> PipelineAction | None: ...
+
+    def take_review_pipeline_claim(self) -> PipelineAction | None: ...
+
+    def begin_review_pipeline_output(self) -> None: ...
+
+    def rollback_review_pipeline_output(self) -> None: ...
 
     def complete_review_discovery(
         self,
@@ -142,7 +183,8 @@ class ReviewPipelineRepository(Protocol):
         action: PipelineAction,
         output_id: str | None,
         completed_at: int,
-    ) -> None: ...
+        claim_next: bool = False,
+    ) -> PipelineAction | None: ...
 
     def fail_review_pipeline_action(
         self,
@@ -166,11 +208,17 @@ class ReviewPreparationPipeline:
         discover: Callable[
             [str, str], tuple[int, str, tuple[CatalogueEntry, ...]]
         ],
-        extract: Callable[[PipelineAction], tuple[str, bool]],
-        providers: Callable[[str], tuple[ProviderStatus, ...]],
-        propose: Callable[[str], str],
-        admit: Callable[[str], tuple[str, str | None]],
-        project: Callable[[str], bool],
+        extract: Callable[
+            [ReviewPipelineRepository, PipelineAction, bool], tuple[str, bool]
+        ],
+        providers: Callable[
+            [ReviewPipelineRepository, str], tuple[ProviderStatus, ...]
+        ],
+        propose: Callable[[ReviewPipelineRepository, str], str],
+        admit: Callable[
+            [ReviewPipelineRepository, str], tuple[str, str | None]
+        ],
+        project: Callable[[ReviewPipelineRepository, str], bool],
         clock: Callable[[], int] = lambda: int(time.time()),
     ) -> None:
         if not libraries or len(libraries) != len(set(libraries)):
@@ -239,6 +287,19 @@ class ReviewPreparationPipeline:
         finally:
             repository.close()
 
+    def status(self) -> tuple[tuple[PipelineProgress | None, ...], bool]:
+        libraries = tuple(sorted(self._libraries))
+        repository = self._open_repository()
+        try:
+            try:
+                return repository.review_pipeline_status(libraries)
+            except ReviewPipelineError:
+                raise
+            except Exception as error:
+                raise ReviewPipelineError("persistence") from error
+        finally:
+            repository.close()
+
     def recover(self) -> None:
         repository = self._open_repository()
         try:
@@ -258,7 +319,33 @@ class ReviewPreparationPipeline:
         finally:
             repository.close()
 
-    def run_next(self) -> bool:
+    def paused(self) -> bool:
+        repository = self._open_repository()
+        try:
+            try:
+                return repository.review_pipeline_paused()
+            except ReviewPipelineError:
+                raise
+            except Exception as error:
+                raise ReviewPipelineError("persistence") from error
+        finally:
+            repository.close()
+
+    def set_paused(self, paused: bool) -> None:
+        repository = self._open_repository()
+        try:
+            try:
+                repository.set_review_pipeline_paused(paused, self._clock())
+            except ReviewPipelineError:
+                raise
+            except Exception as error:
+                raise ReviewPipelineError("persistence") from error
+        finally:
+            repository.close()
+
+    def run_next(self, maximum_actions: int = 64) -> bool:
+        if type(maximum_actions) is not int or not 1 <= maximum_actions <= 64:
+            raise ReviewPipelineError("configuration")
         repository = self._open_repository()
         try:
             try:
@@ -267,104 +354,164 @@ class ReviewPreparationPipeline:
                 raise
             except Exception as error:
                 raise ReviewPipelineError("persistence") from error
+            if action is None:
+                return False
+            for index in range(maximum_actions):
+                next_action = self._run_claimed_action(
+                    repository,
+                    action,
+                    claim_next=index + 1 < maximum_actions,
+                )
+                if next_action is None:
+                    return True
+                action = next_action
+            return True
         finally:
             repository.close()
-        if action is None:
-            return False
+
+    def _run_claimed_action(
+        self,
+        repository: ReviewPipelineRepository,
+        action: PipelineAction,
+        *,
+        claim_next: bool,
+    ) -> PipelineAction | None:
+        output_transaction = False
         try:
             output_id: str | None = None
             if action.stage == "discovery":
                 generation, fingerprint, entries = self._discover(
                     action.connection, action.library
                 )
-                self._complete_discovery(action, generation, fingerprint, entries)
-                return True
+                self._complete_discovery(
+                    repository, action, generation, fingerprint, entries
+                )
+                return None
             if action.stage == "extraction":
-                output_id, checkpoint_committed = self._extract(action)
+                output_id, checkpoint_committed = self._extract(
+                    repository, action, claim_next
+                )
                 if checkpoint_committed:
-                    return True
+                    return repository.take_review_pipeline_claim()
             elif action.stage == "provider":
                 if action.report_id is None:
                     raise ReviewPipelineError("state")
-                statuses = self._providers(action.report_id)
-                failures = _TECHNICAL_PROVIDER_FAILURES.intersection(statuses)
-                if failures:
-                    self._fail(action, "provider", False)
-                    return True
+                statuses = self._providers(repository, action.report_id)
+                disposition = provider_failure_disposition(statuses)
+                if disposition is not None:
+                    self._fail(repository, action, *disposition)
+                    return None
             elif action.stage == "proposal":
                 if action.report_id is None:
                     raise ReviewPipelineError("state")
-                output_id = self._propose(action.report_id)
+                repository.begin_review_pipeline_output()
+                output_transaction = True
+                output_id = self._propose(repository, action.report_id)
             elif action.stage == "admission":
                 if action.proposal_set_id is None:
                     raise ReviewPipelineError("state")
-                _, output_id = self._admit(action.proposal_set_id)
+                repository.begin_review_pipeline_output()
+                output_transaction = True
+                _, output_id = self._admit(repository, action.proposal_set_id)
             elif action.stage == "projection":
                 if action.review_case_id is not None and not self._project(
-                    action.review_case_id
+                    repository, action.review_case_id
                 ):
                     raise ReviewPipelineError("projection")
-            self._advance(action, output_id)
+            return self._advance(
+                repository,
+                action,
+                output_id,
+                claim_next=claim_next,
+            )
         except ReviewPipelineError as error:
-            self._fail(action, error.code, error.code in {"stale", "transient"})
+            if output_transaction:
+                repository.rollback_review_pipeline_output()
+            self._fail(
+                repository,
+                action,
+                error.code,
+                error.code in {"stale", "transient"},
+            )
         except Exception:
-            self._fail(action, "failed", False)
-        return True
+            if output_transaction:
+                repository.rollback_review_pipeline_output()
+            self._fail(repository, action, "failed", False)
+        return None
 
     def _complete_discovery(
         self,
+        repository: ReviewPipelineRepository,
         action: PipelineAction,
         generation: int,
         fingerprint: str,
         entries: tuple[CatalogueEntry, ...],
     ) -> None:
-        repository = self._open_repository()
         try:
-            try:
-                repository.complete_review_discovery(
-                    action, generation, fingerprint, entries, self._clock()
-                )
-            except ReviewPipelineError:
-                raise
-            except Exception as error:
-                raise ReviewPipelineError("persistence") from error
-        finally:
-            repository.close()
+            repository.complete_review_discovery(
+                action, generation, fingerprint, entries, self._clock()
+            )
+        except ReviewPipelineError:
+            raise
+        except Exception as error:
+            raise ReviewPipelineError("persistence") from error
 
-    def _advance(self, action: PipelineAction, output_id: str | None) -> None:
-        repository = self._open_repository()
+    def _advance(
+        self,
+        repository: ReviewPipelineRepository,
+        action: PipelineAction,
+        output_id: str | None,
+        *,
+        claim_next: bool,
+    ) -> PipelineAction | None:
         try:
-            try:
-                repository.advance_review_pipeline_action(
-                    action, output_id, self._clock()
-                )
-            except ReviewPipelineError:
-                raise
-            except Exception as error:
-                raise ReviewPipelineError("persistence") from error
-        finally:
-            repository.close()
+            return repository.advance_review_pipeline_action(
+                action, output_id, self._clock(), claim_next
+            )
+        except ReviewPipelineError:
+            raise
+        except Exception as error:
+            raise ReviewPipelineError("persistence") from error
 
-    def _fail(self, action: PipelineAction, code: str, retryable: bool) -> None:
-        repository = self._open_repository()
+    def _fail(
+        self,
+        repository: ReviewPipelineRepository,
+        action: PipelineAction,
+        code: str,
+        retryable: bool,
+    ) -> None:
         try:
-            try:
-                repository.fail_review_pipeline_action(
-                    action, code, retryable, self._clock()
-                )
-            except ReviewPipelineError:
-                raise
-            except Exception as error:
-                raise ReviewPipelineError("persistence") from error
-        finally:
-            repository.close()
+            repository.fail_review_pipeline_action(
+                action, code, retryable, self._clock()
+            )
+        except ReviewPipelineError:
+            raise
+        except Exception as error:
+            raise ReviewPipelineError("persistence") from error
 
 
 class ReviewPreparationSupervisor:
     """Run the fixed two-lane persisted pipeline and wake it after owner requests."""
 
-    def __init__(self, pipeline: ReviewPreparationPipeline) -> None:
+    def __init__(
+        self,
+        pipeline: ReviewPreparationPipeline,
+        *,
+        polling_interval_seconds: int | None = None,
+        clock: Callable[[], int] = lambda: int(time.time()),
+    ) -> None:
+        if polling_interval_seconds is not None and (
+            type(polling_interval_seconds) is not int
+            or not 60 <= polling_interval_seconds <= 86_400
+        ):
+            raise ReviewPipelineError("configuration")
         self._pipeline = pipeline
+        self._polling_interval_seconds = polling_interval_seconds
+        self._clock = clock
+        self._schedule_lock = threading.Lock()
+        self._next_schedule_at: int | None = None
+        self._schedule_paused = False
+        self._schedule_waiting_for_action = False
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._threads: tuple[threading.Thread, ...] = ()
@@ -377,9 +524,11 @@ class ReviewPreparationSupervisor:
         if self._threads:
             return
         self._pipeline.recover()
+        self._schedule_due()
         self._threads = tuple(
             threading.Thread(
                 target=self._run,
+                args=(lane,),
                 name=f"review-preparation-{lane}",
                 daemon=True,
             )
@@ -397,20 +546,97 @@ class ReviewPreparationSupervisor:
         self._threads = ()
 
     def request(self, connection: str, library: str) -> PipelineProgress:
+        if self._pipeline.paused():
+            raise ReviewPipelineError("paused")
         progress = self._pipeline.request(connection, library)
+        with self._schedule_lock:
+            self._schedule_waiting_for_action = False
+            self._next_schedule_at = None
         self._wake.set()
         return progress
 
     def progress(self, connection: str, library: str) -> PipelineProgress | None:
         return self._pipeline.progress(connection, library)
 
-    def _run(self) -> None:
+    def status(self) -> tuple[tuple[PipelineProgress | None, ...], bool]:
+        return self._pipeline.status()
+
+    def paused(self) -> bool:
+        return self._pipeline.paused()
+
+    def set_paused(self, paused: bool) -> None:
+        self._pipeline.set_paused(paused)
+        with self._schedule_lock:
+            self._schedule_paused = paused
+            if not paused:
+                self._schedule_waiting_for_action = False
+                self._next_schedule_at = None
+        if not paused:
+            self._schedule_due()
+            self._wake.set()
+
+    def retry(self, connection: str, library: str) -> PipelineProgress:
+        progress = self.progress(connection, library)
+        if progress is None or progress.state != "completed_with_failures":
+            raise ReviewPipelineError("retry")
+        return self.request(connection, library)
+
+    def _schedule_due(self) -> None:
+        with self._schedule_lock:
+            if self._polling_interval_seconds is None:
+                return
+            if self._schedule_paused:
+                return
+            if self._schedule_waiting_for_action:
+                return
+            now = self._clock()
+            if self._next_schedule_at is not None and now < self._next_schedule_at:
+                return
+            progresses, paused = self._pipeline.status()
+            if paused:
+                self._schedule_paused = True
+                self._next_schedule_at = None
+                return
+            next_schedule_at: int | None = None
+            only_actionable_failures = bool(progresses)
+            for (connection, library, _), progress in zip(
+                self.libraries, progresses, strict=True
+            ):
+                only_actionable_failures = only_actionable_failures and (
+                    progress is not None
+                    and progress.state == "completed_with_failures"
+                )
+                if progress is None or (
+                    progress.state == "completed"
+                    and now - progress.updated_at >= self._polling_interval_seconds
+                ):
+                    self._pipeline.request(connection, library)
+                    next_schedule_at = now + 1
+                elif progress.state in {"queued", "discovering", "processing"}:
+                    next_schedule_at = now + 1
+                elif progress.state == "completed":
+                    due_at = progress.updated_at + self._polling_interval_seconds
+                    next_schedule_at = (
+                        due_at
+                        if next_schedule_at is None
+                        else min(next_schedule_at, due_at)
+                    )
+            self._next_schedule_at = next_schedule_at
+            self._schedule_waiting_for_action = only_actionable_failures
+
+    def _run(self, lane: int) -> None:
         while not self._stop.is_set():
             self._wake.wait(timeout=1)
             self._wake.clear()
             try:
-                while not self._stop.is_set() and self._pipeline.run_next():
-                    pass
+                if lane == 0:
+                    self._schedule_due()
+                while not self._stop.is_set():
+                    advanced = self._pipeline.run_next()
+                    if lane == 0:
+                        self._schedule_due()
+                    if not advanced:
+                        break
             except ReviewPipelineError:
                 continue
 

@@ -4,7 +4,7 @@
 - Date: 2026-08-07
 - Owners: project maintainers
 - Supersedes: none
-- Superseded by: none
+- Superseded by: ADR-0032 for the polling deferral and complete-baseline catalogue publication boundary
 
 ## Context
 

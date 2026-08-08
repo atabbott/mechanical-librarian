@@ -472,6 +472,13 @@
           "title": "Canonical Origin",
           "type": "string"
         },
+        "library_polling_interval_seconds": {
+          "default": 900,
+          "maximum": 86400,
+          "minimum": 60,
+          "title": "Library Polling Interval Seconds",
+          "type": "integer"
+        },
         "owner_password_hash_file": {
           "maxLength": 1024,
           "minLength": 1,

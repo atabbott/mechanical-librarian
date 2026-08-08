@@ -18,7 +18,17 @@ contains a path. Exact lookup can include the service-relative EPUB path; comman
 errors remain value-free and logs must redact titles, authors, identities, paths,
 and credentials.
 
-The database retains only the installed `catalogue-v1` schema. A different or
+Each entry retains a canonical fingerprint of the bounded Audiobookshelf values
+that can affect review evidence or currentness: stable item and library
+identity, reviewed metadata and cover identity, file identity, media presence,
+and media revision. Volatile playback, bookmark, and progress fields are
+excluded. When Audiobookshelf supplies a stable EPUB revision, generic item
+activity timestamps do not invalidate completed work. When that material
+revision is absent, or a cover has no independent revision, the item timestamp
+is retained as a conservative freshness fallback so changed bytes cannot reuse
+stale evidence.
+
+The database retains only the installed `catalogue-v2` schema. A different or
 tampered schema fails closed and requires an operator-created clean database.
 Configuration changes produce `catalogue requires refresh`; they never silently
 adapt a current generation.

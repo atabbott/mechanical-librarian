@@ -13,7 +13,9 @@ byte. Its isolated interpreter runs a representative smoke cohort before the
 installed CLI is exercised outside the checkout. Scale, endurance, exhaustive,
 and resource proofs remain in the explicit exact-head slow tier. Aggregate
 evidence binds the source, wheel, payload, selected tier, and command-output
-digests. Changes add focused unit/integration/security tests, documentation,
+digests. A test that makes no progress for 30 seconds emits one bounded,
+path-free test identifier so a hosted timeout remains diagnosable without raw
+test output. Changes add focused unit/integration/security tests, documentation,
 changelog, schema or ADR updates as applicable. Tests, types, safety gates, and
 failure handling are never weakened to make a change pass. The authoritative
 [testing strategy](testing-strategy.md) owns the commands and tier boundary.

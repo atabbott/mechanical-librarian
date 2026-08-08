@@ -49,9 +49,24 @@ errors. A complete target enumeration stages absence candidates, but only a
 fully successful scan may tombstone an absent review lineage or retire a
 present lineage that is no longer eligible. Catalogue discovery and shared
 provider pacers serialize their mutation of global generation and pacing state
-across the two lanes. The first stale catalogue refresh establishes a complete
-configured-library baseline; later work validates its exact item and revision
-against the latest generation. Staged absence and ineligibility transitions
+across the two lanes. A stale catalogue baseline is rebuilt progressively per
+successfully observed library, isolating unavailable connections; later work
+validates its exact item and revision against the latest generation. The
+authenticated activity projection reads all library progress and pause state
+from one validated repository snapshot. Only one worker lane evaluates automatic
+scan admission, using that aggregate snapshot and a retained next deadline rather
+than repeated per-library integrity validation. A claimed stage retains its
+already-validated repository connection, without an open transaction, until its
+separate durable transition; composed report, proposal, admission, and projection
+services borrow that validated connection without owning or closing it. Proposal
+and admission output publication shares the full-synchronous transaction that
+advances its stage and may claim the next globally fair action, so the next
+action is durable before execution and crash recovery can requeue it. External
+work still occurs outside SQLite write transactions. Provider disposition is a
+pure classification of the report already being published and shares that
+publication checkpoint; a retry is durably returned to extraction before it runs,
+while a successful checkpoint may atomically claim the next globally fair action.
+Staged absence and ineligibility transitions
 require one final confirmation discovery; failed rediscovery makes queued child
 work unclaimable. Final pipeline publication also requires the
 target to remain singular. External target, media, cover, and artifact
@@ -60,8 +75,10 @@ its local expected-pointer check; one slow external read cannot hold the writer
 lock against the other lane. Technical failure in any
 configured provider lane stops that work before proposal creation and prevents
 that scan's staged retirements. The path cannot decide a field, construct an apply plan, write a
-target or media file, delete media, poll, or automatically retry provider
-failure.
+target or media file, or delete media. The supported review server may poll on
+the one bounded configured interval, resume transient work, and hold terminal
+provider failure for an authenticated owner retry. Durable pause, fair-claim,
+and circuit state contains only bounded operational values.
 
 ## External actors
 
@@ -488,7 +505,7 @@ one exact closed reviewer producer shape; a provider-only category/stage cannot
 cross by claiming the reviewer component. The legitimate
 persistence/persistence/persistence producer remains accepted.
 
-The final report database, `catalogue-v1` database, `config-v5`, artifact
+The final report database, `catalogue-v2` database, `config-v5`, artifact
 records, and `batch-manifest-v5` each accept only absent or their exact current
 schema. `metadata-report-v1` through `metadata-report-v10`, prior development
 schemas, extra objects, altered

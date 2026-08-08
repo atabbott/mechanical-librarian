@@ -257,15 +257,20 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     key=key,
                     port=port,
                     report=_manual_report(),
-                ) as (origin, _case_id):
+                ) as (origin, case_id):
+                    assert case_id is not None
                     responses = [
                         ("queued", 0, 0),
                         ("processing", 1, 0),
                         ("processing", 1, 1),
-                        ("completed", 1, 1),
+                        ("processing", 1, 1),
+                        ("processing", 1, 1),
+                        ("processing", 1, 1),
+                        ("completed_with_failures", 1, 1),
                     ]
                     requests = 0
                     library_requests = 0
+                    finished = False
 
                     def library_page(route) -> None:
                         response = route.fetch()
@@ -288,8 +293,12 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         route.fulfill(status=200, json=payload)
 
                     def preparation(route) -> None:
-                        nonlocal requests
-                        state, checked, ready = responses[min(requests, 3)]
+                        nonlocal requests, finished
+                        state, checked, ready = (
+                            ("completed", 1, 1)
+                            if finished
+                            else responses[min(requests, len(responses) - 1)]
+                        )
                         requests += 1
                         route.fulfill(
                             status=200,
@@ -297,6 +306,9 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                             body=json.dumps(
                                 {
                                     "schema_version": "review-preparation-v1",
+                                    "active": state in {"queued", "discovering", "processing"},
+                                    "actionable": state == "completed_with_failures",
+                                    "paused": False,
                                     "libraries": [
                                         {
                                             "connection": "primary",
@@ -307,7 +319,17 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                                             "total": 1,
                                             "ready": ready,
                                             "blocked": 0,
-                                        }
+                                        },
+                                        {
+                                            "connection": "primary",
+                                            "library": "history",
+                                            "library_id": "lib-2",
+                                            "state": state,
+                                            "checked": checked,
+                                            "total": 1,
+                                            "ready": 0,
+                                            "blocked": 1 if state == "completed_with_failures" else 0,
+                                        },
                                     ],
                                 }
                             ),
@@ -331,18 +353,114 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                             "node => node === document.activeElement"
                         )
                     )
-                    lens_link = page.locator('.lenses a[aria-current="page"]')
-                    lens_link.focus()
-                    page.get_by_text("1 checked · 1 ready", exact=True).wait_for(
+                    activity = page.locator(".activity-button")
+                    activity.wait_for(state="visible")
+                    page.set_viewport_size({"width": 1440, "height": 1000})
+                    activity.click()
+                    activity_region = page.get_by_role("region", name="Background activity")
+                    activity_region.wait_for()
+                    self.assertLessEqual(
+                        page.evaluate("() => document.documentElement.scrollWidth"), 1440
+                    )
+                    self.assertLessEqual(activity_region.bounding_box()["width"], 390)
+                    self.assertEqual(
+                        page.locator(".topbar").evaluate(
+                            "node => getComputedStyle(node).position"
+                        ),
+                        "sticky",
+                    )
+                    self.assertEqual(
+                        page.locator(".workspace-navigation").evaluate(
+                            "node => getComputedStyle(node).position"
+                        ),
+                        "sticky",
+                    )
+                    activity_region.locator(".activity-library").first.get_by_text(
+                        re.compile(r"\d+ checked · \d+ remaining")
+                    ).wait_for(timeout=8_000)
+                    page.set_viewport_size({"width": 390, "height": 844})
+                    self.assertLessEqual(
+                        page.evaluate("() => document.documentElement.scrollWidth"), 390
+                    )
+                    self.assertLessEqual(activity_region.bounding_box()["width"], 366)
+                    activity_region.locator(".activity-library").first.get_by_text(
+                        "1 checked · 0 remaining", exact=True
+                    ).wait_for(
                         timeout=8_000
                     )
-                    self.assertGreaterEqual(requests, 4)
+                    activity_region.locator(".activity-library").first.get_by_text(
+                        "1 ready · 0 blocked", exact=True
+                    ).wait_for()
+                    retries = activity_region.get_by_role("button", name="Retry")
+                    retries.first.wait_for(timeout=8_000)
+                    self.assertEqual(retries.count(), 2)
+                    retries.nth(1).focus()
+                    page.wait_for_timeout(1_750)
+                    self.assertTrue(
+                        retries.nth(1).evaluate("node => node === document.activeElement")
+                    )
+                    page.route(
+                        "**/api/v1/review-preparation/**",
+                        lambda route: route.fulfill(
+                            status=503,
+                            content_type="application/json",
+                            body='{"error":{"code":"persistence"}}',
+                        ),
+                    )
+                    retries.nth(1).click()
+                    failure = activity_region.get_by_role("alert")
+                    failure.wait_for()
+                    self.assertIn("Retry failed safely", failure.inner_text())
+                    self.assertEqual(page.locator(".preparation-panel").count(), 0)
+                    page.get_by_role("button", name="Close").click()
+                    self.assertTrue(
+                        activity.evaluate("node => node === document.activeElement")
+                    )
+                    lens_link = page.locator('.lenses a[aria-current="page"]')
+                    lens_link.focus()
+                    activity.click()
+                    activity_region.get_by_role("button", name="Close").focus()
+                    finished = True
+                    activity.wait_for(state="hidden", timeout=8_000)
+                    self.assertTrue(
+                        lens_link.evaluate("node => node === document.activeElement")
+                    )
+                    self.assertGreaterEqual(requests, len(responses))
                     self.assertGreaterEqual(library_requests, 2)
                     self.assertEqual(navigations, [])
                     self.assertEqual(search.input_value(), "unsent search")
                     self.assertTrue(
                         lens_link.evaluate("node => node === document.activeElement")
                     )
+                    for path, heading, focus_target in (
+                        (
+                            "/attention",
+                            re.compile(r"^Fields needing attention"),
+                            '.workspace-tab.attention-tab[aria-current="page"]',
+                        ),
+                        (
+                            f"/review/{case_id}",
+                            "Current review case",
+                            '.workspace-tab[href="/library"]',
+                        ),
+                    ):
+                        finished = False
+                        requests = 0
+                        page.goto(f"{origin}{path}")
+                        page.get_by_role("heading", name=heading).wait_for()
+                        activity = page.locator(".activity-button")
+                        activity.wait_for(state="visible", timeout=8_000)
+                        activity.click()
+                        activity_region = page.get_by_role(
+                            "region", name="Background activity"
+                        )
+                        activity_region.get_by_role("button", name="Close").focus()
+                        target = page.locator(focus_target)
+                        finished = True
+                        activity.wait_for(state="hidden", timeout=8_000)
+                        self.assertTrue(
+                            target.evaluate("node => node === document.activeElement")
+                        )
                     context.close()
 
     def test_desktop_round_trip_is_explicit_responsive_and_durable(self) -> None:

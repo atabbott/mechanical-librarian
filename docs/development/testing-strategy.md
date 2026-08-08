@@ -75,6 +75,32 @@ report and ProposalSet creation, concurrent admission, replay, restart-backed
 get, successor/historical projection, and nonactionable retirement against a
 disposable loopback target and synthetic EPUB.
 
+The required suite includes a 45-item continuous-review restart cohort across
+three libraries. It retains the cross-library fairness, interruption, forced
+restart and recovery, authenticated progress and completion, exact installed
+console, and zero target/media/artifact write assertions while remaining a
+continuous pull-request gate. The full 1,000-item workload is an explicit slow
+exact-wheel qualification with the same behavioral assertions plus its
+throughput and 512 MiB resident-memory ceiling. Its timer and RSS sampling cover
+the actual synthetic report, proposal, and admission workload before the
+installed-console restart proof; the later no-change scan is not used as a
+proxy for processing cost:
+
+```bash
+python3 scripts/qualify_exact_artifact.py \
+  --source-sha "$(git rev-parse HEAD)" \
+  --test-tier slow
+```
+
+Run that command from a clean exact-head checkout. The slow module is
+owned by `tests/slow/test_*.py` and is not required by the public
+pull-request gate; this is an explicit test tier, not a skipped test. A separate
+manual or scheduled workflow is not maintained because the local exact-wheel
+entry point supplies the required milestone evidence without adding another
+remote workflow surface. Qualification reports distinguish a bounded subprocess
+timeout (`*_timeout`) from a genuine nonzero test result (`*_failed`) without
+including captured output or checkout paths.
+
 ## Timing baseline and tier decision
 
 On exact `main` source `6405ff514f4b33498a7c907cf540a651b7f2ccb9`, the
@@ -114,8 +140,10 @@ The suite covers:
 
 - authenticated, CSRF-bound review preparation requests and value-free compact
   progress; persisted request coalescing, exact-schema restart recovery,
-  complete first-refresh catalogue baselines, item-scoped currentness across
-  unrelated library refreshes, complete successful scans before absence
+  isolated progressive first-refresh catalogue baselines, one-snapshot
+  aggregate activity status, one-lane retained-deadline scheduling, discarded
+  superseded Library refresh responses, item-scoped currentness across unrelated library
+  refreshes, complete successful scans before absence
   tombstones or ineligible retirements, failed-scan staged-retirement discard,
   reappearance/readmission, synchronized shared provider pacing, Linux
   same-process derived database authority, typed proposal-currentness drift,
@@ -128,6 +156,18 @@ The suite covers:
   atomic report/checkpoint rollback and restart,
   bounded third-attempt crash recovery, completed-ledger inert recovery, and a fixed
   two-lane proof that one slow work cannot impose a library-wide stage barrier;
+  automatic first-start and interval admission, durable pause/resume, explicit
+  terminal retry, action-woken terminal-failure scheduling, deadline admission
+  between bounded work batches, cross-library ageing and reserved-new-work fairness, bounded
+  circuit recovery, canonical material-source fingerprints including root-cover
+  field presence and raw-state distinctions, one validated repository open per
+  claimed stage, atomic output-plus-transition-plus-next-claim crash recovery,
+  report-publication provider disposition, no-case admission completion, indexed
+  aged and recent claim ordering, and
+  an exact installed-`review-serve` 45-work three-library first-start,
+  forced-restart, authenticated-progress, completion, and zero-write proof in
+  the required gate. The explicit slow tier repeats the complete behavioral
+  proof over 1,000 works and retains the throughput and memory-ceiling assertions;
 
 - closed reports, canonical serialization, stable claim/report references,
   title normalization, and occurrence-local ISBN applicability, including

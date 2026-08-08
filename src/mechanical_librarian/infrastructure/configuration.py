@@ -181,6 +181,9 @@ class ReviewInput(_Closed):
         list[Annotated[StrictStr, Field(min_length=1, max_length=64)]],
         Field(max_length=16),
     ] = []
+    library_polling_interval_seconds: Annotated[
+        StrictInt, Field(ge=60, le=86_400)
+    ] = 900
 
 
 class ConfigurationInput(_Closed):
@@ -218,6 +221,7 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
                 tls_private_key_file=value.review.tls_private_key_file,
                 session_lifetime_seconds=value.review.session_lifetime_seconds,
                 trusted_proxy_ips=tuple(sorted(value.review.trusted_proxy_ips)),
+                library_polling_interval_seconds=value.review.library_polling_interval_seconds,
             ),
         )
     except ConfigurationError:

@@ -70,6 +70,7 @@ uv run --frozen python scripts/generate_configuration_schema.py
     "tls_certificate_file": "/run/secrets/review-tls.crt",
     "tls_private_key_file": "/run/secrets/review-tls.key",
     "session_lifetime_seconds": 3600,
+    "library_polling_interval_seconds": 900,
     "trusted_proxy_ips": []
   }
 }
@@ -138,7 +139,10 @@ environment source. The server snapshots and validates one matching TLS
 identity before it opens the
 application database and retains only immutable anonymous snapshot descriptors
 for the server's lifetime. `review-serve` has no plaintext or TLS-disable mode.
-Session lifetime is 300–86,400 seconds. Proxy forwarding is disabled unless the
+Session lifetime is 300–86,400 seconds. The global
+`library_polling_interval_seconds` is 60–86,400 seconds and controls only when
+configured libraries reconcile; concurrency, provider pacing, and retry bounds
+remain maintainer-owned. Proxy forwarding is disabled unless the
 direct peer is one of at most 16 explicitly listed `trusted_proxy_ips`;
 forwarded Host or scheme headers from any other peer fail closed. No password,
 private-key contents, raw session token, or CSRF token is stored in

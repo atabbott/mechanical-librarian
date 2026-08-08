@@ -260,6 +260,9 @@ class _PreparationProgress(_ClosedModel):
 
 class _PreparationResponse(_ClosedModel):
     libraries: list[_PreparationProgress]
+    paused: bool = False
+    active: bool = False
+    actionable: bool = False
     schema_version: Literal["review-preparation-v1"] = "review-preparation-v1"
 
 
@@ -624,11 +627,15 @@ def create_review_app(
     ) -> _PreparationResponse:
         _require_session(sessions, ml_session)
         if review_preparation is None:
-            raise HTTPException(503, detail={"code": "unavailable"})
+            return _PreparationResponse(libraries=[])
         values: list[_PreparationProgress] = []
         try:
-            for connection, library_name, library_id in review_preparation.libraries:
-                progress = review_preparation.progress(connection, library_name)
+            progress_values, paused = review_preparation.status()
+            if len(progress_values) != len(review_preparation.libraries):
+                raise ReviewPipelineError("state")
+            for (connection, library_name, library_id), progress in zip(
+                review_preparation.libraries, progress_values, strict=True
+            ):
                 values.append(
                     _PreparationProgress(
                         scan_id=None if progress is None else progress.scan_id,
@@ -649,7 +656,12 @@ def create_review_app(
             raise HTTPException(503, detail={"code": "persistence"}) from None
         except Exception:
             raise HTTPException(503, detail={"code": "persistence"}) from None
-        return _PreparationResponse(libraries=values)
+        return _PreparationResponse(
+            libraries=values,
+            paused=paused,
+            active=any(value.state in {"queued", "discovering", "processing"} for value in values),
+            actionable=any(value.state == "completed_with_failures" for value in values),
+        )
 
     @app.post(
         "/api/v1/review-preparation/{connection}/{library_name}/scan",
@@ -657,7 +669,7 @@ def create_review_app(
         status_code=202,
         responses={
             status: {"model": _ErrorResponse}
-            for status in (400, 401, 403, 404, 422, 503)
+            for status in (400, 401, 403, 404, 409, 422, 503)
         },
     )
     def request_review_scan(
@@ -679,8 +691,9 @@ def create_review_app(
                 if item[:2] == (connection, library_name)
             )
         except (ReviewPipelineError, StopIteration) as error:
-            status = 404 if getattr(error, "code", "") == "library" else 503
-            raise HTTPException(status, detail={"code": "library" if status == 404 else "persistence"}) from None
+            code = getattr(error, "code", "")
+            status = 404 if code == "library" else 409 if code == "paused" else 503
+            raise HTTPException(status, detail={"code": code if status != 503 else "persistence"}) from None
         except Exception:
             raise HTTPException(503, detail={"code": "persistence"}) from None
         return _PreparationProgress(
@@ -694,6 +707,71 @@ def create_review_app(
             ready=progress.ready,
             blocked=progress.blocked,
             rescan_requested=progress.rescan_requested,
+        )
+
+    def preparation_control(paused: bool, ml_session: str, csrf: str) -> _PreparationResponse:
+        _require_session(sessions, ml_session, csrf)
+        if review_preparation is None:
+            raise HTTPException(503, detail={"code": "unavailable"})
+        try:
+            review_preparation.set_paused(paused)
+            return review_preparation_status(ml_session)
+        except ReviewPipelineError:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        except Exception:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+
+    @app.post(
+        "/api/v1/review-preparation/pause",
+        response_model=_PreparationResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)},
+    )
+    def pause_review_preparation(
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PreparationResponse:
+        return preparation_control(True, ml_session, x_csrf_token)
+
+    @app.post(
+        "/api/v1/review-preparation/resume",
+        response_model=_PreparationResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)},
+    )
+    def resume_review_preparation(
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PreparationResponse:
+        return preparation_control(False, ml_session, x_csrf_token)
+
+    @app.post(
+        "/api/v1/review-preparation/{connection}/{library_name}/retry",
+        response_model=_PreparationProgress,
+        status_code=202,
+        responses={status: {"model": _ErrorResponse} for status in (401, 403, 404, 409, 422, 503)},
+    )
+    def retry_review_preparation(
+        connection: str,
+        library_name: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PreparationProgress:
+        _require_session(sessions, ml_session, x_csrf_token)
+        if review_preparation is None:
+            raise HTTPException(503, detail={"code": "unavailable"})
+        if not 1 <= len(connection) <= 64 or not 1 <= len(library_name) <= 64:
+            raise HTTPException(404, detail={"code": "library"})
+        try:
+            progress = review_preparation.retry(connection, library_name)
+            library_id = next(item[2] for item in review_preparation.libraries if item[:2] == (connection, library_name))
+        except (ReviewPipelineError, StopIteration) as error:
+            code = getattr(error, "code", "library")
+            status = 409 if code in {"retry", "paused"} else 404 if code == "library" else 503
+            raise HTTPException(status, detail={"code": code}) from None
+        return _PreparationProgress(
+            scan_id=progress.scan_id, connection=progress.connection,
+            library=progress.library, library_id=library_id, state=progress.state,
+            checked=progress.checked, total=progress.total, ready=progress.ready,
+            blocked=progress.blocked, rescan_requested=progress.rescan_requested,
         )
 
     @app.get(

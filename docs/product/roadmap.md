@@ -323,6 +323,10 @@ Exit: production writes are recoverable, idempotent, and fully audited.
 
 ## M5: Continuous operation
 
+F17a now delivers decision-only continuous review preparation, bounded polling,
+fair persisted work admission, restart recovery, and compact owner activity.
+Guarded apply composition and release publication remain separate outcomes.
+
 - Enable persisted scheduled unattended processing with polling as the
   authoritative reconciliation path.
 - Keep notification-assisted reconciliation and summary enhancements deferred

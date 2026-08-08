@@ -461,18 +461,13 @@ class HardcoverMetadataProvider:
                     and self._ledger.allows_retry(self._attempt_count, _MAX_ATTEMPTS_PER_OBSERVATION)
                 )
                 delay = (
-                    (
-                        error.retry_after
-                        if error.retry_after is not None
-                        else self._retry_delay(retry_index)
-                    )
-                    if can_retry
-                    else None
+                    error.retry_after
+                    if error.retry_after is not None
+                    else self._retry_delay(retry_index) if can_retry else None
                 )
-                if delay is not None and not self._delay_fits(
+                if can_retry and delay is not None and not self._delay_fits(
                     delay, deadline=deadline
                 ):
-                    delay = None
                     can_retry = False
                 if not can_retry or delay is None:
                     self._record_attempt(

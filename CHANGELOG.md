@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+- Activate bounded continuous review reconciliation in the supported container:
+  first-start and interval scans coalesce through the persisted two-lane
+  pipeline, fair claims and provider circuit state survive restart, and the
+  protected M shell gains one compact activity popover with pause, resume, and
+  eligible retry controls, including per-library scan. The path remains
+  decision-only and write-free. Material-source reuse prefers stable media
+  revisions and conservatively falls back to the item revision for unversioned
+  EPUB or cover bytes while retaining absent, null, empty, malformed, and value
+  states for reviewed metadata and the root cover field. Initial
+  catalogue preparation is isolated per library, and compact activity reads one
+  aggregate repository snapshot; one supervisor lane schedules from that same
+  bounded snapshot and a retained deadline. Superseded Library refresh responses
+  cannot replace newer exact-current results. Fair claims select their bounded
+  library before using aged/recent indexes, and a durable stage transition may
+  atomically persist proposal/admission output, transition its stage, and claim
+  the next fair action before that action executes, reducing full-synchronous
+  commits without weakening restart recovery. Pipeline-composed
+  services borrow the already-validated stage repository without taking ownership;
+  provider disposition is checkpointed with report publication, and admission
+  without a review case completes without a no-op projection stage. The report
+  checkpoint may claim the next fair action in the same durable transaction.
+  Required exact-wheel qualification continuously proves the installed restart
+  workflow over a representative 45-item, three-library cohort; the complete
+  1,000-item workload and memory ceiling remain an explicit exact-head slow tier,
+  measured across its real report, proposal, and admission processing path.
+  Fixed, path-free evidence distinguishes subprocess timeout from a genuine
+  nonzero test failure through the shared qualification tiers, and a stalled
+  test emits one bounded path-free identifier after 30 seconds without exposing
+  raw test output.
+  Transient lane and final-attempt `Retry-After` values
+  extend only the transient circuit; paused retry and disappearing activity
+  retain truthful controls and visible keyboard focus. Stable terminal failures
+  wait without repeated repository validation until an owner action, while the
+  scheduling lane rechecks automatic deadlines between bounded work batches so
+  a large backlog cannot starve another library's interval scan. (#475, #473)
 - Tier public qualification into independent required fast-source,
   exact-installed, and protected-browser jobs while preserving one stable
   aggregate gate. Scale, endurance, exhaustive, and resource assertions retain

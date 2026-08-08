@@ -19,12 +19,12 @@ from mechanical_librarian.application.catalogue import (
 )
 from mechanical_librarian.application.batch import CatalogueSnapshot
 
-_SCHEMA = "catalogue-v1"
+_SCHEMA = "catalogue-v2"
 _SQL = (
-    "CREATE TABLE catalogue_schema (version TEXT PRIMARY KEY CHECK (version = 'catalogue-v1'));",
+    "CREATE TABLE catalogue_schema (version TEXT PRIMARY KEY CHECK (version = 'catalogue-v2'));",
     "CREATE TABLE catalogue_generations (generation INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL CHECK(length(fingerprint)=64), current INTEGER NOT NULL CHECK(current IN (0,1)), CHECK(current = 0 OR generation > 0));",
     "CREATE UNIQUE INDEX catalogue_one_current ON catalogue_generations(current) WHERE current = 1;",
-    "CREATE TABLE catalogue_entries (generation INTEGER NOT NULL REFERENCES catalogue_generations(generation), connection TEXT NOT NULL, library TEXT NOT NULL, library_id TEXT NOT NULL, item_id TEXT NOT NULL, updated_at INTEGER NOT NULL, title TEXT NOT NULL, authors TEXT NOT NULL, has_ebook INTEGER NOT NULL CHECK(has_ebook IN (0,1)), has_audio INTEGER NOT NULL CHECK(has_audio IN (0,1)), classification TEXT NOT NULL CHECK(classification IN ('none','singular-supported','needs-attention')), file_identity TEXT, service_path TEXT, format TEXT, mount TEXT, PRIMARY KEY(generation, connection, library, item_id));",
+    "CREATE TABLE catalogue_entries (generation INTEGER NOT NULL REFERENCES catalogue_generations(generation), connection TEXT NOT NULL, library TEXT NOT NULL, library_id TEXT NOT NULL, item_id TEXT NOT NULL, updated_at INTEGER NOT NULL, title TEXT NOT NULL, authors TEXT NOT NULL, has_ebook INTEGER NOT NULL CHECK(has_ebook IN (0,1)), has_audio INTEGER NOT NULL CHECK(has_audio IN (0,1)), classification TEXT NOT NULL CHECK(classification IN ('none','singular-supported','needs-attention')), file_identity TEXT, service_path TEXT, format TEXT, mount TEXT, source_fingerprint TEXT NOT NULL CHECK(length(source_fingerprint)=64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'), PRIMARY KEY(generation, connection, library, item_id));",
 )
 
 
@@ -141,8 +141,8 @@ class SQLiteCatalogueRepository:
             self._connection.execute("UPDATE catalogue_generations SET current=0 WHERE current=1")
             self._connection.execute("INSERT INTO catalogue_generations(generation,fingerprint,current) VALUES(?,?,1)", (generation, fingerprint))
             self._connection.executemany(
-                "INSERT INTO catalogue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                [(generation, item.connection, item.library, item.library_id, item.item_id, item.updated_at, item.title, json.dumps(item.authors, ensure_ascii=False, separators=(",", ":")), int(item.has_ebook), int(item.has_audio), item.classification, item.file_identity, item.service_path, item.format, item.mount) for item in entries],
+                "INSERT INTO catalogue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [(generation, item.connection, item.library, item.library_id, item.item_id, item.updated_at, item.title, json.dumps(item.authors, ensure_ascii=False, separators=(",", ":")), int(item.has_ebook), int(item.has_audio), item.classification, item.file_identity, item.service_path, item.format, item.mount, item.source_fingerprint) for item in entries],
             )
             self._connection.execute("DELETE FROM catalogue_entries WHERE generation <> ?", (generation,))
             self._connection.execute("DELETE FROM catalogue_generations WHERE generation <> ?", (generation,))
@@ -163,9 +163,9 @@ class SQLiteCatalogueRepository:
             raise CatalogueStaleError("catalogue requires refresh")
         if row[1] != fingerprint:
             raise CatalogueStaleError("catalogue requires refresh")
-        values = self._connection.execute("SELECT connection,library,library_id,item_id,updated_at,title,authors,has_ebook,has_audio,classification,file_identity,service_path,format,mount FROM catalogue_entries WHERE generation=?", (row[0],)).fetchall()
+        values = self._connection.execute("SELECT connection,library,library_id,item_id,updated_at,title,authors,has_ebook,has_audio,classification,file_identity,service_path,format,mount,source_fingerprint FROM catalogue_entries WHERE generation=?", (row[0],)).fetchall()
         try:
-            return tuple(CatalogueEntry(value[0], value[1], value[2], value[3], value[4], value[5], tuple(json.loads(value[6])), bool(value[7]), bool(value[8]), value[9], value[10], value[11], value[12], value[13]) for value in values)
+            return tuple(CatalogueEntry(value[0], value[1], value[2], value[3], value[4], value[5], tuple(json.loads(value[6])), bool(value[7]), bool(value[8]), value[9], value[10], value[11], value[12], value[13], value[14]) for value in values)
         except (TypeError, ValueError):
             raise CatalogueError("catalogue state is invalid") from None
 
@@ -188,11 +188,11 @@ class SQLiteCatalogueRepository:
         try:
             row = self._connection.execute("SELECT generation FROM catalogue_generations WHERE current=1 AND generation=? AND fingerprint=?", (generation, fingerprint)).fetchone()
             if row is None: raise CatalogueStaleError("catalogue requires refresh")
-            entries = self._connection.execute("SELECT connection,library,library_id,item_id,updated_at,title,authors,has_ebook,has_audio,classification,file_identity,service_path,format,mount FROM catalogue_entries WHERE generation=? AND connection=? AND library=? AND library_id=? AND item_id=?", (generation, *key)).fetchall()
+            entries = self._connection.execute("SELECT connection,library,library_id,item_id,updated_at,title,authors,has_ebook,has_audio,classification,file_identity,service_path,format,mount,source_fingerprint FROM catalogue_entries WHERE generation=? AND connection=? AND library=? AND library_id=? AND item_id=?", (generation, *key)).fetchall()
             self._connection.execute("COMMIT")
             if len(entries) != 1: return None
             value = entries[0]
-            return CatalogueEntry(value[0], value[1], value[2], value[3], value[4], value[5], tuple(json.loads(value[6])), bool(value[7]), bool(value[8]), value[9], value[10], value[11], value[12], value[13])
+            return CatalogueEntry(value[0], value[1], value[2], value[3], value[4], value[5], tuple(json.loads(value[6])), bool(value[7]), bool(value[8]), value[9], value[10], value[11], value[12], value[13], value[14])
         except Exception:
             if self._connection.in_transaction: self._connection.execute("ROLLBACK")
             raise
@@ -211,7 +211,7 @@ class SQLiteCatalogueRepository:
                 raise CatalogueStaleError("catalogue requires refresh")
             entries = self._connection.execute(
                 "SELECT connection,library,library_id,item_id,updated_at,title,authors,"
-                "has_ebook,has_audio,classification,file_identity,service_path,format,mount "
+                "has_ebook,has_audio,classification,file_identity,service_path,format,mount,source_fingerprint "
                 "FROM catalogue_entries WHERE generation=? AND connection=? "
                 "AND library=? AND library_id=? AND item_id=?",
                 (current[0], *key),
@@ -223,7 +223,7 @@ class SQLiteCatalogueRepository:
             return CatalogueEntry(
                 value[0], value[1], value[2], value[3], value[4], value[5],
                 tuple(json.loads(value[6])), bool(value[7]), bool(value[8]),
-                value[9], value[10], value[11], value[12], value[13]
+                value[9], value[10], value[11], value[12], value[13], value[14]
             )
         except Exception:
             if self._connection.in_transaction:
