@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.metadata_policy import (
@@ -30,7 +31,7 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope, LocalClaim
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
-from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
+from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError, AutomaticSafetyState
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source,
@@ -469,6 +470,55 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 reopened.automatic_safety_state(),
             )
             reopened.close()
+
+    def test_automatic_authority_binding_failure_is_global_and_keeps_shadow_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports.sqlite"
+            repository = open_repository(path)
+            case_id = _case(repository)
+            # The construction seam reports malformed manifest/source/identity
+            # bindings as an authority error. It must fail closed globally,
+            # while the report-only observation survives the savepoint rollback.
+            with patch.object(
+                repository,
+                "_record_automatic_outcomes",
+                side_effect=AutomaticDecisionError("source_binding_invalid"),
+            ):
+                persisted = repository.persist_shadow_outcome(case_id, 9)
+            self.assertTrue(persisted.startswith('{"authority":"none"'))
+            self.assertEqual(
+                "automatic_authority_failed",
+                repository.automatic_safety_state().global_suspension,
+            )
+            self.assertEqual((), repository.automatic_safety_state().category_suspensions)
+            self.assertEqual(((persisted, 9),), repository.list_shadow_outcomes(50))
+            repository.close()
+            reopened = open_repository(path)
+            self.assertEqual(
+                "automatic_authority_failed",
+                reopened.automatic_safety_state().global_suspension,
+            )
+            reopened.close()
+
+    def test_explicit_bundle_safety_failure_is_category_scoped(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            # Category is reserved for the bundle-coherence classifier; it
+            # must not become the fallback for authority-binding failures.
+            with patch.object(
+                repository,
+                "_record_automatic_outcomes",
+                side_effect=AutomaticDecisionError("category:title_layout"),
+            ):
+                repository.persist_shadow_outcome(case_id, 10)
+            safety = repository.automatic_safety_state()
+            self.assertIsNone(safety.global_suspension)
+            self.assertEqual(
+                (("title_layout", "automatic_admission_failed"),),
+                safety.category_suspensions,
+            )
+            repository.close()
 
     def test_shadow_history_orders_human_and_preview_events_by_time(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

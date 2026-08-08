@@ -2628,20 +2628,61 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("shadow posture is unavailable") from error
 
     def enter_shadow_preview(self, updated_at: int) -> str:
-        """Enter the non-authoritative Preview posture idempotently."""
+        """Enter Preview and reconcile the exact-current cohort when leaving automatic."""
         if type(updated_at) is not int or updated_at < 0:
             raise MetadataReportError("shadow posture request is invalid")
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             row = self._connection.execute(
-                "SELECT posture FROM metadata_policy_state WHERE singleton=1"
+                "SELECT active_policy_id,generation,posture FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
-            if row is None or row[0] not in {"review", "preview", "automatic"}:
+            if row is None or row[2] not in {"review", "preview", "automatic"}:
                 raise MetadataReportError("shadow posture is unavailable")
             self._connection.execute(
                 "UPDATE metadata_policy_state SET posture='preview' WHERE singleton=1"
             )
             self._connection.commit()
+            # Automatic decisions must never survive a posture change without
+            # re-projecting the exact-current cohort through the established
+            # F09 transition/work protocol.  A fresh generation makes both the
+            # bounded progress signal and the later confirmation check durable.
+            if row[2] == "automatic":
+                active_document = self._connection.execute(
+                    "SELECT document FROM metadata_policy_drafts WHERE policy_id=?",
+                    (row[0],),
+                ).fetchone()
+                if active_document is None or type(active_document[0]) is not str:
+                    raise MetadataReportError("shadow posture reconciliation is unavailable")
+                active_profile = MetadataPolicyProfile.from_data(json.loads(active_document[0]))
+                # A policy with no automatic destination has no affected
+                # automatic cohort.  Preserve the ordinary Preview workflow.
+                if not any(value == "automatic" for _, value in active_profile.destinations):
+                    return "preview"
+                affected = self._connection.execute(
+                    "SELECT 1 FROM automatic_decisions LIMIT 1"
+                ).fetchone()
+                # There is no prior automatic authority to reconcile until a
+                # current cohort has actually received an automatic decision.
+                # Initial Preview remains a harmless report-only entry.
+                if affected is None:
+                    return "preview"
+                resolutions = tuple(self._connection.execute(
+                    "SELECT library_name,resolved_policy_id,document FROM metadata_policy_resolutions WHERE generation=? ORDER BY library_name",
+                    (row[1],),
+                ).fetchall())
+                if not resolutions:
+                    profile = active_profile
+                    libraries = self._connection.execute(
+                        "SELECT DISTINCT c.library_name " + _CURRENT_REVIEW_FROM_SQL + " ORDER BY c.library_name"
+                    ).fetchall()
+                    resolutions = tuple(
+                        (library[0], resolved.resolved_id, resolved.canonical_json)
+                        for library in libraries
+                        for resolved in (resolve_policy(profile, library[0]),)
+                    )
+                self.activate_metadata_policy(
+                    row[0], row[0], resolutions, updated_at, reconcile_current=True
+                )
             return "preview"
         except (sqlite3.Error, MetadataReportError) as error:
             if self._connection.in_transaction:
@@ -2665,6 +2706,17 @@ class SQLiteMetadataReportRepository:
             requested = {f"{field}:{option}" for field, option in policy.options if dict(policy.destinations)[field] == "automatic"}
             if not requested or not requested.issubset(QUALIFIED_POLICY_OPTIONS):
                 raise MetadataReportError("automatic posture qualification is unavailable")
+            transition = self.metadata_policy_transition()
+            if (
+                transition is None
+                or transition.generation != self._connection.execute(
+                    "SELECT generation FROM metadata_policy_state WHERE singleton=1"
+                ).fetchone()[0]
+                or transition.state != "completed"
+                or transition.completed != transition.total
+                or transition.failed != 0
+            ):
+                raise MetadataReportError("automatic posture confirmation is unavailable")
             self._connection.execute("UPDATE metadata_policy_state SET posture='automatic' WHERE singleton=1")
             self._connection.commit()
             return "automatic"
@@ -3038,9 +3090,11 @@ class SQLiteMetadataReportRepository:
                     occurred_at=occurred_at,
                 )
             except AutomaticDecisionError as error:
-                raise AutomaticDecisionError(
-                    "category:" + str(field.policy_category)
-                ) from error
+                # Construction and identity/source/manifest binding defects
+                # invalidate automatic authority as a whole.  Category
+                # suspension is reserved for the explicit protected-bundle
+                # coherence check above.
+                raise AutomaticDecisionError("authority") from error
             decisions.append(decision)
         # A normal human winner or replay is not an authority failure.  Remove
         # its whole bundle before any insert, so a bundle is all-or-none.
@@ -3320,6 +3374,8 @@ class SQLiteMetadataReportRepository:
         expected_active_policy_id: str,
         resolutions: tuple[tuple[str, str, str], ...],
         activated_at: int,
+        *,
+        reconcile_current: bool = False,
     ) -> PolicyTransition | None:
         if (
             type(policy_id) is not str
@@ -3337,6 +3393,7 @@ class SQLiteMetadataReportRepository:
             )
             or type(activated_at) is not int
             or activated_at < 0
+            or type(reconcile_current) is not bool
         ):
             raise MetadataReportError("metadata policy activation is invalid")
         try:
@@ -3366,7 +3423,7 @@ class SQLiteMetadataReportRepository:
                     self._connection.commit()
                     return result
                 raise MetadataReportError("metadata policy activation is stale")
-            if policy_id == state[0]:
+            if policy_id == state[0] and not reconcile_current:
                 self._connection.commit()
                 return None
             active_transition = self._connection.execute(
