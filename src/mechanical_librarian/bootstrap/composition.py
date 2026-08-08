@@ -798,6 +798,8 @@ def admit_review_case_loaded(
         except Exception as error:
             raise ReviewCaseError("persistence") from error
         try:
+            if not _require_report_current_loaded(configuration, artifacts, report):
+                return False
             configured_policy = resolve_policy(
                 MetadataPolicyProfile.builtin(),
                 report.target.library,
@@ -809,7 +811,6 @@ def admit_review_case_loaded(
             )
             return (
                 proposal.resolved_policy_id == configured_policy.resolved_id
-                and _require_report_current_loaded(configuration, artifacts, report)
             )
         except (CurrentnessError, TargetNotFoundError):
             return False
