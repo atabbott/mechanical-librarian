@@ -106,6 +106,15 @@ sabotage is outside the supported threat model.
 
 ## Authenticated review surface
 
+The policy notebook is the same owner-only review surface: state and immutable
+draft reads require the session, and validate, create, and preview also require
+the session CSRF token and canonical Origin/Host. Its bounded 16 KiB mutation
+body path accepts closed maps only and returns value-free structured failures.
+Every response, including its separately served policy script, is private,
+no-store, and covered by the same restrictive CSP. Creating, reading,
+validating, or previewing a draft cannot activate a policy, create a successor
+or queue item, record a decision, or write metadata.
+
 The supported network path terminates TLS directly in `review-serve`. Its
 certificate and private-key paths are explicit schema fields, must be supplied
 together as bounded owner-controlled regular no-follow files with an owner-only

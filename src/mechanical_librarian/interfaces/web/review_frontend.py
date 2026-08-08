@@ -47,6 +47,7 @@ def _shell(*, title: str, active: str, main: str, csrf_token: str | None) -> str
   {'' if csrf_token is None else '<section id="activity-popover" class="activity-popover" aria-label="Background activity" hidden></section>'}
   <p class="visually-hidden" id="theme-status" role="status" aria-live="polite"></p>
   <script src="/assets/review.js" defer></script>
+  {'' if active != "policy" else '<script src="/assets/policy.js" defer></script>'}
 </body>
 </html>"""
 
@@ -437,7 +438,7 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 """
 
 
-REVIEW_JS = r"""
+REVIEW_JS = "\n".join(line.strip() for line in r"""
 const element = (name, text, className) => {
   const value = document.createElement(name);
   if (text !== undefined && text !== null) value.textContent = text;
@@ -927,17 +928,24 @@ if (root) {
   });
 }
 
+""".splitlines())
+
+
+POLICY_JS = "\n".join(line.strip() for line in r"""
 (() => {
   const form = document.querySelector("#policy-draft");
   if (!form) return;
   const csrf = document.body.dataset.csrfToken, fields = document.querySelector("#policy-fields"), status = document.querySelector("#policy-status"), preview = document.querySelector("#policy-preview");
   const catalogue = {title_layout:["preserve","title_and_subtitle"],date_precision:["year","full_date"],language_rendering:["preserve","display_name"],contributor_names:["preserve","canonical"],publisher_preference:["publisher","imprint"],genres:["preserve","catalogue"],tags:["preserve","catalogue"],description_fill:["preserve","fill_when_empty"],isbn_form:["preserve","isbn13"],cover_order:["fixed_source_order"],asin:["preserve","canonical_asin"],explicit:["unsupported"]};
   const node = (tag, text) => { const value=document.createElement(tag); value.textContent=text; return value; };
-  for (const [name, values] of Object.entries(catalogue)) { const row=document.createElement("div"), option=document.createElement("select"), destination=document.createElement("select"); row.className="policy-field"; row.append(node("label",name.replaceAll("_"," "))); option.name=`option-${name}`; values.forEach(value=>option.append(new Option(value,value))); destination.name=`destination-${name}`; (name === "explicit" ? ["unsupported"] : ["ask","ignore","automatic"]).forEach(value=>{ const choice=new Option(value === "ask" ? "Ask me" : value === "ignore" ? "Ignore" : value === "automatic" ? "Automatic (unqualified)" : "Explicit unsupported",value); choice.disabled=value === "automatic"; destination.append(choice); }); row.append(option,destination); fields.append(row); }
+  const renderFields = profile => { fields.replaceChildren(); for (const [name, values] of Object.entries(catalogue)) { const row=document.createElement("div"), option=document.createElement("select"), destination=document.createElement("select"), optionId=`policy-option-${name}`, destinationId=`policy-destination-${name}`; row.className="policy-field"; option.id=optionId; destination.id=destinationId; option.name=`option-${name}`; destination.name=`destination-${name}`; option.setAttribute("aria-label", `${name.replaceAll("_"," ")} option`); destination.setAttribute("aria-label", `${name.replaceAll("_"," ")} destination`); values.forEach(value=>option.append(new Option(value,value))); (name === "explicit" ? ["unsupported"] : ["ask","ignore","automatic"]).forEach(value=>{ const choice=new Option(value === "ask" ? "Ask me" : value === "ignore" ? "Ignore" : value === "automatic" ? "Automatic (unqualified)" : "Explicit unsupported",value); choice.disabled=value === "automatic"; destination.append(choice); }); option.value=profile.options[name]; destination.value=profile.destinations[name]; const optionLabel=node("label", `${name.replaceAll("_"," ")} option`); optionLabel.htmlFor=optionId; const destinationLabel=node("label", `${name.replaceAll("_"," ")} destination`); destinationLabel.htmlFor=destinationId; row.append(optionLabel,option,destinationLabel,destination); fields.append(row); } };
   const data = () => ({name:document.querySelector("#policy-name").value,options:Object.fromEntries(Object.keys(catalogue).map(key=>[key,form.elements[`option-${key}`].value])),destinations:Object.fromEntries(Object.keys(catalogue).map(key=>[key,form.elements[`destination-${key}`].value]))});
-  const call = async (url, method, body) => { const response=await fetch(url,{method,headers:{"content-type":"application/json","x-csrf-token":csrf},body:body && JSON.stringify(body)}); if(!response.ok) throw Error(); return response.json(); };
-  call("/api/v1/metadata-policy/state","GET").then(value=>document.querySelector("#policy-active").replaceChildren(node("p",`${value.profile.name} is active and read-only.`))).catch(()=>{});
-  form.addEventListener("submit", async event=>{event.preventDefault(); try { const action=event.submitter.dataset.action, value=await call(action === "create" ? "/api/v1/metadata-policy/drafts" : action === "preview" ? "/api/v1/metadata-policy/preview" : "/api/v1/metadata-policy/validate","POST",data()); if(action === "preview") preview.replaceChildren(...(value.libraries.length ? value.libraries.map(item=>node("p",`${item.library}: ${item.affected_categories.join(", ") || "no changed categories"}; ${item.current_unapplied_count} current unapplied item(s).`)) : [node("p","No configured libraries to preview.")])); status.textContent=action === "preview" ? "Read-only preview complete; nothing changed." : action === "create" ? `Immutable draft created: ${value.policy_id}.` : `Valid draft: ${value.policy_id}.`; } catch { status.textContent="The draft could not be processed. Nothing changed."; }});
-  document.querySelector("#policy-chapter-select")?.addEventListener("change", event=>document.querySelector(`#${event.target.value}`)?.scrollIntoView({block:"start"}));
+  const call = async (url, method, body) => { const response=await fetch(url,{method,headers:method === "GET" ? {} : {"content-type":"application/json","x-csrf-token":csrf},body:body && JSON.stringify(body)}); const value=await response.json().catch(()=>null); if(!response.ok) { const error=new Error(); error.problem=value?.error?.code; throw error; } return value; };
+  const chapters = [...document.querySelectorAll(".policy-chapters a")], chapterSelect=document.querySelector("#policy-chapter-select"), selectChapter = id => { chapters.forEach(link=>link.toggleAttribute("aria-current", link.getAttribute("href") === `#${id}`)); if(chapterSelect) chapterSelect.value=id; };
+  chapters.forEach(link=>link.addEventListener("click", ()=>selectChapter(link.getAttribute("href").slice(1))));
+  const observe = new IntersectionObserver(entries => { const visible=entries.filter(entry=>entry.isIntersecting).sort((a,b)=>b.intersectionRatio-a.intersectionRatio)[0]; if(visible) selectChapter(visible.target.id); }, {rootMargin:"-150px 0px -55% 0px", threshold:[.1,.5]}); document.querySelectorAll(".policy-card").forEach(card=>observe.observe(card));
+  call("/api/v1/metadata-policy/state","GET").then(value=>{ renderFields(value.profile); document.querySelector("#policy-active").replaceChildren(node("p",`${value.profile.name} is active and read-only.`), node("p",`Active policy ID: ${value.policy_id}`)); status.textContent="Draft starts as a separate copy of the active policy."; }).catch(()=>{ status.textContent="The active policy could not be loaded. No draft was created."; });
+  form.addEventListener("submit", async event=>{event.preventDefault(); if(!fields.childElementCount) return; try { const action=event.submitter.dataset.action, value=await call(action === "create" ? "/api/v1/metadata-policy/drafts" : action === "preview" ? "/api/v1/metadata-policy/preview" : "/api/v1/metadata-policy/validate","POST",data()); if(action === "preview") preview.replaceChildren(...(value.libraries.length ? value.libraries.map(item=>node("p",`${item.library}: ${item.affected_categories.join(", ") || "no changed categories"}; ${item.current_unapplied_count} current unapplied item(s).`)) : [node("p","No configured libraries to preview.")])); status.textContent=action === "preview" ? "Read-only preview complete; active policy unchanged." : action === "create" ? `Immutable draft created: ${value.policy_id}. Active policy unchanged.` : `Valid draft: ${value.policy_id}. Active policy unchanged.`; } catch (error) { status.textContent=`The draft could not be processed (${error.problem || "policy_validation"}). Nothing changed.`; }});
+  chapterSelect?.addEventListener("change", event=>{ const target=document.querySelector(`#${CSS.escape(event.target.value)}`); if(target) target.tabIndex=-1; target?.scrollIntoView({block:"start"}); target?.focus({preventScroll:true}); });
 })();
-"""
+""".splitlines())

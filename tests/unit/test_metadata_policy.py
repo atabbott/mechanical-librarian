@@ -38,7 +38,12 @@ class MetadataPolicyTests(unittest.TestCase):
         self.assertNotEqual(first.resolved_id, second.resolved_id)
 
     def test_unknown_removed_and_automatic_options_fail_or_remain_unqualified(self) -> None:
-        profile = MetadataPolicyProfile.builtin()
+        options = dict(DEFAULT_OPTIONS)
+        options["date_precision"] = "full_date"
+        profile = MetadataPolicyProfile.create(
+            "Draft", options,
+            {field: "ask" if field != "explicit" else "unsupported" for field in OPTION_CATALOGUE},
+        )
         with self.assertRaises(MetadataPolicyError):
             resolve_policy(profile, "library", {"options": {"removed": "anything"}, "destinations": {}})
         with self.assertRaises(MetadataPolicyError):
@@ -52,12 +57,47 @@ class MetadataPolicyTests(unittest.TestCase):
             def current_unapplied_count(self, library: str) -> int:
                 self.calls.append(library); return {"first": 2, "second": 0}[library]
         repository = Repository()
-        profile = MetadataPolicyProfile.builtin()
-        preview = preview_policy(profile, ("first", "second"), {"first": {"options": {"date_precision": "full_date"}, "destinations": {}}}, repository)
+        options = dict(DEFAULT_OPTIONS)
+        options["date_precision"] = "full_date"
+        profile = MetadataPolicyProfile.create(
+            "Draft",
+            options,
+            {field: "ask" if field != "explicit" else "unsupported" for field in OPTION_CATALOGUE},
+        )
+        preview = preview_policy(profile, ("first", "second"), {"first": {"options": {}, "destinations": {}}}, repository)
         self.assertEqual(["first", "second"], repository.calls)
         self.assertEqual(("first", "second"), tuple(item.library for item in preview.libraries))
         self.assertEqual((2, 0), tuple(item.current_unapplied_count for item in preview.libraries))
         self.assertIn("date_precision", preview.libraries[0].affected_categories)
+
+    def test_preview_categories_are_the_exact_resolved_delta_from_active_policy(self) -> None:
+        class Repository:
+            def current_unapplied_count(self, library: str) -> int:
+                return 0
+
+        options = dict(DEFAULT_OPTIONS)
+        destinations = {
+            field: "ask" if field != "explicit" else "unsupported"
+            for field in OPTION_CATALOGUE
+        }
+        options["date_precision"] = "full_date"
+        destinations["tags"] = "ignore"
+        draft = MetadataPolicyProfile.create("Draft", options, destinations)
+        preview = preview_policy(
+            draft,
+            ("inherited", "overridden"),
+            {
+                "overridden": {
+                    "options": {"date_precision": "year"},
+                    "destinations": {"tags": "ask"},
+                }
+            },
+            Repository(),
+        )
+        self.assertEqual(
+            ("date_precision", "tags"), preview.libraries[0].affected_categories
+        )
+        self.assertEqual((), preview.libraries[1].affected_categories)
 
     def test_proposal_binding_is_exact_and_does_not_change_the_profile(self) -> None:
         profile = MetadataPolicyProfile.builtin()

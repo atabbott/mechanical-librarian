@@ -26,6 +26,13 @@ rejected input may contain secrets, private paths, or media text. Synthetic
 fixtures are repository-authored and contain no personal or copyrighted
 material.
 
+Policy-draft qualification additionally proves the authenticated private
+state/validate/create/read/preview schemas, CSRF and Origin/Host failure paths,
+closed bounded maps, and declared or chunked bodies above 16 KiB. Browser proof
+loads the policy-only script at 1440 and 390 CSS pixels, including active-draft
+initialization, disabled automatic and unsupported Explicit choices, chapter
+focus/navigation, hostile-safe DOM rendering, and absence of console errors.
+
 Provider retry changes require deterministic proof of the fixed policy:
 accepted and rejected typed transport classes, status and canonical
 `Retry-After` handling, exact per-request and per-observation attempt limits,

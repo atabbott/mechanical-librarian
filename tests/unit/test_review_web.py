@@ -81,6 +81,20 @@ class _Repository:
         self.rotate_result = "rotated"
         self.existence_failure = False
         self.case_current = True
+        self.policy_documents: dict[str, str] = {}
+        self.policy_count_calls: list[str] = []
+
+    def current_unapplied_count(self, library: str) -> int:
+        self.policy_count_calls.append(library)
+        return 0
+
+    def create_metadata_policy_draft(self, document: str) -> str:
+        policy_id = "policy_" + hashlib.sha256(document.encode()).hexdigest()
+        self.policy_documents[policy_id] = document
+        return policy_id
+
+    def get_metadata_policy_draft(self, policy_id: str) -> str:
+        return self.policy_documents[policy_id]
 
     def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
         self.failures = [value for value in self.failures if value >= now - window_seconds]
@@ -477,6 +491,52 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(denied.status_code, 401)
         self.assertEqual(denied.json()["error"]["code"], "unauthorized")
         self.assertEqual(denied.headers["cache-control"], "no-store, private")
+
+    def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(self) -> None:
+        anonymous = self.client.post("/api/v1/metadata-policy/validate", headers=self.origin, json={})
+        self.assertEqual(401, anonymous.status_code)
+        login = self._login()
+        headers = {**self.origin, "X-CSRF-Token": login["csrf_token"]}
+        active = self.client.get("/api/v1/metadata-policy/state")
+        payload = active.json()["profile"]
+        del payload["schema_version"]
+        payload["name"] = "Draft"
+        payload["options"]["removed"] = "unknown"
+        invalid = self.client.post("/api/v1/metadata-policy/validate", headers=headers, json=payload)
+        self.assertEqual(422, invalid.status_code)
+        self.assertEqual("policy_option_unavailable", invalid.json()["error"]["code"])
+        self.assertEqual("review-error-v1", invalid.json()["schema_version"])
+        self.assertEqual("no-store, private", invalid.headers["cache-control"])
+        valid_payload = active.json()["profile"]
+        del valid_payload["schema_version"]
+        denied = self.client.post("/api/v1/metadata-policy/preview", headers=self.origin, json=valid_payload)
+        self.assertEqual(403, denied.status_code)
+        self.assertEqual("csrf", denied.json()["error"]["code"])
+
+    def test_policy_routes_are_closed_read_only_and_schema_deterministic(self) -> None:
+        login = self._login()
+        headers = {**self.origin, "X-CSRF-Token": login["csrf_token"]}
+        active = self.client.get("/api/v1/metadata-policy/state")
+        self.assertEqual(200, active.status_code)
+        payload = active.json()["profile"]
+        del payload["schema_version"]
+        payload["name"] = "<hostile draft>"
+        payload["options"]["date_precision"] = "full_date"
+        before = (dict(self.repository.decisions), dict(self.repository.policy_documents))
+        validated = self.client.post("/api/v1/metadata-policy/validate", headers=headers, json=payload)
+        self.assertEqual(200, validated.status_code)
+        self.assertEqual("metadata-policy-notebook-v1", validated.json()["schema_version"])
+        created = self.client.post("/api/v1/metadata-policy/drafts", headers=headers, json=payload)
+        self.assertEqual(201, created.status_code)
+        policy_id = created.json()["policy_id"]
+        read = self.client.get(f"/api/v1/metadata-policy/drafts/{policy_id}")
+        self.assertEqual(validated.json(), read.json())
+        preview = self.client.post("/api/v1/metadata-policy/preview", headers=headers, json=payload)
+        self.assertEqual(200, preview.status_code)
+        self.assertEqual("metadata-policy-preview-v1", preview.json()["schema_version"])
+        self.assertEqual(before[0], self.repository.decisions)
+        self.assertEqual(1, len(self.repository.policy_documents))
+        self.assertEqual([], self.repository.policy_count_calls)
 
     def test_trust_boundary_failures_match_declared_api_statuses(self) -> None:
         bad_host = self.client.get(
@@ -902,6 +962,12 @@ class ReviewWebTests(unittest.TestCase):
         self.assertNotIn("Automatically handled", script)
         self.assertNotIn("localStorage", script)
         self.assertNotIn("sessionStorage", script)
+        self.assertNotIn("policy-draft", script)
+        self.assertLess(len(script.encode()), 40_000)
+        policy_script = self.client.get("/assets/policy.js")
+        self.assertEqual(200, policy_script.status_code)
+        self.assertIn("policy-draft", policy_script.text)
+        self.assertLess(len(policy_script.content), 8_000)
         field = self.client.get(
             f"/api/v1/review-cases/{self.case.review_case_id}"
         ).json()["fields"][0]

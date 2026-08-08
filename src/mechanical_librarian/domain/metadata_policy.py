@@ -65,10 +65,10 @@ def _closed_options(value: object, *, sparse: bool) -> dict[str, str]:
     if type(value) is not dict:
         raise MetadataPolicyError("policy options are invalid")
     expected = set(OPTION_CATALOGUE)
-    if not sparse and set(value) != expected:
-        raise MetadataPolicyError("policy options are incomplete")
     if not set(value).issubset(expected):
         raise MetadataPolicyError("policy option is unavailable")
+    if not sparse and set(value) != expected:
+        raise MetadataPolicyError("policy options are incomplete")
     result: dict[str, str] = {}
     for field, option in value.items():
         if type(field) is not str or type(option) is not str or option not in OPTION_CATALOGUE[field]:
@@ -81,10 +81,10 @@ def _closed_destinations(value: object, *, sparse: bool) -> dict[str, str]:
     if type(value) is not dict:
         raise MetadataPolicyError("policy destinations are invalid")
     expected = set(OPTION_CATALOGUE)
-    if not sparse and set(value) != expected:
-        raise MetadataPolicyError("policy destinations are incomplete")
     if not set(value).issubset(expected):
         raise MetadataPolicyError("policy destination is unavailable")
+    if not sparse and set(value) != expected:
+        raise MetadataPolicyError("policy destinations are incomplete")
     result: dict[str, str] = {}
     for field, destination in value.items():
         if type(field) is not str or type(destination) is not str or destination not in DESTINATIONS:

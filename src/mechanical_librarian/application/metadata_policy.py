@@ -51,10 +51,22 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
     try:
         for library in libraries:
             resolved = resolve_policy(profile, library, overrides.get(library))
+            active = resolve_policy(
+                MetadataPolicyProfile.builtin(), library, overrides.get(library)
+            )
             count = repository.current_unapplied_count(library)
             if type(count) is not int or count < 0:
                 raise MetadataPolicyApplicationError("policy preview is unavailable")
-            categories = tuple(field for field in OPTION_CATALOGUE if dict(resolved.options)[field] != "preserve" or dict(resolved.destinations)[field] != "ask")
+            resolved_options = dict(resolved.options)
+            resolved_destinations = dict(resolved.destinations)
+            active_options = dict(active.options)
+            active_destinations = dict(active.destinations)
+            categories = tuple(
+                field
+                for field in OPTION_CATALOGUE
+                if resolved_options[field] != active_options[field]
+                or resolved_destinations[field] != active_destinations[field]
+            )
             impacts.append(LibraryPolicyImpact(library, categories, count, resolved.resolved_id))
     except MetadataPolicyApplicationError:
         raise

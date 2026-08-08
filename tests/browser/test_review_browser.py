@@ -236,6 +236,41 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         verify_playwright_browser()
 
+    def test_policy_notebook_initializes_active_draft_and_responsive_navigation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.chmod(root, 0o700)
+            hash_path = root / "owner.hash"
+            hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+            os.chmod(hash_path, 0o600)
+            certificate, key = _certificate(root)
+            database = root / "application.sqlite3"
+            port = _unused_port()
+            errors: list[str] = []
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                context = browser.new_context(ignore_https_errors=True)
+                page = context.new_page()
+                _capture_errors(page, errors)
+                with _server(database=database, hash_path=hash_path, certificate=certificate, key=key, port=port, report=_manual_report()) as (origin, _):
+                    _login(page, origin)
+                    page.goto(f"{origin}/policy")
+                    page.get_by_role("heading", name="Choose how prepared metadata reaches you").wait_for()
+                    self.assertEqual("title_and_subtitle", page.locator('select[name="option-title_layout"]').input_value())
+                    self.assertEqual("ask", page.locator('select[name="destination-tags"]').input_value())
+                    page.set_viewport_size({"width": 1440, "height": 900})
+                    self.assertEqual("sticky", page.locator(".policy-chapters").evaluate("node => getComputedStyle(node).position"))
+                    page.locator('.policy-chapters a[href="#descriptions"]').click()
+                    self.assertEqual("Effects", page.locator("#policy-chapter-select").input_value() and page.locator("#policy-chapter-select option:checked").inner_text())
+                    page.set_viewport_size({"width": 390, "height": 844})
+                    self.assertEqual("sticky", page.locator(".policy-chapters").evaluate("node => getComputedStyle(node).position"))
+                    page.get_by_label("Policy chapter", exact=True).select_option("availability")
+                    page.locator("#availability").wait_for()
+                    self.assertTrue(page.locator("#availability").evaluate("node => node === document.activeElement"))
+                    self.assertEqual([], errors)
+                    context.close()
+                browser.close()
+
     def test_preparation_progress_refreshes_library_without_navigation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
