@@ -908,7 +908,8 @@ def _proposal_identifier(value: dict[str, object]) -> str:
         }
         or value.get("schema_version") != "proposal-set-v4"
         or value.get("policy_version") != "fixed-conservative-v6"
-        or _SHA256.fullmatch(str(value.get("resolved_policy_id", "")).removeprefix("resolved_policy_")) is None
+        or type(value.get("resolved_policy_id")) is not str
+        or re.fullmatch(r"resolved_policy_[0-9a-f]{64}", value["resolved_policy_id"]) is None
         or type(relationships) is not dict
         or set(relationships)
         != {"bibliographic_combinations", "schema_version"}

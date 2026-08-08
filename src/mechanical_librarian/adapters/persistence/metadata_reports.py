@@ -3290,9 +3290,8 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("shadow review request is unavailable")
         if row[0] != REQUEST_SCHEMA:
             raise MetadataReportError("shadow review request is invalid")
-        request = ShadowReviewRequest.from_json(
-            row[4], self._source_report_for_review_case(row[1])
-        )
+        report, proposal = self._source_pair_for_review_case(row[1])
+        request = ShadowReviewRequest.from_json(row[4], report, proposal)
         if (
             request.schema_version != row[0]
             or request.review_request_id != review_request_id
@@ -3317,6 +3316,24 @@ class SQLiteMetadataReportRepository:
         if row is None:
             raise MetadataReportError("shadow review source is unavailable")
         return MetadataReport.from_json(_validate_report_row(row))
+
+    def _source_pair_for_review_case(
+        self, review_case_id: str
+    ) -> tuple[MetadataReport, ProposalSet]:
+        row = self._connection.execute(
+            "SELECT r.report_id,r.connection_name,r.library_name,r.item_id,"
+            "r.file_identity,r.content_digest,r.schema_version,r.document_digest,"
+            "r.document,p.proposal_set_id,p.report_id,p.policy_version,p.document "
+            "FROM review_cases c JOIN metadata_reports r ON r.report_id=c.report_id "
+            "JOIN proposal_sets p ON p.proposal_set_id=c.proposal_set_id "
+            "WHERE c.review_case_id=?", (review_case_id,)
+        ).fetchone()
+        if row is None:
+            raise MetadataReportError("shadow review source is unavailable")
+        return (
+            MetadataReport.from_json(_validate_report_row(row[:9])),
+            ProposalSet.from_json(_validate_proposal_row(row[9:])),
+        )
 
     def _request_for_attempt(self, attempt_id: str) -> ShadowReviewRequest:
         row = self._connection.execute(
