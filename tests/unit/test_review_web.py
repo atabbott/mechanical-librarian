@@ -753,6 +753,45 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(denied.status_code, 401)
         self.assertEqual(denied.json()["error"]["code"], "unauthorized")
 
+    def test_automatic_detail_uses_a_closed_projection_without_human_commit(self) -> None:
+        # Durable automatic documents carry authority bindings that must never
+        # cross the authenticated case read model.
+        self._login()
+        self.repository.decisions["title"] = json.dumps(
+            {
+                "origin": "automatic_policy",
+                "schema_version": "automatic-decision-v1",
+                "decision_id": "automatic_decision_" + "a" * 64,
+                "review_case_id": self.case.review_case_id,
+                "proposal_id": self.case.proposals[0]["proposal_id"],
+                "destination": "title",
+                "outcome": "candidate",
+                "occurred_at": 7,
+                "target_fingerprint": self.case.target_fingerprint,
+                "report_id": "report_" + "b" * 64,
+                "proposal_set_id": "proposal_set_" + "c" * 64,
+                "policy_category": "title_layout",
+                "policy_option": "preserve",
+                "qualification_manifest_sha256": "d" * 64,
+                "idempotency_digest": "e" * 64,
+            }, separators=(",", ":"), sort_keys=True,
+        )
+        detail = self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}")
+        self.assertEqual(200, detail.status_code)
+        field = next(value for value in detail.json()["fields"] if value["destination"] == "title")
+        self.assertIsNone(field["human_decision"])
+        self.assertFalse(field["needs_attention"])
+        self.assertEqual(
+            {
+                "decision_id", "destination", "occurred_at", "outcome",
+                "proposal_id", "review_case_id", "target_fingerprint",
+            },
+            set(field["automatic_decision"]),
+        )
+        self.assertNotIn("actor", field["automatic_decision"])
+        self.assertNotIn("selected_value", field["automatic_decision"])
+        self.assertNotIn("qualification_manifest_sha256", field["automatic_decision"])
+
     def test_login_case_evidence_history_and_logout_round_trip(self) -> None:
         login = self._login()
         cookie = self.client.cookies.get("ml_session")

@@ -2917,13 +2917,16 @@ class SQLiteMetadataReportRepository:
             # derived inside this same exact-current transaction, never by a
             # later queue or apply worker.
             if state[1] == "automatic":
+                self._connection.execute("SAVEPOINT automatic_admission")
                 try:
                     self._record_automatic_outcomes(outcome, evaluated_at)
                 except AutomaticDecisionError as error:
-                    # The outcome and any candidate rows share this transaction.
-                    # Roll them back before recording a durable fail-closed
-                    # safety state; the unresolved fields remain human work.
-                    self._connection.rollback()
+                    # Keep the outer report/case/outcome projection intact. A
+                    # savepoint confines an admission defect to its candidate
+                    # rows while recording the fail-closed state in the same
+                    # outer transaction (which may belong to the pipeline).
+                    self._connection.execute("ROLLBACK TO automatic_admission")
+                    self._connection.execute("RELEASE automatic_admission")
                     current = self.automatic_safety_state()
                     message = str(error)
                     category = message.removeprefix("category:") if message.startswith("category:") else None
@@ -2933,8 +2936,9 @@ class SQLiteMetadataReportRepository:
                         safety = AutomaticSafetyState(current.paused, current.global_suspension, tuple(sorted(categories.items())))
                     else:
                         safety = AutomaticSafetyState(current.paused, "automatic_authority_failed", current.category_suspensions)
-                    self.set_automatic_safety_state(safety, evaluated_at)
-                    return serialized
+                    self._set_automatic_safety_state(safety, evaluated_at)
+                else:
+                    self._connection.execute("RELEASE automatic_admission")
             if owns_transaction:
                 self._connection.commit()
             return serialized
@@ -2984,13 +2988,21 @@ class SQLiteMetadataReportRepository:
                 field for field in outcome.outcomes
                 if field.policy_category == category and field.destination in destinations
             )
-            if (
-                len(members) != len(destinations)
-                or {field.destination for field in members} != set(destinations)
-                or any(field.disposition not in automatic_dispositions for field in members)
-                or len({field.combination_ids for field in members}) != 1
-                or not members[0].combination_ids
-            ):
+            all_automatic = bool(members) and all(
+                field.disposition in automatic_dispositions for field in members
+            )
+            coherent = (
+                len(members) == len(destinations)
+                and {field.destination for field in members} == set(destinations)
+                and all_automatic
+                and len({field.combination_ids for field in members}) == 1
+                and bool(members[0].combination_ids)
+            )
+            if not coherent:
+                # A fully automatic but incoherent protected tuple is an
+                # authority defect, unlike an ordinary abstention/conflict.
+                if len(members) == len(destinations) and all_automatic:
+                    raise AutomaticDecisionError("category:" + category)
                 continue
             bundle_ids[category] = "automatic_bundle_" + hashlib.sha256(
                 _canonical_json({"category": category, "combination_ids": list(members[0].combination_ids)}).encode("utf-8")
@@ -3030,6 +3042,18 @@ class SQLiteMetadataReportRepository:
                     "category:" + str(field.policy_category)
                 ) from error
             decisions.append(decision)
+        # A normal human winner or replay is not an authority failure.  Remove
+        # its whole bundle before any insert, so a bundle is all-or-none.
+        blocked_bundles: set[str] = set()
+        for decision in decisions:
+            conflict = self._connection.execute(
+                "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
+                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
+                (decision.review_case_id, decision.destination, decision.review_case_id, decision.destination),
+            ).fetchone()
+            if conflict is not None and decision.bundle_id is not None:
+                blocked_bundles.add(decision.bundle_id)
+        decisions = [decision for decision in decisions if decision.bundle_id not in blocked_bundles]
         # Complete validation precedes every insert: an authority defect cannot
         # leave a subset of a multi-field bundle durable.
         for decision in decisions:
@@ -3049,7 +3073,9 @@ class SQLiteMetadataReportRepository:
                  decision.review_case_id, decision.destination),
             ).fetchone()
             if conflict is not None:
-                raise AutomaticDecisionError("already_decided")
+                # Human wins and independent replay are ordinary fallback, not
+                # a global safety event.  Bundles were removed as a unit above.
+                continue
             self._connection.execute(
                 "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
                 (decision.decision_id, decision.review_case_id, decision.destination,
@@ -3898,8 +3924,14 @@ class SQLiteMetadataReportRepository:
             self._connection.rollback()
             raise MetadataReportError("human decision persistence failed") from error
 
-    def record_automatic_decision(self, decision: AutomaticDecision) -> str:
-        """Append one exact-current qualified automatic disposition atomically."""
+    def _record_automatic_decision(self, decision: AutomaticDecision) -> str:
+        """Legacy internal single-row helper; projection admission owns policy classification.
+
+        It is intentionally not a repository command or web/API seam.  The
+        only supported admission path is ``persist_shadow_outcome``, which
+        validates a complete outcome and applies bundle/race classification
+        before any durable insert.
+        """
         if type(decision) is not AutomaticDecision:
             raise MetadataReportError("automatic decision persistence failed")
         try:
@@ -3991,18 +4023,30 @@ class SQLiteMetadataReportRepository:
     def set_automatic_safety_state(self, state: AutomaticSafetyState, updated_at: int) -> None:
         if type(state) is not AutomaticSafetyState or type(updated_at) is not int or updated_at < 0:
             raise MetadataReportError("automatic safety state is invalid")
+        owns_transaction = not self._connection.in_transaction
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            if owns_transaction:
+                self._connection.execute("BEGIN IMMEDIATE")
+            self._set_automatic_safety_state(state, updated_at)
+            if owns_transaction:
+                self._connection.commit()
+        except (sqlite3.Error, MetadataReportError) as error:
+            if owns_transaction and self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("automatic safety state is unavailable") from error
+
+    def _set_automatic_safety_state(self, state: AutomaticSafetyState, updated_at: int) -> None:
+        """Update safety state inside a caller-owned transaction when present."""
+        try:
             changed = self._connection.execute(
                 "UPDATE automatic_safety_state SET paused=?,global_suspension=?,category_suspensions_document=?,updated_at=? WHERE singleton=1",
                 (int(state.paused), state.global_suspension, _canonical_json([list(value) for value in state.category_suspensions]), updated_at),
             ).rowcount
             if changed != 1:
                 raise MetadataReportError("automatic safety state is unavailable")
-            self._connection.commit()
         except (sqlite3.Error, MetadataReportError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("automatic safety state is unavailable") from error
@@ -5136,7 +5180,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
                 ("automatic-bootstrap-v1:" + builtin_policy.policy_id).encode("utf-8")
             ).hexdigest()
             connection.execute(
-                "INSERT INTO metadata_policy_transitions(transition_id,from_policy_id,to_policy_id,generation,state,total,acknowledged,created_at,updated_at) VALUES(?,?,?,1,'completed',0,1,0,0)",
+                "INSERT INTO metadata_policy_transitions(transition_id,from_policy_id,to_policy_id,generation,state,total,acknowledged,created_at,updated_at) VALUES(?,?,?,1,'completed',0,0,0,0)",
                 (bootstrap_transition_id, builtin_policy.policy_id, builtin_policy.policy_id),
             )
             connection.execute(_REVIEW_CASES_SQL)

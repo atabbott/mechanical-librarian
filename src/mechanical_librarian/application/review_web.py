@@ -219,7 +219,16 @@ class InspectCurrentReviewCase:
                 if type(value) is not dict:
                     raise ReviewWebError("unavailable")
                 if value.get("origin") == "automatic_policy":
-                    automatic[str(value["destination"])] = value
+                    # The durable authority document deliberately contains
+                    # qualification and replay bindings.  The review surface is
+                    # a closed read model, never that document by accident.
+                    automatic[str(value["destination"])] = {
+                        key: value[key]
+                        for key in (
+                            "decision_id", "destination", "occurred_at", "outcome",
+                            "proposal_id", "review_case_id", "target_fingerprint",
+                        )
+                    }
                 else:
                     decision = HumanDecision.from_json(document)
                     decisions[decision.destination] = decision

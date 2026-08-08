@@ -30,6 +30,7 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope, LocalClaim
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source,
@@ -407,6 +408,11 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             case_id = _case(repository)
 
             self.assertEqual("automatic", repository.shadow_posture())
+            bootstrap = repository.metadata_policy_transition()
+            self.assertIsNotNone(bootstrap)
+            assert bootstrap is not None
+            self.assertFalse(bootstrap.acknowledged)
+            self.assertFalse(hasattr(repository, "record_automatic_decision"))
             automatic = repository.persist_shadow_outcome(case_id, 10)
             self.assertTrue(automatic.startswith('{"authority":"none"'))
             self.assertEqual(((automatic, 10),), repository.list_shadow_outcomes(50))
@@ -445,6 +451,24 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                     "UPDATE shadow_decision_outcomes SET evaluated_at=99"
                 )
             connection.close()
+
+    def test_automatic_safety_update_preserves_a_caller_transaction_and_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports.sqlite"
+            repository = open_repository(path)
+            repository._connection.execute("BEGIN IMMEDIATE")
+            repository.set_automatic_safety_state(
+                AutomaticSafetyState(False, None, (("title_layout", "admission_failed"),)), 9
+            )
+            self.assertTrue(repository._connection.in_transaction)
+            repository._connection.commit()
+            repository.close()
+            reopened = open_repository(path)
+            self.assertEqual(
+                AutomaticSafetyState(False, None, (("title_layout", "admission_failed"),)),
+                reopened.automatic_safety_state(),
+            )
+            reopened.close()
 
     def test_shadow_history_orders_human_and_preview_events_by_time(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
