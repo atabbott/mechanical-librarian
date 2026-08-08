@@ -294,7 +294,9 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     page.get_by_label("Policy chapter", exact=True).select_option("availability")
                     page.locator("#availability").wait_for()
                     self.assertTrue(page.locator("#availability").evaluate("node => node === document.activeElement"))
-                    errors[:] = [error for error in errors if "403 (Forbidden)" not in error]
+                    expected_403 = [error for error in errors if "403 (Forbidden)" in error]
+                    self.assertEqual(1, len(expected_403))
+                    errors.remove(expected_403[0])
                     self.assertEqual([], errors)
                     context.close()
                 browser.close()

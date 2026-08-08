@@ -66,6 +66,9 @@ class ExactArtifactQualificationTests(unittest.TestCase):
         proposal["resolved_policy_id"] = "d" * 64
         with self.assertRaises(QualificationFailure):
             _proposal_identifier(proposal)
+        proposal["resolved_policy_id"] = 7
+        with self.assertRaises(QualificationFailure):
+            _proposal_identifier(proposal)
 
     def test_review_probe_epub_has_fixed_member_timestamps(self) -> None:
         for actionable in (False, True):
