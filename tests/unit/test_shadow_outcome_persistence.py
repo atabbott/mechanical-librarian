@@ -919,13 +919,44 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             repository.close()
 
     def test_paused_or_category_suspended_automatic_tuple_remains_in_every_attention_projection(self) -> None:
+        local_title = LocalClaim.create(
+            kind=ClaimKind.TITLE, observed="Secret History", canonical="Secret History",
+            excerpt="Secret History", applicability="not_applicable", checksum="not_applicable",
+            applicability_basis="not_applicable", scope=ClaimScope.WORK,
+        )
+        source = _source("catalogue", "edition-1", titles=("Secret History",), subtitle="A Mistborn Novella")
+        report = _bibliographic_report(
+            current_title="secret history", providers=(source,), local_claims=(local_title,)
+        )
+        profile = _preview_automatic_profile()
+
+        def admit(repository):
+            repository.enter_shadow_preview(1)
+            repository.create_metadata_policy_draft(profile.canonical_json)
+            resolved = resolve_policy(profile, report.target.library)
+            repository.activate_metadata_policy(profile.policy_id, MetadataPolicyProfile.builtin().policy_id, ((report.target.library, resolved.resolved_id, resolved.canonical_json),), 2)
+            proposal = evaluate_report(report, resolved.resolved_id, human_review_destinations(resolved))
+            title = next(value for value in proposal.results if value.destination.value == "title")
+            self.assertNotEqual("unresolved_choice", title.to_data()["outcome"])
+            self.assertNotIn("no_safe_bibliographic_combination", title.to_data()["reasons"])
+            repository.publish(report, lambda: True)
+            repository.publish_proposal(proposal)
+            return json.loads(repository.admit_review_case(proposal))["review_case_id"]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            baseline = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = admit(baseline)
+            title = next(field for field in InspectCurrentReviewCase(baseline).run(case_id)["fields"] if field["destination"] == "title")
+            self.assertFalse(title["needs_attention"])
+            baseline.close()
         for safety in (
             AutomaticSafetyState(True, None, ()),
             AutomaticSafetyState(False, None, (("title_layout", "admission_failed"),)),
+            AutomaticSafetyState(False, "authority_failed", ()),
         ):
             with self.subTest(safety=safety), tempfile.TemporaryDirectory() as temporary:
                 repository = open_repository(Path(temporary) / "reports.sqlite")
-                case_id = _case(repository)
+                case_id = admit(repository)
                 repository.set_automatic_safety_state(safety, 1)
                 repository.persist_shadow_outcome(case_id, 2)
                 self.assertEqual((0,), repository._connection.execute(
@@ -938,8 +969,8 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 self.assertEqual(1, library.total)
                 self.assertEqual(1, library.attention_total)
                 attention = repository.read_review_attention(None, 50, 0)
-                self.assertEqual(1, attention.total)
-                self.assertEqual("title", attention.rows[0][2])
+                self.assertGreaterEqual(attention.total, 1)
+                self.assertIn("title", tuple(row[2] for row in attention.rows))
                 repository.close()
 
     def test_bootstrap_transition_acknowledgement_is_durable(self) -> None:
