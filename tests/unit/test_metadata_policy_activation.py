@@ -18,7 +18,9 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
 from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report
+from tests.unit.test_shadow_reviews import _identity
 
 
 def _draft() -> MetadataPolicyProfile:
@@ -96,6 +98,29 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         )
         assert transition is not None
         self.assertEqual((transition.state, transition.completed, transition.total, transition.failed), ("processing", 0, 1, 0))
+        self.assertEqual(
+            transition,
+            repository.activate_metadata_policy(
+                draft.policy_id,
+                builtin.policy_id,
+                ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+                30,
+            ),
+        )
+        follow_up = MetadataPolicyProfile.create(
+            "Follow-up policy",
+            {**dict(draft.options), "language_rendering": "preserve"},
+            dict(draft.destinations),
+        )
+        repository.create_metadata_policy_draft(follow_up.canonical_json)
+        follow_up_resolved = resolve_policy(follow_up, report.target.library)
+        with self.assertRaisesRegex(MetadataReportError, "processing"):
+            repository.activate_metadata_policy(
+                follow_up.policy_id,
+                draft.policy_id,
+                ((report.target.library, follow_up_resolved.resolved_id, follow_up_resolved.canonical_json),),
+                30,
+            )
         self.assertEqual(repository.current_unapplied_count(report.target.library), 0)
         self.assertEqual(
             repository._connection.execute(
@@ -141,6 +166,13 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         repository.close()
 
         reopened = open_repository(self.path, create=False)
+        with self.assertRaisesRegex(MetadataReportError, "processing"):
+            reopened.activate_metadata_policy(
+                follow_up.policy_id,
+                draft.policy_id,
+                ((report.target.library, follow_up_resolved.resolved_id, follow_up_resolved.canonical_json),),
+                30,
+            )
         action = reopened.claim_review_pipeline_action(31)
         assert action is not None
         self.assertEqual((action.stage, action.report_id), ("proposal", report.report_id))
@@ -168,6 +200,19 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         assert completed is not None
         self.assertEqual((completed.state, completed.completed, completed.total, completed.failed), ("completed", 1, 1, 0))
         self.assertNotEqual(admitted.get("review_case_id"), old_case_id)
+        successor_case_id = admitted.get("review_case_id")
+        assert type(successor_case_id) is str
+        self.assertTrue(json.loads(reopened.get_review_case(successor_case_id))["current"])
+        browsed = reopened.list_current_review_case_documents(None, 50, 0, None)
+        self.assertIn(
+            successor_case_id,
+            tuple(ReviewCase.from_json(value[0]).review_case_id for value in browsed),
+        )
+        shadow_request = reopened._shadow_request(successor_case_id, _identity())
+        self.assertEqual(
+            shadow_request,
+            reopened.validate_shadow_request(shadow_request.to_json()),
+        )
         acknowledged = reopened.acknowledge_metadata_policy_transition(completed.transition_id, 37)
         self.assertTrue(acknowledged.acknowledged)
         self.assertIsNone(
@@ -178,6 +223,14 @@ class MetadataPolicyActivationTests(unittest.TestCase):
                 38,
             )
         )
+        next_transition = reopened.activate_metadata_policy(
+            follow_up.policy_id,
+            draft.policy_id,
+            ((report.target.library, follow_up_resolved.resolved_id, follow_up_resolved.canonical_json),),
+            39,
+        )
+        assert next_transition is not None
+        self.assertEqual(3, next_transition.generation)
         reopened.close()
 
     def test_missing_pipeline_work_is_typed_durable_and_retryable(self) -> None:
@@ -204,6 +257,20 @@ class MetadataPolicyActivationTests(unittest.TestCase):
             ).fetchone(),
             ("failed", "pipeline_unavailable"),
         )
+        blocked = MetadataPolicyProfile.create(
+            "Blocked follow-up",
+            {**dict(draft.options), "language_rendering": "preserve"},
+            dict(draft.destinations),
+        )
+        repository.create_metadata_policy_draft(blocked.canonical_json)
+        blocked_resolution = resolve_policy(blocked, report.target.library)
+        with self.assertRaisesRegex(MetadataReportError, "processing"):
+            repository.activate_metadata_policy(
+                blocked.policy_id,
+                draft.policy_id,
+                ((report.target.library, blocked_resolution.resolved_id, blocked_resolution.canonical_json),),
+                41,
+            )
         repository.request_review_scan(
             report.target.connection, report.target.library, "lib-1", _PRODUCER, 41
         )
@@ -252,6 +319,75 @@ class MetadataPolicyActivationTests(unittest.TestCase):
                 ((report.target.library, "resolved_policy_" + "0" * 64, resolved.canonical_json),),
                 41,
             )
+        repository.close()
+
+    def test_failed_provider_work_restarts_and_retries_at_safe_proposal_stage(self) -> None:
+        repository, report, _, _ = self._current_case_with_completed_work()
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='provider',state='queued',report_id=?,updated_at=24",
+            (report.report_id,),
+        )
+        repository._connection.execute(
+            "UPDATE review_preparation_scans SET state='processing',updated_at=24"
+        )
+        repository._connection.commit()
+        draft = _draft()
+        repository.create_metadata_policy_draft(draft.canonical_json)
+        resolved = resolve_policy(draft, report.target.library)
+        transition = repository.activate_metadata_policy(
+            draft.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            25,
+        )
+        assert transition is not None
+        provider = repository.claim_review_pipeline_action(26)
+        assert provider is not None
+        self.assertEqual("provider", provider.stage)
+        repository.fail_review_pipeline_action(provider, "provider", False, 27)
+        failed = repository.metadata_policy_transition()
+        assert failed is not None
+        self.assertEqual(("completed_with_failures", 1), (failed.state, failed.failed))
+        repository.close()
+
+        reopened = open_repository(self.path, create=False)
+        retried = reopened.retry_metadata_policy_transition(transition.transition_id, 28)
+        self.assertEqual(("processing", 0), (retried.state, retried.failed))
+        action = reopened.claim_review_pipeline_action(29)
+        assert action is not None
+        self.assertEqual(("proposal", report.report_id), (action.stage, action.report_id))
+        reopened.close()
+
+    def test_invisible_stale_case_is_not_in_activation_cohort(self) -> None:
+        repository = open_repository(self.path)
+        report = _report()
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        repository.admit_review_case(proposal)
+        changed = _report("Changed current title", "a", "c")
+        repository.publish(changed, lambda: True, report.report_id)
+        self.assertEqual(0, repository.current_unapplied_count(report.target.library))
+        draft = _draft()
+        repository.create_metadata_policy_draft(draft.canonical_json)
+        resolved = resolve_policy(draft, report.target.library)
+        transition = repository.activate_metadata_policy(
+            draft.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            30,
+        )
+        assert transition is not None
+        self.assertEqual(
+            ("completed", 0, 0, 0),
+            (transition.state, transition.completed, transition.total, transition.failed),
+        )
+        self.assertEqual(
+            (0,),
+            repository._connection.execute(
+                "SELECT COUNT(*) FROM metadata_policy_transition_items"
+            ).fetchone(),
+        )
         repository.close()
 
     def test_changed_inflight_extraction_is_new_work_not_old_cohort_completion(self) -> None:

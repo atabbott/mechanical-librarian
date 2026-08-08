@@ -115,7 +115,8 @@ no-store, and covered by the same restrictive CSP. Creating, reading,
 validating, or previewing a draft cannot activate a policy, create a successor
 or queue item, record a decision, or write metadata.
 
-Activation is a separate authenticated CSRF-protected owner mutation. It binds
+Activation is a separate authenticated CSRF-protected owner mutation with the
+same 16 KiB pre-parse request bound as policy drafts. It binds
 the expected active identity and exact immutable draft, revalidates qualified
 canonical per-library resolutions, and atomically retires the current cohort
 before changing generation. Old proposals and human submissions then fail

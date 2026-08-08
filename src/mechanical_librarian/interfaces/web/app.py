@@ -357,7 +357,7 @@ def _policy_transition_response(value: PolicyTransition) -> _PolicyTransitionRes
 
 def _policy_application_http_error(error: MetadataPolicyApplicationError) -> HTTPException:
     code = str(error)
-    status = 409 if "stale" in code else (422 if "invalid" in code or "unqualified" in code else 503)
+    status = 409 if "stale" in code or "processing" in code else (422 if "invalid" in code or "unqualified" in code else 503)
     return HTTPException(status, detail={"code": code.replace(" ", "_")})
 
 
@@ -395,7 +395,12 @@ class _BodyLimitMiddleware:
                 path,
             )
         )
-        is_policy_draft = path in {"/api/v1/metadata-policy/drafts", "/api/v1/metadata-policy/validate", "/api/v1/metadata-policy/preview"}
+        is_policy_draft = path in {
+            "/api/v1/metadata-policy/activate",
+            "/api/v1/metadata-policy/drafts",
+            "/api/v1/metadata-policy/validate",
+            "/api/v1/metadata-policy/preview",
+        }
         if scope["type"] != "http" or not (is_login or is_decision or is_policy_draft):
             await self._app(scope, receive, send)
             return
@@ -674,7 +679,7 @@ def create_review_app(
             raise HTTPException(422, detail={"code": "policy_validation"}) from None
         return _PolicyPreviewResponse(policy_id=profile.policy_id, libraries=[_PolicyImpactResponse(affected_categories=list(item.affected_categories), current_unapplied_count=item.current_unapplied_count, library=item.library, resolved_policy_id=item.resolved_policy_id) for item in preview.libraries])
 
-    @app.post("/api/v1/metadata-policy/activate", response_model=_PolicyActivationResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)})
+    @app.post("/api/v1/metadata-policy/activate", response_model=_PolicyActivationResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 413, 422, 503)})
     def activate_metadata_policy(payload: _PolicyActivationRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyActivationResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:

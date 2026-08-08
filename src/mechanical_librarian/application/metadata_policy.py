@@ -221,6 +221,10 @@ class PolicyNotebook:
         except Exception as error:
             if "stale" in str(error):
                 raise MetadataPolicyApplicationError("policy activation is stale") from error
+            if "processing" in str(error):
+                raise MetadataPolicyApplicationError(
+                    "policy transition is processing"
+                ) from error
             if "unqualified" in str(error):
                 raise MetadataPolicyApplicationError("policy activation is unqualified") from error
             raise MetadataPolicyApplicationError("policy activation is unavailable") from error

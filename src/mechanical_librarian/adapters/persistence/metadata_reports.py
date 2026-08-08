@@ -2207,12 +2207,15 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("review case source is unavailable")
             proposal = ProposalSet.from_json(_validate_proposal_row(proposal_row))
             report = MetadataReport.from_json(_validate_report_row(report_row))
+            policy_destinations = self._policy_destinations_for(report, proposal)
             if (
                 proposal.proposal_set_id != case.proposal_set_id
                 or proposal.report_id != case.report_id
                 or proposal.target_fingerprint != case.target_fingerprint
                 or proposal.to_json()
-                != evaluate_report(report, proposal.resolved_policy_id).to_json()
+                != evaluate_report(
+                    report, proposal.resolved_policy_id, policy_destinations
+                ).to_json()
                 or report.target.to_data() != case.target
                 or report.target.fingerprint != case.target_fingerprint
                 or report.file.identity != case.file_identity
@@ -2255,7 +2258,12 @@ class SQLiteMetadataReportRepository:
             request_id, request_document, kind, result_document = row
             if kind == "result":
                 report, proposal = self._source_pair_for_review_case(review_case_id)
-                request = ShadowReviewRequest.from_json(request_document, report, proposal)
+                request = ShadowReviewRequest.from_json(
+                    request_document,
+                    report,
+                    proposal,
+                    self._policy_destinations_for(report, proposal),
+                )
                 result = ShadowReviewResult.from_json(result_document, request)
                 if result.review_request_id != request_id:
                     raise MetadataReportError("review model advice is invalid")
@@ -2371,7 +2379,18 @@ class SQLiteMetadataReportRepository:
                 "c.library_name,c.item_id,rc.review_case_id LIMIT ? OFFSET ?",
                 (query, pattern, pattern, pattern, limit, offset),
             ).fetchall()
-            return tuple(_validate_review_browse_row(row) for row in rows)
+            return tuple(
+                _validate_review_browse_row(
+                    row,
+                    self._policy_destinations_for(
+                        MetadataReport.from_json(row[1]),
+                        ProposalSet.from_json(
+                            ReviewCase.from_json(row[0]).proposal_document
+                        ),
+                    ),
+                )
+                for row in rows
+            )
         except (
             sqlite3.Error,
             MetadataReportError,
@@ -2430,7 +2449,13 @@ class SQLiteMetadataReportRepository:
             values = []
             for row in rows:
                 case_document, report_document = _validate_review_browse_row(
-                    row[:2]
+                    row[:2],
+                    self._policy_destinations_for(
+                        MetadataReport.from_json(row[1]),
+                        ProposalSet.from_json(
+                            ReviewCase.from_json(row[0]).proposal_document
+                        ),
+                    ),
                 )
                 if type(row[2]) is not str:
                     raise MetadataReportError("review attention field is invalid")
@@ -2643,11 +2668,43 @@ class SQLiteMetadataReportRepository:
             state = self._connection.execute(
                 "SELECT active_policy_id,generation FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
-            if state is None or state[0] != expected_active_policy_id:
+            if state is None:
+                raise MetadataReportError("metadata policy activation is stale")
+            if state[0] != expected_active_policy_id:
+                replay = self._connection.execute(
+                    "SELECT transition_id,from_policy_id,to_policy_id,generation,state,total,acknowledged "
+                    "FROM metadata_policy_transitions WHERE generation=?",
+                    (state[1],),
+                ).fetchone()
+                if (
+                    state[0] == policy_id
+                    and replay is not None
+                    and replay[1] == expected_active_policy_id
+                    and replay[2] == policy_id
+                ):
+                    result = self.metadata_policy_transition()
+                    if result is None or result.transition_id != replay[0]:
+                        raise MetadataReportError(
+                            "metadata policy transition is unavailable"
+                        )
+                    self._connection.commit()
+                    return result
                 raise MetadataReportError("metadata policy activation is stale")
             if policy_id == state[0]:
                 self._connection.commit()
                 return None
+            active_transition = self._connection.execute(
+                "SELECT state,acknowledged FROM metadata_policy_transitions WHERE generation=?",
+                (state[1],),
+            ).fetchone()
+            if active_transition is not None and (
+                active_transition[0] == "processing"
+                or (
+                    active_transition[0] == "completed_with_failures"
+                    and active_transition[1] == 0
+                )
+            ):
+                raise MetadataReportError("metadata policy transition is processing")
             draft = self._connection.execute(
                 "SELECT document FROM metadata_policy_drafts WHERE policy_id=?", (policy_id,)
             ).fetchone()
@@ -2663,8 +2720,9 @@ class SQLiteMetadataReportRepository:
             transition_id = "policy_transition_" + hashlib.sha256(material.encode()).hexdigest()
             cohort = self._connection.execute(
                 "SELECT c.connection_name,c.library_name,c.item_id,c.proposal_set_id,c.report_id,"
-                "c.review_case_id,c.checkpoint FROM current_review_case_lineages c "
-                "WHERE c.review_case_id IS NOT NULL ORDER BY c.connection_name,c.library_name,c.item_id"
+                "c.review_case_id,c.checkpoint "
+                + _CURRENT_REVIEW_FROM_SQL
+                + " WHERE 1 ORDER BY c.connection_name,c.library_name,c.item_id"
             ).fetchall()
             parsed_resolutions: list[tuple[str, str, str]] = []
             for library, resolved_id, document in resolutions:
@@ -2794,25 +2852,28 @@ class SQLiteMetadataReportRepository:
             ).fetchall()
             for connection, library, item, report_id, work_id in failed:
                 work_stage = None
+                work_state = None
                 if work_id is None:
                     found = self._connection.execute(
-                        "SELECT work_id,stage FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=? AND report_id=?",
+                        "SELECT work_id,stage,state FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=? AND report_id=?",
                         (connection, library, item, report_id),
                     ).fetchone()
                     if found is not None:
-                        work_id, work_stage = found
+                        work_id, work_stage, work_state = found
                 else:
                     existing_work = self._connection.execute(
-                        "SELECT stage,report_id FROM review_preparation_work WHERE work_id=?",
+                        "SELECT stage,state,report_id FROM review_preparation_work WHERE work_id=?",
                         (work_id,),
                     ).fetchone()
-                    if existing_work is None or existing_work[1] != report_id:
+                    if existing_work is None or existing_work[2] != report_id:
                         work_id = None
                     else:
-                        work_stage = existing_work[0]
+                        work_stage, work_state = existing_work[:2]
                 if work_id is None:
                     continue
-                if work_stage not in {"extraction", "provider"}:
+                if work_stage not in {"extraction", "provider"} or (
+                    work_stage == "provider" and work_state in {"failed", "stale"}
+                ):
                     self._connection.execute(
                         "UPDATE review_preparation_work SET stage='proposal',state='queued',attempt=0,recovery_attempt=0,proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL,updated_at=? WHERE work_id=?",
                         (retried_at, work_id),
@@ -3244,7 +3305,12 @@ class SQLiteMetadataReportRepository:
             ):
                 raise ShadowReviewValueError("shadow-review request is invalid")
             report, proposal = self._source_pair_for_review_case(raw["review_case_id"])
-            return ShadowReviewRequest.from_json(serialized, report, proposal)
+            return ShadowReviewRequest.from_json(
+                serialized,
+                report,
+                proposal,
+                self._policy_destinations_for(report, proposal),
+            )
         except MetadataReportError:
             raise
         except (
@@ -3705,6 +3771,31 @@ class SQLiteMetadataReportRepository:
         report = MetadataReport.from_json(_validate_report_row(report_row))
         return case, ShadowReviewPacket.create(case, proposal, report)
 
+    def _policy_destinations_for(
+        self, report: MetadataReport, proposal: ProposalSet
+    ) -> dict[str, str] | None:
+        rows = self._connection.execute(
+            "SELECT document FROM metadata_policy_resolutions "
+            "WHERE library_name=? AND resolved_policy_id=? ORDER BY generation",
+            (report.target.library, proposal.resolved_policy_id),
+        ).fetchall()
+        if not rows:
+            # Generation 1 did not persist resolutions and used the original
+            # evaluator semantics, irrespective of its identity-only binding.
+            return None
+        if any(len(row) != 1 or type(row[0]) is not str for row in rows):
+            raise MetadataReportError("proposal policy resolution is unavailable")
+        documents = {row[0] for row in rows}
+        if len(documents) != 1:
+            raise MetadataReportError("proposal policy resolution is unavailable")
+        resolved = ResolvedMetadataPolicy.from_data(json.loads(next(iter(documents))))
+        if (
+            resolved.library != report.target.library
+            or resolved.resolved_id != proposal.resolved_policy_id
+        ):
+            raise MetadataReportError("proposal policy resolution is unavailable")
+        return dict(resolved.destinations)
+
     def _validated_shadow_request(
         self, review_request_id: str
     ) -> ShadowReviewRequest:
@@ -3719,7 +3810,12 @@ class SQLiteMetadataReportRepository:
         if row[0] != REQUEST_SCHEMA:
             raise MetadataReportError("shadow review request is invalid")
         report, proposal = self._source_pair_for_review_case(row[1])
-        request = ShadowReviewRequest.from_json(row[4], report, proposal)
+        request = ShadowReviewRequest.from_json(
+            row[4],
+            report,
+            proposal,
+            self._policy_destinations_for(report, proposal),
+        )
         if (
             request.schema_version != row[0]
             or request.review_request_id != review_request_id
@@ -4611,7 +4707,9 @@ def _review_casefold(value: object) -> str:
     return value.casefold()
 
 
-def _validate_review_browse_row(row: object) -> tuple[str, str]:
+def _validate_review_browse_row(
+    row: object, policy_destinations: dict[str, str] | None = None
+) -> tuple[str, str]:
     if (
         type(row) not in {tuple, sqlite3.Row}
         or len(row) != 2  # type: ignore[arg-type]
@@ -4629,7 +4727,9 @@ def _validate_review_browse_row(row: object) -> tuple[str, str]:
         or tuple(
             value.to_data()
             for value in evaluate_report(
-                report, ProposalSet.from_json(case.proposal_document).resolved_policy_id
+                report,
+                ProposalSet.from_json(case.proposal_document).resolved_policy_id,
+                policy_destinations,
             ).results
         )
         != case.results

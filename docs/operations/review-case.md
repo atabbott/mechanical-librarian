@@ -132,6 +132,10 @@ current policy immediately without changing the fixed cutover total. Cutover
 adds no provider reacquisition, second queue, decision transfer, automatic
 authority, apply plan, target write, or media write. The policy-only script is
 served separately from the shared Library and Attention interaction bundle.
+While processing, the notebook refreshes this compact status at a bounded
+interval; retry restarts polling, while terminal or acknowledged state stops it.
+Another activation cannot overlap processing or unacknowledged failed
+completion. An exact response-loss retry returns the original transition.
 Authenticated `/library` provides bounded attention-first, all, and
 no-attention-needed lenses; `/attention` contains only exact unresolved/manual
 fields and links to the exact field on detail. Both support bounded search,

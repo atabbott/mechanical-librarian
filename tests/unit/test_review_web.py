@@ -610,6 +610,30 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(503, response.status_code)
         self.assertEqual("persistence", response.json()["error"]["code"])
 
+    def test_policy_activation_body_is_bounded_before_validation(self) -> None:
+        login = self._login()
+        headers = {
+            **self.origin,
+            "Content-Type": "application/json",
+            "X-CSRF-Token": login["csrf_token"],
+        }
+        oversized = b'{"policy_id":"' + b"x" * 16_384 + b'"}'
+        before = self.repository.active_policy_id
+        declared = self.client.post(
+            "/api/v1/metadata-policy/activate",
+            headers=headers,
+            content=oversized,
+        )
+        streamed = self.client.post(
+            "/api/v1/metadata-policy/activate",
+            headers=headers,
+            content=(chunk for chunk in (oversized[:8_000], oversized[8_000:])),
+        )
+        self.assertEqual((413, 413), (declared.status_code, streamed.status_code))
+        self.assertNotIn(b"x" * 128, declared.content)
+        self.assertNotIn(b"x" * 128, streamed.content)
+        self.assertEqual(before, self.repository.active_policy_id)
+
     def test_trust_boundary_failures_match_declared_api_statuses(self) -> None:
         bad_host = self.client.get(
             f"/api/v1/review-cases/{self.case.review_case_id}",
@@ -1180,6 +1204,10 @@ class ReviewWebTests(unittest.TestCase):
         self.assertIn(
             "413",
             expected["paths"]["/api/v1/metadata-policy/drafts"]["post"]["responses"],
+        )
+        self.assertIn(
+            "413",
+            expected["paths"]["/api/v1/metadata-policy/activate"]["post"]["responses"],
         )
         schemas = expected["components"]["schemas"]
         self.assertNotIn("HTTPValidationError", schemas)

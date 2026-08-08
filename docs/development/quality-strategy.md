@@ -35,12 +35,17 @@ focus/navigation, hostile-safe DOM rendering, and absence of console errors.
 
 Policy-activation qualification proves exact draft and per-library resolution
 revalidation, an atomic old/new authority boundary, both human-commit orderings,
-stale evaluation, Ask/Ignore behavior, fixed denominators when new work arrives,
-reuse of eligible evidence, restart/idempotency, and durable typed
-failure/retry/acknowledgement. Browser proof directly inspects the selected B
+stale evaluation, historical Ignore replay across detail/browse/shadow,
+Ask/Ignore behavior, exact-current cohort selection, response-loss replay,
+consecutive-activation gates, fixed denominators when new work arrives, reuse
+of eligible evidence, restart/idempotency, and durable typed provider
+failure/retry/acknowledgement. Declared and chunked oversized activation bodies
+fail before parsing. Browser proof directly inspects the selected B
 notebook, active-versus-draft wording, compact shared activity, sticky desktop
 chapters, pinned compact mobile selection, keyboard focus, responsive layout,
 and absence of Automatic, apply, target-write, or media-write authority.
+It also proves bounded processing refresh, polling restart after retry, and
+terminal stop.
 
 Provider retry changes require deterministic proof of the fixed policy:
 accepted and rejected typed transport classes, status and canonical

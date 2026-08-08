@@ -16,8 +16,9 @@ proposals must not transfer to successors.
 Activation revalidates the immutable draft, its exact canonical per-library
 resolutions, qualification, and the current unapplied cohort in one immediate
 database transaction. The transaction records one new generation, retires all
-current cohort pointers, fixes the transition denominator, links each item to
-its existing F17a work, and only then makes the generation current.
+exact-current cohort pointers (using the same report/file joins as queue
+authority), fixes the transition denominator, links each item and exact report
+to its existing F17a work, and only then makes the generation current.
 
 The resolved per-library documents are persisted with the generation and are
 replayed during proposal publication and review admission. `Ask` retains the
@@ -38,6 +39,14 @@ old human submission is stale. New work uses the current generation but is not
 added to the fixed transition denominator. Aggregate completion, failures,
 retry, and acknowledgement survive restart. Acknowledgement hides only the
 transition notification; history and diagnostics remain.
+
+A response-loss replay naming the exact original from/to pair returns that
+generation's transition. Any other stale pair fails. A following activation is
+blocked while the current transition is processing or retains unacknowledged
+failures; a completed transition, or an acknowledged failed completion, may be
+followed by another explicit generation. Historical proposal validation
+resolves its immutable destinations by resolved identity rather than assuming
+the currently active profile.
 
 This adds no second queue, staging batch, migration path, automatic authority,
 apply plan, target/media write, provider credential access, or destructive
