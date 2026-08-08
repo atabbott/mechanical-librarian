@@ -51,6 +51,8 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecisionError,
 )
 from mechanical_librarian.interfaces.web import create_review_app
+from mechanical_librarian.application.metadata_policy import PolicyTransition
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
 from tests.unit.test_review_case_persistence import _report
 from tests.unit.test_proposal_set import (
     _claim as _proposal_claim,
@@ -83,6 +85,9 @@ class _Repository:
         self.case_current = True
         self.policy_documents: dict[str, str] = {}
         self.policy_count_calls: list[str] = []
+        builtin = MetadataPolicyProfile.builtin()
+        self.active_policy_id = builtin.policy_id
+        self.policy_transition = None
 
     def current_unapplied_count(self, library: str) -> int:
         self.policy_count_calls.append(library)
@@ -95,6 +100,42 @@ class _Repository:
 
     def get_metadata_policy_draft(self, policy_id: str) -> str:
         return self.policy_documents[policy_id]
+
+    def active_metadata_policy(self) -> str:
+        if self.active_policy_id == MetadataPolicyProfile.builtin().policy_id:
+            return MetadataPolicyProfile.builtin().canonical_json
+        return self.policy_documents[self.active_policy_id]
+
+    def activate_metadata_policy(self, policy_id, expected_active_policy_id, resolutions, activated_at):
+        if expected_active_policy_id != self.active_policy_id:
+            raise RuntimeError("stale")
+        if policy_id == self.active_policy_id:
+            return None
+        previous = self.active_policy_id
+        self.active_policy_id = policy_id
+        self.policy_transition = PolicyTransition(
+            "policy_transition_" + "a" * 64, previous, policy_id, 2,
+            "completed", 0, 0, 0, False,
+        )
+        return self.policy_transition
+
+    def metadata_policy_transition(self):
+        return self.policy_transition
+
+    def retry_metadata_policy_transition(self, transition_id, retried_at):
+        return self.policy_transition
+
+    def acknowledge_metadata_policy_transition(self, transition_id, acknowledged_at):
+        value = self.policy_transition
+        self.policy_transition = PolicyTransition(
+            value.transition_id, value.from_policy_id, value.to_policy_id,
+            value.generation, value.state, value.completed, value.total,
+            value.failed, True,
+        )
+        return self.policy_transition
+
+    def current_resolved_policy_id(self, library):
+        return resolve_policy(MetadataPolicyProfile.from_data(json.loads(self.active_metadata_policy())), library).resolved_id
 
     def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
         self.failures = [value for value in self.failures if value >= now - window_seconds]
@@ -534,6 +575,27 @@ class ReviewWebTests(unittest.TestCase):
         preview = self.client.post("/api/v1/metadata-policy/preview", headers=headers, json=payload)
         self.assertEqual(200, preview.status_code)
         self.assertEqual("metadata-policy-preview-v1", preview.json()["schema_version"])
+        denied_activation = self.client.post(
+            "/api/v1/metadata-policy/activate",
+            headers=self.origin,
+            json={"policy_id": policy_id, "expected_active_policy_id": active.json()["policy_id"]},
+        )
+        self.assertEqual(403, denied_activation.status_code)
+        activated = self.client.post(
+            "/api/v1/metadata-policy/activate",
+            headers=headers,
+            json={"policy_id": policy_id, "expected_active_policy_id": active.json()["policy_id"]},
+        )
+        self.assertEqual(200, activated.status_code)
+        self.assertEqual("metadata-policy-activation-v1", activated.json()["schema_version"])
+        self.assertEqual(policy_id, self.client.get("/api/v1/metadata-policy/state").json()["policy_id"])
+        transition = self.client.get("/api/v1/metadata-policy/transition")
+        self.assertEqual("metadata-policy-transition-v1", transition.json()["schema_version"])
+        dismissed = self.client.post(
+            f"/api/v1/metadata-policy/transitions/{transition.json()['transition_id']}/acknowledge",
+            headers=headers,
+        )
+        self.assertTrue(dismissed.json()["acknowledged"])
         self.assertEqual(before[0], self.repository.decisions)
         self.assertEqual(1, len(self.repository.policy_documents))
         self.assertEqual([], self.repository.policy_count_calls)
@@ -547,6 +609,30 @@ class ReviewWebTests(unittest.TestCase):
         response = self.client.post("/api/v1/metadata-policy/drafts", headers=headers, json=payload)
         self.assertEqual(503, response.status_code)
         self.assertEqual("persistence", response.json()["error"]["code"])
+
+    def test_policy_activation_body_is_bounded_before_validation(self) -> None:
+        login = self._login()
+        headers = {
+            **self.origin,
+            "Content-Type": "application/json",
+            "X-CSRF-Token": login["csrf_token"],
+        }
+        oversized = b'{"policy_id":"' + b"x" * 16_384 + b'"}'
+        before = self.repository.active_policy_id
+        declared = self.client.post(
+            "/api/v1/metadata-policy/activate",
+            headers=headers,
+            content=oversized,
+        )
+        streamed = self.client.post(
+            "/api/v1/metadata-policy/activate",
+            headers=headers,
+            content=(chunk for chunk in (oversized[:8_000], oversized[8_000:])),
+        )
+        self.assertEqual((413, 413), (declared.status_code, streamed.status_code))
+        self.assertNotIn(b"x" * 128, declared.content)
+        self.assertNotIn(b"x" * 128, streamed.content)
+        self.assertEqual(before, self.repository.active_policy_id)
 
     def test_trust_boundary_failures_match_declared_api_statuses(self) -> None:
         bad_host = self.client.get(
@@ -1119,6 +1205,10 @@ class ReviewWebTests(unittest.TestCase):
             "413",
             expected["paths"]["/api/v1/metadata-policy/drafts"]["post"]["responses"],
         )
+        self.assertIn(
+            "413",
+            expected["paths"]["/api/v1/metadata-policy/activate"]["post"]["responses"],
+        )
         schemas = expected["components"]["schemas"]
         self.assertNotIn("HTTPValidationError", schemas)
         self.assertTrue(
@@ -1152,10 +1242,20 @@ class ReviewWebTests(unittest.TestCase):
             {
                 ("get", "/api/v1/attention"),
                 ("get", "/api/v1/library"),
+                ("post", "/api/v1/metadata-policy/activate"),
                 ("post", "/api/v1/metadata-policy/drafts"),
                 ("get", "/api/v1/metadata-policy/drafts/{policy_id}"),
                 ("post", "/api/v1/metadata-policy/preview"),
                 ("get", "/api/v1/metadata-policy/state"),
+                ("get", "/api/v1/metadata-policy/transition"),
+                (
+                    "post",
+                    "/api/v1/metadata-policy/transitions/{transition_id}/acknowledge",
+                ),
+                (
+                    "post",
+                    "/api/v1/metadata-policy/transitions/{transition_id}/retry",
+                ),
                 ("post", "/api/v1/metadata-policy/validate"),
                 ("get", "/api/v1/review-preparation"),
                 ("get", "/api/v1/review-cases/{review_case_id}"),

@@ -33,6 +33,20 @@ loads the policy-only script at 1440 and 390 CSS pixels, including active-draft
 initialization, disabled automatic and unsupported Explicit choices, chapter
 focus/navigation, hostile-safe DOM rendering, and absence of console errors.
 
+Policy-activation qualification proves exact draft and per-library resolution
+revalidation, an atomic old/new authority boundary, both human-commit orderings,
+stale evaluation, historical Ignore replay across detail/browse/shadow,
+Ask/Ignore behavior, exact-current cohort selection, response-loss replay,
+consecutive-activation gates, fixed denominators when new work arrives, reuse
+of eligible evidence, restart/idempotency, and durable typed extraction/provider
+failure, safe stage-specific retry, and acknowledgement. Declared and chunked oversized activation bodies
+fail before parsing. Browser proof directly inspects the selected B
+notebook, active-versus-draft wording, compact shared activity, sticky desktop
+chapters, pinned compact mobile selection, keyboard focus, responsive layout,
+and absence of Automatic, apply, target-write, or media-write authority.
+It also proves bounded processing refresh, polling restart after retry, and
+terminal stop.
+
 Provider retry changes require deterministic proof of the fixed policy:
 accepted and rejected typed transport classes, status and canonical
 `Retry-After` handling, exact per-request and per-observation attempt limits,

@@ -276,6 +276,62 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertEqual(policy_id, read.json()["policy_id"])
                     page.get_by_role("button", name="Preview effects").click()
                     page.get_by_text(re.compile(r"ebooks: date_precision; 1 current unapplied item"), exact=False).wait_for()
+                    self.assertTrue(page.get_by_role("button", name="Activate reviewed draft").is_enabled())
+                    page.get_by_role("button", name="Activate reviewed draft").click()
+                    page.get_by_text("Policy activated:", exact=False).wait_for()
+                    page.get_by_text("Complete with 1 failure", exact=False).wait_for()
+                    transition = page.evaluate(
+                        "async () => (await fetch('/api/v1/metadata-policy/transition')).json()"
+                    )
+                    polling_calls: list[int] = []
+
+                    def transition_poll(route) -> None:
+                        polling_calls.append(1)
+                        processing = len(polling_calls) == 1
+                        route.fulfill(
+                            status=200,
+                            content_type="application/json",
+                            body=json.dumps(
+                                {
+                                    **transition,
+                                    "state": "processing" if processing else "completed",
+                                    "completed": 0 if processing else transition["total"],
+                                    "failed": 0,
+                                }
+                            ),
+                        )
+
+                    page.route(
+                        "**/api/v1/metadata-policy/transition", transition_poll
+                    )
+                    page.route(
+                        "**/api/v1/metadata-policy/transitions/*/retry",
+                        lambda route: route.fulfill(
+                            status=200,
+                            content_type="application/json",
+                            body=json.dumps(
+                                {
+                                    **transition,
+                                    "state": "processing",
+                                    "completed": 0,
+                                    "failed": 0,
+                                }
+                            ),
+                        ),
+                    )
+                    page.get_by_role("button", name="Retry").click()
+                    page.get_by_text("Applying updated policy: 0/1").wait_for()
+                    page.get_by_text("Complete: 1/1").wait_for(timeout=6_000)
+                    self.assertEqual(2, len(polling_calls))
+                    page.wait_for_timeout(1_750)
+                    self.assertEqual(2, len(polling_calls))
+                    library = page.evaluate(
+                        "async () => { const response = await fetch('/api/v1/library?limit=10'); "
+                        "return {status: response.status, body: await response.json()}; }"
+                    )
+                    self.assertEqual(200, library["status"])
+                    self.assertEqual(0, library["body"]["counts"]["all"])
+                    self.assertEqual([], library["body"]["items"])
                     self.assertNotIn("<hostile draft>", page.locator("#policy-status").inner_html())
                     page.set_viewport_size({"width": 1440, "height": 900})
                     self.assertEqual("sticky", page.locator(".policy-chapters").evaluate("node => getComputedStyle(node).position"))

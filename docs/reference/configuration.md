@@ -91,6 +91,12 @@ me or Ignore. The application never rewrites this configuration. `automatic`
 is accepted as stated intent but remains unavailable until a separately
 qualified policy can consume it; `explicit` is always `unsupported`.
 
+Activation resolves every configured library override against the exact
+immutable draft and persists that canonical resolved document with the new
+generation. Proposal evaluation replays it, so a later configuration edit
+cannot silently reinterpret an already active generation; another explicit
+activation establishes any new resolution.
+
 An ebook library requires a named read-only mount. Audiobook libraries may
 coexist and use `mount: null`, but `metadata-report` rejects their items before
 parser/provider/publication activity.

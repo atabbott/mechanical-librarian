@@ -116,12 +116,26 @@ invalid sessions return `401`, CSRF mismatches return `403`, and persistence
 outages return `503`. Logout clears the cookie only after revocation succeeds.
 The Policy notebook uses this same authenticated boundary. It initializes a
 separate draft from the read-only built-in active policy; validate, immutable
-create, read, and preview use deterministic versioned responses. Preview lists
-the resolved per-library category delta and current unapplied count but has no
-activation, successor, decision, queue, apply, target, or media-write effect.
-Automatic choices remain visibly unavailable until qualified and Explicit is
-unsupported. Its policy-only script is served separately from the shared
-Library and Attention interaction bundle.
+create, read, and preview use deterministic versioned responses. After exact
+preview, the owner may activate that immutable draft. One transaction persists
+the exact resolved per-library documents, retires every current unapplied
+old-policy pointer, fixes the transition total, and changes the active
+generation. Successors return progressively through the existing pipeline from
+eligible persisted evidence. Ask retains human work; Ignore removes that
+category from actionable attention with a typed policy result. Automatic stays
+unavailable until qualified and Explicit is unsupported.
+
+The compact transition status is server-authoritative and survives restart.
+`completed_with_failures` retains typed diagnostics and explicit retry;
+acknowledgement dismisses only that transition notification. New work uses the
+current policy immediately without changing the fixed cutover total. Cutover
+adds no provider reacquisition, second queue, decision transfer, automatic
+authority, apply plan, target write, or media write. The policy-only script is
+served separately from the shared Library and Attention interaction bundle.
+While processing, the notebook refreshes this compact status at a bounded
+interval; retry restarts polling, while terminal or acknowledged state stops it.
+Another activation cannot overlap processing or unacknowledged failed
+completion. An exact response-loss retry returns the original transition.
 Authenticated `/library` provides bounded attention-first, all, and
 no-attention-needed lenses; `/attention` contains only exact unresolved/manual
 fields and links to the exact field on detail. Both support bounded search,

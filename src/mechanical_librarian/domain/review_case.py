@@ -194,10 +194,10 @@ class ReviewTransition:
         if (
             type(self.checkpoint) is not int
             or self.checkpoint < 1
-            or self.actor not in {"review-admission-v1", "review-preparation-v1"}
+            or self.actor not in {"review-admission-v1", "review-preparation-v1", "policy-activation-v1"}
             or self.kind not in _TRANSITION_KIND
             or self.reason not in {
-                "actionable", "nonactionable", "absent", "ineligible"
+                "actionable", "nonactionable", "absent", "ineligible", "policy_changed"
             }
             or type(self.proposal_set_id) is not str
             or _PROPOSAL_SET_ID.fullmatch(self.proposal_set_id) is None
@@ -238,6 +238,13 @@ class ReviewTransition:
                 self.actor == "review-preparation-v1"
                 and (
                     self.reason != "ineligible"
+                    or self.from_review_case_id is None
+                )
+            )
+            or (
+                self.actor == "policy-activation-v1"
+                and (
+                    self.reason != "policy_changed"
                     or self.from_review_case_id is None
                 )
             )
