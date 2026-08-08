@@ -927,9 +927,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 repository = open_repository(Path(temporary) / "reports.sqlite")
                 case_id = _case(repository)
                 repository.set_automatic_safety_state(safety, 1)
-                repository._record_automatic_outcomes(
-                    _synthetic_automatic_tuple(repository, case_id, "title_layout"), 2
-                )
+                repository.persist_shadow_outcome(case_id, 2)
                 self.assertEqual((0,), repository._connection.execute(
                     "SELECT COUNT(*) FROM automatic_decisions"
                 ).fetchone())

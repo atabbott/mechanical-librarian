@@ -765,8 +765,8 @@ class ReviewWebTests(unittest.TestCase):
                 "review_case_id": self.case.review_case_id,
                 "proposal_id": self.case.proposals[0]["proposal_id"],
                 "destination": "title",
-                "outcome": "keep_current",
-                "candidate_id": None,
+                "outcome": "candidate",
+                "candidate_id": self.case.proposals[0]["result"]["alternatives"][0]["alternative_id"],
                 "occurred_at": 7,
                 "target_fingerprint": self.case.target_fingerprint,
                 "report_id": "report_" + "b" * 64,
@@ -791,10 +791,15 @@ class ReviewWebTests(unittest.TestCase):
             set(field["automatic_decision"]),
         )
         self.assertNotIn("actor", field["automatic_decision"])
-        self.assertEqual("keep_current", field["automatic_decision"]["outcome"])
-        self.assertIsNone(field["automatic_decision"]["candidate_id"])
-        self.assertIsNone(field["automatic_decision"]["selected_value"])
+        self.assertEqual("candidate", field["automatic_decision"]["outcome"])
+        self.assertEqual(self.case.proposals[0]["result"]["alternatives"][0]["alternative_id"], field["automatic_decision"]["candidate_id"])
+        self.assertEqual(self.case.proposals[0]["result"]["alternatives"][0]["value"], field["automatic_decision"]["selected_value"])
         self.assertNotIn("qualification_manifest_sha256", field["automatic_decision"])
+        malformed = json.loads(self.repository.decisions["title"])
+        malformed["candidate_id"] = "alternative_" + "f" * 64
+        self.repository.decisions["title"] = json.dumps(malformed, separators=(",", ":"), sort_keys=True)
+        self.assertEqual(404, self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}").status_code)
+        self.assertIn("automaticCandidate", self.client.get("/assets/review.js").text)
 
     def test_automatic_safety_bodies_are_closed_before_control_access(self) -> None:
         login = self._login()

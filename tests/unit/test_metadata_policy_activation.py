@@ -184,6 +184,19 @@ class MetadataPolicyActivationTests(unittest.TestCase):
             notebook.activate(profile.policy_id, MetadataPolicyProfile.builtin().policy_id, 2)
         repository.close()
 
+    def test_initial_resolution_binding_rejects_an_unqualified_automatic_override(self) -> None:
+        repository = open_repository(self.path)
+        resolved = resolve_policy(
+            MetadataPolicyProfile.builtin(), "ebooks",
+            {"options": {"publisher_preference": "imprint"}, "destinations": {}},
+        )
+        with self.assertRaisesRegex(MetadataReportError, "unqualified"):
+            repository.bind_initial_metadata_policy_resolution(resolved.canonical_json)
+        self.assertEqual((0,), repository._connection.execute(
+            "SELECT COUNT(*) FROM metadata_policy_resolutions"
+        ).fetchone())
+        repository.close()
+
     def _current_case_with_completed_work(self, path: Path | None = None):
         repository = open_repository(self.path if path is None else path)
         report = _report()

@@ -349,12 +349,22 @@ _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL = (
     "AND json_extract(manual_result.value,'$.reasons[0]')="
     "'no_safe_bibliographic_combination')"
 )
+_AUTOMATIC_SAFETY_ATTENTION_SQL = (
+    "EXISTS (SELECT 1 FROM shadow_decision_outcomes shadow,"
+    " json_each(shadow.document,'$.outcomes') outcome,automatic_safety_state safety "
+    "WHERE shadow.review_case_id=rc.review_case_id "
+    "AND json_extract(outcome.value,'$.destination')=json_extract(result.value,'$.destination') "
+    "AND json_extract(outcome.value,'$.policy_destination')='automatic' AND ("
+    "safety.paused=1 OR safety.global_suspension IS NOT NULL OR EXISTS("
+    "SELECT 1 FROM json_each(safety.category_suspensions_document) category "
+    "WHERE json_extract(category.value,'$[0]')=json_extract(outcome.value,'$.policy_category'))))"
+)
 _REVIEW_FIELD_ATTENTION_SQL = (
     "(json_extract(result.value,'$.outcome')='unresolved_choice' "
     "OR (json_extract(result.value,'$.destination') "
     "IN ('title','subtitle','series') AND "
     + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
-    + ")) AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
+    + ") OR " + _AUTOMATIC_SAFETY_ATTENTION_SQL + ") AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
     "AND decision.destination=json_extract(result.value,'$.destination')) "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
@@ -2393,6 +2403,7 @@ class SQLiteMetadataReportRepository:
                     if history_limit is None
                     else self.get_review_case_history(review_case_id, history_limit)
                 ),
+                automatic_attention_destinations=self._automatic_attention_destinations(review_case_id),
             )
         return snapshot
 
@@ -2414,6 +2425,7 @@ class SQLiteMetadataReportRepository:
                     self.get_review_case_decisions(
                         ReviewCase.from_json(case_document).review_case_id
                     ),
+                    self._automatic_attention_destinations(ReviewCase.from_json(case_document).review_case_id),
                 )
                 for case_document, report_document in rows
             )
@@ -2424,6 +2436,18 @@ class SQLiteMetadataReportRepository:
                 attention_total=attention_total,
             )
         return snapshot
+
+    def _automatic_attention_destinations(self, review_case_id: str) -> tuple[str, ...]:
+        rows = self._connection.execute(
+            "SELECT DISTINCT json_extract(outcome.value,'$.destination') FROM shadow_decision_outcomes shadow, "
+            "json_each(shadow.document,'$.outcomes') outcome, automatic_safety_state safety "
+            "WHERE shadow.review_case_id=? AND json_extract(outcome.value,'$.policy_destination')='automatic' AND ("
+            "safety.paused=1 OR safety.global_suspension IS NOT NULL OR EXISTS(SELECT 1 FROM json_each(safety.category_suspensions_document) category WHERE json_extract(category.value,'$[0]')=json_extract(outcome.value,'$.policy_category'))) ORDER BY 1",
+            (review_case_id,),
+        ).fetchall()
+        if any(type(row[0]) is not str for row in rows):
+            raise MetadataReportError("review attention is unavailable")
+        return tuple(row[0] for row in rows)
 
     def read_review_attention(
         self, search: str | None, limit: int, offset: int
@@ -3322,6 +3346,13 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError(
                     "active metadata policy resolution is unavailable"
                 )
+            requested = {
+                f"{category}:{dict(resolved.options)[category]}"
+                for category, destination in resolved.destinations
+                if destination == "automatic"
+            }
+            if state[0] == 1 and state[1] == profile.policy_id and requested and not requested.issubset(QUALIFIED_POLICY_OPTIONS):
+                raise MetadataReportError("active metadata policy resolution is unqualified")
             self._connection.execute(
                 "INSERT OR IGNORE INTO metadata_policy_resolutions("
                 "generation,library_name,resolved_policy_id,document) VALUES(1,?,?,?)",
