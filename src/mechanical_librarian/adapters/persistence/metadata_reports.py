@@ -2137,8 +2137,8 @@ class SQLiteMetadataReportRepository:
                 return {"results": [], "state": "not_requested"}
             request_id, request_document, kind, result_document = row
             if kind == "result":
-                report = self._source_report_for_review_case(review_case_id)
-                request = ShadowReviewRequest.from_json(request_document, report)
+                report, proposal = self._source_pair_for_review_case(review_case_id)
+                request = ShadowReviewRequest.from_json(request_document, report, proposal)
                 result = ShadowReviewResult.from_json(result_document, request)
                 if result.review_request_id != request_id:
                     raise MetadataReportError("review model advice is invalid")
@@ -2813,10 +2813,8 @@ class SQLiteMetadataReportRepository:
                 or type(raw.get("review_case_id")) is not str
             ):
                 raise ShadowReviewValueError("shadow-review request is invalid")
-            report = self._source_report_for_review_case(
-                raw["review_case_id"]
-            )
-            return ShadowReviewRequest.from_json(serialized, report)
+            report, proposal = self._source_pair_for_review_case(raw["review_case_id"])
+            return ShadowReviewRequest.from_json(serialized, report, proposal)
         except MetadataReportError:
             raise
         except (
