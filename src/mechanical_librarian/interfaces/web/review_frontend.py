@@ -128,11 +128,12 @@ def policy_html(csrf_token: str) -> str:
     <p class="lede">The built-in policy is active. Draft previews are read-only: they do not alter evidence, proposals, the queue, or your library.</p>
     <div class="policy-notebook" aria-label="Policy notebook">
       <nav class="policy-chapters" aria-label="Policy chapters">
-        <a href="#identity">Identity</a><a href="#bibliography">Bibliography</a><a href="#descriptions">Descriptions</a><a href="#availability">Availability</a>
+        <label class="visually-hidden" for="policy-chapter-select">Policy chapter</label><select id="policy-chapter-select" class="policy-chapter-select"><option value="identity">Identity</option><option value="bibliography">Draft</option><option value="descriptions">Effects</option><option value="availability">Availability</option></select>
+        <a href="#identity">Identity</a><a href="#bibliography">Draft</a><a href="#descriptions">Effects</a><a href="#availability">Availability</a>
       </nav>
-      <section id="identity" class="policy-card"><p class="eyebrow">Active · built-in</p><h2>Calm, conservative defaults</h2><p>Title, date, contributors, language, publisher, identifiers, genres, tags, description, cover order, and Explicit use named options only.</p></section>
-      <section id="bibliography" class="policy-card"><h2>Draft before activation</h2><p>A draft is immutable and versioned. It can be validated and previewed, but cannot become active in this view.</p></section>
-      <section id="descriptions" class="policy-card"><h2>Per-library effects</h2><p>Configured sparse overrides are resolved with the global draft. Preview names every affected category and current unapplied count.</p></section>
+      <section id="identity" class="policy-card"><p class="eyebrow">Active · built-in</p><h2>Calm, conservative defaults</h2><div id="policy-active" aria-live="polite"><p>Loading active policy…</p></div></section>
+      <section id="bibliography" class="policy-card"><h2>Draft before activation</h2><p>A draft is immutable and versioned. It can be validated and previewed, but cannot become active in this view.</p><form id="policy-draft"><label for="policy-name">Draft name</label><input id="policy-name" maxlength="80" required value="Policy draft"><div id="policy-fields"></div><div class="policy-actions"><button class="secondary-button" type="submit" data-action="validate">Validate</button><button class="primary-button" type="submit" data-action="create">Create immutable draft</button><button class="secondary-button" type="submit" data-action="preview">Preview effects</button></div><p id="policy-status" role="status"></p></form></section>
+      <section id="descriptions" class="policy-card"><h2>Per-library effects</h2><p>Configured sparse overrides are resolved with the global draft. Preview names every affected category and current unapplied count.</p><div id="policy-preview" aria-live="polite"></div></section>
       <section id="availability" class="policy-card"><h2>Qualification availability</h2><p>Automatic is unavailable until qualified. Ask me and Ignore remain manual-only. Explicit is unsupported.</p></section>
     </div>
   </section>
@@ -366,6 +367,13 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .policy-chapters a:focus-visible, .policy-chapters a:hover { background: var(--surface-strong); color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
 .policy-card { margin-bottom: 12px; padding: clamp(18px, 3vw, 30px); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
 .policy-card h2 { margin-top: 0; }
+.policy-card input, .policy-card select { width: 100%; padding: 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface-strong); color: var(--ink); }
+.policy-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }
+.policy-field { padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); }
+.policy-field label { display: block; margin-bottom: 4px; font-size: .72rem; font-weight: 800; }
+.policy-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.policy-actions .primary-button { width: auto; padding: 0 14px; }
+.policy-chapter-select { display: none; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
@@ -394,6 +402,10 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
   .workspace-navigation-inner { min-height: 54px; padding: 6px 10px; }
   .workspace-tab { min-height: 40px; padding: 0 10px; font-size: .64rem; }
   .workspace-context { display: none; }
+  .policy-chapters { display: block; padding: 0; border: 0; background: transparent; }
+  .policy-chapters a { display: none; }
+  .policy-chapter-select { display: block; min-height: 44px; }
+  .policy-fields { grid-template-columns: 1fr; }
   .prototype-shell { padding: 14px 10px 80px; }
   .page-heading { grid-template-columns: 1fr; }
   .count-cluster { width: 100%; }
@@ -421,6 +433,7 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
   .search-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
   .search-form label { min-width: 0; }
 }
+
 """
 
 
@@ -913,4 +926,18 @@ if (root) {
     const box = element("section", null, "error-state"); const alert = element("p", "The exact current case could not be loaded. Return to the library and reopen the current case."); alert.setAttribute("role", "alert"); const link = element("a", "Return to library", "recovery"); link.href = "/library"; box.append(element("p", "Exact-current protection", "eyebrow"), element("h1", "Case unavailable"), alert, link); root.replaceChildren(box); root.focus();
   });
 }
+
+(() => {
+  const form = document.querySelector("#policy-draft");
+  if (!form) return;
+  const csrf = document.body.dataset.csrfToken, fields = document.querySelector("#policy-fields"), status = document.querySelector("#policy-status"), preview = document.querySelector("#policy-preview");
+  const catalogue = {title_layout:["preserve","title_and_subtitle"],date_precision:["year","full_date"],language_rendering:["preserve","display_name"],contributor_names:["preserve","canonical"],publisher_preference:["publisher","imprint"],genres:["preserve","catalogue"],tags:["preserve","catalogue"],description_fill:["preserve","fill_when_empty"],isbn_form:["preserve","isbn13"],cover_order:["fixed_source_order"],asin:["preserve","canonical_asin"],explicit:["unsupported"]};
+  const node = (tag, text) => { const value=document.createElement(tag); value.textContent=text; return value; };
+  for (const [name, values] of Object.entries(catalogue)) { const row=document.createElement("div"), option=document.createElement("select"), destination=document.createElement("select"); row.className="policy-field"; row.append(node("label",name.replaceAll("_"," "))); option.name=`option-${name}`; values.forEach(value=>option.append(new Option(value,value))); destination.name=`destination-${name}`; (name === "explicit" ? ["unsupported"] : ["ask","ignore","automatic"]).forEach(value=>{ const choice=new Option(value === "ask" ? "Ask me" : value === "ignore" ? "Ignore" : value === "automatic" ? "Automatic (unqualified)" : "Explicit unsupported",value); choice.disabled=value === "automatic"; destination.append(choice); }); row.append(option,destination); fields.append(row); }
+  const data = () => ({name:document.querySelector("#policy-name").value,options:Object.fromEntries(Object.keys(catalogue).map(key=>[key,form.elements[`option-${key}`].value])),destinations:Object.fromEntries(Object.keys(catalogue).map(key=>[key,form.elements[`destination-${key}`].value]))});
+  const call = async (url, method, body) => { const response=await fetch(url,{method,headers:{"content-type":"application/json","x-csrf-token":csrf},body:body && JSON.stringify(body)}); if(!response.ok) throw Error(); return response.json(); };
+  call("/api/v1/metadata-policy/state","GET").then(value=>document.querySelector("#policy-active").replaceChildren(node("p",`${value.profile.name} is active and read-only.`))).catch(()=>{});
+  form.addEventListener("submit", async event=>{event.preventDefault(); try { const action=event.submitter.dataset.action, value=await call(action === "create" ? "/api/v1/metadata-policy/drafts" : action === "preview" ? "/api/v1/metadata-policy/preview" : "/api/v1/metadata-policy/validate","POST",data()); if(action === "preview") preview.replaceChildren(...(value.libraries.length ? value.libraries.map(item=>node("p",`${item.library}: ${item.affected_categories.join(", ") || "no changed categories"}; ${item.current_unapplied_count} current unapplied item(s).`)) : [node("p","No configured libraries to preview.")])); status.textContent=action === "preview" ? "Read-only preview complete; nothing changed." : action === "create" ? `Immutable draft created: ${value.policy_id}.` : `Valid draft: ${value.policy_id}.`; } catch { status.textContent="The draft could not be processed. Nothing changed."; }});
+  document.querySelector("#policy-chapter-select")?.addEventListener("change", event=>document.querySelector(`#${event.target.value}`)?.scrollIntoView({block:"start"}));
+})();
 """

@@ -2423,6 +2423,22 @@ class SQLiteMetadataReportRepository:
         except (MetadataPolicyError, ValueError, TypeError, sqlite3.Error) as error:
             raise MetadataReportError("metadata policy draft is unavailable") from error
 
+    def current_unapplied_count(self, library: str) -> int:
+        """Count only current, undecided review cases for one configured library."""
+        if type(library) is not str or not library:
+            raise MetadataReportError("policy preview is unavailable")
+        try:
+            row = self._connection.execute(
+                "SELECT count(*) " + _CURRENT_REVIEW_FROM_SQL +
+                " WHERE c.library_name=? AND NOT EXISTS (SELECT 1 FROM human_decisions d WHERE d.review_case_id=rc.review_case_id)",
+                (library,),
+            ).fetchone()
+            if row is None or type(row[0]) is not int or row[0] < 0:
+                raise MetadataReportError("policy preview is unavailable")
+            return row[0]
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            raise MetadataReportError("policy preview is unavailable") from error
+
     def create_review_session(
         self,
         session_digest: str,

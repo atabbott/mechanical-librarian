@@ -1367,6 +1367,10 @@ def run_review_server(
                 review,
                 close_repository=True,
                 review_preparation=preparation,
+                policy_libraries=tuple(
+                    (library.name, library.policy_override)
+                    for library in getattr(configuration, "libraries", ())
+                ),
             )
             uvicorn.run(
                 app,

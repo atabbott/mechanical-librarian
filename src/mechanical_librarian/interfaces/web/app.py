@@ -33,6 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.metadata_policy import MetadataPolicyApplicationError, PolicyNotebook
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     CurrentReviewCaseSnapshot,
@@ -290,6 +291,32 @@ class _PolicyDraftResponse(_ClosedModel):
     schema_version: Literal["metadata-policy-profile-v1"] = "metadata-policy-profile-v1"
 
 
+class _PolicyProfile(_ClosedModel):
+    destinations: dict[StrictStr, StrictStr] = Field(max_length=16)
+    name: StrictStr = Field(min_length=1, max_length=80)
+    options: dict[StrictStr, StrictStr] = Field(max_length=16)
+    schema_version: Literal["metadata-policy-profile-v1"]
+
+
+class _PolicyProfileResponse(_ClosedModel):
+    policy_id: str
+    profile: _PolicyProfile
+    schema_version: Literal["metadata-policy-notebook-v1"] = "metadata-policy-notebook-v1"
+
+
+class _PolicyImpactResponse(_ClosedModel):
+    affected_categories: list[str]
+    current_unapplied_count: int
+    library: str
+    resolved_policy_id: str
+
+
+class _PolicyPreviewResponse(_ClosedModel):
+    libraries: list[_PolicyImpactResponse]
+    policy_id: str
+    schema_version: Literal["metadata-policy-preview-v1"] = "metadata-policy-preview-v1"
+
+
 class _BodyLimitMiddleware:
     def __init__(
         self,
@@ -310,7 +337,7 @@ class _BodyLimitMiddleware:
                 path,
             )
         )
-        is_policy_draft = path == "/api/v1/metadata-policy/drafts"
+        is_policy_draft = path in {"/api/v1/metadata-policy/drafts", "/api/v1/metadata-policy/validate", "/api/v1/metadata-policy/preview"}
         if scope["type"] != "http" or not (is_login or is_decision or is_policy_draft):
             await self._app(scope, receive, send)
             return
@@ -372,6 +399,7 @@ def create_review_app(
     clock: Callable[[], int] = lambda: int(time.time()),
     close_repository: bool = False,
     review_preparation: ReviewPreparationSupervisor | None = None,
+    policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
 ) -> FastAPI:
     serialized_repository = _SerializedReviewRepository(repository)
     verifier = _owner_password_verifier(Path(configuration.owner_password_hash_file))
@@ -384,6 +412,8 @@ def create_review_app(
     cases = InspectCurrentReviewCase(serialized_repository)
     decisions = RecordHumanDecision(serialized_repository, clock)
     browse = BrowseReviewLibrary(serialized_repository)
+    overrides = {name: value for name, value in policy_libraries if value is not None}
+    notebook = PolicyNotebook(serialized_repository, tuple(name for name, _ in policy_libraries), overrides)
     origin = urlsplit(configuration.canonical_origin)
 
     @asynccontextmanager
@@ -528,13 +558,53 @@ def create_review_app(
     ) -> _PolicyDraftResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            profile = MetadataPolicyProfile.create(payload.name, payload.options, payload.destinations)
-            policy_id = serialized_repository.create_metadata_policy_draft(profile.canonical_json)
-        except (MetadataPolicyError, ReviewWebError):
+            profile = notebook.create(payload.name, payload.options, payload.destinations)
+            policy_id = profile.policy_id
+        except (MetadataPolicyError, MetadataPolicyApplicationError, ReviewWebError):
             raise HTTPException(422, detail={"code": "invalid"}) from None
         except Exception:
             raise HTTPException(503, detail={"code": "persistence"}) from None
         return _PolicyDraftResponse(policy_id=policy_id)
+
+    @app.get("/api/v1/metadata-policy/state", response_model=_PolicyProfileResponse, responses={status: {"model": _ErrorResponse} for status in (401, 503)})
+    def metadata_policy_state(ml_session: str = Depends(authenticated_session_cookie)) -> _PolicyProfileResponse:
+        _require_session(sessions, ml_session)
+        profile = notebook.active()
+        return _PolicyProfileResponse(
+            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data())
+        )
+
+    @app.post("/api/v1/metadata-policy/validate", response_model=_PolicyProfileResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422)})
+    def validate_metadata_policy(payload: _PolicyDraftRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyProfileResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            profile = MetadataPolicyProfile.create(payload.name, payload.options, payload.destinations)
+        except MetadataPolicyError:
+            raise HTTPException(422, detail={"code": "invalid"}) from None
+        return _PolicyProfileResponse(
+            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data())
+        )
+
+    @app.get("/api/v1/metadata-policy/drafts/{policy_id}", response_model=_PolicyProfileResponse, responses={status: {"model": _ErrorResponse} for status in (401, 404, 422, 503)})
+    def get_metadata_policy_draft(policy_id: str, ml_session: str = Depends(authenticated_session_cookie)) -> _PolicyProfileResponse:
+        _require_session(sessions, ml_session)
+        try:
+            profile = notebook.read(policy_id)
+        except MetadataPolicyApplicationError:
+            raise HTTPException(404, detail={"code": "unavailable"}) from None
+        return _PolicyProfileResponse(
+            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data())
+        )
+
+    @app.post("/api/v1/metadata-policy/preview", response_model=_PolicyPreviewResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
+    def preview_metadata_policy(payload: _PolicyDraftRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyPreviewResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            profile = MetadataPolicyProfile.create(payload.name, payload.options, payload.destinations)
+            preview = notebook.preview(profile)
+        except (MetadataPolicyError, MetadataPolicyApplicationError):
+            raise HTTPException(422, detail={"code": "invalid"}) from None
+        return _PolicyPreviewResponse(policy_id=profile.policy_id, libraries=[_PolicyImpactResponse(affected_categories=list(item.affected_categories), current_unapplied_count=item.current_unapplied_count, library=item.library, resolved_policy_id=item.resolved_policy_id) for item in preview.libraries])
 
     @app.get(
         "/api/v1/review-cases/{review_case_id}",
@@ -1032,6 +1102,10 @@ class _SerializedReviewRepository:
     def get_metadata_policy_draft(self, policy_id: str) -> str:
         with self._lock:
             return self._repository.get_metadata_policy_draft(policy_id)
+
+    def current_unapplied_count(self, library: str) -> int:
+        with self._lock:
+            return self._repository.current_unapplied_count(library)
 
 
 def _request_matches_origin(request: Request, configuration: ReviewWebConfiguration) -> bool:
