@@ -256,12 +256,50 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                 _capture_errors(page, errors)
                 with _server(database=database, hash_path=hash_path, certificate=certificate, key=key, port=port, report=_manual_report(), policy_libraries=(("ebooks", None),)) as (origin, _):
                     _login(page, origin)
-                    page.goto(f"{origin}/policy")
-                    page.get_by_role("heading", name="Choose how prepared metadata reaches you").wait_for()
+                    response = page.goto(f"{origin}/policy")
+                    assert response is not None
+                    self.assertEqual(200, response.status)
+                    self.assertEqual(f"{origin}/policy", page.url)
+                    policy_heading = page.locator("#policy-title")
+                    self.assertEqual(
+                        1,
+                        policy_heading.count(),
+                        f"title={page.title()!r}; body={page.locator('body').inner_text()[:240]!r}",
+                    )
+                    policy_heading.wait_for()
                     self.assertEqual("title_and_subtitle", page.locator('select[name="option-title_layout"]').input_value())
                     self.assertEqual("ask", page.locator('select[name="destination-tags"]').input_value())
                     self.assertTrue(page.locator('select[name="destination-tags"] option[value="automatic"]').is_disabled())
                     self.assertEqual("unsupported", page.locator('select[name="destination-explicit"]').input_value())
+                    page.get_by_text("Human review is active.", exact=False).wait_for()
+                    before_preview = page.request.get(
+                        f"{origin}/api/v1/library?lens=all&limit=10"
+                    ).json()
+                    page.get_by_role("button", name="Enter Preview").click()
+                    page.get_by_text("Preview is on.", exact=False).wait_for()
+                    automatic = page.locator(
+                        'select[name="destination-title_layout"] option[value="automatic"]'
+                    )
+                    self.assertFalse(automatic.is_disabled())
+                    self.assertIn("non-authoritative", automatic.inner_text())
+                    page.locator(
+                        'select[name="destination-title_layout"]'
+                    ).select_option("automatic")
+                    self.assertTrue(
+                        page.get_by_role("button", name="Enter Preview").is_disabled()
+                    )
+                    after_preview = page.request.get(
+                        f"{origin}/api/v1/library?lens=all&limit=10"
+                    ).json()
+                    self.assertEqual(before_preview, after_preview)
+                    page.get_by_role("button", name="Preview leaving").click()
+                    page.get_by_text(
+                        "Leaving Preview cannot be confirmed", exact=False
+                    ).wait_for()
+                    self.assertEqual(
+                        0,
+                        page.get_by_role("button", name=re.compile("confirm", re.I)).count(),
+                    )
                     stale_rotation = page.request.get(f"{origin}/library")
                     self.assertEqual(200, stale_rotation.status)
                     page.locator("#policy-name").fill("<hostile draft>")
@@ -275,10 +313,21 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertEqual(200, read.status)
                     self.assertEqual(policy_id, read.json()["policy_id"])
                     page.get_by_role("button", name="Preview effects").click()
-                    page.get_by_text(re.compile(r"ebooks: date_precision; 1 current unapplied item"), exact=False).wait_for()
+                    preview_line = page.locator("#policy-preview p")
+                    preview_line.wait_for()
+                    self.assertRegex(
+                        preview_line.inner_text(),
+                        r"^ebooks: (?:date_precision, title_layout|title_layout, date_precision); 1 current unapplied item\(s\)\.$",
+                    )
                     self.assertTrue(page.get_by_role("button", name="Activate reviewed draft").is_enabled())
                     page.get_by_role("button", name="Activate reviewed draft").click()
                     page.get_by_text("Policy activated:", exact=False).wait_for()
+                    self.assertEqual(
+                        "automatic",
+                        page.request.get(
+                            f"{origin}/api/v1/metadata-policy/state"
+                        ).json()["profile"]["destinations"]["title_layout"],
+                    )
                     page.get_by_text("Complete with 1 failure", exact=False).wait_for()
                     transition = page.evaluate(
                         "async () => (await fetch('/api/v1/metadata-policy/transition')).json()"
@@ -345,6 +394,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertEqual("Effects", page.locator("#policy-chapter-select").input_value() and page.locator("#policy-chapter-select option:checked").inner_text())
                     page.set_viewport_size({"width": 390, "height": 844})
                     self.assertEqual("sticky", page.locator(".policy-chapters").evaluate("node => getComputedStyle(node).position"))
+                    self.assertEqual("block", page.locator("#policy-chapter-select").evaluate("node => getComputedStyle(node).display"))
                     self.assertLessEqual(page.locator(".policy-content").evaluate("node => node.scrollWidth"), 390)
                     self.assertLessEqual(page.locator("body").evaluate("node => node.scrollWidth"), 390)
                     page.get_by_label("Policy chapter", exact=True).select_option("availability")
@@ -356,6 +406,73 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertEqual([], errors)
                     context.close()
                 browser.close()
+
+    def test_policy_preview_renders_persisted_sample_without_stray_text(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.chmod(root, 0o700)
+            hash_path = root / "owner.hash"
+            hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+            os.chmod(hash_path, 0o600)
+            certificate, key = _certificate(root)
+            database = root / "application.sqlite3"
+            repository = open_repository(database)
+            report = _manual_report()
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            case_id = json.loads(repository.admit_review_case(proposal))[
+                "review_case_id"
+            ]
+            repository.enter_shadow_preview(999)
+            repository.persist_shadow_outcome(case_id, 1_000)
+            repository.close()
+            port = _unused_port()
+            errors: list[str] = []
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                context = browser.new_context(ignore_https_errors=True)
+                page = context.new_page()
+                _capture_errors(page, errors)
+                with _server(
+                    database=database,
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    policy_libraries=(("ebooks", None),),
+                ) as (origin, _):
+                    _login(page, origin)
+                    page.goto(f"{origin}/policy")
+                    asset = page.request.get(f"{origin}/assets/shadow-policy.js")
+                    self.assertEqual(200, asset.status)
+                    sample_response = page.request.get(
+                        f"{origin}/api/v1/metadata-policy/shadow/outcomes?limit=10"
+                    )
+                    self.assertEqual(200, sample_response.status)
+                    self.assertGreater(len(sample_response.json()["items"]), 0)
+                    page.wait_for_timeout(500)
+                    self.assertEqual([], errors)
+                    self.assertIn(
+                        "/assets/shadow-policy.js",
+                        page.eval_on_selector_all(
+                            "script[src]", "nodes => nodes.map(node => node.getAttribute('src'))"
+                        ),
+                    )
+                    self.assertEqual(
+                        "preview",
+                        page.evaluate(
+                            "document.documentElement.dataset.policyPosture || null"
+                        ),
+                    )
+                    sample = page.locator("#shadow-sample article")
+                    sample.first.wait_for()
+                    self.assertGreater(sample.count(), 0)
+                    self.assertIn("Non-authoritative", sample.first.inner_text())
+                    self.assertNotIn("undefined", page.locator("body").inner_text())
+                    self.assertEqual([], errors)
+                    context.close()
+                    browser.close()
 
     def test_preparation_progress_refreshes_library_without_navigation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

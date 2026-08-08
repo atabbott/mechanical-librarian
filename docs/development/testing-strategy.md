@@ -138,6 +138,23 @@ and test artifacts are not packaged or published.
 
 The suite covers:
 
+- metadata-policy Preview default/entry and exact canonical replay; closed
+  candidate, keep-current, ignore, manual, abstention, conflict, and unsupported
+  outcomes; exact case/report/proposal/target/policy/rule/catalogue/evidence/
+  qualification identity binding; deterministic chronology beside human
+  history; whole-read failure on malformed persistence; one-MiB limit-50 sample
+  proof with 256 citations and 256 combinations per field; and the hard stale
+  race where the sole old projection row is running and is atomically requeued
+  for the current report without publishing an outcome. The protected browser
+  proves owner/CSRF entry, unchanged Library work, non-confirmable leave impact,
+  the selected B notebook, sticky desktop chapters, visible pinned compact
+  mobile selector, responsive width, and non-authoritative language. The matrix
+  also proves Review rejects Automatic with a stable problem, Preview permits
+  its full supported policy workflow, only Automatic becomes Ask for human
+  admission, default AI packets still exclude ignored proposals, and the F19
+  projection records every one of the seven dispositions. A persisted non-empty
+  browser sample must render without stray `undefined` text or page errors;
+
 - authenticated, CSRF-bound review preparation requests and value-free compact
   progress; persisted request coalescing, exact-schema restart recovery,
   isolated progressive first-refresh catalogue baselines, one-snapshot

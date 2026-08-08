@@ -35,6 +35,33 @@ destinations remain manual. The output is an explicit preview only: it is not
 persisted, is not the default recommendation path, and grants no approval,
 apply, target-write, or media-write authority. See [ADR-0029](../architecture/decisions/0029-provider-independent-shadow-decision-preview.md).
 
+## Background policy Preview
+
+The selected B policy notebook exposes an advanced **Enter Preview** control.
+It is owner authenticated and CSRF protected. Preview does not run the external
+reviewer: as a newly eligible exact-current case reaches the existing
+projection stage, the application evaluates the same fixed provider-independent
+F19 policy and persists one canonical `shadow-outcome-set-v1`. Duplicate and
+restart delivery replay one identity. A stale case, report, proposal, target,
+or policy generation publishes nothing and safely requeues the existing current
+work row.
+
+After entry, Automatic can be selected in the notebook as explicit
+non-authoritative Preview intent. The supported validate, immutable-draft,
+effects-preview, and activation flow retains that intent, while human admission
+treats only Automatic categories as Ask and preserves configured Ask, Ignore,
+and Unsupported behavior. Review posture rejects Automatic intent, and no
+Automatic category is qualified to decide anything.
+
+The notebook shows a compact authenticated sample and case history records a
+separate non-authoritative event. Samples accept a limit from 1 through 50 and
+remain under one MiB at the maximum legal citation/combination cardinality.
+Library and Attention membership remain the human queue. **Preview leaving**
+only reports affected categories and current unapplied counts; this version
+cannot confirm a transition out of Preview. It creates no decision, apply plan,
+target/media/artifact write, provider access, or second scheduler. See
+[ADR-0035](../architecture/decisions/0035-persist-non-authoritative-policy-preview-outcomes.md).
+
 ## Qualification profile
 
 Create an owner-only (`0600`) canonical JSON file matching

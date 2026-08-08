@@ -59,6 +59,19 @@ class MetadataPolicyError(ValueError):
     """A profile or override is malformed or cannot be replayed."""
 
 
+def human_review_destinations(
+    policy: "ResolvedMetadataPolicy",
+) -> dict[str, str]:
+    """Keep Preview automatic intent from changing the supported human queue."""
+    destinations = dict(policy.destinations)
+    if "automatic" not in destinations.values():
+        return destinations
+    return {
+        category: "ask" if destination == "automatic" else destination
+        for category, destination in destinations.items()
+    }
+
+
 def _canonical_document(value: Mapping[str, object]) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 

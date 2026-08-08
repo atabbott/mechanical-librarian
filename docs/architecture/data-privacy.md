@@ -74,6 +74,16 @@ and arbitrary diagnostics. Public inspection aggregates only category, closed
 component/stage, optional retryability/currentness, and count; it omits packets,
 results, process facts, attempt identifiers and ordinals, and legacy digests.
 
+Policy Preview additionally retains append-only canonical deterministic outcome
+sets. They contain only opaque case/report/proposal/target fingerprints,
+policy/profile/generation and fixed rule/catalogue identities, closed
+dispositions, action/candidate identities, and evidence/combination references
+already admitted to the bounded case. They add no raw evidence, title, item,
+path, credential, provider response, model output, human identity, or decision
+text. Authenticated samples request at most 50 records and are truncated at one
+MiB without adding a pagination or export surface. There is no per-outcome
+purge, retention, or selective export command.
+
 The complete application SQLite database—including shadow packets and advice—
 is exposed to whoever can read a backup. Store it and its backups as private
 application state with owner-scoped access and encrypted-at-rest backup

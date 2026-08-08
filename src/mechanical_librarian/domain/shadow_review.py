@@ -584,12 +584,18 @@ class ShadowReviewPacket:
 
     @classmethod
     def create(
-        cls, case: ReviewCase, proposal_set: ProposalSet, report: MetadataReport
+        cls,
+        case: ReviewCase,
+        proposal_set: ProposalSet,
+        report: MetadataReport,
+        *,
+        include_policy_ignored: bool = False,
     ) -> Self:
         if (
             type(case) is not ReviewCase
             or type(proposal_set) is not ProposalSet
             or type(report) is not MetadataReport
+            or type(include_policy_ignored) is not bool
             or (case.proposal_set_id, case.report_id)
             != (proposal_set.proposal_set_id, report.report_id)
             or case.proposal_document != proposal_set.to_json()
@@ -617,14 +623,22 @@ class ShadowReviewPacket:
         for wrapped in case.proposals:
             result = wrapped["result"]
             manual_required = wrapped["manual_required"]
+            preview_ignored = (
+                include_policy_ignored
+                and result["outcome"] == ProposalOutcome.INELIGIBLE.value
+                and result["reasons"] == ["policy_ignored"]
+            )
             if (
-                result["outcome"] not in {
-                    ProposalOutcome.ACCEPTABLE_CHOICE.value,
-                    ProposalOutcome.PROPOSE_CHANGE.value,
-                    ProposalOutcome.UNRESOLVED_CHOICE.value,
-                }
-                and result["destination"] not in constrained_destinations
-                and not manual_required
+                not preview_ignored
+                and (
+                    result["outcome"] not in {
+                        ProposalOutcome.ACCEPTABLE_CHOICE.value,
+                        ProposalOutcome.PROPOSE_CHANGE.value,
+                        ProposalOutcome.UNRESOLVED_CHOICE.value,
+                    }
+                    and result["destination"] not in constrained_destinations
+                    and not manual_required
+                )
             ):
                 continue
             candidates: list[dict[str, object]] = []

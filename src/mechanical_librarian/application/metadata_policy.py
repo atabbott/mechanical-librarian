@@ -7,6 +7,10 @@ import json
 from typing import Protocol
 
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyError, MetadataPolicyProfile, OPTION_CATALOGUE, ResolvedMetadataPolicy, resolve_policy
+from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+
+
+MAX_SHADOW_SAMPLE_RESPONSE_BYTES = 1_048_576
 
 
 class MetadataPolicyApplicationError(RuntimeError):
@@ -84,6 +88,12 @@ class PolicyImpactRepository(Protocol):
 
     def metadata_policy_resolution_for_preview(self, library: str) -> ResolvedMetadataPolicy | None: ...
 
+    def shadow_posture(self) -> str: ...
+
+    def enter_shadow_preview(self, updated_at: int) -> str: ...
+
+    def list_shadow_outcomes(self, limit: int) -> tuple[tuple[str, int], ...]: ...
+
 
 def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], overrides: dict[str, dict[str, object]], repository: PolicyImpactRepository) -> PolicyPreview:
     if type(profile) is not MetadataPolicyProfile or type(libraries) is not tuple or libraries != tuple(sorted(set(libraries))):
@@ -160,9 +170,22 @@ class PolicyNotebook:
         except Exception as error:
             raise MetadataPolicyApplicationError("active policy is unavailable") from error
 
+    def validate(self, profile: MetadataPolicyProfile) -> MetadataPolicyProfile:
+        """Allow Automatic intent only inside the non-authoritative Preview posture."""
+        if type(profile) is not MetadataPolicyProfile:
+            raise MetadataPolicyApplicationError("policy validation is invalid")
+        if (
+            any(destination == "automatic" for _, destination in profile.destinations)
+            and self.shadow_state()["posture"] != "preview"
+        ):
+            raise MetadataPolicyApplicationError("policy automatic unqualified")
+        return profile
+
     def create(self, name: object, options: object, destinations: object) -> MetadataPolicyProfile:
         try:
-            profile = MetadataPolicyProfile.create(name, options, destinations)
+            profile = self.validate(
+                MetadataPolicyProfile.create(name, options, destinations)
+            )
             policy_id = self._repository.create_metadata_policy_draft(profile.canonical_json)
             if policy_id != profile.policy_id:
                 raise MetadataPolicyApplicationError("policy draft is unavailable")
@@ -170,6 +193,10 @@ class PolicyNotebook:
         except MetadataPolicyApplicationError:
             raise
         except Exception as error:
+            if "automatic intent is unqualified" in str(error):
+                raise MetadataPolicyApplicationError(
+                    "policy automatic unqualified"
+                ) from error
             raise MetadataPolicyApplicationError("policy draft is unavailable") from error
 
     def read(self, policy_id: object) -> MetadataPolicyProfile:
@@ -186,7 +213,119 @@ class PolicyNotebook:
             raise MetadataPolicyApplicationError("policy draft is unavailable") from error
 
     def preview(self, profile: MetadataPolicyProfile) -> PolicyPreview:
-        return preview_policy(profile, self._libraries, self._overrides, self._repository)
+        return preview_policy(
+            self.validate(profile),
+            self._libraries,
+            self._overrides,
+            self._repository,
+        )
+
+    def shadow_state(self) -> dict[str, object]:
+        try:
+            posture = (
+                self._repository.shadow_posture()
+                if hasattr(self._repository, "shadow_posture")
+                else "review"
+            )
+            if posture not in {"review", "preview"}:
+                raise ValueError
+            return {
+                "authority": "none",
+                "can_leave_preview": False,
+                "posture": posture,
+                "schema_version": "shadow-posture-v1",
+            }
+        except Exception as error:
+            raise MetadataPolicyApplicationError(
+                "shadow posture is unavailable"
+            ) from error
+
+    def enter_preview(self, updated_at: object) -> dict[str, object]:
+        if type(updated_at) is not int or updated_at < 0:
+            raise MetadataPolicyApplicationError("shadow posture is invalid")
+        try:
+            if self._repository.enter_shadow_preview(updated_at) != "preview":
+                raise ValueError
+            return self.shadow_state()
+        except MetadataPolicyApplicationError:
+            raise
+        except Exception as error:
+            raise MetadataPolicyApplicationError(
+                "shadow posture is unavailable"
+            ) from error
+
+    def preview_leave(self) -> dict[str, object]:
+        """Describe leaving Preview; this increment has no commit method."""
+        active = self.active()
+        impacts = []
+        for library in self._libraries:
+            resolved = resolve_policy(active, library, self._overrides.get(library))
+            impacts.append(
+                {
+                    "affected_categories": sorted(
+                        field
+                        for field, destination in resolved.destinations
+                        if destination == "automatic"
+                    ),
+                    "current_unapplied_count": self._repository.current_unapplied_count(
+                        library
+                    ),
+                    "library": library,
+                }
+            )
+        return {
+            "authority": "none",
+            "can_confirm": False,
+            "confirmation_required": True,
+            "libraries": impacts,
+            "posture": self.shadow_state()["posture"],
+            "requested_posture": "qualified_decision_only_unavailable",
+            "schema_version": "shadow-posture-leave-preview-v1",
+        }
+
+    def shadow_sample(self, limit: object = 20) -> dict[str, object]:
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise MetadataPolicyApplicationError("shadow sample is invalid")
+        try:
+            items: list[dict[str, object]] = []
+            for document, evaluated_at in self._repository.list_shadow_outcomes(
+                limit
+            ):
+                candidate = {
+                    **ShadowOutcomeSet.from_json(document).to_data(),
+                    "evaluated_at": evaluated_at,
+                }
+                bounded = {
+                    "authority": "none",
+                    "items": [*items, candidate],
+                    "next_cursor": None,
+                    "schema_version": "shadow-outcome-sample-v1",
+                }
+                if (
+                    len(
+                        json.dumps(
+                            bounded,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ).encode("utf-8")
+                    )
+                    > MAX_SHADOW_SAMPLE_RESPONSE_BYTES
+                ):
+                    if not items:
+                        raise ValueError
+                    break
+                items.append(candidate)
+            return {
+                "authority": "none",
+                "items": items,
+                "next_cursor": None,
+                "schema_version": "shadow-outcome-sample-v1",
+            }
+        except Exception as error:
+            raise MetadataPolicyApplicationError(
+                "shadow sample is unavailable"
+            ) from error
 
     def activate(
         self,
@@ -201,9 +340,7 @@ class PolicyNotebook:
             or activated_at < 0
         ):
             raise MetadataPolicyApplicationError("policy activation is invalid")
-        profile = self.read(policy_id)
-        if any(value == "automatic" for _, value in profile.destinations):
-            raise MetadataPolicyApplicationError("policy activation is unqualified")
+        profile = self.validate(self.read(policy_id))
         try:
             resolutions = tuple(
                 (
@@ -258,4 +395,4 @@ class PolicyNotebook:
             raise MetadataPolicyApplicationError("policy transition is unavailable") from error
 
 
-__all__ = ["LibraryPolicyImpact", "MetadataPolicyApplicationError", "PolicyActivation", "PolicyImpactRepository", "PolicyNotebook", "PolicyPreview", "PolicyTransition", "ProposalPolicyBinding", "bind_proposal_policy", "preview_policy"]
+__all__ = ["LibraryPolicyImpact", "MAX_SHADOW_SAMPLE_RESPONSE_BYTES", "MetadataPolicyApplicationError", "PolicyActivation", "PolicyImpactRepository", "PolicyNotebook", "PolicyPreview", "PolicyTransition", "ProposalPolicyBinding", "bind_proposal_policy", "preview_policy"]

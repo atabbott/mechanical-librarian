@@ -50,6 +50,28 @@ scope and returns `202` only after the configured-library request is persisted.
 Unknown libraries return `404`; unavailable persistence returns `503`.
 Preparation creates no field decision and has no apply or target-write route.
 
+Metadata-policy Preview adds four owner-authenticated operations:
+
+- `GET /api/v1/metadata-policy/shadow` returns the closed `review | preview`
+  posture and literal authority `none`;
+- CSRF-protected `POST /api/v1/metadata-policy/shadow/enter` accepts no body and
+  enters Preview without changing human work;
+- `GET /api/v1/metadata-policy/shadow/leave-preview` returns per-library impact
+  with `can_confirm: false`; and
+- `GET /api/v1/metadata-policy/shadow/outcomes?limit=1..50` returns a bounded,
+  one-MiB maximum sample of closed identity-rich outcome documents.
+
+While posture is `preview`, the existing policy validate, draft-create,
+preview, and activate operations accept Automatic as non-authoritative intent.
+In `review`, the first three reject it with `422
+policy_automatic_unqualified`; persistence also rechecks posture atomically.
+Automatic remains absent from qualified authority.
+
+There is no leave commit, cursor, automatic-decision, queue, apply, target, or
+write operation. Shadow history events are a separate typed variant from human
+decision events and model advice. Malformed persistence fails the complete
+request with a value-free unavailable response.
+
 The bundled browser obtains a freshly rotated per-page CSRF token from its
 authenticated private detail document, removes it from the DOM at startup, and
 holds it only in page memory. It submits an exact server-presented decision and

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Add an explicit metadata-policy Preview posture that records immutable,
+  non-authoritative F19 outcomes as newly eligible exact-current cases pass the
+  existing background projection stage. Outcomes bind exact policy, rule,
+  catalogue, evidence, candidate, and qualification identities; replay is
+  idempotent, stale work publishes nothing and safely reuses its current
+  pipeline row, and authenticated bounded history/sample views remain separate
+  from human decisions and model advice. Entering Preview leaves Library and
+  Attention work unchanged. Automatic intent can be validated, drafted,
+  previewed, and activated only while the stored posture is Preview; proposal
+  admission treats only those Automatic categories as Ask, preserving existing
+  Ask, Ignore, and Unsupported human behavior. Qualification remains empty and
+  every observed result remains non-authoritative. Leaving is impact-only and cannot be confirmed;
+  no automatic decision, apply, target, media, artifact, or write authority is
+  added. (#478)
+
 - Activate an exact reviewed metadata-policy draft with one atomic generation
   cutover. Current old-policy cases retire before successors progressively
   return through the existing review pipeline; Ask remains manual, Ignore is

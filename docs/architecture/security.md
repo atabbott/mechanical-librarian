@@ -579,3 +579,23 @@ failure preserve database bytes, directory entries, and SQLite sidecars. The
 domain policy can select only an exact compiler action with closed citations
 and combinations; ambiguity and unsupported state abstain to manual. The
 canonical output is operator-visible data, not approval or an apply token.
+
+Policy Preview composes that same provider-independent decision policy into the
+existing persisted projection stage without adding a network client, provider
+call, scheduler, or queue. The owner-session/CSRF command changes only the
+closed `review | preview` posture and always reports authority `none`. Outcome
+publication revalidates exact case, report, proposal, target fingerprint,
+policy generation/resolution, source decision set, catalogue, action, evidence,
+and rule identity in one immediate transaction. Stale work publishes no
+outcome and reuses the current pipeline row. Outcome/history reads validate the
+whole append-only document before returning anything and cap the requested
+sample at 50 and the encoded projection at one MiB. They never construct target
+or apply clients. Leave-Preview is impact-only and has no confirmation command.
+
+Automatic policy intent is accepted only after the authenticated owner enters
+Preview, and both draft persistence and activation recheck that stored posture
+inside their transactions. Human admission substitutes Ask only for Automatic
+categories; it preserves explicit Ask, Ignore, and Unsupported choices. The
+qualified Automatic set is empty and all persisted outcomes declare authority
+`none`. Only the deterministic F19 projection includes exact `policy_ignored`
+proposals; the external-review packet remains unchanged.

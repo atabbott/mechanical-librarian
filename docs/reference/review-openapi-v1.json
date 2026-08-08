@@ -517,6 +517,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/_HistoryDecisionItem"
+                },
+                {
+                  "$ref": "#/components/schemas/_HistoryShadowItem"
                 }
               ]
             },
@@ -550,6 +553,62 @@
           "schema_version"
         ],
         "title": "_HistoryResponse",
+        "type": "object"
+      },
+      "_HistoryShadowItem": {
+        "additionalProperties": false,
+        "properties": {
+          "authority": {
+            "const": "none",
+            "title": "Authority",
+            "type": "string"
+          },
+          "dispositions": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Dispositions",
+            "type": "object"
+          },
+          "kind": {
+            "const": "shadow_preview_recorded",
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "origin": {
+            "const": "policy_preview",
+            "title": "Origin",
+            "type": "string"
+          },
+          "outcome_set_id": {
+            "title": "Outcome Set Id",
+            "type": "string"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "shadow-preview-history-event-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authority",
+          "dispositions",
+          "kind",
+          "occurred_at",
+          "origin",
+          "outcome_set_id",
+          "review_case_id",
+          "schema_version"
+        ],
+        "title": "_HistoryShadowItem",
         "type": "object"
       },
       "_HistoryTransitionItem": {
@@ -1400,6 +1459,380 @@
         "title": "_SessionResponse",
         "type": "object"
       },
+      "_ShadowFieldOutcomeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "title": "Action Id",
+            "type": "string"
+          },
+          "candidate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
+          "citation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Citation Ids",
+            "type": "array"
+          },
+          "combination_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Combination Ids",
+            "type": "array"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "abstention",
+              "candidate",
+              "conflict",
+              "ignore",
+              "keep_current",
+              "manual",
+              "unsupported"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "outcome_id": {
+            "title": "Outcome Id",
+            "type": "string"
+          },
+          "policy_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Category"
+          },
+          "policy_destination": {
+            "enum": [
+              "ask",
+              "automatic",
+              "ignore",
+              "unsupported"
+            ],
+            "title": "Policy Destination",
+            "type": "string"
+          },
+          "policy_option": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Option"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "qualification_candidate_id": {
+            "title": "Qualification Candidate Id",
+            "type": "string"
+          },
+          "reason_code": {
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_id",
+          "candidate_id",
+          "citation_ids",
+          "combination_ids",
+          "destination",
+          "disposition",
+          "outcome_id",
+          "policy_category",
+          "policy_destination",
+          "policy_option",
+          "proposal_id",
+          "qualification_candidate_id",
+          "reason_code",
+          "rule_id"
+        ],
+        "title": "_ShadowFieldOutcomeResponse",
+        "type": "object"
+      },
+      "_ShadowLeaveImpact": {
+        "additionalProperties": false,
+        "properties": {
+          "affected_categories": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Affected Categories",
+            "type": "array"
+          },
+          "current_unapplied_count": {
+            "title": "Current Unapplied Count",
+            "type": "integer"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          }
+        },
+        "required": [
+          "affected_categories",
+          "current_unapplied_count",
+          "library"
+        ],
+        "title": "_ShadowLeaveImpact",
+        "type": "object"
+      },
+      "_ShadowLeaveResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "authority": {
+            "const": "none",
+            "title": "Authority",
+            "type": "string"
+          },
+          "can_confirm": {
+            "const": false,
+            "title": "Can Confirm",
+            "type": "boolean"
+          },
+          "confirmation_required": {
+            "const": true,
+            "title": "Confirmation Required",
+            "type": "boolean"
+          },
+          "libraries": {
+            "items": {
+              "$ref": "#/components/schemas/_ShadowLeaveImpact"
+            },
+            "title": "Libraries",
+            "type": "array"
+          },
+          "posture": {
+            "enum": [
+              "review",
+              "preview"
+            ],
+            "title": "Posture",
+            "type": "string"
+          },
+          "requested_posture": {
+            "const": "qualified_decision_only_unavailable",
+            "title": "Requested Posture",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "shadow-posture-leave-preview-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authority",
+          "can_confirm",
+          "confirmation_required",
+          "libraries",
+          "posture",
+          "requested_posture",
+          "schema_version"
+        ],
+        "title": "_ShadowLeaveResponse",
+        "type": "object"
+      },
+      "_ShadowOutcomeSetResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "authority": {
+            "const": "none",
+            "title": "Authority",
+            "type": "string"
+          },
+          "catalogue_sha256": {
+            "title": "Catalogue Sha256",
+            "type": "string"
+          },
+          "decision_policy_sha256": {
+            "title": "Decision Policy Sha256",
+            "type": "string"
+          },
+          "decision_policy_version": {
+            "title": "Decision Policy Version",
+            "type": "string"
+          },
+          "evaluated_at": {
+            "title": "Evaluated At",
+            "type": "integer"
+          },
+          "outcome_set_id": {
+            "title": "Outcome Set Id",
+            "type": "string"
+          },
+          "outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/_ShadowFieldOutcomeResponse"
+            },
+            "title": "Outcomes",
+            "type": "array"
+          },
+          "policy_generation": {
+            "title": "Policy Generation",
+            "type": "integer"
+          },
+          "policy_profile_id": {
+            "title": "Policy Profile Id",
+            "type": "string"
+          },
+          "posture": {
+            "const": "preview",
+            "title": "Posture",
+            "type": "string"
+          },
+          "proposal_set_id": {
+            "title": "Proposal Set Id",
+            "type": "string"
+          },
+          "report_id": {
+            "title": "Report Id",
+            "type": "string"
+          },
+          "resolved_policy_id": {
+            "title": "Resolved Policy Id",
+            "type": "string"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "shadow-outcome-set-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "source_decision_set_id": {
+            "title": "Source Decision Set Id",
+            "type": "string"
+          },
+          "target_fingerprint": {
+            "title": "Target Fingerprint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authority",
+          "catalogue_sha256",
+          "decision_policy_sha256",
+          "decision_policy_version",
+          "evaluated_at",
+          "outcome_set_id",
+          "outcomes",
+          "policy_generation",
+          "policy_profile_id",
+          "posture",
+          "proposal_set_id",
+          "report_id",
+          "resolved_policy_id",
+          "review_case_id",
+          "schema_version",
+          "source_decision_set_id",
+          "target_fingerprint"
+        ],
+        "title": "_ShadowOutcomeSetResponse",
+        "type": "object"
+      },
+      "_ShadowPostureResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "authority": {
+            "const": "none",
+            "title": "Authority",
+            "type": "string"
+          },
+          "can_leave_preview": {
+            "const": false,
+            "title": "Can Leave Preview",
+            "type": "boolean"
+          },
+          "posture": {
+            "enum": [
+              "review",
+              "preview"
+            ],
+            "title": "Posture",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "shadow-posture-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authority",
+          "can_leave_preview",
+          "posture",
+          "schema_version"
+        ],
+        "title": "_ShadowPostureResponse",
+        "type": "object"
+      },
+      "_ShadowSampleResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "authority": {
+            "const": "none",
+            "title": "Authority",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/_ShadowOutcomeSetResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "title": "Next Cursor",
+            "type": "null"
+          },
+          "schema_version": {
+            "const": "shadow-outcome-sample-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authority",
+          "items",
+          "next_cursor",
+          "schema_version"
+        ],
+        "title": "_ShadowSampleResponse",
+        "type": "object"
+      },
       "_TargetField": {
         "additionalProperties": false,
         "properties": {
@@ -2084,6 +2517,233 @@
         "summary": "Preview Metadata Policy"
       }
     },
+    "/api/v1/metadata-policy/shadow": {
+      "get": {
+        "operationId": "shadow_posture_api_v1_metadata_policy_shadow_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ShadowPostureResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Shadow Posture"
+      }
+    },
+    "/api/v1/metadata-policy/shadow/enter": {
+      "post": {
+        "operationId": "enter_shadow_preview_api_v1_metadata_policy_shadow_enter_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ShadowPostureResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Enter Shadow Preview"
+      }
+    },
+    "/api/v1/metadata-policy/shadow/leave-preview": {
+      "get": {
+        "operationId": "preview_leave_shadow_api_v1_metadata_policy_shadow_leave_preview_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ShadowLeaveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Preview Leave Shadow"
+      }
+    },
+    "/api/v1/metadata-policy/shadow/outcomes": {
+      "get": {
+        "operationId": "shadow_outcome_sample_api_v1_metadata_policy_shadow_outcomes_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ShadowSampleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Shadow Outcome Sample"
+      }
+    },
     "/api/v1/metadata-policy/state": {
       "get": {
         "operationId": "metadata_policy_state_api_v1_metadata_policy_state_get",
@@ -2438,6 +3098,16 @@
               }
             },
             "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "security": [

@@ -993,8 +993,10 @@ def create_review_pipeline(
 
     def project(pipeline_repository, review_case_id: str) -> bool:
         try:
-            pipeline_repository.read_current_review_case(review_case_id)
-            return True
+            outcome = pipeline_repository.persist_shadow_outcome(
+                review_case_id, int(time.time())
+            )
+            return "stale" if outcome == "stale" else "complete"
         except Exception as error:
             raise ReviewPipelineError("projection") from error
 
