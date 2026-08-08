@@ -7,6 +7,7 @@ from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
     MetadataPolicyProfile,
     OPTION_CATALOGUE,
+    ResolvedMetadataPolicy,
     resolve_policy,
 )
 from mechanical_librarian.application.metadata_policy import bind_proposal_policy, preview_policy
@@ -102,6 +103,10 @@ class MetadataPolicyTests(unittest.TestCase):
     def test_proposal_binding_is_exact_and_does_not_change_the_profile(self) -> None:
         profile = MetadataPolicyProfile.builtin()
         resolved = resolve_policy(profile, "library")
+        self.assertEqual(
+            resolved,
+            ResolvedMetadataPolicy.from_data(resolved.to_data()),
+        )
         binding = bind_proposal_policy("proposal_set_" + "a" * 64, resolved)
         self.assertEqual(resolved.resolved_id, binding.resolved_policy_id)
         self.assertEqual(profile, MetadataPolicyProfile.from_data(profile.to_data()))

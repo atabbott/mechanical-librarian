@@ -8,7 +8,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Self
+from typing import Any, Mapping, Self
 
 from mechanical_librarian.domain.cover_evidence import (
     CoverSourceKind,
@@ -216,8 +216,23 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
         }
     ),
     ProposalOutcome.INELIGIBLE: frozenset(
-        {("no_supported_evidence",), ("target_state_unusable",)}
+        {("no_supported_evidence",), ("policy_ignored",), ("target_state_unusable",)}
     ),
+}
+
+_POLICY_DESTINATIONS: dict[str, frozenset[TargetDestination]] = {
+    "title_layout": frozenset({TargetDestination.TITLE, TargetDestination.SUBTITLE}),
+    "date_precision": frozenset({TargetDestination.PUBLISHED_YEAR, TargetDestination.PUBLISHED_DATE}),
+    "language_rendering": frozenset({TargetDestination.LANGUAGE}),
+    "contributor_names": frozenset({TargetDestination.AUTHORS, TargetDestination.NARRATORS}),
+    "publisher_preference": frozenset({TargetDestination.PUBLISHER}),
+    "genres": frozenset({TargetDestination.GENRES}),
+    "tags": frozenset({TargetDestination.TAGS}),
+    "description_fill": frozenset({TargetDestination.DESCRIPTION}),
+    "isbn_form": frozenset({TargetDestination.ISBN}),
+    "cover_order": frozenset({TargetDestination.COVER}),
+    "asin": frozenset({TargetDestination.ASIN}),
+    "explicit": frozenset({TargetDestination.EXPLICIT}),
 }
 
 
@@ -862,10 +877,53 @@ class _Observed:
     date_precision: DatePrecision | None = None
 
 
-def evaluate_report(report: MetadataReport, resolved_policy_id: str | None = None) -> ProposalSet:
+def _ignored_policy_targets(
+    destinations: Mapping[str, str] | None,
+) -> frozenset[TargetDestination]:
+    if destinations is None:
+        return frozenset()
+    if (
+        type(destinations) is not dict
+        or set(destinations) != set(_POLICY_DESTINATIONS)
+        or any(
+            type(value) is not str
+            or value not in {"ask", "ignore", "automatic", "unsupported"}
+            for value in destinations.values()
+        )
+    ):
+        raise ProposalValueError("proposal policy destinations are invalid")
+    return frozenset(
+        destination
+        for field, choice in destinations.items()
+        if choice == "ignore"
+        for destination in _POLICY_DESTINATIONS[field]
+    )
+
+
+def _apply_policy_destination(
+    result: ProposalResult, ignored: frozenset[TargetDestination]
+) -> ProposalResult:
+    if result.destination not in ignored:
+        return result
+    return ProposalResult(
+        result.destination,
+        ProposalOutcome.INELIGIBLE,
+        (),
+        None,
+        ("policy_ignored",),
+        result.dependencies,
+    )
+
+
+def evaluate_report(
+    report: MetadataReport,
+    resolved_policy_id: str | None = None,
+    policy_destinations: Mapping[str, str] | None = None,
+) -> ProposalSet:
     """Evaluate one exact report without I/O, configuration, or provider calls."""
     if type(report) is not MetadataReport:
         raise ProposalValueError("proposal report is invalid")
+    ignored = _ignored_policy_targets(policy_destinations)
     targets = {value.destination: value for value in report.target.fields}
     results: dict[TargetDestination, ProposalResult] = {}
     observed_by_destination: dict[TargetDestination, tuple[_Observed, ...]] = {}
@@ -901,11 +959,14 @@ def evaluate_report(report: MetadataReport, resolved_policy_id: str | None = Non
                 ("identifier_applicability_unresolved",),
                 _dependencies(destination),
             )
-        results[destination] = result
+        results[destination] = _apply_policy_destination(result, ignored)
     publication = _publication_results(report, targets)
-    results.update(publication)
-    results[TargetDestination.COVER] = _cover_result(
-        report, targets[TargetDestination.COVER]
+    results.update(
+        (destination, _apply_policy_destination(result, ignored))
+        for destination, result in publication.items()
+    )
+    results[TargetDestination.COVER] = _apply_policy_destination(
+        _cover_result(report, targets[TargetDestination.COVER]), ignored
     )
     combinations, unresolved = _bibliographic_combinations(
         targets,

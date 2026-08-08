@@ -14,7 +14,7 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalValueError,
     evaluate_report,
 )
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, ResolvedMetadataPolicy, resolve_policy
 
 
 class ProposalSetError(RuntimeError):
@@ -42,11 +42,11 @@ class CreateProposalSet:
         self,
         repository: ProposalSetRepository,
         require_current: Callable[[MetadataReport], bool],
-        resolve_policy_id: Callable[[MetadataReport], str] | None = None,
+        resolve_policy_profile: Callable[[MetadataReport], ResolvedMetadataPolicy | str] | None = None,
     ) -> None:
         self._repository = repository
         self._require_current = require_current
-        self._resolve_policy_id = resolve_policy_id or (
+        self._resolve_policy_profile = resolve_policy_profile or (
             lambda report: resolve_policy(
                 MetadataPolicyProfile.builtin(), report.target.library
             ).resolved_id
@@ -57,7 +57,12 @@ class CreateProposalSet:
             report = MetadataReport.from_json(self._repository.get(report_id))
             if report.report_id != report_id:
                 raise ProposalSetError("proposal report identity disagrees")
-            proposal_set = evaluate_report(report, self._resolve_policy_id(report))
+            policy = self._resolve_policy_profile(report)
+            proposal_set = evaluate_report(
+                report,
+                policy if type(policy) is str else policy.resolved_id,
+                None if type(policy) is str else dict(policy.destinations),
+            )
             if self._require_current(report) is not True:
                 raise ProposalSetError("proposal report is stale")
             persisted = self._repository.publish_proposal(proposal_set)

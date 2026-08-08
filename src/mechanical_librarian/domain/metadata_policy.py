@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import Final, Mapping
 
@@ -51,6 +52,7 @@ DEFAULT_OPTIONS: Final = {
 # Current qualification deliberately has no automatic destination.  This is
 # data rather than a hidden fallback so previews can explain availability.
 QUALIFIED_AUTOMATIC: Final[frozenset[str]] = frozenset()
+_POLICY_ID: Final = re.compile(r"^policy_[0-9a-f]{64}$")
 
 
 class MetadataPolicyError(ValueError):
@@ -150,11 +152,38 @@ class ResolvedMetadataPolicy:
 
     @property
     def resolved_id(self) -> str:
-        payload = _canonical_document(self.to_data())
-        return "resolved_policy_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return "resolved_policy_" + hashlib.sha256(self.canonical_json.encode("utf-8")).hexdigest()
+
+    @property
+    def canonical_json(self) -> str:
+        return _canonical_document(self.to_data())
 
     def to_data(self) -> dict[str, object]:
         return {"destinations": dict(self.destinations), "library": self.library, "options": dict(self.options), "profile_id": self.profile_id, "schema_version": POLICY_SCHEMA_VERSION}
+
+    @classmethod
+    def from_data(cls, value: object) -> "ResolvedMetadataPolicy":
+        if (
+            type(value) is not dict
+            or set(value) != {"destinations", "library", "options", "profile_id", "schema_version"}
+            or value.get("schema_version") != POLICY_SCHEMA_VERSION
+            or type(value.get("profile_id")) is not str
+            or _POLICY_ID.fullmatch(str(value["profile_id"])) is None
+            or type(value.get("library")) is not str
+            or not 1 <= len(str(value["library"])) <= 64
+        ):
+            raise MetadataPolicyError("resolved policy document is invalid")
+        options = _closed_options(value["options"], sparse=False)
+        destinations = _closed_destinations(value["destinations"], sparse=False)
+        resolved = cls(
+            str(value["profile_id"]),
+            str(value["library"]),
+            tuple(sorted(options.items())),
+            tuple(sorted(destinations.items())),
+        )
+        if resolved.to_data() != value:
+            raise MetadataPolicyError("resolved policy document is not canonical")
+        return resolved
 
     def qualification(self, field: str) -> str:
         if field not in OPTION_CATALOGUE:

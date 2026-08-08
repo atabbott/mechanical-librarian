@@ -761,15 +761,9 @@ def create_proposal_set_loaded(
         return CreateProposalSet(
             repository,
             current,
-            lambda report: resolve_policy(
-                MetadataPolicyProfile.builtin(),
-                report.target.library,
-                next(
-                    library.policy_override
-                    for library in configuration.libraries
-                    if library.name == report.target.library
-                ),
-            ).resolved_id,
+            lambda report: _current_resolved_policy(
+                configuration, repository, report.target.library
+            ),
         ).run(report_id)
     finally:
         repository.close()
@@ -800,18 +794,9 @@ def admit_review_case_loaded(
         try:
             if not _require_report_current_loaded(configuration, artifacts, report):
                 return False
-            configured_policy = resolve_policy(
-                MetadataPolicyProfile.builtin(),
-                report.target.library,
-                next(
-                    library.policy_override
-                    for library in configuration.libraries
-                    if library.name == report.target.library
-                ),
-            )
-            return (
-                proposal.resolved_policy_id == configured_policy.resolved_id
-            )
+            return proposal.resolved_policy_id == _current_resolved_policy(
+                configuration, repository, report.target.library
+            ).resolved_id
         except (CurrentnessError, TargetNotFoundError):
             return False
 
@@ -819,6 +804,22 @@ def admit_review_case_loaded(
         return AdmitReviewCase(repository, current).run(proposal_set_id)
     finally:
         repository.close()
+
+
+def _current_resolved_policy(configuration, repository, library: str):
+    persisted = repository.current_resolved_metadata_policy(library)
+    if persisted is not None:
+        return persisted
+    profile = MetadataPolicyProfile.from_data(
+        json.loads(repository.active_metadata_policy())
+    )
+    configured = next(
+        (value for value in configuration.libraries if value.name == library),
+        None,
+    )
+    if configured is None:
+        raise ReviewCaseError("configuration")
+    return resolve_policy(profile, library, configured.policy_override)
 
 
 def create_review_pipeline(

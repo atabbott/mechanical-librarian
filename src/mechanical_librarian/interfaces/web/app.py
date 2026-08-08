@@ -33,7 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
-from mechanical_librarian.application.metadata_policy import MetadataPolicyApplicationError, PolicyNotebook
+from mechanical_librarian.application.metadata_policy import MetadataPolicyApplicationError, PolicyNotebook, PolicyTransition
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     CurrentReviewCaseSnapshot,
@@ -315,6 +315,50 @@ class _PolicyPreviewResponse(_ClosedModel):
     libraries: list[_PolicyImpactResponse]
     policy_id: str
     schema_version: Literal["metadata-policy-preview-v1"] = "metadata-policy-preview-v1"
+
+
+class _PolicyActivationRequest(_ClosedModel):
+    policy_id: StrictStr = Field(pattern=r"^policy_[0-9a-f]{64}$")
+    expected_active_policy_id: StrictStr = Field(pattern=r"^policy_[0-9a-f]{64}$")
+
+
+class _PolicyTransitionResponse(_ClosedModel):
+    transition_id: str
+    from_policy_id: str
+    to_policy_id: str
+    generation: int
+    state: str
+    completed: int
+    total: int
+    failed: int
+    acknowledged: bool
+    schema_version: Literal["metadata-policy-transition-v1"] = "metadata-policy-transition-v1"
+
+
+class _PolicyActivationResponse(_ClosedModel):
+    policy_id: str
+    transition: _PolicyTransitionResponse | None
+    schema_version: Literal["metadata-policy-activation-v1"] = "metadata-policy-activation-v1"
+
+
+def _policy_transition_response(value: PolicyTransition) -> _PolicyTransitionResponse:
+    return _PolicyTransitionResponse(**{
+        "transition_id": value.transition_id,
+        "from_policy_id": value.from_policy_id,
+        "to_policy_id": value.to_policy_id,
+        "generation": value.generation,
+        "state": value.state,
+        "completed": value.completed,
+        "total": value.total,
+        "failed": value.failed,
+        "acknowledged": value.acknowledged,
+    })
+
+
+def _policy_application_http_error(error: MetadataPolicyApplicationError) -> HTTPException:
+    code = str(error)
+    status = 409 if "stale" in code else (422 if "invalid" in code or "unqualified" in code else 503)
+    return HTTPException(status, detail={"code": code.replace(" ", "_")})
 
 
 def _policy_problem(error: MetadataPolicyError) -> str:
@@ -629,6 +673,39 @@ def create_review_app(
         except MetadataPolicyApplicationError:
             raise HTTPException(422, detail={"code": "policy_validation"}) from None
         return _PolicyPreviewResponse(policy_id=profile.policy_id, libraries=[_PolicyImpactResponse(affected_categories=list(item.affected_categories), current_unapplied_count=item.current_unapplied_count, library=item.library, resolved_policy_id=item.resolved_policy_id) for item in preview.libraries])
+
+    @app.post("/api/v1/metadata-policy/activate", response_model=_PolicyActivationResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)})
+    def activate_metadata_policy(payload: _PolicyActivationRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyActivationResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            result = notebook.activate(payload.policy_id, payload.expected_active_policy_id, clock())
+        except MetadataPolicyApplicationError as error:
+            raise _policy_application_http_error(error) from None
+        return _PolicyActivationResponse(policy_id=result.active.policy_id, transition=None if result.transition is None else _policy_transition_response(result.transition))
+
+    @app.get("/api/v1/metadata-policy/transition", response_model=_PolicyTransitionResponse | None, responses={status: {"model": _ErrorResponse} for status in (401, 503)})
+    def metadata_policy_transition(ml_session: str = Depends(authenticated_session_cookie)) -> _PolicyTransitionResponse | None:
+        try:
+            transition = notebook.transition()
+        except MetadataPolicyApplicationError as error:
+            raise _policy_application_http_error(error) from None
+        return None if transition is None else _policy_transition_response(transition)
+
+    @app.post("/api/v1/metadata-policy/transitions/{transition_id}/retry", response_model=_PolicyTransitionResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)})
+    def retry_metadata_policy_transition(transition_id: str, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyTransitionResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            return _policy_transition_response(notebook.retry(transition_id, clock()))
+        except MetadataPolicyApplicationError as error:
+            raise _policy_application_http_error(error) from None
+
+    @app.post("/api/v1/metadata-policy/transitions/{transition_id}/acknowledge", response_model=_PolicyTransitionResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)})
+    def acknowledge_metadata_policy_transition(transition_id: str, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyTransitionResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            return _policy_transition_response(notebook.acknowledge(transition_id, clock()))
+        except MetadataPolicyApplicationError as error:
+            raise _policy_application_http_error(error) from None
 
     @app.get(
         "/api/v1/review-cases/{review_case_id}",
@@ -1138,6 +1215,38 @@ class _SerializedReviewRepository:
     def current_unapplied_count(self, library: str) -> int:
         with self._lock:
             return self._repository.current_unapplied_count(library)
+
+    def active_metadata_policy(self) -> str:
+        with self._lock:
+            if not hasattr(self._repository, "active_metadata_policy"):
+                return MetadataPolicyProfile.builtin().canonical_json
+            return self._repository.active_metadata_policy()
+
+    def activate_metadata_policy(self, policy_id: str, expected_active_policy_id: str, resolutions: tuple[tuple[str, str, str], ...], activated_at: int) -> PolicyTransition | None:
+        with self._lock:
+            return self._repository.activate_metadata_policy(policy_id, expected_active_policy_id, resolutions, activated_at)
+
+    def metadata_policy_transition(self) -> PolicyTransition | None:
+        with self._lock:
+            return self._repository.metadata_policy_transition()
+
+    def retry_metadata_policy_transition(self, transition_id: str, retried_at: int) -> PolicyTransition:
+        with self._lock:
+            return self._repository.retry_metadata_policy_transition(transition_id, retried_at)
+
+    def acknowledge_metadata_policy_transition(self, transition_id: str, acknowledged_at: int) -> PolicyTransition:
+        with self._lock:
+            return self._repository.acknowledge_metadata_policy_transition(transition_id, acknowledged_at)
+
+    def current_resolved_policy_id(self, library: str) -> str:
+        with self._lock:
+            return self._repository.current_resolved_policy_id(library)
+
+    def current_resolved_metadata_policy(self, library: str):
+        with self._lock:
+            if not hasattr(self._repository, "current_resolved_metadata_policy"):
+                return None
+            return self._repository.current_resolved_metadata_policy(library)
 
 
 def _request_matches_origin(request: Request, configuration: ReviewWebConfiguration) -> bool:

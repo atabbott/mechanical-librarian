@@ -389,3 +389,11 @@ reviewer projection never refresh the stored value.
 Hostile-input tests name a supported external actor and reachable boundary.
 Typed in-process collaborators are not attacker-controlled unless the product
 explicitly introduces an untrusted extension seam.
+
+Metadata-policy activation tests use clean-schema SQLite stores and synthetic
+reports to exercise the transaction boundary, restart while a fixed transition
+is processing, stale old-policy publication, progressive completion, missing
+F17a linkage, typed retry, and transition-scoped acknowledgement. Generated
+OpenAPI and the authenticated browser flow cover activation and transition
+routes; exact installed-artifact qualification remains report-only and verifies
+no target, media, or artifact writes.

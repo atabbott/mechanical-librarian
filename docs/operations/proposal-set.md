@@ -44,6 +44,11 @@ series, genres, publishedYear, publishedDate, publisher, description, isbn,
 asin, language, explicit, tags, and cover. Each result is one of
 `propose_change`, `acceptable_choice`, `unresolved_choice`, `keep`, `reject`,
 `defer`, or `ineligible`.
+An active metadata profile is replayed from its exact persisted per-library
+resolution. Ask leaves conservative results available for human review, while
+Ignore converts the category to typed non-actionable `policy_ignored` before
+bibliographic combinations are formed. Automatic is not qualified for
+activation.
 The canonical document does not serialize its content-addressed ProposalSet ID;
 the ID is derived from those canonical bytes and remains the exact-get input.
 

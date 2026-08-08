@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Activate an exact reviewed metadata-policy draft with one atomic generation
+  cutover. Current old-policy cases retire before successors progressively
+  return through the existing review pipeline; Ask remains manual, Ignore is
+  non-actionable, and unqualified Automatic remains unavailable. Durable
+  fixed-cohort progress, typed failure/retry, and dismissible completion add no
+  automatic decision, apply, target, or media-write authority. (#477, #343)
+
 - Add closed, canonical metadata-policy draft and sparse per-library preview
   contracts. The built-in policy stays active; preview creates no activation,
   queue authority, decision, apply, or target/media write capability.

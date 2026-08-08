@@ -276,6 +276,17 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertEqual(policy_id, read.json()["policy_id"])
                     page.get_by_role("button", name="Preview effects").click()
                     page.get_by_text(re.compile(r"ebooks: date_precision; 1 current unapplied item"), exact=False).wait_for()
+                    self.assertTrue(page.get_by_role("button", name="Activate reviewed draft").is_enabled())
+                    page.get_by_role("button", name="Activate reviewed draft").click()
+                    page.get_by_text("Policy activated:", exact=False).wait_for()
+                    page.get_by_text("Complete with 1 failure", exact=False).wait_for()
+                    library = page.evaluate(
+                        "async () => { const response = await fetch('/api/v1/library?limit=10'); "
+                        "return {status: response.status, body: await response.json()}; }"
+                    )
+                    self.assertEqual(200, library["status"])
+                    self.assertEqual(0, library["body"]["counts"]["all"])
+                    self.assertEqual([], library["body"]["items"])
                     self.assertNotIn("<hostile draft>", page.locator("#policy-status").inner_html())
                     page.set_viewport_size({"width": 1440, "height": 900})
                     self.assertEqual("sticky", page.locator(".policy-chapters").evaluate("node => getComputedStyle(node).position"))
