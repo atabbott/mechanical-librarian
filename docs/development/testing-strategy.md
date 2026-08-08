@@ -395,7 +395,8 @@ reports to exercise the transaction boundary, restart while a fixed transition
 is processing, exact response replay, consecutive generation gating,
 exact-current cohort exclusion, stale old-policy publication, historical
 resolved-destination replay, progressive completion, missing F17a linkage,
-actual provider failure and safe retry, and transition-scoped acknowledgement. Generated
+actual terminal extraction/provider failure and safe stage-specific retry, and
+transition-scoped acknowledgement. Generated
 OpenAPI and the authenticated browser flow cover activation and transition
 routes; exact installed-artifact qualification remains report-only and verifies
 no target, media, or artifact writes.

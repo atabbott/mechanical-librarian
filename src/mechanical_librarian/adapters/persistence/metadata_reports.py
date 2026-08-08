@@ -2865,18 +2865,30 @@ class SQLiteMetadataReportRepository:
                         "SELECT stage,state,report_id FROM review_preparation_work WHERE work_id=?",
                         (work_id,),
                     ).fetchone()
-                    if existing_work is None or existing_work[2] != report_id:
+                    if existing_work is None or (
+                        existing_work[0] != "extraction"
+                        and existing_work[2] != report_id
+                    ):
                         work_id = None
                     else:
                         work_stage, work_state = existing_work[:2]
                 if work_id is None:
                     continue
-                if work_stage not in {"extraction", "provider"} or (
-                    work_stage == "provider" and work_state in {"failed", "stale"}
-                ):
+                if work_state in {"failed", "stale"} or work_stage not in {
+                    "extraction",
+                    "provider",
+                }:
+                    restart_stage = (
+                        "extraction" if work_stage == "extraction" else "proposal"
+                    )
                     self._connection.execute(
-                        "UPDATE review_preparation_work SET stage='proposal',state='queued',attempt=0,recovery_attempt=0,proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL,updated_at=? WHERE work_id=?",
-                        (retried_at, work_id),
+                        "UPDATE review_preparation_work SET stage=?,state='queued',attempt=0,recovery_attempt=0,report_id=?,proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL,updated_at=? WHERE work_id=?",
+                        (
+                            restart_stage,
+                            None if restart_stage == "extraction" else report_id,
+                            retried_at,
+                            work_id,
+                        ),
                     )
                 self._connection.execute(
                     "UPDATE metadata_policy_transition_items SET work_id=?,state='pending',failure_code=NULL,updated_at=? WHERE transition_id=? AND connection_name=? AND library_name=? AND item_id=?",

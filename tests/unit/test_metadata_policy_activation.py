@@ -19,6 +19,7 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report
 from tests.unit.test_shadow_reviews import _identity
 
@@ -46,8 +47,8 @@ class MetadataPolicyActivationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.directory.cleanup()
 
-    def _current_case_with_completed_work(self):
-        repository = open_repository(self.path)
+    def _current_case_with_completed_work(self, path: Path | None = None):
+        repository = open_repository(self.path if path is None else path)
         report = _report()
         repository.publish(report, lambda: True)
         old = evaluate_report(report)
@@ -82,6 +83,29 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         repository.advance_review_pipeline_action(action, None, 22)
         repository.claim_review_pipeline_action(23)
         return repository, report, old, admitted["review_case_id"]
+
+    def _human_decision(
+        self, repository, case_id: str, idempotency_key: str
+    ) -> HumanDecision:
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        proposal = next(
+            value
+            for value in case.proposals
+            if value["result"]["outcome"] == "unresolved_choice"
+        )
+        return HumanDecision.create(
+            case,
+            proposal_id=proposal["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination=proposal["destination"],
+            actor="owner",
+            outcome="keep_current",
+            selected_value=None,
+            idempotency_key=idempotency_key,
+            occurred_at=24,
+        )
 
     def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(self) -> None:
         repository, report, old, old_case_id = self._current_case_with_completed_work()
@@ -357,6 +381,136 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         assert action is not None
         self.assertEqual(("proposal", report.report_id), (action.stage, action.report_id))
         reopened.close()
+
+    def test_failed_extraction_work_restarts_at_extraction_with_fixed_cohort(self) -> None:
+        repository, report, _, _ = self._current_case_with_completed_work()
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='extraction',state='queued',"
+            "attempt=0,recovery_attempt=0,report_id=NULL,proposal_set_id=NULL,"
+            "review_case_id=NULL,failure_code=NULL,updated_at=24"
+        )
+        repository._connection.execute(
+            "UPDATE review_preparation_scans SET state='processing',updated_at=24"
+        )
+        repository._connection.commit()
+        draft = _draft()
+        repository.create_metadata_policy_draft(draft.canonical_json)
+        resolved = resolve_policy(draft, report.target.library)
+        transition = repository.activate_metadata_policy(
+            draft.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            25,
+        )
+        assert transition is not None
+        extraction = repository.claim_review_pipeline_action(26)
+        assert extraction is not None
+        self.assertEqual(("extraction", None), (extraction.stage, extraction.report_id))
+        repository.fail_review_pipeline_action(extraction, "failed", False, 27)
+        failed = repository.metadata_policy_transition()
+        assert failed is not None
+        self.assertEqual(("completed_with_failures", 1, 1), (failed.state, failed.failed, failed.total))
+        fixed_item = repository._connection.execute(
+            "SELECT report_id,work_id,state FROM metadata_policy_transition_items"
+        ).fetchone()
+        self.assertEqual((report.report_id, extraction.action_id, "failed"), fixed_item)
+        repository.close()
+
+        reopened = open_repository(self.path, create=False)
+        retried = reopened.retry_metadata_policy_transition(transition.transition_id, 28)
+        self.assertEqual(("processing", 0, 1), (retried.state, retried.failed, retried.total))
+        self.assertEqual(
+            ("extraction", "queued", 0, 0, None, None, None, None),
+            reopened._connection.execute(
+                "SELECT stage,state,attempt,recovery_attempt,report_id,proposal_set_id,"
+                "review_case_id,failure_code FROM review_preparation_work"
+            ).fetchone(),
+        )
+        self.assertEqual(
+            (report.report_id, extraction.action_id, "pending"),
+            reopened._connection.execute(
+                "SELECT report_id,work_id,state FROM metadata_policy_transition_items"
+            ).fetchone(),
+        )
+        action = reopened.claim_review_pipeline_action(29)
+        assert action is not None
+        self.assertEqual(("extraction", None), (action.stage, action.report_id))
+        reopened.close()
+
+    def test_activation_and_human_decision_commit_orderings_are_atomic(self) -> None:
+        decision_first_path = Path(self.directory.name) / "decision-first.sqlite"
+        decision_writer, report, _, case_id = self._current_case_with_completed_work(
+            decision_first_path
+        )
+        decision = self._human_decision(
+            decision_writer, case_id, "decision-before-activation-0001"
+        )
+        activator = open_repository(decision_first_path, create=False)
+        draft = _draft()
+        decision_writer.create_metadata_policy_draft(draft.canonical_json)
+        resolved = resolve_policy(draft, report.target.library)
+
+        decision_writer.record_human_decision(decision)
+        transition = activator.activate_metadata_policy(
+            draft.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            25,
+        )
+        assert transition is not None
+        history = activator.get_review_case_history(case_id, 10)
+        self.assertTrue(
+            any(value["kind"] == "human_decision_recorded" for value in history)
+        )
+        self.assertTrue(
+            any(
+                value["kind"] == "retired" and value["reason"] == "policy_changed"
+                for value in history
+            )
+        )
+        self.assertFalse(json.loads(activator.get_review_case(case_id))["current"])
+        self.assertEqual(
+            (1, 1),
+            activator._connection.execute(
+                "SELECT (SELECT COUNT(*) FROM human_decisions),"
+                "(SELECT COUNT(*) FROM human_decision_events)"
+            ).fetchone(),
+        )
+        decision_writer.close()
+        activator.close()
+
+        activation_first_path = Path(self.directory.name) / "activation-first.sqlite"
+        stale_writer, report, _, case_id = self._current_case_with_completed_work(
+            activation_first_path
+        )
+        stale_decision = self._human_decision(
+            stale_writer, case_id, "decision-after-activation-0001"
+        )
+        activator = open_repository(activation_first_path, create=False)
+        draft = _draft()
+        stale_writer.create_metadata_policy_draft(draft.canonical_json)
+        resolved = resolve_policy(draft, report.target.library)
+
+        transition = activator.activate_metadata_policy(
+            draft.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            25,
+        )
+        assert transition is not None
+        with self.assertRaises(HumanDecisionError) as raised:
+            stale_writer.record_human_decision(stale_decision)
+        self.assertEqual("stale", raised.exception.code)
+        self.assertEqual(
+            (0, 0),
+            stale_writer._connection.execute(
+                "SELECT (SELECT COUNT(*) FROM human_decisions),"
+                "(SELECT COUNT(*) FROM human_decision_events)"
+            ).fetchone(),
+        )
+        self.assertFalse(json.loads(stale_writer.get_review_case(case_id))["current"])
+        stale_writer.close()
+        activator.close()
 
     def test_invisible_stale_case_is_not_in_activation_cohort(self) -> None:
         repository = open_repository(self.path)
