@@ -563,7 +563,7 @@ def create_review_app(
         "/api/v1/metadata-policy/drafts",
         response_model=_PolicyDraftResponse,
         status_code=201,
-        responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)},
+        responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)},
     )
     def create_metadata_policy_draft(
         payload: _PolicyDraftRequest,
@@ -578,7 +578,9 @@ def create_review_app(
             policy_id = profile.policy_id
         except MetadataPolicyError as error:
             raise HTTPException(422, detail={"code": _policy_problem(error)}) from None
-        except (MetadataPolicyApplicationError, ReviewWebError):
+        except MetadataPolicyApplicationError:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        except ReviewWebError:
             raise HTTPException(422, detail={"code": "policy_validation"}) from None
         except Exception:
             raise HTTPException(503, detail={"code": "persistence"}) from None

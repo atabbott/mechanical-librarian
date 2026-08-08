@@ -2432,7 +2432,7 @@ class SQLiteMetadataReportRepository:
         try:
             row = self._connection.execute(
                 "SELECT count(*) " + _CURRENT_REVIEW_FROM_SQL +
-                " WHERE c.library_name=? AND NOT EXISTS (SELECT 1 FROM human_decisions d WHERE d.review_case_id=rc.review_case_id)",
+                " WHERE c.library_name=?",
                 (library,),
             ).fetchone()
             if row is None or type(row[0]) is not int or row[0] < 0:

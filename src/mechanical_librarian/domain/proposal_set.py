@@ -712,6 +712,7 @@ class ProposalSet:
             or _DIGEST.fullmatch(self.target_fingerprint) is None
             or self.schema_version != PROPOSAL_SCHEMA
             or self.policy_version != POLICY_VERSION
+            or type(self.resolved_policy_id) is not str
             or re.fullmatch(r"resolved_policy_[0-9a-f]{64}", self.resolved_policy_id) is None
             or type(self.results) is not tuple
             or tuple(value.destination for value in self.results)
