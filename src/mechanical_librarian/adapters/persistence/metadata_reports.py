@@ -1089,6 +1089,8 @@ class SQLiteMetadataReportRepository:
             if raw.get("current") is not True:
                 raise FieldEffectError("consent")
             return EffectConsent.from_data(raw["consent"])
+        except FieldEffectError:
+            raise
         except (json.JSONDecodeError, KeyError, sqlite3.Error,
                 TypeError, ValueError) as error:
             raise FieldEffectError("persistence") from error

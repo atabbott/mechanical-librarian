@@ -68,6 +68,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact, CoverDesignation, CoverSource, CoverSourceKind,
     CoverSourceState, cover_source_id,
 )
+from mechanical_librarian.domain.field_effect import FieldEffectError
 
 
 class _InterruptedProviderStream(httpx.SyncByteStream):
@@ -235,6 +236,19 @@ def _leave_hot_journal(path: Path) -> Path:
 
 
 class MetadataPersistenceTests(unittest.TestCase):
+    def test_absent_field_effect_consent_remains_a_semantic_absence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            try:
+                with self.assertRaises(FieldEffectError) as raised:
+                    repository.current_field_effect_consent(
+                        "primary", "ebooks", "title"
+                    )
+            finally:
+                repository.close()
+
+        self.assertEqual(raised.exception.code, "consent")
+
     def test_slow_external_currentness_does_not_hold_the_publication_lock(
         self,
     ) -> None:
