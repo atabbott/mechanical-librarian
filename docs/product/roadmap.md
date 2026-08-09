@@ -143,7 +143,7 @@ The historical sequence was completed F06 #142 to F07a #143/#30/#31/#188 to F07b
 F09g #238/#243. F09g is the 0.3.0 checkpoint exit. Completing this internal
 checkpoint does not publish a release.
 
-The remaining 1.0 outcome set is F08 #144, F15a #151, F16a #152, F13 #149,
+The remaining 1.0 outcome set is F08 #144, F15a #151,
 F14 #150, and F17 #153. F10b #240 is delivered; F11 #147 ended in terminal
 non-activation after failed model-review qualification; and F19 #384 was
 delivered by #442 as a provider-independent, read-only, non-persisted preview.
@@ -309,14 +309,14 @@ Exit: no systematic unsafe decision pattern remains unexplained.
 
 ## M4: Production apply
 
-- Require an applicable current human decision from F16a #152 before F13 #149
-  proves guarded fake-service apply; F14 #150 follows completed F13
-  qualification. These delivery dependencies govern even though this capability
-  grouping appears before M6.
+- F13 #149 now proves guarded fake-service apply from both applicable current
+  human and qualified automatic decisions; F14 #150 follows that completed
+  qualification. These delivery dependencies govern even though this
+  capability grouping appears before M6.
 - Enforce backup readiness.
 - Add optimistic concurrency and service locks.
 - Apply only validated field changes through supported APIs.
-- Verify and roll back failures.
+- Verify effects and reconcile ambiguous or failed fields forward.
 - Complete a ten-item canary and bounded production batches.
 
 Exit: production writes are recoverable, idempotent, and fully audited.

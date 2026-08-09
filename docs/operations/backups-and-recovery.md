@@ -50,3 +50,21 @@ directly to force recovery.
 
 Restoring the matching application database and artifact store cannot change
 Audiobookshelf or media because this runtime has no such write authority.
+
+## Guarded fake-effect recovery
+
+Stop effect processing before copying the exact-current application database.
+Restart reads each persisted state rather than inferring completion: planned
+and retryable work crosses every gate again; claimed or applying work performs
+a targeted read and enters reconciliation; verified, stale, superseded, and
+abandoned work remains terminal. Desired target state verifies, the captured
+pre-state may requeue only under current authority and freshness, and a third
+value stays stale for forward re-evaluation. Never edit rows or blindly repeat
+an ambiguous request.
+
+Cover recovery files are transient private material, not a general backup or
+Undo system. Preserve their owner-only directory only while corresponding
+nonterminal cover work exists. A capture failure blocks that cover alone.
+After audited abandonment, remove the matching recovery file; verified cover
+work removes it automatically. This fake-only increment cannot alter
+Audiobookshelf or embedded media.

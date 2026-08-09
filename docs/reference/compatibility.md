@@ -103,6 +103,13 @@ parser. A clean rebuild may be required and old state may be retained offline.
 Exact-ID and current-scope replay apply only within the exact current schema;
 current-schema restart, replay, and crash safety remain mandatory.
 
+The guarded-effect tables, control row, and append-only audit events are part
+of the exact current application schema. A database without them, with altered
+SQL, extra columns/objects, or an earlier experimental effect schema is
+rejected without migration or conversion. Field plan and operation documents
+accept only their exact v1 shapes. Restart compatibility applies only inside
+that exact schema.
+
 Private qualification attempt, retry-pair, scoring, cohort, analysis, and
 manifest records are evidence formats, not installed compatibility surfaces.
 They are frozen and validated by their owning private programme and cannot be

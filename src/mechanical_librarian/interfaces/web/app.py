@@ -33,6 +33,11 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.field_effects import (
+    GuardedApplicationError,
+    GuardedFieldApplication,
+)
+from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls, MetadataPolicyApplicationError, PolicyNotebook, PolicyTransition
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
@@ -593,6 +598,7 @@ def create_review_app(
     close_repository: bool = False,
     review_preparation: ReviewPreparationSupervisor | None = None,
     policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
+    field_application: GuardedFieldApplication | None = None,
 ) -> FastAPI:
     serialized_repository = _SerializedReviewRepository(repository)
     verifier = _owner_password_verifier(Path(configuration.owner_password_hash_file))
@@ -990,6 +996,73 @@ def create_review_app(
                 )
             )
         )
+
+    def field_effect_call(callable_):
+        if field_application is None:
+            raise HTTPException(503, detail={"code": "unavailable"})
+        try:
+            return callable_().to_data()
+        except (GuardedApplicationError, FieldEffectError) as error:
+            code = getattr(error, "code", "persistence")
+            status_code = 404 if code == "not_found" else 409 if code in {
+                "claim_conflict", "transition_conflict", "paused"
+            } else 503
+            raise HTTPException(status_code, detail={"code": code}) from None
+
+    @app.get("/api/v1/field-effects/{plan_id}", response_model=dict[str, object],
+             responses={status: {"model": _ErrorResponse} for status in (401, 404, 422, 503)})
+    def field_effect_status(plan_id: str,
+                            ml_session: str = Depends(authenticated_session_cookie)) -> dict[str, object]:
+        if not re.fullmatch(r"effect_plan_[0-9a-f]{64}", plan_id):
+            raise HTTPException(404, detail={"code": "not_found"})
+        application = field_application
+        if application is None:
+            raise HTTPException(503, detail={"code": "unavailable"})
+        return field_effect_call(lambda: application.status(plan_id))
+
+    @app.post("/api/v1/field-effects/{plan_id}/apply", response_model=dict[str, object],
+              responses={status: {"model": _ErrorResponse} for status in (401, 403, 404, 409, 422, 503)})
+    def apply_field_effect(plan_id: str, ml_session: str = Depends(authenticated_session_cookie),
+                           x_csrf_token: str = Header()) -> dict[str, object]:
+        _require_session(sessions, ml_session, x_csrf_token)
+        if not re.fullmatch(r"effect_plan_[0-9a-f]{64}", plan_id):
+            raise HTTPException(404, detail={"code": "not_found"})
+        application = field_application
+        if application is None:
+            raise HTTPException(503, detail={"code": "unavailable"})
+        return field_effect_call(lambda: application.apply(plan_id))
+
+    @app.post("/api/v1/field-effects/{plan_id}/reconcile", response_model=dict[str, object],
+              responses={status: {"model": _ErrorResponse} for status in (401, 403, 404, 409, 422, 503)})
+    def reconcile_field_effect(plan_id: str, ml_session: str = Depends(authenticated_session_cookie),
+                               x_csrf_token: str = Header()) -> dict[str, object]:
+        _require_session(sessions, ml_session, x_csrf_token)
+        if not re.fullmatch(r"effect_plan_[0-9a-f]{64}", plan_id):
+            raise HTTPException(404, detail={"code": "not_found"})
+        application = field_application
+        if application is None:
+            raise HTTPException(503, detail={"code": "unavailable"})
+        return field_effect_call(lambda: application.reconcile(plan_id))
+
+    @app.post("/api/v1/field-effects/pause", status_code=204,
+              responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)})
+    def pause_field_effects(ml_session: str = Depends(authenticated_session_cookie),
+                            x_csrf_token: str = Header()) -> Response:
+        _require_session(sessions, ml_session, x_csrf_token)
+        if field_application is None:
+            raise HTTPException(503, detail={"code": "unavailable"})
+        field_application.set_paused(True)
+        return Response(status_code=204)
+
+    @app.post("/api/v1/field-effects/resume", status_code=204,
+              responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)})
+    def resume_field_effects(ml_session: str = Depends(authenticated_session_cookie),
+                             x_csrf_token: str = Header()) -> Response:
+        _require_session(sessions, ml_session, x_csrf_token)
+        if field_application is None:
+            raise HTTPException(503, detail={"code": "unavailable"})
+        field_application.set_paused(False)
+        return Response(status_code=204)
 
     @app.get("/api/v1/openapi.json", include_in_schema=False)
     def openapi_document(
@@ -1437,6 +1510,34 @@ class _SerializedReviewRepository:
     def record_human_decision(self, decision: HumanDecision) -> str:
         with self._lock:
             return self._repository.record_human_decision(decision)
+
+    def record_field_effect(self, operation):
+        with self._lock:
+            return self._repository.record_field_effect(operation)
+
+    def get_field_effect(self, plan_id: str):
+        with self._lock:
+            return self._repository.get_field_effect(plan_id)
+
+    def claim_field_effect(self, plan_id: str, expected_state: str, claim_token: str, claimed_at: int):
+        with self._lock:
+            return self._repository.claim_field_effect(plan_id, expected_state, claim_token, claimed_at)
+
+    def transition_field_effect(self, plan_id: str, expected_state: str, state: str, changed_at: int, failure: str | None = None):
+        with self._lock:
+            return self._repository.transition_field_effect(plan_id, expected_state, state, changed_at, failure)
+
+    def supersede_field_effect(self, decision_id: str, superseded_at: int) -> int:
+        with self._lock:
+            return self._repository.supersede_field_effect(decision_id, superseded_at)
+
+    def set_field_effect_paused(self, paused: bool, changed_at: int) -> None:
+        with self._lock:
+            self._repository.set_field_effect_paused(paused, changed_at)
+
+    def field_effect_paused(self) -> bool:
+        with self._lock:
+            return self._repository.field_effect_paused()
 
     def create_metadata_policy_draft(self, document: str) -> str:
         with self._lock:

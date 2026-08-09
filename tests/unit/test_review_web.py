@@ -1409,6 +1409,11 @@ class ReviewWebTests(unittest.TestCase):
             {
                 ("get", "/api/v1/attention"),
                 ("get", "/api/v1/library"),
+                ("get", "/api/v1/field-effects/{plan_id}"),
+                ("post", "/api/v1/field-effects/{plan_id}/apply"),
+                ("post", "/api/v1/field-effects/{plan_id}/reconcile"),
+                ("post", "/api/v1/field-effects/pause"),
+                ("post", "/api/v1/field-effects/resume"),
                 ("post", "/api/v1/metadata-policy/activate"),
                 ("post", "/api/v1/metadata-policy/drafts"),
                 ("get", "/api/v1/metadata-policy/drafts/{policy_id}"),
@@ -1488,6 +1493,26 @@ class ReviewWebTests(unittest.TestCase):
             response_statuses[("get", "/api/v1/review-preparation")],
             {"200", "401", "503"},
         )
+        self.assertEqual(
+            response_statuses[("get", "/api/v1/field-effects/{plan_id}")],
+            {"200", "401", "404", "422", "503"},
+        )
+        for path in (
+            "/api/v1/field-effects/{plan_id}/apply",
+            "/api/v1/field-effects/{plan_id}/reconcile",
+        ):
+            self.assertEqual(
+                response_statuses[("post", path)],
+                {"200", "401", "403", "404", "409", "422", "503"},
+            )
+        for path in (
+            "/api/v1/field-effects/pause",
+            "/api/v1/field-effects/resume",
+        ):
+            self.assertEqual(
+                response_statuses[("post", path)],
+                {"204", "401", "403", "422", "503"},
+            )
         self.assertEqual(
             response_statuses[
                 (

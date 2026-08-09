@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add the origin-neutral guarded field-effect kernel for immutable owner and
+  sealed qualified automatic decisions. All 14 ebook destinations use one
+  deterministic field plan (with atomic series), exact preclaim gates,
+  persisted claim/effect/readback/reconciliation/audit, bounded retries,
+  independent sibling outcomes, and private cover recovery. The only writable
+  target is a deterministic fake; no Audiobookshelf, media, CLI, bulk, release,
+  or production write capability is added. (#149)
+
 - Qualified metadata-policy defaults now create immutable, decision-only
   automatic dispositions for the sealed F19a envelope. Preview, owner pause,
   durable safety suspension, and explicit recovery keep unresolved or

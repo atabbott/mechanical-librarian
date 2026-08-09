@@ -95,6 +95,14 @@ rewritten. Operators may retain them offline, subject to the same data-handling
 obligations, but recovery for the current increment uses a clean database and
 supported report regeneration.
 
+Field-effect plans and append-only events retain bounded scalar pre-values,
+desired values, closed identities, state, attempts, and failure codes for
+attribution and recovery. Raw prior cover bytes are deliberately excluded.
+They exist only in a bounded owner-mode private recovery directory, named by a
+plan digest, and are removed after verified completion or audited abandonment.
+Application documents, APIs, logs, diagnostics, fixtures, exports, support
+bundles, and reviewers must never contain those bytes or their private path.
+
 The retained local vocabulary includes bounded title/subtitle, creator/contributor
 roles, series/sequence, ISBN, dates, publisher/imprint, description, language,
 and contextual subject evidence; it retains no paths or source bodies.

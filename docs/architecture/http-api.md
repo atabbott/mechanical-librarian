@@ -191,6 +191,15 @@ Mutating endpoints require the narrowest applicable combination of:
 
 A client cannot force an invalid transition by posting a desired state name.
 
+The guarded fake-effect service adds authenticated status plus CSRF-protected
+apply, reconcile, pause, and resume operations under `/api/v1/field-effects`.
+Callers supply only an existing deterministic plan identity; they cannot post
+authority, a desired transition, target credentials, cover bytes, or an
+arbitrary destination. Responses are the bounded canonical operation
+projection. The routes return unavailable until the fake-effect application
+service is composed; when composed, they call that same service used by
+application callers.
+
 ## Errors
 
 Errors use a stable envelope:
