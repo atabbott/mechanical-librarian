@@ -97,6 +97,8 @@ def project_decision_value(destination: str, value: object) -> object:
 @dataclass(frozen=True, slots=True)
 class EffectAuthority:
     decision_id: str
+    review_case_id: str
+    target_fingerprint: str
     origin: Literal["human", "automatic_policy"]
     outcome: Literal["candidate"]
     policy_identity: str | None
@@ -105,6 +107,10 @@ class EffectAuthority:
     def __post_init__(self) -> None:
         prefix = "human_decision_" if self.origin == "human" else "automatic_decision_"
         if not self.decision_id.startswith(prefix) or _HEX.fullmatch(self.decision_id[len(prefix):]) is None:
+            raise FieldEffectError("invalid_authority")
+        if (not self.review_case_id.startswith("review_case_")
+                or _HEX.fullmatch(self.review_case_id.removeprefix("review_case_")) is None
+                or _HEX.fullmatch(self.target_fingerprint) is None):
             raise FieldEffectError("invalid_authority")
         if self.origin == "human" and (self.policy_identity is not None or self.qualification_identity is not None):
             raise FieldEffectError("invalid_authority")
@@ -116,17 +122,61 @@ class EffectAuthority:
 
 
 @dataclass(frozen=True, slots=True)
+class EffectConsent:
+    consent_id: str
+    connection: str
+    library: str
+    destination: str
+    action: Literal["apply_field"]
+    granted_at: int
+
+    @classmethod
+    def create(cls, *, connection: str, library: str, destination: str,
+               granted_at: int) -> Self:
+        if (any(type(value) is not str or _IDENTITY.fullmatch(value) is None
+                for value in (connection, library))
+                or destination not in SUPPORTED_DESTINATIONS
+                or type(granted_at) is not int or granted_at < 0):
+            raise FieldEffectError("invalid_consent")
+        identity = _digest({"action": "apply_field", "connection": connection,
+                            "destination": destination, "granted_at": granted_at,
+                            "library": library})
+        return cls("effect_consent_" + identity, connection, library,
+                   destination, "apply_field", granted_at)
+
+    def to_data(self) -> dict[str, object]:
+        return {"action": self.action, "connection": self.connection,
+                "consent_id": self.consent_id, "destination": self.destination,
+                "granted_at": self.granted_at, "library": self.library,
+                "schema_version": "field-effect-consent-v1"}
+
+    @classmethod
+    def from_data(cls, raw: object) -> Self:
+        keys = {"action", "connection", "consent_id", "destination", "granted_at",
+                "library", "schema_version"}
+        if type(raw) is not dict or set(raw) != keys or raw.get("schema_version") != "field-effect-consent-v1" or raw.get("action") != "apply_field":
+            raise FieldEffectError("invalid_consent")
+        value = cls.create(connection=raw["connection"], library=raw["library"],
+                           destination=raw["destination"], granted_at=raw["granted_at"])
+        if value.consent_id != raw["consent_id"]:
+            raise FieldEffectError("invalid_consent")
+        return value
+
+
+@dataclass(frozen=True, slots=True)
 class FieldEffectPlan:
     plan_id: str
     connection: str
     library: str
     work_id: str
     destination: str
+    target_fingerprint: str
     pre_value: object
     desired_value: object
     target_version: str
     dependency_digests: tuple[str, ...]
     authority: EffectAuthority
+    consent: EffectConsent
     capability_digest: str
     idempotency_key: str
     created_at: int
@@ -134,8 +184,9 @@ class FieldEffectPlan:
     @classmethod
     def create(cls, *, connection: str, library: str, work_id: str,
                destination: str, pre_value: object, desired_value: object,
-               target_version: str, dependency_digests: tuple[str, ...],
-               authority: EffectAuthority, capability_digest: str,
+               target_fingerprint: str, target_version: str,
+               dependency_digests: tuple[str, ...], authority: EffectAuthority,
+               consent: EffectConsent, capability_digest: str,
                created_at: int) -> Self:
         for value in (connection, library, work_id, target_version):
             if type(value) is not str or _IDENTITY.fullmatch(value) is None:
@@ -145,30 +196,39 @@ class FieldEffectPlan:
         desired = validate_effect_value(destination, desired_value)
         if pre_value is not None:
             validate_effect_value(destination, pre_value)
+        if (_HEX.fullmatch(target_fingerprint) is None
+                or target_fingerprint != authority.target_fingerprint
+                or (consent.connection, consent.library, consent.destination, consent.action)
+                != (connection, library, destination, "apply_field")):
+            raise FieldEffectError("invalid_binding")
         if _HEX.fullmatch(capability_digest) is None or not dependency_digests or any(_HEX.fullmatch(v) is None for v in dependency_digests):
             raise FieldEffectError("invalid_dependency")
         core = {
             "authority": authority_to_data(authority), "capability_digest": capability_digest,
             "connection": connection, "dependency_digests": list(dependency_digests),
             "destination": destination, "desired_value": desired, "library": library,
-            "pre_value": pre_value, "target_version": target_version, "work_id": work_id,
+            "pre_value": pre_value, "target_fingerprint": target_fingerprint,
+            "target_version": target_version, "work_id": work_id,
+            "consent": consent.to_data(),
         }
         if len(canonical_json(core).encode()) > 120_000:
             raise FieldEffectError("plan_too_large")
         identity = _digest(core)
         return cls("effect_plan_" + identity, connection, library, work_id,
-                   destination, pre_value, desired, target_version,
-                   dependency_digests, authority, capability_digest,
+                   destination, target_fingerprint, pre_value, desired, target_version,
+                   dependency_digests, authority, consent, capability_digest,
                    "effect_" + identity, created_at)
 
     def to_data(self) -> dict[str, object]:
         return {"schema_version": "field-effect-plan-v1", "plan_id": self.plan_id,
                 "connection": self.connection, "library": self.library,
                 "work_id": self.work_id, "destination": self.destination,
+                "target_fingerprint": self.target_fingerprint,
                 "pre_value": self.pre_value, "desired_value": self.desired_value,
                 "target_version": self.target_version,
                 "dependency_digests": list(self.dependency_digests),
                 "authority": authority_to_data(self.authority),
+                "consent": self.consent.to_data(),
                 "capability_digest": self.capability_digest,
                 "idempotency_key": self.idempotency_key, "created_at": self.created_at}
 
@@ -178,23 +238,34 @@ class FieldEffectPlan:
     @classmethod
     def from_data(cls, raw: object) -> Self:
         try:
-            if type(raw) is not dict or raw.get("schema_version") != "field-effect-plan-v1":
+            keys = {"authority", "capability_digest", "connection", "consent",
+                    "created_at", "dependency_digests", "desired_value", "destination",
+                    "idempotency_key", "library", "plan_id", "pre_value",
+                    "schema_version", "target_fingerprint", "target_version", "work_id"}
+            if type(raw) is not dict or set(raw) != keys or raw.get("schema_version") != "field-effect-plan-v1":
                 raise FieldEffectError("invalid_plan")
             authority_raw = raw["authority"]
             if type(authority_raw) is not dict:
                 raise FieldEffectError("invalid_plan")
             authority = EffectAuthority(
-                authority_raw["decision_id"], authority_raw["origin"],
+                authority_raw["decision_id"], authority_raw["review_case_id"],
+                authority_raw["target_fingerprint"], authority_raw["origin"],
                 authority_raw["outcome"], authority_raw["policy_identity"],
                 authority_raw["qualification_identity"],
             )
+            if set(authority_raw) != {"decision_id", "origin", "outcome", "policy_identity",
+                                      "qualification_identity", "review_case_id",
+                                      "target_fingerprint"}:
+                raise FieldEffectError("invalid_plan")
+            consent = EffectConsent.from_data(raw["consent"])
             value = cls.create(
                 connection=raw["connection"], library=raw["library"],
                 work_id=raw["work_id"], destination=raw["destination"],
                 pre_value=raw["pre_value"], desired_value=raw["desired_value"],
-                target_version=raw["target_version"],
+                target_fingerprint=raw["target_fingerprint"], target_version=raw["target_version"],
                 dependency_digests=tuple(raw["dependency_digests"]),
-                authority=authority, capability_digest=raw["capability_digest"],
+                authority=authority, consent=consent,
+                capability_digest=raw["capability_digest"],
                 created_at=raw["created_at"],
             )
             if value.plan_id != raw["plan_id"] or value.idempotency_key != raw["idempotency_key"]:
@@ -239,7 +310,9 @@ class FieldEffectOperation:
     def from_json(cls, document: str) -> Self:
         try:
             raw = json.loads(document)
-            if type(raw) is not dict or raw.get("schema_version") != "field-effect-operation-v1":
+            keys = {"attempt", "claim_token", "failure", "plan", "schema_version",
+                    "state", "updated_at"}
+            if type(raw) is not dict or set(raw) != keys or raw.get("schema_version") != "field-effect-operation-v1":
                 raise FieldEffectError("invalid_operation")
             return cls(FieldEffectPlan.from_data(raw["plan"]), raw["state"],
                        raw["attempt"], raw["updated_at"], raw["failure"],
@@ -251,6 +324,7 @@ class FieldEffectOperation:
 
 
 def authority_to_data(value: EffectAuthority) -> dict[str, object]:
-    return {"decision_id": value.decision_id, "origin": value.origin,
+    return {"decision_id": value.decision_id, "review_case_id": value.review_case_id,
+            "target_fingerprint": value.target_fingerprint, "origin": value.origin,
             "outcome": value.outcome, "policy_identity": value.policy_identity,
             "qualification_identity": value.qualification_identity}

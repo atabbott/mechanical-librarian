@@ -612,8 +612,14 @@ Guarded field effects add the first persisted mutation boundary, restricted to
 the credential-free fake target. Only exact `HumanDecision(accept)` or sealed
 qualified `AutomaticDecision(candidate)` instances project authority; raw
 proposals, previews, advice, policy dispositions, and caller-supplied origin
-strings cannot. Every claim rechecks backup, capability, authority,
-dependencies, target pre-state/version, circuit, pause, and optimistic state.
+strings cannot. Planning rejects any decision/current-case mismatch in
+destination, work, target fingerprint, or target version, and requires a
+separate current consent for the exact connection/library/destination/action.
+Every claim rechecks backup, capability, authority, consent, dependencies,
+target pre-state/version, circuit, pause, and optimistic state. Persisted
+authority, consent, pause, and claim state are conditioned atomically in one
+repository transaction; the target's value-and-version CAS closes later
+external drift, without claiming a cross-system transaction.
 Unknown and stale facts fail closed. Target and credential authority are absent
 from domain code, reviewers, diagnostics, and the API. There is no
 Audiobookshelf or media-write constructor in this boundary.

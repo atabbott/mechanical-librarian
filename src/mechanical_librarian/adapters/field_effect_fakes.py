@@ -9,10 +9,11 @@ from pathlib import Path
 from typing import Callable
 
 from mechanical_librarian.application.field_effects import (
+    AuthoritySnapshot,
     TargetEffectResult,
     TargetObservation,
 )
-from mechanical_librarian.domain.field_effect import EffectAuthority, FieldEffectPlan
+from mechanical_librarian.domain.field_effect import EffectAuthority, EffectConsent, FieldEffectPlan
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 
@@ -95,14 +96,43 @@ class FakeAuthorityCurrentness:
     def __init__(self) -> None:
         self.revoked: set[str] = set()
         self.automatic_values: dict[str, object] = {}
-    def value(self, decision: HumanDecision | AutomaticDecision) -> object:
+        self.bindings: dict[str, AuthoritySnapshot] = {}
+    def bind(self, decision: HumanDecision | AutomaticDecision, *, connection: str,
+             library: str, work_id: str, target_version: str) -> None:
         if type(decision) is HumanDecision and decision.outcome == "accept":
-            return decision.selected_value
-        if type(decision) is AutomaticDecision and decision.outcome == "candidate":
-            return self.automatic_values[decision.decision_id]
-        raise ValueError("decision has no effect value")
+            value = decision.selected_value
+        elif type(decision) is AutomaticDecision and decision.outcome == "candidate":
+            value = self.automatic_values[decision.decision_id]
+        else:
+            raise ValueError("decision has no effect value")
+        self.bindings[decision.decision_id] = AuthoritySnapshot(
+            connection, library, work_id, decision.destination,
+            decision.review_case_id, decision.target_fingerprint,
+            target_version, value,
+        )
+    def resolve(self, decision: HumanDecision | AutomaticDecision) -> AuthoritySnapshot:
+        return self.bindings[decision.decision_id]
     def current(self, authority: EffectAuthority) -> bool:
         return authority.decision_id not in self.revoked
+
+
+class FakeConsentCurrentness:
+    def __init__(self) -> None:
+        self.revoked: set[str] = set()
+        self.allowed: dict[tuple[str, str, str, str], EffectConsent] = {}
+    def allow(self, *, connection: str, library: str, destination: str) -> None:
+        consent = EffectConsent.create(
+            connection=connection, library=library, destination=destination,
+            granted_at=1,
+        )
+        self.allowed[(connection, library, destination, "apply_field")] = consent
+    def resolve(self, *, connection: str, library: str,
+                destination: str) -> EffectConsent:
+        return self.allowed[(connection, library, destination, "apply_field")]
+    def current(self, consent: EffectConsent) -> bool:
+        return (consent.consent_id not in self.revoked
+                and self.allowed.get((consent.connection, consent.library,
+                                      consent.destination, consent.action)) == consent)
 
 
 class FakeDependencyCurrentness:
@@ -128,11 +158,14 @@ class PrivateCoverRecoveryStore:
         self._root = root
         self._reader = reader
         self._maximum_bytes = maximum_bytes
+        self.fail_remove_next = False
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(root, 0o700)
 
     def capture(self, plan: FieldEffectPlan) -> None:
         path = self._path(plan.plan_id)
+        temporary = self._temporary_path(plan.plan_id)
+        self._clean_incomplete(temporary)
         try:
             information = path.lstat()
         except FileNotFoundError:
@@ -140,7 +173,11 @@ class PrivateCoverRecoveryStore:
         if information is not None:
             if (not stat.S_ISREG(information.st_mode)
                     or stat.S_IMODE(information.st_mode) != 0o600
+                    or information.st_uid != os.geteuid()
                     or information.st_size > self._maximum_bytes):
+                if stat.S_ISREG(information.st_mode) and information.st_uid == os.geteuid():
+                    path.unlink()
+                    self._sync_root()
                 raise ValueError("cover recovery unavailable")
             return
         value = self._reader(plan)
@@ -149,7 +186,7 @@ class PrivateCoverRecoveryStore:
         if type(value) is not bytes or len(value) > self._maximum_bytes:
             raise ValueError("cover recovery unavailable")
         descriptor = os.open(
-            path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
             | getattr(os, "O_NOFOLLOW", 0), 0o600
         )
         try:
@@ -162,14 +199,22 @@ class PrivateCoverRecoveryStore:
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
+        os.replace(temporary, path)
         self._sync_root()
 
     def remove(self, plan_id: str) -> None:
-        try:
-            self._path(plan_id).unlink()
-        except FileNotFoundError:
-            pass
-        else:
+        if self.fail_remove_next:
+            self.fail_remove_next = False
+            raise OSError("synthetic cleanup failure")
+        removed = False
+        for path in (self._path(plan_id), self._temporary_path(plan_id)):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            else:
+                removed = True
+        if removed:
             self._sync_root()
 
     def exists(self, plan_id: str) -> bool:
@@ -180,6 +225,20 @@ class PrivateCoverRecoveryStore:
         if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
             raise ValueError("invalid plan identity")
         return self._root / (digest + ".recovery")
+
+    def _temporary_path(self, plan_id: str) -> Path:
+        return self._path(plan_id).with_suffix(".recovery.tmp")
+
+    def _clean_incomplete(self, path: Path) -> None:
+        try:
+            information = path.lstat()
+        except FileNotFoundError:
+            return
+        if (not stat.S_ISREG(information.st_mode)
+                or information.st_uid != os.geteuid()):
+            raise ValueError("cover recovery unavailable")
+        path.unlink()
+        self._sync_root()
 
     def _sync_root(self) -> None:
         descriptor = os.open(self._root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))

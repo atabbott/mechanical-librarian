@@ -55,9 +55,11 @@ Audiobookshelf or media because this runtime has no such write authority.
 
 Stop effect processing before copying the exact-current application database.
 Restart reads each persisted state rather than inferring completion: planned
-and retryable work crosses every gate again; claimed or applying work performs
-a targeted read and enters reconciliation; verified, stale, superseded, and
-abandoned work remains terminal. Desired target state verifies, the captured
+and retryable work crosses every gate again; already claimed work continues
+under its granted claim, while applying or ambiguous work performs its
+persisted targeted read and enters reconciliation; verified, stale,
+superseded, and abandoned work remains terminal while any pending cover-cleanup
+obligation is retried. Desired target state verifies, the captured
 pre-state may requeue only under current authority and freshness, and a third
 value stays stale for forward re-evaluation. Never edit rows or blindly repeat
 an ambiguous request.
@@ -65,6 +67,8 @@ an ambiguous request.
 Cover recovery files are transient private material, not a general backup or
 Undo system. Preserve their owner-only directory only while corresponding
 nonterminal cover work exists. A capture failure blocks that cover alone.
-After audited abandonment, remove the matching recovery file; verified cover
-work removes it automatically. This fake-only increment cannot alter
+Capture is temp-file/fsync/atomic-rename/directory-fsync. Incomplete temporary
+or invalid final captures are rejected and cleaned where safely owned. Every
+terminal cover path persists cleanup and restart retries a failed removal.
+This fake-only increment cannot alter
 Audiobookshelf or embedded media.

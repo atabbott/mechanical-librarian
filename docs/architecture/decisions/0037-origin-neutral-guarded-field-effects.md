@@ -24,22 +24,27 @@ repository implements plan/control/audit persistence. A deterministic fake is
 the only target implementation. The authenticated web edge may call the same
 application service; no apply CLI is introduced.
 
-Backup readiness, capability, current authority, dependency freshness, target
+Planning resolves the exact persisted decision and current review-case binding;
+caller coordinates cannot change its destination, work, target fingerprint, or
+target version. A separate bounded consent fact binds the connection, library,
+destination, and `apply_field` action. Backup readiness, capability, current authority, dependency freshness, target
 pre-state, circuit state, then atomic pause/concurrency claim are checked in
 that order and refreshed at the last feasible point before claim. The target
 adapter must independently compare both captured pre-value and target version
 atomically with its write. These checks do not claim a transaction across the
 repository and external systems; later drift is detected by target conflict or
-readback and reconciled forward. Claimed work is never revoked mid-effect.
-Ambiguous responses enter
-durable reconciliation: desired completes, the captured pre-state may requeue
+readback and reconciled forward. Repository-held authority, consent, pause, and
+claim state share one `BEGIN IMMEDIATE` transaction; this is the supported
+atomic boundary. Claimed work is never revoked mid-effect. Ambiguous responses
+atomically schedule one durable targeted-read action: desired completes, the captured pre-state may requeue
 after renewed gates, and a third value stales the plan for forward evaluation.
 Verified siblings remain complete.
 
-Cover recovery bytes use a separate owner-only bounded private store. They are
+Cover recovery bytes use a separate owner-only bounded private store. Capture
+uses an owner-mode temporary file, file sync, atomic rename, and directory sync.
+Every terminal cover path records a retryable cleanup obligation. The bytes are
 never placed in SQLite documents, logs, diagnostics, fixtures, APIs, exports,
-or support material, and are removed after verified completion or audited
-abandonment.
+or support material.
 
 ## Consequences
 

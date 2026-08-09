@@ -429,10 +429,12 @@ routes; exact installed-artifact qualification remains report-only and verifies
 no target, media, or artifact writes.
 
 Guarded-application tests use only synthetic immutable decisions and fake
-backup, capability, authority, dependency, clock, target, fault, and cover
+backup, capability, exact authority binding, distinct consent, dependency,
+clock, target, fault, and cover
 recovery adapters. They cover both origins, every closed destination shape,
 atomic series, no-ops, ordered gate failures, pause/supersede/claim semantics,
-sibling independence, ambiguous desired/pre/third readback, retry exhaustion,
-restart boundaries, append-only scalar audit, owner-only cover lifecycle,
-exact-schema rejection, architecture imports, authenticated API calls, and the
+sibling independence, atomic revoke-versus-claim races, persisted ambiguous
+desired/pre/third readback and forward reevaluation, retry exhaustion, restart
+boundaries, append-only audit, retryable owner-only cover cleanup, canonical
+row/document/action corruption rejection, architecture imports, authenticated API calls, and the
 absence of Audiobookshelf/media-write construction.
