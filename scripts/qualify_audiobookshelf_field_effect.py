@@ -1153,7 +1153,9 @@ def _installed_continuous_qualification(
                             ),
                             "destination": field.get("destination"),
                             "disposition": field.get("deterministic_disposition"),
+                            "current": field.get("current"),
                             "proposed": len(field.get("proposed_values", [])),
+                            "values": field.get("proposed_values"),
                         })
                 raise QualificationError(
                     "installed_scheduler_failed:"
