@@ -529,7 +529,7 @@ def _qualification_hardcover_client(
                     requested_isbn, "Guarded qualification title"
                 )
                 authors = ["Synthetic Author"]
-                contribution_authors = tuple(authors)
+                contribution_authors = (*authors, "Second Qualified Author")
             else:
                 observations["title"] = observations.get("title", 0) + 1
                 requested_isbn = "9780306406157"
@@ -545,7 +545,9 @@ def _qualification_hardcover_client(
                         for value in raw_authors
                     ]
                 )
-                contribution_authors = ("Synthetic Author",)
+                contribution_authors = (
+                    "Synthetic Author", "Second Qualified Author"
+                )
         except (UnicodeError, json.JSONDecodeError):
             raise QualificationError("installed_provider_request_invalid") from None
         operator_title = requested_title in isbn_titles.values()
@@ -1500,6 +1502,15 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             _apply(service, repository, target, capabilities, writes, recovery,
                    item, "tags", ["canary"], clock()),
         ]
+        if corpus_sources:
+            authors_item = next(
+                value for value in items
+                if value in operator_item_ids and value != item
+            )
+            adapter_outcomes.append(_apply(
+                service, repository, target, capabilities, writes, recovery,
+                authors_item, "authors", ["Seed Author"], clock(),
+            ))
         _stable_cover_observation(target, item)
         adapter_outcomes.append(_apply(
             service, repository, target, capabilities, writes, recovery,
