@@ -7,10 +7,27 @@ from pathlib import Path
 
 import httpx
 
-from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import AudiobookshelfFieldEffectCapabilities, AudiobookshelfFieldEffectTarget
+from mechanical_librarian.adapters.field_effect_fakes import (
+    FakeBackupReadiness,
+    FakeCapabilityObserver,
+    FakeDependencyCurrentness,
+    FakeForwardReevaluation,
+)
+from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import (
+    AudiobookshelfFieldEffectCapabilities,
+    AudiobookshelfFieldEffectTarget,
+)
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
+from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
-from mechanical_librarian.domain.field_effect import EffectAuthority, EffectConsent, FieldEffectPlan
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    EffectConsent,
+    FieldEffectOperation,
+    FieldEffectPlan,
+)
 
 
 _PNG = b"\x89PNG\r\n\x1a\nsynthetic-cover"
@@ -134,6 +151,103 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
     def test_capability_constructor_rejects_unbounded_or_invalid_inputs(self) -> None:
         with self.assertRaises(ValueError):
             AudiobookshelfFieldEffectCapabilities(client_factory=lambda: httpx.Client(), endpoint="invalid", library_id="", maximum_response_bytes=1)
+
+    def test_capability_is_field_local_and_malformed_or_unavailable_state_fails_closed(self) -> None:
+        user = {
+            "isActive": True,
+            "permissions": {"update": True, "upload": False, "accessAllLibraries": False},
+            "librariesAccessible": ["library-1"],
+        }
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/me":
+                return httpx.Response(200, headers={"content-type": "application/json"}, json=user)
+            return httpx.Response(200, headers={"content-type": "application/json"}, json=self.detail)
+
+        capabilities = AudiobookshelfFieldEffectCapabilities(
+            client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handle)),
+            endpoint="https://abs.example.invalid", library_id="library-1",
+        )
+        self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "allowed")
+        self.assertEqual(capabilities.result(self.plan("cover", None, self.cover)).category, "insufficient_permission")
+        user["permissions"]["upload"] = True
+        self.assertEqual(capabilities.result(self.plan("cover", None, self.cover)).category, "allowed")
+        user["librariesAccessible"] = "library-1"
+        self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "insufficient_permission")
+        user["permissions"]["accessAllLibraries"] = True
+        self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "allowed")
+        user["isActive"] = False
+        self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "insufficient_permission")
+
+        unavailable = AudiobookshelfFieldEffectCapabilities(
+            client_factory=lambda: httpx.Client(
+                transport=httpx.MockTransport(lambda request: (_ for _ in ()).throw(httpx.ReadError("lost", request=request)))
+            ),
+            endpoint="https://abs.example.invalid", library_id="library-1",
+        )
+        self.assertEqual(unavailable.result(self.plan("title", "Before", "After")).category, "unavailable")
+
+    def test_streamed_reads_reject_encoded_or_oversized_responses(self) -> None:
+        plan = self.plan("title", "Before", "After")
+        encoded = AudiobookshelfFieldEffectTarget(
+            client_factory=lambda: httpx.Client(transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, headers={"content-type": "application/json", "content-encoding": "gzip"}, content=b"invalid")
+            )),
+            endpoint="https://abs.example.invalid", library_id="library-1", artifacts=self.artifacts,
+        )
+        with self.assertRaises(ValueError):
+            encoded.read(plan)
+
+        oversized = AudiobookshelfFieldEffectTarget(
+            client_factory=lambda: httpx.Client(transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, headers={"content-type": "application/json"}, content=b"{" + b" " * 1024)
+            )),
+            endpoint="https://abs.example.invalid", library_id="library-1", artifacts=self.artifacts,
+            maximum_response_bytes=1024,
+        )
+        with self.assertRaises(ValueError):
+            oversized.read(plan)
+
+    def test_post_dispatch_status_and_transport_loss_reconcile_through_application(self) -> None:
+        for outcome in (403, 500, "transport_loss"):
+            with self.subTest(outcome=outcome):
+                detail = {
+                    "id": "item-1", "libraryId": "library-1", "mediaType": "book", "updatedAt": 7,
+                    "media": {"metadata": {"title": "Before"}, "tags": []},
+                }
+                requests: list[str] = []
+
+                def handle(request: httpx.Request) -> httpx.Response:
+                    requests.append(request.method)
+                    if request.method == "GET":
+                        return httpx.Response(200, headers={"content-type": "application/json"}, json=detail)
+                    detail["media"]["metadata"]["title"] = "After"
+                    detail["updatedAt"] = 8
+                    if outcome == "transport_loss":
+                        raise httpx.ReadError("response lost", request=request)
+                    return httpx.Response(outcome)
+
+                target = AudiobookshelfFieldEffectTarget(
+                    client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handle)),
+                    endpoint="https://abs.example.invalid", library_id="library-1", artifacts=self.artifacts,
+                )
+                plan = self.plan("title", "Before", "After")
+                root = Path(self.directory.name) / ("case-" + str(outcome))
+                root.mkdir()
+                repository = open_repository(root / "effects.sqlite")
+                repository.record_field_effect(FieldEffectOperation(plan, updated_at=1))
+                current = type("Current", (), {"current": lambda self, value: True})()
+                ticks = iter(range(10, 100))
+                service = GuardedFieldApplication(
+                    repository, target, FakeBackupReadiness(), FakeCapabilityObserver("e" * 64),
+                    current, FakeDependencyCurrentness(), current,
+                    PrivateCoverRecoveryStore(root / "recovery", lambda _: b""),
+                    FakeForwardReevaluation(), lambda: next(ticks),
+                )
+                self.assertEqual(service.apply(plan.plan_id).state, "verified")
+                self.assertEqual(requests.count("PATCH"), 1)
+                self.assertGreaterEqual(requests.count("GET"), 4)
+                repository.close()
 
 
 if __name__ == "__main__":
