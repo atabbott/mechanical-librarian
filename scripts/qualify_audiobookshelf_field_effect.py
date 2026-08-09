@@ -969,6 +969,8 @@ def _installed_continuous_qualification(
                     )
                 )
             returned_automatic = False
+            returned_destination = None
+            returned_work_id = None
             for case_summary in cases:
                 if type(case_summary) is not dict:
                     continue
@@ -1023,9 +1025,21 @@ def _installed_continuous_qualification(
                         ) is None):
                     raise QualificationError("installed_return_automatic_failed")
                 returned_automatic = True
+                returned_destination = automatic_destination
+                returned_work_id = target.get("item")
                 break
             if not returned_automatic:
                 raise QualificationError("installed_manual_hold_unproved")
+            return_deadline = time.monotonic() + 60
+            while (time.monotonic() < return_deadline
+                   and repository.field_effect_manual_hold_context(
+                       case_id, automatic_destination
+                   ) is not None):
+                time.sleep(0.25)
+            if repository.field_effect_manual_hold_context(
+                case_id, automatic_destination
+            ) is not None:
+                raise QualificationError("installed_return_fresh_lineage_failed")
             paused = client.post("/api/v1/field-effects/pause", headers=mutation_headers)
             activity = client.get("/api/v1/activity")
             if paused.status_code != 204 or activity.status_code != 200 or activity.json().get("paused") is not True:
@@ -1131,6 +1145,13 @@ def _installed_continuous_qualification(
                     None if thread is None or thread.ident is None
                     else sys._current_frames().get(thread.ident)
                 )
+            if not any(
+                row["destination"] == returned_destination
+                and row["work_id"] == returned_work_id
+                and row["origin"] == "automatic_policy"
+                for row in installed_outcomes
+            ):
+                raise QualificationError("installed_return_automatic_unverified")
                 while frame is not None:
                     thread_stack.append(frame.f_code.co_name)
                     frame = frame.f_back
