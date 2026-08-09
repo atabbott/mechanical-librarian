@@ -29,6 +29,8 @@ class FakeTargetService:
         self._lock = threading.RLock()
         self.fail_next = False
         self.fail_read_next = False
+        self.fail_reads_for: set[str] = set()
+        self.fail_read_after_apply_for: set[str] = set()
         self.ambiguous_next: str | None = None
         self.before_apply: Callable[[FieldEffectPlan], None] | None = None
         self.after_apply: Callable[[FieldEffectPlan], None] | None = None
@@ -41,7 +43,7 @@ class FakeTargetService:
 
     def read(self, plan: FieldEffectPlan) -> TargetObservation:
         with self._lock:
-            if self.fail_read_next:
+            if self.fail_read_next or plan.plan_id in self.fail_reads_for:
                 self.fail_read_next = False
                 raise RuntimeError("synthetic target read failure")
             key = self._key(plan)
@@ -74,6 +76,8 @@ class FakeTargetService:
                     self._effects[plan.idempotency_key] = result
                 return result
             self._write(plan, plan.desired_value)
+            if plan.plan_id in self.fail_read_after_apply_for:
+                self.fail_reads_for.add(plan.plan_id)
             if self.after_apply is not None:
                 callback, self.after_apply = self.after_apply, None
                 callback(plan)

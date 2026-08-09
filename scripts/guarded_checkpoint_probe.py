@@ -123,6 +123,10 @@ def main() -> None:
         repository.claim_field_effect(
             claimed.plan_id, "planned", "1" * 64, clock()
         )
+        verification = _plan(repository, clock, "authors", "9", ["old"], ["new"])
+        repository.claim_field_effect(
+            verification.plan_id, "planned", "9" * 64, clock()
+        )
         applying = _plan(repository, clock, "publisher", "2")
         repository.claim_field_effect(
             applying.plan_id, "planned", "2" * 64, clock()
@@ -173,6 +177,7 @@ def main() -> None:
             for name, value in {
                 "ready": ready,
                 "claimed": claimed,
+                "verification": verification,
                 "applying": applying,
                 "reconciling": reconciling,
                 "cover": cover,
@@ -191,19 +196,21 @@ def main() -> None:
     identifiers = json.loads(identifiers_path.read_text(encoding="ascii"))
     repository = open_repository(database, create=False, cross_thread=True)
     target = FakeTargetService()
-    for name in ("claimed", "applying", "reconciling"):
+    for name in ("claimed", "verification", "applying", "reconciling"):
         target.seed(repository.get_field_effect(identifiers[name]).plan)
+    target.fail_read_after_apply_for.add(identifiers["verification"])
     store = PrivateCoverRecoveryStore(
         recovery_root,
         lambda value: (_ for _ in ()).throw(RuntimeError("unexpected reread")),
     )
     service = _service(repository, target, store, clock)
     startup = service.start()
-    if startup != (3, 0, 1):
+    if startup != (4, 1, 1):
         raise RuntimeError(f"startup recovery count disagrees: {startup!r}")
     expected = {
         "ready": "planned",
         "claimed": "verified",
+        "verification": "retryable",
         "applying": "retryable",
         "reconciling": "retryable",
         "cover": "verified",
@@ -215,7 +222,10 @@ def main() -> None:
         name: service.status(plan_id).state
         for name, plan_id in identifiers.items()
     }
-    if actual != expected or store.exists(identifiers["cover"]):
+    verification = service.status(identifiers["verification"])
+    if (actual != expected
+            or verification.failure != "target_failure"
+            or store.exists(identifiers["cover"])):
         raise RuntimeError("checkpoint recovery disagrees")
     repository.close()
     print(json.dumps({

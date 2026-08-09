@@ -372,8 +372,18 @@ class GuardedFieldApplication:
         return result
 
     def _verify(self, operation: FieldEffectOperation) -> FieldEffectOperation:
-        with self._timing.measure("verification", "target"):
-            observed = self._target.read(operation.plan)
+        try:
+            with self._timing.measure("verification", "target"):
+                observed = self._target.read(operation.plan)
+        except Exception:
+            # The write may already have succeeded. Persist a targeted read;
+            # never infer failure and blindly write the desired value again.
+            return self._repository.schedule_field_effect_reconciliation(
+                operation.plan.plan_id,
+                "applying",
+                self._clock(),
+                "target_failure",
+            )
         if observed.value == operation.plan.desired_value:
             return self._complete(operation, "applying")
         return self._repository.schedule_field_effect_reconciliation(

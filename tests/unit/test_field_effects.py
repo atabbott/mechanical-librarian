@@ -778,6 +778,28 @@ class FieldEffectTests(unittest.TestCase):
         self.assertEqual((failed.state, failed.failure), ("retryable", "target_failure"))
         self.assertEqual((sibling.state, sibling.failure), ("retryable", "not_applied"))
 
+    def test_startup_contains_verification_read_failure_after_successful_apply(self) -> None:
+        first = self.plan(destination="subtitle", suffix="7")
+        sibling = self.plan(destination="publisher", suffix="8")
+        for operation, token in ((first, "7"), (sibling, "8")):
+            self.repository.claim_field_effect(
+                operation.plan.plan_id, "planned", token * 64, self.clock()
+            )
+
+        self.target.fail_read_after_apply_for.add(first.plan.plan_id)
+
+        self.assertEqual(self.service.start(), (2, 1, 0))
+        failed = self.service.status(first.plan.plan_id)
+        continued = self.service.status(sibling.plan.plan_id)
+        self.assertEqual(
+            (failed.state, failed.failure), ("retryable", "target_failure")
+        )
+        self.assertEqual((continued.state, continued.failure), ("verified", None))
+        self.target.fail_reads_for.remove(first.plan.plan_id)
+        self.assertEqual(
+            self.target.read(first.plan).value, first.plan.desired_value
+        )
+
     def test_cover_recovery_survives_restart_and_rejects_permission_drift(self) -> None:
         cover = self.plan(
             "cover", None, "cover_" + "7" * 64, "d"
