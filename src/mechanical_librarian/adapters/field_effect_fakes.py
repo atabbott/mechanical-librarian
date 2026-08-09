@@ -6,6 +6,7 @@ import hashlib
 import os
 import stat
 from pathlib import Path
+from typing import Callable
 
 from mechanical_librarian.application.field_effects import (
     TargetEffectResult,
@@ -25,6 +26,7 @@ class FakeTargetService:
         self._effects: dict[str, TargetEffectResult] = {}
         self.fail_next = False
         self.ambiguous_next: str | None = None
+        self.before_apply: Callable[[FieldEffectPlan], None] | None = None
 
     def seed(self, plan: FieldEffectPlan) -> None:
         key = self._key(plan)
@@ -42,6 +44,12 @@ class FakeTargetService:
         if self.fail_next:
             self.fail_next = False
             raise RuntimeError("synthetic target failure")
+        if self.before_apply is not None:
+            callback, self.before_apply = self.before_apply, None
+            callback(plan)
+        observed = self.read(plan)
+        if observed.value != plan.pre_value or observed.version != plan.target_version:
+            return TargetEffectResult("conflict")
         if self.ambiguous_next is not None:
             behavior, self.ambiguous_next = self.ambiguous_next, None
             if behavior == "desired":
@@ -49,7 +57,8 @@ class FakeTargetService:
             elif behavior == "third":
                 self._write(plan, "synthetic-third-value")
             result = TargetEffectResult("ambiguous")
-            self._effects[plan.idempotency_key] = result
+            if behavior != "pre":
+                self._effects[plan.idempotency_key] = result
             return result
         self._write(plan, plan.desired_value)
         result = TargetEffectResult("accepted")
@@ -100,6 +109,16 @@ class FakeDependencyCurrentness:
     current_value = True
     def current(self, digests: tuple[str, ...]) -> bool:
         return self.current_value
+
+
+class FakePreclaimHook:
+    def __init__(self) -> None:
+        self.callback: Callable[[FieldEffectPlan], None] | None = None
+
+    def __call__(self, plan: FieldEffectPlan) -> None:
+        if self.callback is not None:
+            callback, self.callback = self.callback, None
+            callback(plan)
 
 
 class PrivateCoverRecoveryStore:

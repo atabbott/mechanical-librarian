@@ -4,7 +4,8 @@
 
 - Add the origin-neutral guarded field-effect kernel for immutable owner and
   sealed qualified automatic decisions. All 14 ebook destinations use one
-  deterministic field plan (with atomic series), exact preclaim gates,
+  deterministic field plan (with atomic series), last-feasible preclaim guard
+  refresh and target-side optimistic concurrency,
   persisted claim/effect/readback/reconciliation/audit, bounded retries,
   independent sibling outcomes, and private cover recovery. The only writable
   target is a deterministic fake; no Audiobookshelf, media, CLI, bulk, release,

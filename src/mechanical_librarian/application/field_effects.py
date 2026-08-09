@@ -31,7 +31,7 @@ class TargetObservation:
 
 @dataclass(frozen=True, slots=True)
 class TargetEffectResult:
-    outcome: Literal["accepted", "ambiguous"]
+    outcome: Literal["accepted", "ambiguous", "conflict"]
 
 
 class FieldEffectRepository(Protocol):
@@ -95,7 +95,8 @@ class GuardedFieldApplication:
     def __init__(self, repository: FieldEffectRepository, target: TargetService,
                  backup: BackupReadiness, capabilities: CapabilityObserver,
                  authority: AuthorityCurrentness, dependencies: DependencyCurrentness,
-                 cover_recovery: CoverRecovery, clock: Callable[[], int]) -> None:
+                 cover_recovery: CoverRecovery, clock: Callable[[], int],
+                 preclaim_hook: Callable[[FieldEffectPlan], None] | None = None) -> None:
         self._repository = repository
         self._target = target
         self._backup = backup
@@ -104,6 +105,7 @@ class GuardedFieldApplication:
         self._dependencies = dependencies
         self._cover_recovery = cover_recovery
         self._clock = clock
+        self._preclaim_hook = preclaim_hook or (lambda _: None)
 
     def plan(self, decision: HumanDecision | AutomaticDecision, *, connection: str,
              library: str, work_id: str, destination: str, pre_value: object,
@@ -142,26 +144,20 @@ class GuardedFieldApplication:
             )
             return self.reconcile(plan_id)
         plan = operation.plan
-        # Mandatory preclaim order: backup, capability, consent/authority,
-        # dependency, target, circuit, then atomic concurrency/claim.
-        if not self._backup.ready(plan):
-            return self._stale(operation, "backup")
-        if self._capabilities.observe(plan) != plan.capability_digest:
-            return self._stale(operation, "capability")
-        if not self._authority.current(plan.authority):
-            return self._stale(operation, "authority")
-        if not self._dependencies.current(plan.dependency_digests):
-            return self._stale(operation, "dependency")
-        observed = self._target.read(plan)
-        if observed.value != plan.pre_value or observed.version != plan.target_version:
-            return self._stale(operation, "target_changed")
-        if operation.attempt >= 3:
-            return self._stale(operation, "circuit_open")
+        guarded = self._preclaim(operation)
+        if guarded is not None:
+            return guarded
         if plan.destination == "cover":
             try:
                 self._cover_recovery.capture(plan)
             except Exception:
                 return self._stale(operation, "cover_recovery")
+        # Refresh every guard at the last feasible point before the repository's
+        # atomic pause/state claim. The target independently enforces its own CAS.
+        self._preclaim_hook(plan)
+        guarded = self._preclaim(operation)
+        if guarded is not None:
+            return guarded
         token = hashlib.sha256(f"{plan.plan_id}:{operation.attempt + 1}".encode()).hexdigest()
         try:
             operation = self._repository.claim_field_effect(
@@ -188,6 +184,10 @@ class GuardedFieldApplication:
         if result.outcome == "ambiguous":
             return self._repository.transition_field_effect(
                 plan.plan_id, "applying", "reconciling", self._clock(), "ambiguous"
+            )
+        if result.outcome == "conflict":
+            return self._repository.transition_field_effect(
+                plan.plan_id, "applying", "stale", self._clock(), "target_changed"
             )
         return self._verify(operation)
 
@@ -249,6 +249,29 @@ class GuardedFieldApplication:
         return result
 
     def _stale(self, operation: FieldEffectOperation, failure: str) -> FieldEffectOperation:
-        return self._repository.transition_field_effect(
+        result = self._repository.transition_field_effect(
             operation.plan.plan_id, operation.state, "stale", self._clock(), failure
         )
+        if operation.plan.destination == "cover":
+            self._cover_recovery.remove(operation.plan.plan_id)
+        return result
+
+    def _preclaim(self, operation: FieldEffectOperation) -> FieldEffectOperation | None:
+        """Evaluate current guards in their fixed order without claiming."""
+        plan = operation.plan
+        if not self._backup.ready(plan):
+            return self._stale(operation, "backup")
+        if self._capabilities.observe(plan) != plan.capability_digest:
+            return self._stale(operation, "capability")
+        if not self._authority.current(plan.authority):
+            return self._stale(operation, "authority")
+        if not self._dependencies.current(plan.dependency_digests):
+            return self._stale(operation, "dependency")
+        observed = self._target.read(plan)
+        if observed.value != plan.pre_value or observed.version != plan.target_version:
+            return self._stale(operation, "target_changed")
+        if operation.attempt >= 3:
+            return self._stale(operation, "circuit_open")
+        if self._repository.field_effect_paused():
+            raise GuardedApplicationError("paused")
+        return None

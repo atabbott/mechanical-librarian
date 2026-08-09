@@ -13,6 +13,7 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     FakeBackupReadiness,
     FakeCapabilityObserver,
     FakeDependencyCurrentness,
+    FakePreclaimHook,
     FakeTargetService,
     PrivateCoverRecoveryStore,
 )
@@ -55,9 +56,8 @@ def decision(destination: str, selected: object, suffix: str = "a") -> HumanDeci
 
 def envelope(destination: str, value: object) -> dict[str, object]:
     kind = (
-        "list" if destination in {"authors", "genres"}
+        "list" if destination in {"authors", "genres", "tags"}
         else "series" if destination == "series"
-        else "boolean" if destination == "explicit"
         else "cover" if destination == "cover"
         else "text"
     )
@@ -74,12 +74,14 @@ class FieldEffectTests(unittest.TestCase):
         self.authority = FakeAuthorityCurrentness()
         self.dependencies = FakeDependencyCurrentness()
         self.backup = FakeBackupReadiness()
+        self.capabilities = FakeCapabilityObserver(CAPABILITY)
+        self.preclaim = FakePreclaimHook()
         self.recovery = PrivateCoverRecoveryStore(root / "recovery", lambda _: b"old-cover")
         self.clock = Clock()
         self.service = GuardedFieldApplication(
             self.repository, self.target, self.backup,
-            FakeCapabilityObserver(CAPABILITY), self.authority,
-            self.dependencies, self.recovery, self.clock,
+            self.capabilities, self.authority,
+            self.dependencies, self.recovery, self.clock, self.preclaim,
         )
 
     def tearDown(self) -> None:
@@ -105,7 +107,7 @@ class FieldEffectTests(unittest.TestCase):
             "series": [{"name": "S", "sequence": "2.5"}], "genres": ["G"],
             "publishedYear": "2026", "publishedDate": "2026-01-02",
             "publisher": "P", "description": "D", "isbn": "1",
-            "asin": "A", "language": "en", "explicit": False,
+            "asin": "A", "language": "en", "tags": ["T"],
             "cover": "cover_" + "a" * 64,
         }
         self.assertEqual(SUPPORTED_DESTINATIONS, set(values))
@@ -207,12 +209,50 @@ class FieldEffectTests(unittest.TestCase):
         self.target.ambiguous_next = "pre"
         self.assertEqual(self.service.apply(pre.plan.plan_id).state, "reconciling")
         self.assertEqual(self.service.reconcile(pre.plan.plan_id).state, "retryable")
+        self.assertEqual(self.service.apply(pre.plan.plan_id).state, "verified")
 
         third = self.plan(destination="publisher", suffix="7")
         self.target.ambiguous_next = "third"
         self.service.apply(third.plan.plan_id)
         result = self.service.reconcile(third.plan.plan_id)
         self.assertEqual((result.state, result.failure), ("stale", "third_value"))
+
+    def test_target_compare_and_set_rejects_a_race_without_overwrite(self) -> None:
+        operation = self.plan(suffix="0")
+        self.target.before_apply = lambda plan: self.target.drift(plan, "external")
+        result = self.service.apply(operation.plan.plan_id)
+        self.assertEqual((result.state, result.failure), ("stale", "target_changed"))
+        self.assertEqual(self.target.read(operation.plan).value, "external")
+
+    def test_final_preclaim_refresh_blocks_guard_drift_and_leaves_siblings_local(self) -> None:
+        cases = (
+            ("pause", lambda plan: self.service.set_paused(True)),
+            ("authority", lambda plan: self.authority.revoked.add(plan.authority.decision_id)),
+            ("capability", lambda plan: setattr(self.capabilities, "digest", "e" * 64)),
+            ("dependency", lambda plan: setattr(self.dependencies, "current_value", False)),
+        )
+        for index, (failure, mutate) in enumerate(cases, start=1):
+            with self.subTest(failure=failure):
+                operation = self.plan(destination="subtitle", suffix=format(index, "x"))
+                self.preclaim.callback = mutate
+                if failure == "pause":
+                    with self.assertRaisesRegex(Exception, "paused"):
+                        self.service.apply(operation.plan.plan_id)
+                    result = self.service.status(operation.plan.plan_id)
+                    self.service.set_paused(False)
+                    self.assertEqual((result.state, result.attempt), ("planned", 0))
+                else:
+                    result = self.service.apply(operation.plan.plan_id)
+                    self.assertEqual(
+                        (result.state, result.failure, result.attempt),
+                        ("stale", failure, 0),
+                    )
+                self.assertEqual(self.target.read(operation.plan).value, operation.plan.pre_value)
+                self.capabilities.digest = CAPABILITY
+                self.dependencies.current_value = True
+
+        sibling = self.plan(destination="publisher", suffix="e")
+        self.assertEqual(self.service.apply(sibling.plan.plan_id).state, "verified")
 
     def test_supersession_does_not_interrupt_claimed_and_cover_bytes_are_private(self) -> None:
         planned = self.plan(suffix="8")

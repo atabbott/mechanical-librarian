@@ -17,9 +17,9 @@ class FieldEffectError(ValueError):
 
 SCALAR_DESTINATIONS = frozenset({
     "title", "subtitle", "publishedYear", "publishedDate", "publisher",
-    "description", "isbn", "asin", "language", "explicit", "cover",
+    "description", "isbn", "asin", "language", "cover",
 })
-LIST_DESTINATIONS = frozenset({"authors", "genres"})
+LIST_DESTINATIONS = frozenset({"authors", "genres", "tags"})
 SERIES_DESTINATION = "series"
 SUPPORTED_DESTINATIONS = SCALAR_DESTINATIONS | LIST_DESTINATIONS | {SERIES_DESTINATION}
 TERMINAL_STATES = frozenset({"verified", "stale", "superseded", "abandoned"})
@@ -70,10 +70,6 @@ def validate_effect_value(destination: str, value: object) -> object:
                 raise FieldEffectError("invalid_value")
             normalized.append({"name": name, "sequence": sequence})
         return normalized
-    if destination == "explicit":
-        if type(value) is not bool:
-            raise FieldEffectError("invalid_value")
-        return value
     if destination == "cover":
         if type(value) is not str or re.fullmatch(r"cover_[0-9a-f]{64}", value) is None:
             raise FieldEffectError("invalid_value")
@@ -90,7 +86,6 @@ def project_decision_value(destination: str, value: object) -> object:
     expected = (
         "list" if destination in LIST_DESTINATIONS
         else "series" if destination == SERIES_DESTINATION
-        else "boolean" if destination == "explicit"
         else "cover" if destination == "cover"
         else "text"
     )

@@ -14,7 +14,7 @@ Audiobookshelf writer or treating advice and previews as authority.
 
 Use one field-level plan and persisted state machine for both decision origins.
 The plan deterministically binds connection, library, work, closed destination,
-captured scalar pre-value, desired value, target version, evidence dependencies,
+captured pre-value, desired value, target version, evidence dependencies,
 decision and policy/qualification identities, capability observation, and
 idempotency identity. Series name and sequence are one compound destination.
 
@@ -26,7 +26,12 @@ application service; no apply CLI is introduced.
 
 Backup readiness, capability, current authority, dependency freshness, target
 pre-state, circuit state, then atomic pause/concurrency claim are checked in
-that order. Claimed work is never revoked mid-effect. Ambiguous responses enter
+that order and refreshed at the last feasible point before claim. The target
+adapter must independently compare both captured pre-value and target version
+atomically with its write. These checks do not claim a transaction across the
+repository and external systems; later drift is detected by target conflict or
+readback and reconciled forward. Claimed work is never revoked mid-effect.
+Ambiguous responses enter
 durable reconciliation: desired completes, the captured pre-state may requeue
 after renewed gates, and a third value stales the plan for forward evaluation.
 Verified siblings remain complete.
