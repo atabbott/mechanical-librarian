@@ -5545,12 +5545,11 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             if previous is not None:
                 effect = self._connection.execute(
-                    "SELECT state FROM field_effects WHERE decision_id=?",
+                    "SELECT 1 FROM field_effects WHERE decision_id=? AND state NOT IN "
+                    "('planned','retryable','superseded','abandoned') LIMIT 1",
                     (previous[0],),
                 ).fetchone()
-                if effect is not None and effect[0] not in {
-                    "planned", "retryable", "superseded", "abandoned"
-                }:
+                if effect is not None:
                     raise HumanDecisionError("already_decided")
             selected = _canonical_json(decision.selected_value)
             self._connection.execute(

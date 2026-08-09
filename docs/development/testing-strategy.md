@@ -25,6 +25,16 @@ uv run python scripts/qualify_audiobookshelf_field_effect.py \
   --source-sha "$(git rev-parse HEAD)"
 ```
 
+That generated diagnostic canary is not milestone acceptance. F17 milestone
+qualification supplies the frozen private operator corpus explicitly and must
+report `operator_corpus: true` with six to eight cases:
+
+```bash
+uv run python scripts/qualify_audiobookshelf_field_effect.py \
+  --source-sha "$(git rev-parse HEAD)" \
+  --corpus /private/path/to/frozen-rights-verified-epubs
+```
+
 The public suite has four explicit qualification tiers. They retain every
 existing assertion while keeping independent feedback paths parallel and
 diagnosable.
@@ -455,13 +465,15 @@ then uses that installed adapter only against its owned disposable synthetic
 library. Its receipt hashes the real validated event-ledger sequence rather than
 a derived operation summary. F17 additionally qualifies the installed continuous
 composition against owned disposable Audiobookshelf 2.26 and latest containers,
-mounting six to eight rights-verified real EPUBs beside a generated diagnostic
-control. Temporary private copies receive deterministic qualification metadata;
+mounting six to eight rights-verified real EPUBs. Temporary private copies
+receive deterministic qualification metadata;
 all required destination coverage is bound to those real-work service identities,
-while the controls supply additional diagnostics. It round-trips every existing
+while a separate adapter canary supplies additional diagnostics. It round-trips every existing
 destination across mixed human and qualified automatic origins and proves
-field-local drift, one fair instance slot, pause/revoke, restart, ambiguity,
-manual hold, policy demotion, scoped suspension, audit and cover cleanup. Raw
+field-local drift, multi-library progress, pause/revoke, restart, manual hold,
+scoped suspension, audit and cover cleanup. Deterministic fake-service tests own
+exhaustive ambiguity, retry exhaustion, policy demotion and scheduling-fairness
+proof. Raw
 case identities, metadata, paths and media remain private; public evidence is
 aggregate only.
 

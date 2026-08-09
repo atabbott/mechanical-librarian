@@ -187,7 +187,7 @@ class FieldEffectTests(unittest.TestCase):
             ),
         )
 
-    def test_manual_hold_is_durable_and_old_automatic_never_reactivates(self) -> None:
+    def test_manual_hold_requires_explicit_return_and_later_human_wins(self) -> None:
         report = metadata_report("Old title", "1", "2")
         self.repository.publish(report, lambda: True)
         proposal_set = evaluate_report(report)
@@ -247,9 +247,29 @@ class FieldEffectTests(unittest.TestCase):
              non_candidate.occurred_at, non_candidate.to_json()),
         )
         self.repository._connection.commit()
+
+        consent = self.repository.grant_field_effect_consents(
+            "primary", ("books",), (proposal["destination"],), 9
+        )[0]
+        authority = EffectAuthority(
+            automatic.decision_id, automatic.review_case_id,
+            automatic.target_fingerprint, "persisted_review_case",
+            "automatic_policy", "candidate", automatic.resolved_policy_id,
+            automatic.qualification_manifest_sha256,
+        )
+        plan = FieldEffectPlan.create(
+            connection="primary", library="books", work_id="1234567890abcdef",
+            destination=proposal["destination"], pre_value="Old title",
+            desired_value=selected["value"], target_fingerprint=case.target_fingerprint,
+            target_version="version-before-manual", dependency_digests=(DEPENDENCY,),
+            authority=authority, consent=consent, capability_digest=CAPABILITY,
+            created_at=9,
+        )
+        automatic_operation = FieldEffectOperation(plan, updated_at=9)
+        self.repository.record_field_effect(automatic_operation)
         self.repository.record_human_decision(human)
 
-        self.repository.field_effect_manual_override(case_id, proposal["destination"], 11)
+        self.assertEqual(self.repository.get_field_effect(plan.plan_id).state, "superseded")
         self.assertEqual(
             self.repository.field_effect_manual_hold_context(case_id, proposal["destination"]),
             ("primary", "books"),
@@ -267,6 +287,30 @@ class FieldEffectTests(unittest.TestCase):
         pending = self.repository.pending_field_effect_decision_documents(10)
         self.assertEqual(len(pending), 1)
         self.assertIn(automatic.decision_id, pending[0])
+
+        returned = self.repository.record_field_effect(automatic_operation)
+        self.assertEqual(returned.state, "planned")
+        self.assertEqual(self.repository.get_field_effect(plan.plan_id).state, "planned")
+        self.assertEqual(
+            tuple(json.loads(value)["kind"] for value in
+                  self.repository.field_effect_event_documents(plan.plan_id)),
+            ("planned", "superseded", "planned"),
+        )
+
+        later_human = HumanDecision.create(
+            case, proposal_id=proposal["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination=proposal["destination"], actor="owner", outcome="accept",
+            selected_value=selected, idempotency_key="manual-hold-human-0002",
+            occurred_at=13,
+        )
+        self.repository.record_human_decision(later_human)
+        self.assertEqual(self.repository.get_field_effect(plan.plan_id).state, "superseded")
+        self.assertEqual(
+            self.repository.field_effect_manual_hold_context(case_id, proposal["destination"]),
+            ("primary", "books"),
+        )
+
         replacement = metadata_report("Replacement title", "3", "4")
         self.repository.publish(replacement, lambda: True)
         replacement_proposal = evaluate_report(replacement)

@@ -71,9 +71,11 @@ artifact and private recovery seams.
 The remaining target race is intentionally visible and covered by qualification.
 Useful field-local progress is an owned product capability and has no upstream
 CAS prerequisite, but the product does not claim cross-system atomicity. All 14 destinations, both
-origins, multiple libraries, restart, drift, ambiguity, pause, revocation,
-policy demotion, manual hold, fairness, and capability suspension must qualify
-through the exact installed artifact and supported service versions.
+origins, multiple libraries, restart, drift, pause, revocation, manual hold, and
+capability suspension must qualify through the exact installed artifact and
+supported service versions. Deterministic fake-service qualification owns the
+exhaustive ambiguity, bounded-retry, policy-demotion, and scheduling-fairness
+proof that cannot be induced safely or repeatably through the service.
 
 The database remains pre-release exact-current under ADR-0013. No migration,
 release, deployment, tag, package publication, or production-service authority
