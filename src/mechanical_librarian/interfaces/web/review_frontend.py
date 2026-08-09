@@ -260,7 +260,7 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .workspace-context { margin-left: auto; color: var(--ink-soft); font-size: .61rem; }
 
 .prototype-shell { width: 100%; max-width: 1540px; margin: auto; padding: 22px clamp(12px, 2.4vw, 30px) 70px; }
-.library-page:focus-visible, .attention-page:focus-visible, .detail-page:focus-visible { outline: none; }
+.library-page:focus-visible, .attention-page:focus-visible, .detail-page:focus-visible, .activity-page:focus-visible { outline: none; }
 .page-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 18px; margin-bottom: 16px; }
 .page-heading h1 { margin-bottom: 6px; }
 .page-heading p { max-width: 66ch; margin-bottom: 0; color: var(--ink-soft); }
@@ -403,6 +403,7 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .policy-chapter-select { display: none; }
 
 /* Selected 0.13 additive Activity surface. */
+.policy-paper, .policy-summary { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow); }
 .activity-consent { display: grid; gap: 18px; padding: clamp(22px, 4vw, 42px); }
 .activity-consent h2 { margin: 4px 0; font-size: clamp(1.5rem, 3vw, 2.1rem); }
 .activity-consent > div:first-child > p:last-child { max-width: 760px; color: var(--ink-soft); }

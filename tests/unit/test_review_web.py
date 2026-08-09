@@ -541,6 +541,9 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn('href="/activity" aria-current="page"', page.text)
         self.assertIn('/assets/activity.js', page.text)
+        stylesheet = self.client.get("/assets/review.css").text
+        self.assertIn(".activity-page:focus-visible { outline: none; }", stylesheet)
+        self.assertIn(".policy-paper, .policy-summary {", stylesheet)
         self.assertEqual(self.client.get("/api/v1/activity").json()["prepared"]["total"], 2)
         denied = self.client.post(
             "/api/v1/activity/consent",
