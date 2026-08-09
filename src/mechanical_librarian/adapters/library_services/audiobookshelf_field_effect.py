@@ -220,6 +220,10 @@ class AudiobookshelfFieldEffectTarget:
                 raise TargetServiceUnavailable(
                     "destination", "unexpected_effect_behavior"
                 ) from error
+            except ValueError as error:
+                raise TargetServiceUnavailable(
+                    "destination", "field_unavailable"
+                ) from error
             if status == 404:
                 return None
             if status != 200:

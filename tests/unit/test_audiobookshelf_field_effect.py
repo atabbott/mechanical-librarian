@@ -278,6 +278,62 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
             ("destination", "unexpected_effect_behavior"),
         )
 
+    def test_oversized_cover_reads_suspend_the_destination_before_and_after_write(self) -> None:
+        oversized = b"x" * (8 * 1024 * 1024 + 1)
+        for phase in ("preclaim", "verification"):
+            with self.subTest(phase=phase):
+                wrote = False
+
+                def handle(request: httpx.Request) -> httpx.Response:
+                    nonlocal wrote
+                    if request.method == "POST":
+                        wrote = True
+                        return httpx.Response(200)
+                    if request.url.path.endswith("/cover"):
+                        if phase == "preclaim" or wrote:
+                            return httpx.Response(
+                                200, headers={"content-type": "image/jpeg"},
+                                content=oversized,
+                            )
+                        return httpx.Response(404)
+                    return httpx.Response(
+                        200, headers={"content-type": "application/json"},
+                        json=self.detail,
+                    )
+
+                target = AudiobookshelfFieldEffectTarget(
+                    client_factory=lambda: httpx.Client(
+                        transport=httpx.MockTransport(handle)
+                    ),
+                    endpoint="https://abs.example.invalid", library_id="library-1",
+                    artifacts=self.artifacts,
+                )
+                plan = self.plan("cover", None, self.cover)
+                root = Path(self.directory.name) / ("cover-" + phase)
+                root.mkdir()
+                repository = open_repository(root / "effects.sqlite")
+                repository.record_field_effect(FieldEffectOperation(plan, updated_at=1))
+                current = type("Current", (), {"current": lambda self, value: True})()
+                ticks = iter(range(100, 200))
+                service = GuardedFieldApplication(
+                    repository, target, FakeBackupReadiness(),
+                    FakeCapabilityObserver("e" * 64), current,
+                    FakeDependencyCurrentness(), current,
+                    PrivateCoverRecoveryStore(root / "recovery", lambda _: b""),
+                    FakeForwardReevaluation(), lambda: next(ticks),
+                )
+                result = service.apply(plan.plan_id)
+                self.assertEqual(
+                    result.state, "stale" if phase == "preclaim" else "reconciling"
+                )
+                self.assertEqual(
+                    repository.field_effect_capability_suspension(
+                        plan.connection, "cover"
+                    ),
+                    "field_unavailable",
+                )
+                repository.close()
+
     def test_post_dispatch_status_and_transport_loss_reconcile_through_application(self) -> None:
         for outcome in (401, 403, 500, "transport_loss"):
             with self.subTest(outcome=outcome):
