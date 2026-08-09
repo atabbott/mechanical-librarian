@@ -565,6 +565,18 @@ def _provider_statuses(report: MetadataReport) -> tuple[ProviderStatus, ...]:
     )
 
 
+def _provider_authentication_root(report: MetadataReport) -> str | None:
+    roots = sorted(
+        provider.provider
+        for provider in report.providers
+        if any(
+            status in {ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION}
+            for status in (provider.status, *(lane.status for lane in provider.lanes))
+        )
+    )
+    return None if not roots else roots[0]
+
+
 class _NonClosingRepository:
     """Let one composed service borrow a pipeline-owned repository connection."""
 
@@ -695,6 +707,7 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
                     else disposition[0]
                 ),
                 review_claim_next,
+                _provider_authentication_root(report),
             )
         ),
         require_singular_target=review_action is not None,

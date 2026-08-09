@@ -23,6 +23,7 @@ from argon2 import PasswordHasher
 
 ROOT = Path(__file__).resolve().parents[1]
 OWNERSHIP_LABEL = "org.mechanical-librarian.qualification-run"
+GRACEFUL_SHUTDOWN_SECONDS = 5
 
 
 class QualificationError(RuntimeError):
@@ -124,6 +125,27 @@ def _health(port: int, route: str, deadline: float) -> bool:
     return False
 
 
+def _clean_stop(container: str) -> int:
+    started = time.monotonic()
+    _run([
+        "docker", "stop", "--time", str(GRACEFUL_SHUTDOWN_SECONDS), container
+    ])
+    shutdown_ms = int((time.monotonic() - started) * 1000)
+    state = json.loads(_run([
+        "docker", "inspect", container, "--format", "{{json .State}}"
+    ]))
+    if (
+        shutdown_ms > GRACEFUL_SHUTDOWN_SECONDS * 1_000
+        or state.get("Running") is not False
+        or state.get("ExitCode") != 0
+        or state.get("OOMKilled") is not False
+        or state.get("Dead") is not False
+        or state.get("Error") != ""
+    ):
+        raise QualificationError("container_graceful_shutdown_failed")
+    return shutdown_ms
+
+
 def _configuration() -> dict[str, object]:
     return {
         "schema_version": "config-v5",
@@ -154,7 +176,7 @@ def _configuration() -> dict[str, object]:
             "tls_private_key_file": "/data/tls.key",
             "session_lifetime_seconds": 600,
             "library_polling_interval_seconds": 60,
-            "graceful_shutdown_seconds": 5,
+            "graceful_shutdown_seconds": GRACEFUL_SHUTDOWN_SECONDS,
             "diagnostic_timings_enabled": True,
             "trusted_proxy_ips": [],
         },
@@ -273,9 +295,7 @@ def main() -> None:
         ):
             raise QualificationError("container_shape_failed")
 
-        started = time.monotonic()
-        _run(["docker", "stop", "--time", "8", container])
-        shutdown_ms = int((time.monotonic() - started) * 1000)
+        shutdown_ms = _clean_stop(container)
         with tempfile.TemporaryDirectory() as temporary:
             first = Path(temporary) / "first.sqlite3"
             second = Path(temporary) / "second.sqlite3"
@@ -287,7 +307,7 @@ def main() -> None:
             ]).rsplit(":", 1)[1])
             if not _health(port, "/health/ready", time.monotonic() + 20):
                 raise QualificationError("container_restart_failed")
-            _run(["docker", "stop", "--time", "8", container])
+            shutdown_ms = max(shutdown_ms, _clean_stop(container))
             _run(["docker", "cp", f"{container}:/data/application.sqlite3", str(second)])
             second_hash = _sha256(second)
         if first_hash != second_hash:
@@ -303,6 +323,8 @@ def main() -> None:
             "container_id": container_id,
             "exact_current_restart": True,
             "graceful_shutdown_ms": shutdown_ms,
+            "graceful_shutdown_seconds": GRACEFUL_SHUTDOWN_SECONDS,
+            "graceful_terminal_state": True,
             "guarded_checkpoint_restart": True,
             "image_id": image_id,
             "liveness": True,

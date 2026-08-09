@@ -27,7 +27,7 @@ from mechanical_librarian.adapters.field_effect_fakes import (
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
-from mechanical_librarian.application.operations import StageTimer
+from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
 from mechanical_librarian.interfaces.web.app import create_review_app
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
@@ -798,6 +798,67 @@ class FieldEffectTests(unittest.TestCase):
         self.target.fail_reads_for.remove(first.plan.plan_id)
         self.assertEqual(
             self.target.read(first.plan).value, first.plan.desired_value
+        )
+
+    def test_shared_backup_and_service_failures_project_above_field_scope(self) -> None:
+        failures = (
+            (self.plan(destination="title", suffix="a"), "backup"),
+            (self.plan(destination="subtitle", suffix="b"), "backup"),
+            (self.plan(destination="publisher", suffix="c"), "capability"),
+            (self.plan(destination="description", suffix="d"), "capability"),
+            (self.plan(destination="isbn", suffix="e"), "third_value"),
+            (self.plan(destination="asin", suffix="f"), "third_value"),
+        )
+        for operation, failure in failures:
+            self.repository.transition_field_effect(
+                operation.plan.plan_id,
+                "planned",
+                "stale",
+                self.clock(),
+                failure,
+            )
+
+        signals = self.repository.operational_snapshot()["signals"]
+        backup = [value for value in signals if value["kind"] == "backup_failure"]
+        service = [
+            value for value in signals
+            if value["kind"] == "service_incompatibility"
+        ]
+        currentness = [
+            value for value in signals
+            if value["cause"] == "currentness_conflict"
+        ]
+        self.assertEqual(
+            {(value["scope"], value["library"], value["work_id"], value["field"])
+             for value in backup},
+            {("library", "books", None, None)},
+        )
+        self.assertEqual(
+            {(value["scope"], value["library"], value["work_id"], value["field"])
+             for value in service},
+            {("connection", None, None, None)},
+        )
+        self.assertEqual(
+            {(value["scope"], value["work_id"], value["field"])
+             for value in currentness},
+            {("field", "book-1", "isbn"), ("field", "book-1", "asin")},
+        )
+        incidents = aggregate_incidents(signals)
+        self.assertEqual(
+            sorted(
+                (value.kind, value.count)
+                for value in incidents
+                if value.kind in {
+                    "backup_failure", "service_incompatibility",
+                    "owner_action_required",
+                }
+            ),
+            [
+                ("backup_failure", 2),
+                ("owner_action_required", 1),
+                ("owner_action_required", 1),
+                ("service_incompatibility", 2),
+            ],
         )
 
     def test_cover_recovery_survives_restart_and_rejects_permission_drift(self) -> None:

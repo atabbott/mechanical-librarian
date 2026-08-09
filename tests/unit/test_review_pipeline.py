@@ -26,7 +26,11 @@ from mechanical_librarian.application.review_pipeline import (
     _provider_failure_disposition,
 )
 from mechanical_librarian.application.operations import StageTimer
-from mechanical_librarian.domain.metadata_report import ProviderStatus
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    ProviderObservation,
+    ProviderStatus,
+)
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from tests.unit.test_review_case_persistence import _report
 
@@ -99,7 +103,11 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         )
         self.assertEqual(
             _provider_failure_disposition((ProviderStatus.AUTHENTICATION,)),
-            ("configuration", False),
+            ("authentication", False),
+        )
+        self.assertEqual(
+            _provider_failure_disposition((ProviderStatus.AUTHORIZATION,)),
+            ("authentication", False),
         )
         self.assertEqual(
             _provider_failure_disposition((ProviderStatus.MALFORMED,)),
@@ -144,6 +152,76 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             "work_id": None,
             "field": None,
         }, signals)
+
+    def test_observed_provider_authentication_persists_its_binding_root(self) -> None:
+        base = _report()
+        report = MetadataReport.create(
+            target=base.target,
+            file=base.file,
+            local_claims=base.local_claims,
+            local_reasons=base.local_reasons,
+            providers=(
+                ProviderObservation(
+                    "hardcover-main", ProviderStatus.AUTHENTICATION
+                ),
+            ),
+        )
+        entry = _entry("item", report.file.identity)
+        repository = open_repository(self.path)
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery, 1, "a" * 64, (entry,), 12
+        )
+        extraction = repository.claim_review_pipeline_action(13)
+        assert extraction is not None
+        disposition = _provider_failure_disposition(
+            composition._provider_statuses(report)
+        )
+        assert disposition is not None
+        repository.publish(
+            report,
+            lambda: True,
+            None,
+            lambda value, published: value.complete_review_extraction_publication(
+                extraction,
+                published.report_id,
+                14,
+                provider_failure_code=disposition[0],
+                provider_failure_root=composition._provider_authentication_root(
+                    published
+                ),
+            ),
+        )
+        work = repository._connection.execute(
+            "SELECT stage,state,failure_code,failure_root "
+            "FROM review_preparation_work"
+        ).fetchone()
+        signals = repository.operational_snapshot()["signals"]
+        repository.close()
+        self.assertEqual(
+            work,
+            ("provider", "failed", "authentication", "hardcover-main"),
+        )
+        self.assertEqual(
+            [
+                signal for signal in signals
+                if signal["kind"] == "authentication_failure"
+            ],
+            [{
+                "kind": "authentication_failure",
+                "cause": "provider_authentication",
+                "scope": "connection",
+                "connection": "hardcover-main",
+                "library": None,
+                "category": None,
+                "work_id": None,
+                "field": None,
+            }],
+        )
 
     def test_thousand_work_three_library_backlog_is_bounded_and_fair(self) -> None:
         repository = open_repository(self.path)

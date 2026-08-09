@@ -1477,21 +1477,42 @@ class SQLiteMetadataReportRepository:
                 failure = operation.failure
                 if failure in {"target_currentness", "third_value", "readback"}:
                     kind, cause = "owner_action_required", "currentness_conflict"
+                    scope = "field"
+                    signal_library, signal_work, signal_field = (
+                        library, work_id, destination
+                    )
                 elif failure == "backup":
                     kind, cause = "backup_failure", "backup"
-                elif failure in {"capability", "target"}:
+                    scope = "library"
+                    signal_library, signal_work, signal_field = library, None, None
+                elif failure in {"capability", "target", "target_failure"}:
                     kind, cause = "service_incompatibility", "service_incompatibility"
+                    scope = "connection"
+                    signal_library, signal_work, signal_field = None, None, None
                 elif failure in {"authority", "consent", "consent_revoked"}:
                     kind, cause = "field_suspended", "authority_unavailable"
+                    scope = "field"
+                    signal_library, signal_work, signal_field = (
+                        library, work_id, destination
+                    )
                 elif state in {"claimed", "applying", "reconciling", "retryable"}:
                     kind, cause = "automatic_recovery", (
                         "reconciliation" if state == "reconciling" else "in_progress"
                     )
+                    scope = "field"
+                    signal_library, signal_work, signal_field = (
+                        library, work_id, destination
+                    )
                 else:
                     kind, cause = "healthy_activity", "planned"
+                    scope = "field"
+                    signal_library, signal_work, signal_field = (
+                        library, work_id, destination
+                    )
                 signals.append(_operational_signal(
-                    kind, cause, "field", connection=connection, library=library,
-                    work_id=work_id, field=destination,
+                    kind, cause, scope, connection=connection,
+                    library=signal_library, work_id=signal_work,
+                    field=signal_field,
                 ))
             return {"signals": signals}
         except (json.JSONDecodeError, sqlite3.Error, FieldEffectError) as error:
@@ -2433,6 +2454,7 @@ class SQLiteMetadataReportRepository:
         recovery_delay_seconds: int = 0,
         provider_failure_code: str | None = None,
         claim_next: bool = False,
+        provider_failure_root: str | None = None,
     ) -> None:
         """Bind report publication and provider disposition atomically."""
         if (
@@ -2441,8 +2463,22 @@ class SQLiteMetadataReportRepository:
             or type(recovery_delay_seconds) is not int
             or not 0 <= recovery_delay_seconds <= 86_400
             or provider_failure_code
-            not in {None, "provider", "configuration", "transient"}
+            not in {None, "provider", "configuration", "authentication", "transient"}
             or type(claim_next) is not bool
+            or (
+                provider_failure_root is not None
+                and (
+                    provider_failure_code != "authentication"
+                    or type(provider_failure_root) is not str
+                    or re.fullmatch(
+                        r"[a-z][a-z0-9_-]{0,63}", provider_failure_root
+                    ) is None
+                )
+            )
+            or (
+                provider_failure_code == "authentication"
+                and provider_failure_root is None
+            )
         ):
             raise MetadataReportError("review preparation state is invalid")
         if provider_failure_code == "transient":
@@ -2460,13 +2496,14 @@ class SQLiteMetadataReportRepository:
             state = "queued" if provider_failure_code is None else "failed"
             updated = self._connection.execute(
                 "UPDATE review_preparation_work SET stage=?,state=?,attempt=0,"
-                "report_id=?,failure_code=?,failure_root=NULL,updated_at=? WHERE work_id=? "
+                "report_id=?,failure_code=?,failure_root=?,updated_at=? WHERE work_id=? "
                 "AND stage='extraction' AND state='running' AND attempt=?",
                 (
                     "proposal" if provider_failure_code is None else "provider",
                     state,
                     report_id,
                     provider_failure_code,
+                    provider_failure_root,
                     completed_at,
                     action.action_id,
                     action.attempt,

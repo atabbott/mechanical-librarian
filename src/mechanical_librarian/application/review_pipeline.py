@@ -46,7 +46,7 @@ _TECHNICAL_PROVIDER_FAILURES = frozenset(
 _TRANSIENT_PROVIDER_FAILURES = frozenset(
     {ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE}
 )
-_CONFIGURATION_PROVIDER_FAILURES = frozenset(
+_AUTHENTICATION_PROVIDER_FAILURES = frozenset(
     {ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION}
 )
 
@@ -55,8 +55,8 @@ def provider_failure_disposition(
     statuses: tuple[ProviderStatus, ...],
 ) -> tuple[str, bool] | None:
     failures = _TECHNICAL_PROVIDER_FAILURES.intersection(statuses)
-    if _CONFIGURATION_PROVIDER_FAILURES.intersection(failures):
-        return "configuration", False
+    if _AUTHENTICATION_PROVIDER_FAILURES.intersection(failures):
+        return "authentication", False
     if _TRANSIENT_PROVIDER_FAILURES.intersection(failures):
         return "transient", True
     if failures:
