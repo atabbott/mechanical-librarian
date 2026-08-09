@@ -50,3 +50,31 @@ directly to force recovery.
 
 Restoring the matching application database and artifact store cannot change
 Audiobookshelf or media because this runtime has no such write authority.
+
+## Guarded fake-effect recovery
+
+Stop effect processing before copying the exact-current application database.
+Restart reads each persisted state rather than inferring completion: planned
+and retryable work crosses every gate again; already claimed work continues
+under its granted claim, while applying or ambiguous work performs its
+persisted targeted read and enters reconciliation; verified, stale,
+superseded, and abandoned work remains terminal while any pending cover-cleanup
+obligation is retried. Desired target state verifies, the captured
+pre-state may requeue only under current authority and freshness, and a third
+value stays stale for forward re-evaluation. Never edit rows or blindly repeat
+an ambiguous request.
+
+After opening the exact-current repository, invoke the bounded field-effect
+recovery entry point. It claims and dispatches at most 100 closed targeted-read
+or forward-reevaluation actions, then retries at most 100 pending cover-cleanup
+obligations. Interrupted claimed actions remain restartable; completion is
+recorded only after their existing application seam succeeds.
+
+Cover recovery files are transient private material, not a general backup or
+Undo system. Preserve their owner-only directory only while corresponding
+nonterminal cover work exists. A capture failure blocks that cover alone.
+Capture is temp-file/fsync/atomic-rename/directory-fsync. Incomplete temporary
+or invalid final captures are rejected and cleaned where safely owned. Every
+terminal cover path persists cleanup and restart retries a failed removal.
+This fake-only increment cannot alter
+Audiobookshelf or embedded media.

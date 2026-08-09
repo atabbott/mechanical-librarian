@@ -103,6 +103,17 @@ parser. A clean rebuild may be required and old state may be retained offline.
 Exact-ID and current-scope replay apply only within the exact current schema;
 current-schema restart, replay, and crash safety remain mandatory.
 
+The guarded-effect plan, authority, consent, recovery-action, cleanup-obligation
+tables, control row, and append-only audit events are part
+of the exact current application schema. A database without them, with altered
+SQL, extra columns/objects, or an earlier experimental effect schema is
+rejected without migration or conversion. Operation, plan, nested
+authority/consent, action, cleanup, and event documents and their matching
+columns are validated canonically before an existing database opens. Scalar
+members retain exact JSON types: booleans are never accepted as integer
+attempts, sequences, or timestamps. Restart compatibility applies only inside
+that exact schema.
+
 Private qualification attempt, retry-pair, scoring, cohort, analysis, and
 manifest records are evidence formats, not installed compatibility surfaces.
 They are frozen and validated by their owning private programme and cannot be

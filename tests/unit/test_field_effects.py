@@ -1,0 +1,1063 @@
+from __future__ import annotations
+
+import os
+import json
+import sqlite3
+import tempfile
+import threading
+import unittest
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+from argon2 import PasswordHasher
+from fastapi.testclient import TestClient
+
+from mechanical_librarian.adapters.field_effect_fakes import (
+    FakeAuthorityCurrentness,
+    FakeBackupReadiness,
+    FakeCapabilityObserver,
+    FakeConsentCurrentness,
+    FakeDependencyCurrentness,
+    FakeForwardReevaluation,
+    FakePreclaimHook,
+    FakeTargetService,
+    PrivateCoverRecoveryStore,
+)
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.interfaces.web.app import create_review_app
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    EffectConsent,
+    FieldEffectError,
+    FieldEffectOperation,
+    FieldEffectPlan,
+    SUPPORTED_DESTINATIONS,
+)
+from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    FileFacts,
+    LocalClaim,
+    MetadataReport,
+    TargetFacts,
+    default_target_fields,
+)
+from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.automatic_decision import (
+    AutomaticDecision,
+    F19A_QUALIFICATION_MANIFEST_SHA256,
+)
+
+
+CAPABILITY = "c" * 64
+DEPENDENCY = "d" * 64
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.value = 10
+    def __call__(self) -> int:
+        self.value += 1
+        return self.value
+
+
+def decision(destination: str, selected: object, suffix: str = "a") -> HumanDecision:
+    return HumanDecision(
+        "human_decision_" + suffix * 64, "review_case_" + "b" * 64,
+        "review_proposal_" + "c" * 64, "d" * 64, destination, "owner",
+        "accept", selected, "e" * 64, "f" * 64, 1,
+    )
+
+
+def envelope(destination: str, value: object) -> dict[str, object]:
+    kind = (
+        "list" if destination in {"authors", "genres", "tags"}
+        else "series" if destination == "series"
+        else "cover" if destination == "cover"
+        else "text"
+    )
+    return {"kind": kind, "value": value}
+
+
+def metadata_report(title: str, content: str, file_identity: str,
+                    item_id: str = "1234567890abcdef") -> MetadataReport:
+    claim = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed="Exact evaluator candidate",
+        canonical="Exact evaluator candidate",
+        excerpt="Exact evaluator candidate",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary", "books", item_id, default_target_fields(title)
+        ),
+        file=FileFacts(0, content * 64, file_identity * 64),
+        local_claims=(claim,),
+        local_reasons=("opening_matter_title",),
+        providers=(),
+    )
+
+
+class FieldEffectTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        root = Path(self.temporary.name)
+        os.chmod(root, 0o700)
+        self.repository = open_repository(root / "effects.sqlite", cross_thread=True)
+        self.target = FakeTargetService()
+        self.authority = FakeAuthorityCurrentness()
+        self.dependencies = FakeDependencyCurrentness()
+        self.backup = FakeBackupReadiness()
+        self.capabilities = FakeCapabilityObserver(CAPABILITY)
+        self.consent = FakeConsentCurrentness()
+        self.preclaim = FakePreclaimHook()
+        self.claim_hook = FakePreclaimHook()
+        self.recovery_hook = FakePreclaimHook()
+        self.reevaluation = FakeForwardReevaluation()
+        self.recovery = PrivateCoverRecoveryStore(root / "recovery", lambda _: b"old-cover")
+        self.clock = Clock()
+        self.service = GuardedFieldApplication(
+            self.repository, self.target, self.backup,
+            self.capabilities, self.authority,
+            self.dependencies, self.consent, self.recovery, self.reevaluation,
+            self.clock,
+            self.preclaim, self.claim_hook, self.recovery_hook,
+        )
+
+    def tearDown(self) -> None:
+        self.repository.close()
+        self.temporary.cleanup()
+
+    def plan(self, destination: str = "title", pre: object = "old",
+             desired: object = "new", suffix: str = "a") -> FieldEffectOperation:
+        selected = envelope(destination, desired)
+        source = decision(destination, selected, suffix)
+        self.authorize(source)
+        result = self.service.plan(
+            source, connection="primary",
+            library="books", work_id="book-1", destination=destination,
+            pre_value=pre, desired_value=selected, target_fingerprint="d" * 64,
+            target_version="version-1",
+            dependency_digests=(DEPENDENCY,), capability_digest=CAPABILITY,
+        )
+        assert result is not None
+        self.target.seed(result.plan)
+        return result
+
+    def authorize(self, source: HumanDecision | AutomaticDecision, *,
+                  work_id: str = "book-1", target_version: str = "version-1") -> None:
+        self.authority.bind(
+            source, connection="primary", library="books", work_id=work_id,
+            target_version=target_version,
+        )
+        self.consent.allow(
+            connection="primary", library="books", destination=source.destination
+        )
+
+    def test_every_supported_shape_plans_and_no_ops_do_not_mutate(self) -> None:
+        values = {
+            "title": "x", "subtitle": "x", "authors": ["A"],
+            "series": [{"name": "S", "sequence": "2.5"}], "genres": ["G"],
+            "publishedYear": "2026", "publishedDate": "2026-01-02",
+            "publisher": "P", "description": "D", "isbn": "1",
+            "asin": "A", "language": "en", "tags": ["T"],
+            "cover": "cover_" + "a" * 64,
+        }
+        self.assertEqual(SUPPORTED_DESTINATIONS, set(values))
+        for index, (destination, desired) in enumerate(values.items()):
+            with self.subTest(destination=destination):
+                suffix = format(index + 1, "x")[-1]
+                selected = envelope(destination, desired)
+                source = decision(destination, selected, suffix)
+                self.authorize(source, work_id=f"book-{index}")
+                result = self.service.plan(
+                    source, connection="primary",
+                    library="books", work_id=f"book-{index}", destination=destination,
+                    pre_value=None, desired_value=selected, target_fingerprint="d" * 64,
+                    target_version="version-1",
+                    dependency_digests=(DEPENDENCY,), capability_digest=CAPABILITY,
+                )
+                self.assertEqual(result.plan.destination, destination)
+        same = decision("title", envelope("title", "same"), "f")
+        self.authorize(same, work_id="same-book")
+        self.assertIsNone(self.service.plan(
+            same, connection="primary", library="books",
+            work_id="same-book", destination="title", pre_value="same",
+            desired_value=envelope("title", "same"), target_fingerprint="d" * 64,
+            target_version="version-1",
+            dependency_digests=(DEPENDENCY,), capability_digest=CAPABILITY,
+        ))
+
+    def test_qualified_automatic_origin_uses_the_identical_plan_and_effect_path(self) -> None:
+        automatic = AutomaticDecision.create(
+            review_case_id="review_case_" + "a" * 64,
+            report_id="report_" + "b" * 64,
+            proposal_set_id="proposal_set_" + "c" * 64,
+            proposal_id="review_proposal_" + "d" * 64,
+            target_fingerprint="e" * 64, destination="title",
+            outcome="candidate", candidate_id="alternative_" + "f" * 64,
+            resolved_policy_id="resolved_policy_" + "0" * 64,
+            policy_generation=1, rule_id="shadow_rule_" + "1" * 64,
+            policy_category="title_layout", policy_option="preserve",
+            qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
+            source_outcome_id="shadow_outcome_" + "3" * 64,
+            bundle_id="automatic_bundle_" + "4" * 64, occurred_at=1,
+        )
+        self.authority.automatic_values[automatic.decision_id] = envelope("title", "new")
+        self.authorize(automatic, work_id="auto-book")
+        result = self.service.plan(
+            automatic, connection="primary", library="books", work_id="auto-book",
+            destination="title", pre_value="old", desired_value=envelope("title", "new"),
+            target_fingerprint="e" * 64, target_version="version-1",
+            dependency_digests=(DEPENDENCY,),
+            capability_digest=CAPABILITY,
+        )
+        assert result is not None
+        self.assertEqual(result.plan.authority.origin, "automatic_policy")
+        self.target.seed(result.plan)
+        self.assertEqual(self.service.apply(result.plan.plan_id).state, "verified")
+
+    def test_effect_modules_cannot_construct_audiobookshelf_or_media_writes(self) -> None:
+        roots = [
+            Path("src/mechanical_librarian/domain/field_effect.py"),
+            Path("src/mechanical_librarian/application/field_effects.py"),
+            Path("src/mechanical_librarian/adapters/field_effect_fakes.py"),
+        ]
+        joined = "\n".join(path.read_text(encoding="utf-8") for path in roots)
+        self.assertNotIn("audiobookshelf", joined.lower())
+        self.assertNotIn("media_write", joined.lower())
+        keep = decision("title", None, "e")
+        object.__setattr__(keep, "outcome", "keep_current")
+        self.assertIsNone(self.service.plan(
+            keep, connection="primary", library="books", work_id="keep-book",
+            destination="title", pre_value="old", desired_value="new",
+            target_fingerprint="d" * 64, target_version="version-1",
+            dependency_digests=(DEPENDENCY,),
+            capability_digest=CAPABILITY,
+        ))
+
+    def test_verified_sibling_survives_failure_and_restart(self) -> None:
+        first = self.plan(suffix="1")
+        second = self.plan(destination="subtitle", suffix="2")
+        self.assertEqual(self.service.apply(first.plan.plan_id).state, "verified")
+        self.target.fail_next = True
+        self.assertEqual(self.service.apply(second.plan.plan_id).state, "retryable")
+        self.repository.close()
+        self.repository = open_repository(Path(self.temporary.name) / "effects.sqlite", create=False, cross_thread=True)
+        self.service._repository = self.repository
+        self.assertEqual(self.service.status(first.plan.plan_id).state, "verified")
+        self.assertEqual(self.service.apply(second.plan.plan_id).state, "verified")
+
+    def test_plan_retry_ignores_nonidentity_creation_time(self) -> None:
+        original = self.plan(suffix="9")
+        plan = original.plan
+        retried_plan = FieldEffectPlan.create(
+            connection=plan.connection, library=plan.library,
+            work_id=plan.work_id, destination=plan.destination,
+            pre_value=plan.pre_value, desired_value=plan.desired_value,
+            target_fingerprint=plan.target_fingerprint,
+            target_version=plan.target_version,
+            dependency_digests=plan.dependency_digests,
+            authority=plan.authority, consent=plan.consent,
+            capability_digest=plan.capability_digest,
+            created_at=plan.created_at + 100,
+        )
+        self.assertEqual(retried_plan.plan_id, plan.plan_id)
+        self.assertNotEqual(retried_plan.created_at, plan.created_at)
+        reopened = self.repository.record_field_effect(
+            FieldEffectOperation(
+                retried_plan, updated_at=retried_plan.created_at
+            )
+        )
+        self.assertEqual(reopened, original)
+        self.assertEqual(self.repository._connection.execute(
+            "SELECT COUNT(*) FROM field_effect_events WHERE plan_id=?",
+            (plan.plan_id,),
+        ).fetchone(), (1,))
+
+    def test_record_rejects_every_noninitial_operation_without_audit_rows(self) -> None:
+        source = self.plan(suffix="8").plan
+        plan = FieldEffectPlan.create(
+            connection=source.connection, library=source.library,
+            work_id="unrecorded-book", destination=source.destination,
+            pre_value=source.pre_value, desired_value=source.desired_value,
+            target_fingerprint=source.target_fingerprint,
+            target_version=source.target_version,
+            dependency_digests=source.dependency_digests,
+            authority=source.authority, consent=source.consent,
+            capability_digest=source.capability_digest,
+            created_at=source.created_at + 1,
+        )
+        initial = FieldEffectOperation(plan, updated_at=plan.created_at)
+        invalid = (
+            replace(initial, state="claimed", attempt=1, claim_token="a" * 64),
+            replace(initial, attempt=1),
+            replace(initial, failure="target_failure"),
+            replace(initial, claim_token="b" * 64),
+            replace(initial, updated_at=plan.created_at + 1),
+        )
+        for operation in invalid:
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(
+                    FieldEffectError, "invalid_initial_operation"
+                ):
+                    self.repository.record_field_effect(operation)
+                self.assertEqual(self.repository._connection.execute(
+                    "SELECT COUNT(*) FROM field_effects WHERE plan_id=?",
+                    (plan.plan_id,),
+                ).fetchone(), (0,))
+                self.assertEqual(self.repository._connection.execute(
+                    "SELECT COUNT(*) FROM field_effect_events WHERE plan_id=?",
+                    (plan.plan_id,),
+                ).fetchone(), (0,))
+
+    def test_fake_target_serializes_compare_and_write_for_direct_callers(self) -> None:
+        first = self.plan(suffix="7").plan
+        second = FieldEffectPlan.create(
+            connection=first.connection, library=first.library,
+            work_id=first.work_id, destination=first.destination,
+            pre_value=first.pre_value, desired_value="competing-value",
+            target_fingerprint=first.target_fingerprint,
+            target_version=first.target_version,
+            dependency_digests=first.dependency_digests,
+            authority=first.authority, consent=first.consent,
+            capability_digest=first.capability_digest,
+            created_at=first.created_at,
+        )
+        entered = threading.Event()
+        release = threading.Event()
+        second_done = threading.Event()
+        outcomes: dict[str, object] = {}
+
+        def hold_first(_: FieldEffectPlan) -> None:
+            entered.set()
+            if not release.wait(2):
+                raise RuntimeError("test release timeout")
+
+        self.target.before_apply = hold_first
+        first_thread = threading.Thread(
+            target=lambda: outcomes.setdefault("first", self.target.apply(first))
+        )
+
+        def apply_second() -> None:
+            outcomes["second"] = self.target.apply(second)
+            second_done.set()
+
+        second_thread = threading.Thread(target=apply_second)
+        first_thread.start()
+        self.assertTrue(entered.wait(1))
+        second_thread.start()
+        self.assertFalse(second_done.wait(0.1))
+        release.set()
+        first_thread.join(2)
+        second_thread.join(2)
+        self.assertFalse(first_thread.is_alive())
+        self.assertFalse(second_thread.is_alive())
+        self.assertEqual(outcomes["first"].outcome, "accepted")
+        self.assertEqual(outcomes["second"].outcome, "conflict")
+
+    def test_preclaim_failures_are_field_local_and_pause_is_atomic(self) -> None:
+        stale = self.plan(suffix="3")
+        ready = self.plan(destination="subtitle", suffix="4")
+        self.dependencies.current_value = False
+        self.assertEqual(self.service.apply(stale.plan.plan_id).failure, "dependency")
+        self.dependencies.current_value = True
+        self.service.set_paused(True)
+        with self.assertRaises(Exception):
+            self.service.apply(ready.plan.plan_id)
+        self.assertEqual(self.service.status(ready.plan.plan_id).state, "planned")
+        self.service.set_paused(False)
+        self.assertEqual(self.service.apply(ready.plan.plan_id).state, "verified")
+
+    def test_ambiguous_desired_pre_and_third_reconcile_without_blind_retry(self) -> None:
+        desired = self.plan(suffix="5")
+        self.target.ambiguous_next = "desired"
+        self.assertEqual(self.service.apply(desired.plan.plan_id).state, "verified")
+
+        pre = self.plan(destination="subtitle", suffix="6")
+        self.target.ambiguous_next = "pre"
+        self.assertEqual(self.service.apply(pre.plan.plan_id).state, "retryable")
+        self.assertEqual(self.service.apply(pre.plan.plan_id).state, "verified")
+
+        third = self.plan(destination="publisher", suffix="7")
+        self.target.ambiguous_next = "third"
+        result = self.service.apply(third.plan.plan_id)
+        self.assertEqual((result.state, result.failure), ("stale", "third_value"))
+        actions = self.repository._connection.execute(
+            "SELECT kind,state FROM field_effect_actions WHERE plan_id=? ORDER BY kind",
+            (third.plan.plan_id,),
+        ).fetchall()
+        self.assertEqual(actions, [("forward_reevaluation", "pending"),
+                                   ("targeted_read", "completed")])
+        self.reevaluation.fail_next = True
+        with self.assertRaisesRegex(RuntimeError, "reevaluation failure"):
+            self.service.recover_pending()
+        self.assertEqual(self.repository._connection.execute(
+            "SELECT state FROM field_effect_actions WHERE plan_id=? "
+            "AND kind='forward_reevaluation'", (third.plan.plan_id,),
+        ).fetchone(), ("claimed",))
+        self.repository.close()
+        self.repository = open_repository(
+            Path(self.temporary.name) / "effects.sqlite", create=False,
+            cross_thread=True,
+        )
+        self.service._repository = self.repository
+        self.assertEqual(self.service.recover_pending(), (1, 0))
+        self.assertEqual(self.reevaluation.emitted, [third.plan.plan_id])
+        self.assertEqual(self.repository._connection.execute(
+            "SELECT state FROM field_effect_actions WHERE plan_id=? "
+            "AND kind='forward_reevaluation'", (third.plan.plan_id,),
+        ).fetchone(), ("completed",))
+
+    def test_target_compare_and_set_rejects_a_race_without_overwrite(self) -> None:
+        operation = self.plan(suffix="0")
+        self.target.before_apply = lambda plan: self.target.drift(plan, "external")
+        result = self.service.apply(operation.plan.plan_id)
+        self.assertEqual((result.state, result.failure), ("stale", "target_changed"))
+        self.assertEqual(self.target.read(operation.plan).value, "external")
+
+    def test_planning_rejects_rebound_decision_coordinates_and_missing_consent(self) -> None:
+        selected = envelope("title", "new")
+        source = decision("title", selected, "f")
+        self.authorize(source)
+        cases = (
+            {"destination": "subtitle"}, {"work_id": "other-work"},
+            {"target_fingerprint": "e" * 64}, {"target_version": "version-2"},
+        )
+        base = {"connection": "primary", "library": "books", "work_id": "book-1",
+                "destination": "title", "pre_value": "old", "desired_value": selected,
+                "target_fingerprint": "d" * 64, "target_version": "version-1",
+                "dependency_digests": (DEPENDENCY,), "capability_digest": CAPABILITY}
+        for change in cases:
+            with self.subTest(change=change):
+                with self.assertRaisesRegex(Exception, "authority_binding"):
+                    self.service.plan(source, **(base | change))
+        unconsented = decision("publisher", envelope("publisher", "new"), "0")
+        self.authority.bind(
+            unconsented, connection="primary", library="books", work_id="book-1",
+            target_version="version-1",
+        )
+        with self.assertRaisesRegex(Exception, "consent"):
+            self.service.plan(
+                unconsented, connection="primary", library="books", work_id="book-1",
+                destination="publisher", pre_value="old",
+                desired_value=envelope("publisher", "new"),
+                target_fingerprint="d" * 64, target_version="version-1",
+                dependency_digests=(DEPENDENCY,), capability_digest=CAPABILITY,
+            )
+
+    def test_repository_authority_and_consent_revocation_win_the_claim_race(self) -> None:
+        authority = self.plan(suffix="1")
+        self.claim_hook.callback = lambda plan: self.repository.revoke_field_effect_authority(
+            plan.authority.decision_id, self.clock()
+        )
+        with self.assertRaisesRegex(Exception, "claim_conflict"):
+            self.service.apply(authority.plan.plan_id)
+        self.assertEqual(self.service.status(authority.plan.plan_id).state, "superseded")
+        self.assertEqual(self.target.read(authority.plan).value, authority.plan.pre_value)
+
+        consent = self.plan(destination="subtitle", suffix="2")
+        self.claim_hook.callback = lambda plan: self.repository.revoke_field_effect_consent(
+            plan.consent.consent_id, self.clock()
+        )
+        with self.assertRaisesRegex(Exception, "claim_conflict"):
+            self.service.apply(consent.plan.plan_id)
+        self.assertEqual(self.service.status(consent.plan.plan_id).state, "superseded")
+        self.assertEqual(self.target.read(consent.plan).value, consent.plan.pre_value)
+
+    def test_newer_report_wins_claim_before_case_retirement(self) -> None:
+        report = metadata_report("Old title", "1", "2")
+        self.repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        self.repository.publish_proposal(proposal)
+        case_id = json.loads(self.repository.admit_review_case(proposal))["review_case_id"]
+        case = ReviewCase.create_from_data(
+            json.loads(self.repository.get_review_case(case_id))["case"]
+        )
+        candidate = next(
+            item for item in case.proposals
+            if item["result"]["outcome"] == "unresolved_choice"
+        )
+        selected = candidate["result"]["alternatives"][0]["value"]
+        source = HumanDecision.create(
+            case,
+            proposal_id=candidate["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination=candidate["destination"],
+            actor="owner",
+            outcome="accept",
+            selected_value=selected,
+            idempotency_key="field-effect-newer-report-race",
+            occurred_at=1,
+        )
+        self.repository.record_human_decision(source)
+        self.authority.bind(
+            source, connection="primary", library="books",
+            work_id=report.target.item,
+            target_version=case.target_fingerprint,
+            source="persisted_review_case",
+        )
+        self.consent.allow(
+            connection="primary", library="books", destination=source.destination
+        )
+        operation = self.service.plan(
+            source, connection="primary", library="books",
+            work_id=report.target.item, destination=source.destination,
+            pre_value="Old title", desired_value=selected,
+            target_fingerprint=case.target_fingerprint,
+            target_version=case.target_fingerprint,
+            dependency_digests=(DEPENDENCY,), capability_digest=CAPABILITY,
+        )
+        assert operation is not None
+        self.target.seed(operation.plan)
+        newer = metadata_report("New title", "3", "4")
+        self.claim_hook.callback = lambda _: self.repository.publish(
+            newer, lambda: True
+        )
+        with self.assertRaisesRegex(Exception, "claim_conflict"):
+            self.service.apply(operation.plan.plan_id)
+        self.assertEqual(self.service.status(operation.plan.plan_id).state, "planned")
+        self.assertEqual(self.target.read(operation.plan).value, "Old title")
+
+    def test_accepted_readback_mismatch_schedules_durable_targeted_read(self) -> None:
+        operation = self.plan(suffix="4")
+        self.target.after_apply = lambda plan: self.target.drift(
+            plan, "synthetic-third-value"
+        )
+        result = self.service.apply(operation.plan.plan_id)
+        self.assertEqual((result.state, result.failure), ("reconciling", "readback"))
+        self.assertEqual(self.repository._connection.execute(
+            "SELECT state FROM field_effect_actions WHERE plan_id=? "
+            "AND kind='targeted_read'", (operation.plan.plan_id,),
+        ).fetchone(), ("pending",))
+        self.repository.close()
+        self.repository = open_repository(
+            Path(self.temporary.name) / "effects.sqlite", create=False,
+            cross_thread=True,
+        )
+        self.service._repository = self.repository
+        self.assertEqual(self.service.recover_pending(), (2, 0))
+        self.assertEqual(self.service.status(operation.plan.plan_id).state, "stale")
+
+    def test_applying_restart_schedules_targeted_read_before_recovery(self) -> None:
+        operation = self.plan(suffix="5")
+        claimed = self.repository.claim_field_effect(
+            operation.plan.plan_id, "planned", "a" * 64, self.clock()
+        )
+        self.repository.transition_field_effect(
+            operation.plan.plan_id, claimed.state, "applying", self.clock()
+        )
+        self.recovery_hook.callback = lambda _: (_ for _ in ()).throw(
+            RuntimeError("synthetic restart")
+        )
+        with self.assertRaisesRegex(RuntimeError, "synthetic restart"):
+            self.service.apply(operation.plan.plan_id)
+        self.assertEqual(self.repository._connection.execute(
+            "SELECT state FROM field_effect_actions WHERE plan_id=? "
+            "AND kind='targeted_read'", (operation.plan.plan_id,),
+        ).fetchone(), ("pending",))
+        self.repository.close()
+        self.repository = open_repository(
+            Path(self.temporary.name) / "effects.sqlite", create=False,
+            cross_thread=True,
+        )
+        self.service._repository = self.repository
+        self.assertEqual(self.service.recover_pending(), (1, 0))
+        self.assertEqual(self.service.status(operation.plan.plan_id).state, "retryable")
+
+    def test_persisted_targeted_read_reopens_after_restart(self) -> None:
+        operation = self.plan(suffix="3")
+        self.target.ambiguous_next = "desired"
+        self.recovery_hook.callback = lambda _: (_ for _ in ()).throw(
+            RuntimeError("synthetic restart")
+        )
+        with self.assertRaisesRegex(RuntimeError, "synthetic restart"):
+            self.service.apply(operation.plan.plan_id)
+        self.assertEqual(self.service.status(operation.plan.plan_id).state, "reconciling")
+        self.repository.close()
+        self.repository = open_repository(
+            Path(self.temporary.name) / "effects.sqlite", create=False, cross_thread=True
+        )
+        self.service._repository = self.repository
+        self.assertEqual(self.service.recover_pending(), (1, 0))
+        self.assertEqual(self.service.status(operation.plan.plan_id).state, "verified")
+        self.assertEqual(self.repository._connection.execute(
+            "SELECT state,attempt FROM field_effect_actions WHERE plan_id=? AND kind='targeted_read'",
+            (operation.plan.plan_id,),
+        ).fetchone(), ("completed", 1))
+
+    def test_final_preclaim_refresh_blocks_guard_drift_and_leaves_siblings_local(self) -> None:
+        cases = (
+            ("pause", lambda plan: self.service.set_paused(True)),
+            ("authority", lambda plan: self.authority.revoked.add(plan.authority.decision_id)),
+            ("capability", lambda plan: setattr(self.capabilities, "digest", "e" * 64)),
+            ("dependency", lambda plan: setattr(self.dependencies, "current_value", False)),
+        )
+        for index, (failure, mutate) in enumerate(cases, start=1):
+            with self.subTest(failure=failure):
+                operation = self.plan(destination="subtitle", suffix=format(index, "x"))
+                self.preclaim.callback = mutate
+                if failure == "pause":
+                    with self.assertRaisesRegex(Exception, "paused"):
+                        self.service.apply(operation.plan.plan_id)
+                    result = self.service.status(operation.plan.plan_id)
+                    self.service.set_paused(False)
+                    self.assertEqual((result.state, result.attempt), ("planned", 0))
+                else:
+                    result = self.service.apply(operation.plan.plan_id)
+                    self.assertEqual(
+                        (result.state, result.failure, result.attempt),
+                        ("stale", failure, 0),
+                    )
+                self.assertEqual(self.target.read(operation.plan).value, operation.plan.pre_value)
+                self.capabilities.digest = CAPABILITY
+                self.dependencies.current_value = True
+
+        sibling = self.plan(destination="publisher", suffix="e")
+        self.assertEqual(self.service.apply(sibling.plan.plan_id).state, "verified")
+
+    def test_supersession_does_not_interrupt_claimed_and_cover_bytes_are_private(self) -> None:
+        planned = self.plan(suffix="8")
+        self.assertEqual(self.service.supersede(planned.plan.authority.decision_id), 1)
+        self.assertEqual(self.service.status(planned.plan.plan_id).state, "superseded")
+
+        claimed = self.plan(destination="subtitle", suffix="a")
+        self.repository.claim_field_effect(
+            claimed.plan.plan_id, "planned", "1" * 64, self.clock()
+        )
+        self.assertEqual(self.service.supersede(claimed.plan.authority.decision_id), 0)
+        self.assertEqual(self.service.status(claimed.plan.plan_id).state, "claimed")
+        self.assertEqual(self.service.apply(claimed.plan.plan_id).state, "verified")
+
+        cover_value = "cover_" + "9" * 64
+        cover = self.plan("cover", None, cover_value, "9")
+        self.assertEqual(self.service.apply(cover.plan.plan_id).state, "verified")
+        self.assertFalse(self.recovery.exists(cover.plan.plan_id))
+        rows = self.repository._connection.execute(
+            "SELECT document FROM field_effect_events WHERE plan_id=?",
+            (cover.plan.plan_id,),
+        ).fetchall()
+        self.assertNotIn("old-cover", repr(rows))
+
+    def test_retry_exhaustion_opens_the_field_circuit_without_rolling_back_siblings(self) -> None:
+        operation = self.plan(suffix="c")
+        for attempt in range(3):
+            self.target.fail_next = True
+            result = self.service.apply(operation.plan.plan_id)
+            self.assertEqual((result.state, result.attempt), ("retryable", attempt + 1))
+        result = self.service.apply(operation.plan.plan_id)
+        self.assertEqual((result.state, result.failure), ("stale", "circuit_open"))
+
+    def test_cover_recovery_survives_restart_and_rejects_permission_drift(self) -> None:
+        cover = self.plan(
+            "cover", None, "cover_" + "7" * 64, "d"
+        )
+        self.recovery.capture(cover.plan)
+        restarted = PrivateCoverRecoveryStore(
+            Path(self.temporary.name) / "recovery",
+            lambda _: (_ for _ in ()).throw(RuntimeError("must not reread")),
+        )
+        temporary_file = next((Path(self.temporary.name) / "recovery").iterdir()).with_suffix(
+            ".recovery.tmp"
+        )
+        temporary_file.write_bytes(b"incomplete")
+        os.chmod(temporary_file, 0o600)
+        restarted.capture(cover.plan)
+        self.assertFalse(temporary_file.exists())
+        recovery_file = next((Path(self.temporary.name) / "recovery").iterdir())
+        os.chmod(recovery_file, 0o644)
+        with self.assertRaises(ValueError):
+            restarted.capture(cover.plan)
+        self.assertFalse(recovery_file.exists())
+
+        absent_root = Path(self.temporary.name) / "absent-recovery"
+        absent = PrivateCoverRecoveryStore(absent_root, lambda _: None)
+        absent.capture(cover.plan)
+        self.assertEqual(next(absent_root.iterdir()).read_bytes(), b"ABSENT\n")
+
+    def test_cover_terminal_cleanup_obligation_survives_failure_and_restart(self) -> None:
+        cover = self.plan("cover", None, "cover_" + "6" * 64, "4")
+        self.recovery.fail_remove_next = True
+        self.assertEqual(self.service.apply(cover.plan.plan_id).state, "verified")
+        self.assertTrue(self.recovery.exists(cover.plan.plan_id))
+        self.assertTrue(self.repository.field_effect_cleanup_pending(cover.plan.plan_id))
+        self.assertEqual(self.repository._connection.execute(
+            "SELECT state,attempt FROM field_effect_cleanups WHERE plan_id=?",
+            (cover.plan.plan_id,),
+        ).fetchone(), ("pending", 1))
+        self.repository.close()
+        self.repository = open_repository(
+            Path(self.temporary.name) / "effects.sqlite", create=False, cross_thread=True
+        )
+        self.service._repository = self.repository
+        self.assertEqual(self.service.recover_pending(), (0, 1))
+        self.assertEqual(self.service.status(cover.plan.plan_id).state, "verified")
+        self.assertFalse(self.recovery.exists(cover.plan.plan_id))
+        self.assertFalse(self.repository.field_effect_cleanup_pending(cover.plan.plan_id))
+
+    def test_failing_restart_action_cannot_starve_pending_cover_cleanup(self) -> None:
+        third = self.plan(destination="publisher", suffix="3")
+        self.target.ambiguous_next = "third"
+        self.assertEqual(self.service.apply(third.plan.plan_id).state, "stale")
+
+        cover = self.plan("cover", None, "cover_" + "7" * 64, "7")
+        self.recovery.fail_remove_next = True
+        self.assertEqual(self.service.apply(cover.plan.plan_id).state, "verified")
+        self.assertTrue(self.repository.field_effect_cleanup_pending(cover.plan.plan_id))
+
+        self.reevaluation.fail_next = True
+        with self.assertRaisesRegex(RuntimeError, "reevaluation failure"):
+            self.service.recover_pending()
+        self.assertFalse(self.recovery.exists(cover.plan.plan_id))
+        self.assertFalse(self.repository.field_effect_cleanup_pending(cover.plan.plan_id))
+        self.assertEqual(self.repository._connection.execute(
+            "SELECT state FROM field_effect_actions WHERE plan_id=? "
+            "AND kind='forward_reevaluation'", (third.plan.plan_id,),
+        ).fetchone(), ("claimed",))
+
+        self.assertEqual(self.service.recover_pending(), (1, 0))
+        self.assertEqual(self.reevaluation.emitted, [third.plan.plan_id])
+
+    def test_supersede_runs_cover_cleanup_and_retains_a_failed_obligation(self) -> None:
+        cover = self.plan("cover", None, "cover_" + "5" * 64, "8")
+        self.recovery.capture(cover.plan)
+        self.recovery.fail_remove_next = True
+        self.assertEqual(self.service.supersede(cover.plan.authority.decision_id), 1)
+        self.assertTrue(self.repository.field_effect_cleanup_pending(cover.plan.plan_id))
+        self.assertTrue(self.recovery.exists(cover.plan.plan_id))
+        self.assertEqual(self.service.recover_pending(), (0, 1))
+        self.assertFalse(self.recovery.exists(cover.plan.plan_id))
+
+    def test_exact_current_schema_rejects_drift(self) -> None:
+        self.repository.close()
+        path = Path(self.temporary.name) / "effects.sqlite"
+        connection = sqlite3.connect(path)
+        connection.execute("ALTER TABLE field_effects ADD COLUMN drift TEXT")
+        connection.commit()
+        connection.close()
+        with self.assertRaises(Exception):
+            open_repository(path, create=False)
+        self.repository = open_repository(Path(self.temporary.name) / "fresh.sqlite")
+
+    def test_existing_database_rejects_extra_operation_members_without_mutation(self) -> None:
+        operation = self.plan(suffix="5")
+        raw = operation.to_data()
+        raw["legacy"] = True
+        self._corrupt_and_reject(
+            "UPDATE field_effects SET document=? WHERE plan_id=?",
+            (json.dumps(raw), operation.plan.plan_id),
+        )
+
+    def test_existing_database_rejects_row_document_mismatch(self) -> None:
+        operation = self.plan(suffix="6")
+        self._corrupt_and_reject(
+            "UPDATE field_effects SET work_id='other-work' WHERE plan_id=?",
+            (operation.plan.plan_id,),
+        )
+
+    def test_existing_database_rejects_malformed_persisted_action(self) -> None:
+        operation = self.plan(suffix="7")
+        self.target.ambiguous_next = "desired"
+        self.service.apply(operation.plan.plan_id)
+        row = self.repository._connection.execute(
+            "SELECT action_id,document FROM field_effect_actions WHERE plan_id=?",
+            (operation.plan.plan_id,),
+        ).fetchone()
+        raw = json.loads(row[1])
+        raw["unknown"] = "legacy"
+        self._corrupt_and_reject(
+            "UPDATE field_effect_actions SET document=? WHERE action_id=?",
+            (json.dumps(raw), row[0]),
+        )
+
+    def test_existing_database_rejects_boolean_action_attempt(self) -> None:
+        operation = self.plan(suffix="9")
+        self.target.ambiguous_next = "desired"
+        self.service.apply(operation.plan.plan_id)
+        row = self.repository._connection.execute(
+            "SELECT action_id,document FROM field_effect_actions WHERE plan_id=?",
+            (operation.plan.plan_id,),
+        ).fetchone()
+        raw = json.loads(row[1])
+        raw["attempt"] = True
+        self._corrupt_and_reject(
+            "UPDATE field_effect_actions SET document=? WHERE action_id=?",
+            (json.dumps(raw), row[0]),
+        )
+
+    def test_existing_database_rejects_boolean_event_sequence(self) -> None:
+        operation = self.plan(suffix="a")
+        path = Path(self.temporary.name) / "effects.sqlite"
+        self.repository.close()
+        connection = sqlite3.connect(path)
+        trigger = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='field_effect_events_no_update'"
+        ).fetchone()[0]
+        connection.execute("DROP TRIGGER field_effect_events_no_update")
+        row = connection.execute(
+            "SELECT event_id,document FROM field_effect_events WHERE plan_id=?",
+            (operation.plan.plan_id,),
+        ).fetchone()
+        raw = json.loads(row[1])
+        raw["sequence"] = True
+        connection.execute(
+            "UPDATE field_effect_events SET document=? WHERE event_id=?",
+            (json.dumps(raw), row[0]),
+        )
+        connection.execute(trigger)
+        connection.commit()
+        connection.close()
+        with self.assertRaises(Exception):
+            open_repository(path, create=False)
+        self.repository = open_repository(Path(self.temporary.name) / "fresh.sqlite")
+        self.service._repository = self.repository
+
+    def _corrupt_and_reject(self, statement: str, parameters: tuple[object, ...]) -> None:
+        path = Path(self.temporary.name) / "effects.sqlite"
+        self.repository.close()
+        connection = sqlite3.connect(path)
+        connection.execute(statement, parameters)
+        connection.commit()
+        connection.close()
+        with self.assertRaises(Exception):
+            open_repository(path, create=False)
+        self.repository = open_repository(Path(self.temporary.name) / "fresh.sqlite")
+        self.service._repository = self.repository
+
+    def test_authenticated_api_uses_the_same_service_and_blocks_anonymous_mutation(self) -> None:
+        operation = self.plan(suffix="b")
+        root = Path(self.temporary.name)
+        password = root / "owner.hash"
+        password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+        os.chmod(password, 0o600)
+        app = create_review_app(
+            self.repository,
+            ReviewWebConfiguration(
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(password),
+                session_lifetime_seconds=600,
+            ),
+            clock=self.clock,
+            field_application=self.service,
+        )
+        with TestClient(app, base_url="https://review.test") as client:
+            route = f"/api/v1/field-effects/{operation.plan.plan_id}/apply"
+            self.assertEqual(client.post(route, headers={"Origin": "https://review.test"}).status_code, 401)
+            login = client.post(
+                "/api/v1/session/login", json={"password": "correct horse"},
+                headers={"Origin": "https://review.test"},
+            )
+            self.assertEqual(login.status_code, 200)
+            response = client.post(route, headers={
+                "Origin": "https://review.test",
+                "X-CSRF-Token": login.json()["csrf_token"],
+            })
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["state"], "verified")
+            status = client.get(f"/api/v1/field-effects/{operation.plan.plan_id}")
+            self.assertEqual(status.json()["state"], "verified")
+
+    def test_web_pause_and_resume_bound_persistence_failures(self) -> None:
+        repository = self.repository
+
+        class FailingControlRepository:
+            def __getattr__(self, name: str):
+                return getattr(repository, name)
+
+            def set_field_effect_paused(self, paused: bool, changed_at: int) -> None:
+                raise FieldEffectError("persistence")
+
+        failing = FailingControlRepository()
+        self.service._repository = failing
+        root = Path(self.temporary.name)
+        password = root / "failing-control-owner.hash"
+        password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+        os.chmod(password, 0o600)
+        app = create_review_app(
+            failing,
+            ReviewWebConfiguration(
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(password),
+                session_lifetime_seconds=600,
+            ),
+            clock=self.clock,
+            field_application=self.service,
+        )
+        with TestClient(app, base_url="https://review.test") as client:
+            login = client.post(
+                "/api/v1/session/login", json={"password": "correct horse"},
+                headers={"Origin": "https://review.test"},
+            )
+            self.assertEqual(login.status_code, 200)
+            headers = {
+                "Origin": "https://review.test",
+                "X-CSRF-Token": login.json()["csrf_token"],
+            }
+            for action in ("pause", "resume"):
+                with self.subTest(action=action):
+                    response = client.post(
+                        f"/api/v1/field-effects/{action}", headers=headers
+                    )
+                    self.assertEqual(response.status_code, 503)
+                    self.assertEqual(response.json(), {
+                        "error": {"code": "persistence"},
+                        "schema_version": "review-error-v1",
+                    })
+
+    def test_web_field_effect_and_review_reads_share_one_repository_lock(self) -> None:
+        operation = self.plan(suffix="c")
+        entered = threading.Event()
+        release = threading.Event()
+        library_entered = threading.Event()
+        repository = self.repository
+
+        class BlockingRepository:
+            def __getattr__(self, name: str):
+                return getattr(repository, name)
+
+            def get_field_effect(self, plan_id: str):
+                entered.set()
+                if not release.wait(2):
+                    raise RuntimeError("test release timeout")
+                return repository.get_field_effect(plan_id)
+
+            def read_review_library(self, search, limit, offset, attention):
+                library_entered.set()
+                return repository.read_review_library(search, limit, offset, attention)
+
+        blocking = BlockingRepository()
+        self.service._repository = blocking
+        root = Path(self.temporary.name)
+        password = root / "serialized-owner.hash"
+        password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+        os.chmod(password, 0o600)
+        app = create_review_app(
+            blocking,
+            ReviewWebConfiguration(
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(password),
+                session_lifetime_seconds=600,
+            ),
+            clock=self.clock,
+            field_application=self.service,
+        )
+        responses: dict[str, Any] = {}
+        with TestClient(app, base_url="https://review.test") as client:
+            login = client.post(
+                "/api/v1/session/login", json={"password": "correct horse"},
+                headers={"Origin": "https://review.test"},
+            )
+            self.assertEqual(login.status_code, 200)
+
+            status_thread = threading.Thread(
+                target=lambda: responses.setdefault(
+                    "status", client.get(
+                        f"/api/v1/field-effects/{operation.plan.plan_id}"
+                    )
+                )
+            )
+            library_thread = threading.Thread(
+                target=lambda: responses.setdefault(
+                    "library", client.get("/api/v1/library")
+                )
+            )
+            status_thread.start()
+            self.assertTrue(entered.wait(1))
+            library_thread.start()
+            self.assertFalse(library_entered.wait(0.1))
+            release.set()
+            status_thread.join(2)
+            library_thread.join(2)
+            self.assertFalse(status_thread.is_alive())
+            self.assertFalse(library_thread.is_alive())
+            self.assertTrue(library_entered.is_set())
+            self.assertEqual(responses["status"].status_code, 200)
+            self.assertEqual(responses["library"].status_code, 200)
+
+
+class FieldEffectDomainTests(unittest.TestCase):
+    def test_service_tokens_accept_realistic_opaque_ids_but_remain_bounded(self) -> None:
+        authority = EffectAuthority(
+            "human_decision_" + "a" * 64, "review_case_" + "b" * 64,
+            "c" * 64, "fake_service", "human", "candidate", None, None,
+        )
+        consent = EffectConsent.create(
+            connection="primary", library="books", destination="title", granted_at=1
+        )
+
+        def create(work_id: object, target_version: object) -> FieldEffectPlan:
+            return FieldEffectPlan.create(
+                connection="primary", library="books", work_id=work_id,
+                destination="title", pre_value="Old", desired_value="New",
+                target_fingerprint="c" * 64, target_version=target_version,
+                dependency_digests=(DEPENDENCY,), authority=authority,
+                consent=consent, capability_digest=CAPABILITY, created_at=1,
+            )
+
+        plan = create("65f12ab90d42c7e81934beef/+opaque", "d" * 64)
+        self.assertEqual(plan.work_id, "65f12ab90d42c7e81934beef/+opaque")
+        self.assertEqual(plan.target_version, "d" * 64)
+        for work_id, target_version in (
+            ("item\nheader", "v1"),
+            ("item\x00suffix", "v1"),
+            ("x" * 1025, "v1"),
+            ("item-1", "v" * 1025),
+            ("item-1", "   "),
+            ("item-1", "\ud800"),
+            (True, "v1"),
+        ):
+            with self.subTest(work_id=work_id, target_version=target_version):
+                with self.assertRaises(Exception):
+                    create(work_id, target_version)
+
+    def test_series_is_one_atomic_destination_and_state_machine_rejects_skips(self) -> None:
+        authority = EffectAuthority(
+            "human_decision_" + "a" * 64, "review_case_" + "b" * 64,
+            "c" * 64, "fake_service", "human", "candidate", None, None,
+        )
+        consent = EffectConsent.create(
+            connection="primary", library="books", destination="series", granted_at=1
+        )
+        plan = FieldEffectPlan.create(
+            connection="primary", library="books", work_id="book-1",
+            destination="series", pre_value=[{"name": "Old", "sequence": "1"}],
+            desired_value=[{"name": "New", "sequence": "2"}],
+            target_fingerprint="c" * 64, target_version="v1",
+            dependency_digests=(DEPENDENCY,), authority=authority,
+            consent=consent, capability_digest=CAPABILITY, created_at=1,
+        )
+        operation = FieldEffectOperation(plan, updated_at=1)
+        with self.assertRaises(Exception):
+            operation.transition("verified", at=2)
+
+        for member, invalid in (
+            ("attempt", True), ("updated_at", True),
+            ("failure", False), ("claim_token", 1),
+        ):
+            with self.subTest(member=member):
+                raw = operation.to_data()
+                raw[member] = invalid
+                with self.assertRaises(Exception):
+                    FieldEffectOperation.from_json(json.dumps(raw))
+        raw = operation.to_data()
+        raw["plan"]["created_at"] = True
+        with self.assertRaises(Exception):
+            FieldEffectOperation.from_json(json.dumps(raw))
+        raw = operation.to_data()
+        raw["plan"]["consent"]["granted_at"] = True
+        with self.assertRaises(Exception):
+            FieldEffectOperation.from_json(json.dumps(raw))
+
+
+if __name__ == "__main__":
+    unittest.main()

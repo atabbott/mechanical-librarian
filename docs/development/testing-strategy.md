@@ -427,3 +427,16 @@ checks atomic extraction-publication transition failure. Generated
 OpenAPI and the authenticated browser flow cover activation and transition
 routes; exact installed-artifact qualification remains report-only and verifies
 no target, media, or artifact writes.
+
+Guarded-application tests use only synthetic immutable decisions and fake
+backup, capability, exact authority binding, distinct consent, dependency,
+clock, target, fault, and cover
+recovery adapters. They cover both origins, every closed destination shape,
+atomic series, no-ops, ordered gate failures, pause/supersede/claim semantics,
+sibling independence, atomic revoke-versus-claim races, persisted ambiguous
+desired/pre/third readback and forward reevaluation, lineage-replacement races,
+bounded pending-action and cleanup restart runners, retry exhaustion, restart
+boundaries, append-only audit, retryable owner-only cover cleanup, canonical
+row/document/action corruption rejection including boolean/integer aliases and
+closed failure/token types, architecture imports, authenticated API calls, and the
+absence of Audiobookshelf/media-write construction.

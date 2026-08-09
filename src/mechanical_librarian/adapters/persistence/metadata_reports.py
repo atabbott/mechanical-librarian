@@ -47,6 +47,15 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
 )
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    EffectConsent,
+    FIELD_EFFECT_FAILURES,
+    FieldEffectError,
+    FieldEffectOperation,
+    authority_to_data,
+    canonical_json as canonical_effect_json,
+)
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
@@ -327,6 +336,59 @@ _AUTOMATIC_SAFETY_SQL = (
     "global_suspension TEXT, category_suspensions_document TEXT NOT NULL, "
     "updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
 )
+_FIELD_EFFECT_CONTROL_SQL = (
+    "CREATE TABLE field_effect_control (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
+    "paused INTEGER NOT NULL CHECK(paused IN (0,1)), updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
+)
+_FIELD_EFFECT_AUTHORITIES_SQL = (
+    "CREATE TABLE field_effect_authorities ("
+    "decision_id TEXT PRIMARY KEY NOT NULL, current INTEGER NOT NULL CHECK(current IN (0,1)), "
+    "updated_at INTEGER NOT NULL CHECK(updated_at>=0), document TEXT NOT NULL "
+    "CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 4096))"
+)
+_FIELD_EFFECT_CONSENTS_SQL = (
+    "CREATE TABLE field_effect_consents ("
+    "consent_id TEXT PRIMARY KEY NOT NULL CHECK(consent_id GLOB 'effect_consent_[0-9a-f]*' AND length(consent_id)=79), "
+    "current INTEGER NOT NULL CHECK(current IN (0,1)), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 4096))"
+)
+_FIELD_EFFECTS_SQL = (
+    "CREATE TABLE field_effects ("
+    "plan_id TEXT PRIMARY KEY NOT NULL CHECK(plan_id GLOB 'effect_plan_[0-9a-f]*' AND length(plan_id)=76), "
+    "decision_id TEXT NOT NULL UNIQUE, connection_name TEXT NOT NULL, library_name TEXT NOT NULL, "
+    "work_id TEXT NOT NULL, destination TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN "
+    "('planned','claimed','applying','reconciling','retryable','verified','stale','superseded','abandoned')), "
+    "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072))"
+)
+_FIELD_EFFECT_ACTIONS_SQL = (
+    "CREATE TABLE field_effect_actions ("
+    "action_id TEXT PRIMARY KEY NOT NULL CHECK(action_id GLOB 'effect_action_[0-9a-f]*' AND length(action_id)=78), "
+    "plan_id TEXT NOT NULL REFERENCES field_effects(plan_id), "
+    "kind TEXT NOT NULL CHECK(kind IN ('targeted_read','forward_reevaluation')), "
+    "state TEXT NOT NULL CHECK(state IN ('pending','claimed','completed')), "
+    "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 8192), "
+    "UNIQUE(plan_id,kind))"
+)
+_FIELD_EFFECT_CLEANUPS_SQL = (
+    "CREATE TABLE field_effect_cleanups ("
+    "plan_id TEXT PRIMARY KEY NOT NULL REFERENCES field_effects(plan_id), "
+    "state TEXT NOT NULL CHECK(state IN ('pending','completed')), "
+    "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 4096))"
+)
+_FIELD_EFFECT_EVENTS_SQL = (
+    "CREATE TABLE field_effect_events ("
+    "event_id TEXT PRIMARY KEY NOT NULL CHECK(event_id GLOB 'effect_event_[0-9a-f]*' AND length(event_id)=77), "
+        "plan_id TEXT NOT NULL REFERENCES field_effects(plan_id), sequence INTEGER NOT NULL CHECK(sequence>=1), "
+    "kind TEXT NOT NULL CHECK(kind IN ('planned','claimed','applying','reconciling','retryable','verified','stale','superseded','abandoned')), "
+    "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072), "
+    "UNIQUE(plan_id,sequence))"
+)
+_FIELD_EFFECT_EVENT_NO_UPDATE_SQL = "CREATE TRIGGER field_effect_events_no_update BEFORE UPDATE ON field_effect_events BEGIN SELECT RAISE(ABORT, 'field effect events are append-only'); END"
+_FIELD_EFFECT_EVENT_NO_DELETE_SQL = "CREATE TRIGGER field_effect_events_no_delete BEFORE DELETE ON field_effect_events BEGIN SELECT RAISE(ABORT, 'field effect events are append-only'); END"
 _CURRENT_REVIEW_FROM_SQL = (
     "FROM current_review_case_lineages c "
     "JOIN review_cases rc ON rc.review_case_id=c.review_case_id "
@@ -844,6 +906,585 @@ class SQLiteMetadataReportRepository:
         self._binding = binding
         self.identity = identity
         self._review_pipeline_claim: PipelineAction | None = None
+
+    def field_effect_authority_source(
+        self, decision: HumanDecision | AutomaticDecision
+    ) -> dict[str, object]:
+        """Resolve one exact persisted decision against its current case lineage."""
+        table = "human_decisions" if type(decision) is HumanDecision else "automatic_decisions"
+        row = self._connection.execute(
+            f"SELECT document FROM {table} WHERE decision_id=?", (decision.decision_id,)
+        ).fetchone()
+        if row is None or row[0] != decision.to_json():
+            raise FieldEffectError("authority_binding")
+        envelope = json.loads(self.get_review_case(decision.review_case_id))
+        if (type(envelope) is not dict or envelope.get("current") is not True
+                or type(envelope.get("case")) is not dict):
+            raise FieldEffectError("authority_binding")
+        case = ReviewCase.from_json(_canonical_json(envelope["case"]))
+        if type(decision) is HumanDecision:
+            decision.validate_for(case)
+            value = decision.selected_value
+        else:
+            if (decision.review_case_id != case.review_case_id
+                    or decision.target_fingerprint != case.target_fingerprint):
+                raise FieldEffectError("authority_binding")
+            proposal = next((item for item in case.proposals
+                             if item["proposal_id"] == decision.proposal_id
+                             and item["destination"] == decision.destination), None)
+            alternatives = None if proposal is None else proposal["result"].get("alternatives")
+            selected = next((item for item in alternatives or ()
+                             if item.get("alternative_id") == decision.candidate_id), None)
+            if selected is None:
+                raise FieldEffectError("authority_binding")
+            value = selected["value"]
+        lineage = self._connection.execute(
+            "SELECT connection_name,library_name,item_id FROM current_review_case_lineages "
+            "WHERE review_case_id=?", (decision.review_case_id,),
+        ).fetchone()
+        if lineage is None:
+            raise FieldEffectError("authority_binding")
+        return {"connection": lineage[0], "library": lineage[1], "work_id": lineage[2],
+                "destination": decision.destination,
+                "review_case_id": decision.review_case_id,
+                "target_fingerprint": decision.target_fingerprint,
+                "target_version": decision.target_fingerprint,
+                "decision_value": value, "source": "persisted_review_case"}
+
+    def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool:
+        return (self._connection.execute(
+            "SELECT current FROM field_effect_authorities WHERE decision_id=?",
+            (authority.decision_id,),
+        ).fetchone() == (1,) and self._connection.execute(
+            "SELECT 1 FROM current_review_case_lineages WHERE review_case_id=?",
+            (authority.review_case_id,),
+        ).fetchone() == (1,))
+
+    def record_field_effect(self, operation: FieldEffectOperation) -> FieldEffectOperation:
+        """Persist a deterministic plan and its first audit fact atomically."""
+        try:
+            if (operation.state != "planned" or operation.attempt != 0
+                    or operation.failure is not None
+                    or operation.claim_token is not None
+                    or operation.updated_at != operation.plan.created_at):
+                raise FieldEffectError("invalid_initial_operation")
+            document = canonical_effect_json(operation.to_data())
+            self._connection.execute("BEGIN IMMEDIATE")
+            existing = self._connection.execute(
+                "SELECT document FROM field_effects WHERE plan_id=?",
+                (operation.plan.plan_id,),
+            ).fetchone()
+            if existing is not None:
+                persisted = FieldEffectOperation.from_json(existing[0])
+                persisted_identity = persisted.plan.to_data()
+                attempted_identity = operation.plan.to_data()
+                persisted_identity.pop("created_at")
+                attempted_identity.pop("created_at")
+                if persisted_identity != attempted_identity:
+                    raise FieldEffectError("idempotency_conflict")
+                self._connection.commit()
+                return persisted
+            authority_document = canonical_effect_json({
+                "authority": operation.plan.to_data()["authority"], "current": True,
+                "schema_version": "field-effect-authority-state-v1",
+                "updated_at": operation.updated_at,
+            })
+            authority_existing = self._connection.execute(
+                "SELECT document FROM field_effect_authorities WHERE decision_id=?",
+                (operation.plan.authority.decision_id,),
+            ).fetchone()
+            if authority_existing is None:
+                self._connection.execute(
+                    "INSERT INTO field_effect_authorities(decision_id,current,updated_at,document) VALUES(?,1,?,?)",
+                    (operation.plan.authority.decision_id, operation.updated_at, authority_document),
+                )
+            elif authority_existing[0] != authority_document:
+                raise FieldEffectError("authority_conflict")
+            consent_document = canonical_effect_json({
+                "consent": operation.plan.consent.to_data(), "current": True,
+                "schema_version": "field-effect-consent-state-v1",
+                "updated_at": operation.plan.consent.granted_at,
+            })
+            consent_existing = self._connection.execute(
+                "SELECT document FROM field_effect_consents WHERE consent_id=?",
+                (operation.plan.consent.consent_id,),
+            ).fetchone()
+            if consent_existing is None:
+                self._connection.execute(
+                    "INSERT INTO field_effect_consents(consent_id,current,updated_at,document) VALUES(?,1,?,?)",
+                    (operation.plan.consent.consent_id,
+                     operation.plan.consent.granted_at, consent_document),
+                )
+            elif consent_existing[0] != consent_document:
+                raise FieldEffectError("consent_conflict")
+            self._connection.execute(
+                "INSERT INTO field_effects(plan_id,decision_id,connection_name,library_name,work_id,destination,state,attempt,updated_at,document) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (operation.plan.plan_id, operation.plan.authority.decision_id,
+                 operation.plan.connection, operation.plan.library, operation.plan.work_id,
+                 operation.plan.destination, operation.state, operation.attempt,
+                 operation.updated_at, document),
+            )
+            self._record_field_effect_event(operation, "planned", operation.updated_at)
+            self._connection.commit()
+            return operation
+        except (sqlite3.Error, FieldEffectError, TypeError, ValueError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError):
+                raise
+            raise FieldEffectError("persistence") from error
+
+    def get_field_effect(self, plan_id: str) -> FieldEffectOperation:
+        try:
+            row = self._connection.execute(
+                "SELECT document FROM field_effects WHERE plan_id=?", (plan_id,)
+            ).fetchone()
+            if row is None:
+                raise FieldEffectError("not_found")
+            return FieldEffectOperation.from_json(row[0])
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    def claim_field_effect(self, plan_id: str, expected_state: str,
+                           claim_token: str, claimed_at: int) -> FieldEffectOperation:
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            if self._connection.execute(
+                "SELECT paused FROM field_effect_control WHERE singleton=1"
+            ).fetchone() != (0,):
+                raise FieldEffectError("paused")
+            row = self._connection.execute(
+                "SELECT document,state FROM field_effects WHERE plan_id=?", (plan_id,)
+            ).fetchone()
+            if row is None or row[1] != expected_state:
+                raise FieldEffectError("claim_conflict")
+            persisted = FieldEffectOperation.from_json(row[0])
+            if self._connection.execute(
+                "SELECT current FROM field_effect_authorities WHERE decision_id=?",
+                (persisted.plan.authority.decision_id,),
+            ).fetchone() != (1,):
+                raise FieldEffectError("authority")
+            if self._connection.execute(
+                "SELECT current FROM field_effect_consents WHERE consent_id=?",
+                (persisted.plan.consent.consent_id,),
+            ).fetchone() != (1,):
+                raise FieldEffectError("consent")
+            authority = persisted.plan.authority
+            if authority.source == "persisted_review_case":
+                try:
+                    case_envelope = json.loads(
+                        self.get_review_case(authority.review_case_id)
+                    )
+                    case = case_envelope["case"]
+                    target = case["target"]
+                except (MetadataReportError, KeyError, TypeError,
+                        json.JSONDecodeError) as error:
+                    raise FieldEffectError("authority") from error
+                if (case_envelope.get("current") is not True
+                        or case.get("target_fingerprint")
+                        != authority.target_fingerprint
+                        or (target.get("connection"), target.get("library"),
+                            target.get("item"))
+                        != (persisted.plan.connection, persisted.plan.library,
+                            persisted.plan.work_id)):
+                    raise FieldEffectError("authority")
+                table = ("human_decisions" if authority.origin == "human"
+                         else "automatic_decisions")
+                decision = self._connection.execute(
+                    f"SELECT document FROM {table} WHERE decision_id=? "
+                    "AND review_case_id=? AND destination=?",
+                    (authority.decision_id, authority.review_case_id,
+                     persisted.plan.destination),
+                ).fetchone()
+                if (decision is None
+                        or json.loads(decision[0]).get("target_fingerprint")
+                        != authority.target_fingerprint):
+                    raise FieldEffectError("authority")
+                if authority.origin == "automatic_policy":
+                    automatic = json.loads(decision[0])
+                    safety = self._connection.execute(
+                        "SELECT paused,global_suspension,category_suspensions_document "
+                        "FROM automatic_safety_state WHERE singleton=1"
+                    ).fetchone()
+                    suspended = {} if safety is None else dict(json.loads(safety[2]))
+                    if (safety is None or safety[0] != 0 or safety[1] is not None
+                            or automatic["policy_category"] in suspended):
+                        raise FieldEffectError("authority")
+            operation = persisted.transition(
+                "claimed", at=claimed_at, claim_token=claim_token
+            )
+            self._update_field_effect(operation, expected_state)
+            self._record_field_effect_event(operation, "claimed", claimed_at)
+            self._connection.commit()
+            return operation
+        except (sqlite3.Error, FieldEffectError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError):
+                raise
+            raise FieldEffectError("persistence") from error
+
+    def transition_field_effect(self, plan_id: str, expected_state: str,
+                                state: str, changed_at: int,
+                                failure: str | None = None) -> FieldEffectOperation:
+        if state == "reconciling":
+            return self.schedule_field_effect_reconciliation(
+                plan_id, expected_state, changed_at,
+                "ambiguous" if failure is None else failure,
+            )
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT document,state FROM field_effects WHERE plan_id=?", (plan_id,)
+            ).fetchone()
+            if row is None or row[1] != expected_state:
+                raise FieldEffectError("transition_conflict")
+            operation = FieldEffectOperation.from_json(row[0]).transition(
+                state, at=changed_at, failure=failure
+            )
+            self._update_field_effect(operation, expected_state)
+            self._record_field_effect_event(operation, state, changed_at)
+            self._schedule_field_effect_cleanup(operation, changed_at)
+            self._connection.commit()
+            return operation
+        except (sqlite3.Error, FieldEffectError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError):
+                raise
+            raise FieldEffectError("persistence") from error
+
+    def supersede_field_effect(self, decision_id: str, superseded_at: int) -> int:
+        return self.revoke_field_effect_authority(decision_id, superseded_at)
+
+    def revoke_field_effect_authority(self, decision_id: str, changed_at: int) -> int:
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT document FROM field_effect_authorities WHERE decision_id=?",
+                (decision_id,),
+            ).fetchone()
+            if row is None:
+                raise FieldEffectError("authority")
+            raw = json.loads(row[0])
+            raw["current"] = False
+            raw["updated_at"] = changed_at
+            self._connection.execute(
+                "UPDATE field_effect_authorities SET current=0,updated_at=?,document=? WHERE decision_id=?",
+                (changed_at, canonical_effect_json(raw), decision_id),
+            )
+            rows = self._connection.execute(
+                "SELECT document,state FROM field_effects WHERE decision_id=? AND state IN ('planned','retryable')",
+                (decision_id,),
+            ).fetchall()
+            for document, state in rows:
+                operation = FieldEffectOperation.from_json(document).transition(
+                    "superseded", at=changed_at, failure="authority_superseded"
+                )
+                self._update_field_effect(operation, state)
+                self._record_field_effect_event(operation, "superseded", changed_at)
+                self._schedule_field_effect_cleanup(operation, changed_at)
+            self._connection.commit()
+            return len(rows)
+        except (sqlite3.Error, FieldEffectError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError):
+                raise
+            raise FieldEffectError("persistence") from error
+
+    def revoke_field_effect_consent(self, consent_id: str, changed_at: int) -> int:
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT document FROM field_effect_consents WHERE consent_id=?",
+                (consent_id,),
+            ).fetchone()
+            if row is None:
+                raise FieldEffectError("consent")
+            raw = json.loads(row[0])
+            raw["current"] = False
+            raw["updated_at"] = changed_at
+            self._connection.execute(
+                "UPDATE field_effect_consents SET current=0,updated_at=?,document=? WHERE consent_id=?",
+                (changed_at, canonical_effect_json(raw), consent_id),
+            )
+            rows = self._connection.execute(
+                "SELECT document,state FROM field_effects WHERE json_extract(document,'$.plan.consent.consent_id')=? AND state IN ('planned','retryable')",
+                (consent_id,),
+            ).fetchall()
+            for document, state in rows:
+                operation = FieldEffectOperation.from_json(document).transition(
+                    "superseded", at=changed_at, failure="consent_revoked"
+                )
+                self._update_field_effect(operation, state)
+                self._record_field_effect_event(operation, "superseded", changed_at)
+                self._schedule_field_effect_cleanup(operation, changed_at)
+            self._connection.commit()
+            return len(rows)
+        except (sqlite3.Error, FieldEffectError, json.JSONDecodeError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError):
+                raise
+            raise FieldEffectError("persistence") from error
+
+    def schedule_field_effect_reconciliation(self, plan_id: str,
+                                             expected_state: str,
+                                             changed_at: int,
+                                             failure: str = "ambiguous") -> FieldEffectOperation:
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT document,state FROM field_effects WHERE plan_id=?", (plan_id,)
+            ).fetchone()
+            if row is None or row[1] != expected_state:
+                raise FieldEffectError("transition_conflict")
+            operation = FieldEffectOperation.from_json(row[0]).transition(
+                "reconciling", at=changed_at, failure=failure
+            )
+            self._update_field_effect(operation, expected_state)
+            self._record_field_effect_event(operation, "reconciling", changed_at)
+            self._upsert_field_effect_action(operation, "targeted_read", "pending", 0,
+                                             changed_at)
+            self._connection.commit()
+            return operation
+        except (sqlite3.Error, FieldEffectError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError):
+                raise
+            raise FieldEffectError("persistence") from error
+
+    def complete_field_effect_reconciliation(self, plan_id: str, state: str,
+                                             failure: str | None, changed_at: int,
+                                             reevaluate: bool = False) -> FieldEffectOperation:
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT document,state FROM field_effects WHERE plan_id=?", (plan_id,)
+            ).fetchone()
+            if row is None or row[1] != "reconciling":
+                raise FieldEffectError("transition_conflict")
+            operation = FieldEffectOperation.from_json(row[0]).transition(
+                state, at=changed_at, failure=failure
+            )
+            self._update_field_effect(operation, "reconciling")
+            self._record_field_effect_event(operation, state, changed_at)
+            action = self._connection.execute(
+                "SELECT attempt FROM field_effect_actions WHERE plan_id=? "
+                "AND kind='targeted_read' AND state='claimed'",
+                (plan_id,),
+            ).fetchone()
+            if action is None:
+                raise FieldEffectError("action")
+            self._upsert_field_effect_action(operation, "targeted_read", "completed",
+                                             action[0], changed_at)
+            if reevaluate:
+                self._upsert_field_effect_action(operation, "forward_reevaluation",
+                                                 "pending", 0, changed_at)
+            self._schedule_field_effect_cleanup(operation, changed_at)
+            self._connection.commit()
+            return operation
+        except (sqlite3.Error, FieldEffectError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError):
+                raise
+            raise FieldEffectError("persistence") from error
+
+    def claim_next_field_effect_action(self, changed_at: int,
+                                       plan_id: str | None = None) -> dict[str, object] | None:
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            parameters: tuple[object, ...] = () if plan_id is None else (plan_id,)
+            where = "state IN ('pending','claimed')"
+            if plan_id is not None:
+                where += " AND plan_id=?"
+            row = self._connection.execute(
+                "SELECT action_id,plan_id,kind,state,attempt FROM field_effect_actions "
+                f"WHERE {where} ORDER BY CASE kind WHEN 'targeted_read' THEN 0 ELSE 1 END,updated_at,action_id LIMIT 1",
+                parameters,
+            ).fetchone()
+            if row is None:
+                self._connection.commit()
+                return None
+            operation = self.get_field_effect(row[1])
+            attempt = min(row[4] + (1 if row[3] == "pending" else 0), 3)
+            self._upsert_field_effect_action(
+                operation, row[2], "claimed", attempt, changed_at
+            )
+            self._connection.commit()
+            return {"action_id": row[0], "plan_id": row[1],
+                    "kind": row[2], "attempt": attempt}
+        except (sqlite3.Error, FieldEffectError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError):
+                raise
+            raise FieldEffectError("persistence") from error
+
+    def complete_forward_reevaluation(self, action_id: str, changed_at: int) -> None:
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT plan_id,attempt FROM field_effect_actions "
+                "WHERE action_id=? AND kind='forward_reevaluation' AND state='claimed'",
+                (action_id,),
+            ).fetchone()
+            if row is None:
+                raise FieldEffectError("action")
+            operation = self.get_field_effect(row[0])
+            self._upsert_field_effect_action(
+                operation, "forward_reevaluation", "completed", row[1], changed_at
+            )
+            self._connection.commit()
+        except (sqlite3.Error, FieldEffectError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError):
+                raise
+            raise FieldEffectError("persistence") from error
+
+    def field_effect_cleanup_pending(self, plan_id: str) -> bool:
+        row = self._connection.execute(
+            "SELECT state FROM field_effect_cleanups WHERE plan_id=?", (plan_id,)
+        ).fetchone()
+        return row == ("pending",)
+
+    def pending_field_effect_cleanups(self, limit: int) -> tuple[str, ...]:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise FieldEffectError("invalid_limit")
+        return tuple(row[0] for row in self._connection.execute(
+            "SELECT plan_id FROM field_effect_cleanups WHERE state='pending' "
+            "ORDER BY updated_at,plan_id LIMIT ?", (limit,),
+        ).fetchall())
+
+    def complete_field_effect_cleanup(self, plan_id: str, changed_at: int) -> None:
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT attempt FROM field_effect_cleanups WHERE plan_id=? AND state='pending'",
+                (plan_id,),
+            ).fetchone()
+            if row is None:
+                self._connection.commit()
+                return
+            self._upsert_field_effect_cleanup(
+                plan_id, "completed", min(row[0] + 1, 3), changed_at
+            )
+            self._connection.commit()
+        except (sqlite3.Error, FieldEffectError) as error:
+            self._connection.rollback()
+            raise FieldEffectError("persistence") from error
+
+    def fail_field_effect_cleanup(self, plan_id: str, changed_at: int) -> None:
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT attempt FROM field_effect_cleanups WHERE plan_id=? AND state='pending'",
+                (plan_id,),
+            ).fetchone()
+            if row is None:
+                raise FieldEffectError("cleanup")
+            self._upsert_field_effect_cleanup(
+                plan_id, "pending", min(row[0] + 1, 3), changed_at
+            )
+            self._connection.commit()
+        except (sqlite3.Error, FieldEffectError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError):
+                raise
+            raise FieldEffectError("persistence") from error
+
+    def set_field_effect_paused(self, paused: bool, changed_at: int) -> None:
+        if type(paused) is not bool or type(changed_at) is not int or changed_at < 0:
+            raise FieldEffectError("invalid_control")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            self._connection.execute(
+                "UPDATE field_effect_control SET paused=?,updated_at=? WHERE singleton=1",
+                (int(paused), changed_at),
+            )
+            self._connection.commit()
+        except sqlite3.Error as error:
+            self._connection.rollback()
+            raise FieldEffectError("persistence") from error
+
+    def field_effect_paused(self) -> bool:
+        try:
+            return self._connection.execute(
+                "SELECT paused FROM field_effect_control WHERE singleton=1"
+            ).fetchone() == (1,)
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    def _upsert_field_effect_action(self, operation: FieldEffectOperation,
+                                    kind: str, state: str, attempt: int,
+                                    changed_at: int) -> None:
+        action_id = "effect_action_" + hashlib.sha256(
+            f"{operation.plan.plan_id}:{kind}".encode()
+        ).hexdigest()
+        document = canonical_effect_json({
+            "action_id": action_id, "attempt": attempt, "kind": kind,
+            "plan_id": operation.plan.plan_id,
+            "schema_version": "field-effect-action-v1", "state": state,
+            "updated_at": changed_at,
+        })
+        self._connection.execute(
+            "INSERT INTO field_effect_actions(action_id,plan_id,kind,state,attempt,updated_at,document) "
+            "VALUES(?,?,?,?,?,?,?) ON CONFLICT(plan_id,kind) DO UPDATE SET "
+            "state=excluded.state,attempt=excluded.attempt,updated_at=excluded.updated_at,document=excluded.document",
+            (action_id, operation.plan.plan_id, kind, state, attempt, changed_at, document),
+        )
+
+    def _schedule_field_effect_cleanup(self, operation: FieldEffectOperation,
+                                       changed_at: int) -> None:
+        if (operation.plan.destination == "cover"
+                and operation.state in {"verified", "stale", "superseded", "abandoned"}):
+            self._upsert_field_effect_cleanup(
+                operation.plan.plan_id, "pending", 0, changed_at
+            )
+
+    def _upsert_field_effect_cleanup(self, plan_id: str, state: str,
+                                     attempt: int, changed_at: int) -> None:
+        document = canonical_effect_json({
+            "attempt": attempt, "plan_id": plan_id,
+            "schema_version": "field-effect-cleanup-v1", "state": state,
+            "updated_at": changed_at,
+        })
+        self._connection.execute(
+            "INSERT INTO field_effect_cleanups(plan_id,state,attempt,updated_at,document) "
+            "VALUES(?,?,?,?,?) ON CONFLICT(plan_id) DO UPDATE SET "
+            "state=excluded.state,attempt=excluded.attempt,updated_at=excluded.updated_at,document=excluded.document",
+            (plan_id, state, attempt, changed_at, document),
+        )
+
+    def _update_field_effect(self, operation: FieldEffectOperation,
+                             expected_state: str) -> None:
+        cursor = self._connection.execute(
+            "UPDATE field_effects SET state=?,attempt=?,updated_at=?,document=? WHERE plan_id=? AND state=?",
+            (operation.state, operation.attempt, operation.updated_at,
+             canonical_effect_json(operation.to_data()), operation.plan.plan_id,
+             expected_state),
+        )
+        if cursor.rowcount != 1:
+            raise FieldEffectError("transition_conflict")
+
+    def _record_field_effect_event(self, operation: FieldEffectOperation,
+                                   kind: str, occurred_at: int) -> None:
+        sequence = self._connection.execute(
+            "SELECT count(*)+1 FROM field_effect_events WHERE plan_id=?",
+            (operation.plan.plan_id,),
+        ).fetchone()[0]
+        content = {
+            "schema_version": "field-effect-event-v1", "plan_id": operation.plan.plan_id,
+            "decision_id": operation.plan.authority.decision_id,
+            "origin": operation.plan.authority.origin, "destination": operation.plan.destination,
+            "pre_value": operation.plan.pre_value, "desired_value": operation.plan.desired_value,
+            "state": operation.state, "attempt": operation.attempt, "failure": operation.failure,
+            "occurred_at": occurred_at, "kind": kind, "sequence": sequence,
+        }
+        event_id = "effect_event_" + hashlib.sha256(
+            canonical_effect_json(content).encode()
+        ).hexdigest()
+        document = canonical_effect_json({**content, "event_id": event_id})
+        self._connection.execute(
+            "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,document) VALUES(?,?,?,?,?,?)",
+            (event_id, operation.plan.plan_id, sequence, kind, occurred_at, document),
+        )
 
     @property
     def authority(self) -> object | None:
@@ -5306,6 +5947,14 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_AUTOMATIC_DECISIONS_SQL)
             connection.execute(_AUTOMATIC_SAFETY_SQL)
             connection.execute("INSERT INTO automatic_safety_state(singleton,paused,global_suspension,category_suspensions_document,updated_at) VALUES(1,0,NULL,'[]',0)")
+            connection.execute(_FIELD_EFFECT_CONTROL_SQL)
+            connection.execute("INSERT INTO field_effect_control(singleton,paused,updated_at) VALUES(1,0,0)")
+            connection.execute(_FIELD_EFFECT_AUTHORITIES_SQL)
+            connection.execute(_FIELD_EFFECT_CONSENTS_SQL)
+            connection.execute(_FIELD_EFFECTS_SQL)
+            connection.execute(_FIELD_EFFECT_EVENTS_SQL)
+            connection.execute(_FIELD_EFFECT_ACTIONS_SQL)
+            connection.execute(_FIELD_EFFECT_CLEANUPS_SQL)
             connection.execute(_SHADOW_REQUESTS_SQL)
             connection.execute(_SHADOW_ATTEMPTS_SQL)
             connection.execute(_SHADOW_DISPATCHES_SQL)
@@ -5328,6 +5977,8 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_HUMAN_DECISION_EVENT_NO_DELETE_SQL)
             connection.execute(_AUTOMATIC_DECISION_NO_UPDATE_SQL)
             connection.execute(_AUTOMATIC_DECISION_NO_DELETE_SQL)
+            connection.execute(_FIELD_EFFECT_EVENT_NO_UPDATE_SQL)
+            connection.execute(_FIELD_EFFECT_EVENT_NO_DELETE_SQL)
             connection.execute(_SHADOW_REQUEST_NO_UPDATE_SQL)
             connection.execute(_SHADOW_REQUEST_NO_DELETE_SQL)
             connection.execute(_SHADOW_ATTEMPT_NO_UPDATE_SQL)
@@ -5622,6 +6273,15 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_automatic_decisions_1", None),
         ("index", "sqlite_autoindex_automatic_decisions_2", None),
         ("index", "sqlite_autoindex_automatic_decisions_3", None),
+        ("index", "sqlite_autoindex_field_effect_events_1", None),
+        ("index", "sqlite_autoindex_field_effect_events_2", None),
+        ("index", "sqlite_autoindex_field_effect_actions_1", None),
+        ("index", "sqlite_autoindex_field_effect_actions_2", None),
+        ("index", "sqlite_autoindex_field_effect_authorities_1", None),
+        ("index", "sqlite_autoindex_field_effect_cleanups_1", None),
+        ("index", "sqlite_autoindex_field_effect_consents_1", None),
+        ("index", "sqlite_autoindex_field_effects_1", None),
+        ("index", "sqlite_autoindex_field_effects_2", None),
         ("index", "sqlite_autoindex_metadata_reports_1", None),
         ("index", "sqlite_autoindex_metadata_reports_2", None),
         ("index", "sqlite_autoindex_metadata_policy_drafts_1", None),
@@ -5662,6 +6322,13 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "human_decisions", _HUMAN_DECISIONS_SQL),
         ("table", "automatic_decisions", _AUTOMATIC_DECISIONS_SQL),
         ("table", "automatic_safety_state", _AUTOMATIC_SAFETY_SQL),
+        ("table", "field_effect_control", _FIELD_EFFECT_CONTROL_SQL),
+        ("table", "field_effect_actions", _FIELD_EFFECT_ACTIONS_SQL),
+        ("table", "field_effect_authorities", _FIELD_EFFECT_AUTHORITIES_SQL),
+        ("table", "field_effect_cleanups", _FIELD_EFFECT_CLEANUPS_SQL),
+        ("table", "field_effect_consents", _FIELD_EFFECT_CONSENTS_SQL),
+        ("table", "field_effect_events", _FIELD_EFFECT_EVENTS_SQL),
+        ("table", "field_effects", _FIELD_EFFECTS_SQL),
         ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
         ("table", "metadata_reports", _REPORTS_SQL),
         ("table", "metadata_policy_drafts", _METADATA_POLICY_DRAFTS_SQL),
@@ -5695,6 +6362,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("trigger", "human_decisions_no_update", _HUMAN_DECISION_NO_UPDATE_SQL),
         ("trigger", "automatic_decisions_no_delete", _AUTOMATIC_DECISION_NO_DELETE_SQL),
         ("trigger", "automatic_decisions_no_update", _AUTOMATIC_DECISION_NO_UPDATE_SQL),
+        ("trigger", "field_effect_events_no_delete", _FIELD_EFFECT_EVENT_NO_DELETE_SQL),
+        ("trigger", "field_effect_events_no_update", _FIELD_EFFECT_EVENT_NO_UPDATE_SQL),
         ("trigger", "proposal_sets_no_delete", _PROPOSAL_NO_DELETE_SQL),
         ("trigger", "proposal_sets_no_update", _PROPOSAL_NO_UPDATE_SQL),
         ("trigger", "review_case_transitions_no_delete", _REVIEW_TRANSITION_NO_DELETE_SQL),
@@ -5714,6 +6383,186 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
     ))
     if objects != expected_objects or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
+    _validate_field_effect_state(connection)
+
+
+def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
+    """Fail closed on any non-canonical field-effect envelope or row mismatch."""
+    try:
+        control = connection.execute(
+            "SELECT singleton,paused,updated_at FROM field_effect_control"
+        ).fetchall()
+        if (len(control) != 1 or control[0][0] != 1
+                or control[0][1] not in (0, 1)
+                or type(control[0][2]) is not int or control[0][2] < 0):
+            raise FieldEffectError("invalid_control")
+
+        authorities: dict[str, tuple[EffectAuthority, bool, int]] = {}
+        authority_keys = {"authority", "current", "schema_version", "updated_at"}
+        nested_authority_keys = {"decision_id", "origin", "outcome", "policy_identity",
+                                 "qualification_identity", "review_case_id",
+                                 "source", "target_fingerprint"}
+        for decision_id, current, updated_at, document in connection.execute(
+            "SELECT decision_id,current,updated_at,document FROM field_effect_authorities"
+        ):
+            raw = json.loads(document)
+            if (type(raw) is not dict or set(raw) != authority_keys
+                    or raw["schema_version"] != "field-effect-authority-state-v1"
+                    or type(raw["current"]) is not bool
+                    or type(raw["updated_at"]) is not int or raw["updated_at"] < 0
+                    or type(raw["authority"]) is not dict
+                    or set(raw["authority"]) != nested_authority_keys
+                    or (raw["current"], raw["updated_at"]) != (bool(current), updated_at)
+                    or canonical_effect_json(raw) != document):
+                raise FieldEffectError("invalid_authority")
+            item = raw["authority"]
+            authority = EffectAuthority(
+                item["decision_id"], item["review_case_id"], item["target_fingerprint"],
+                item["source"], item["origin"], item["outcome"], item["policy_identity"],
+                item["qualification_identity"],
+            )
+            if decision_id != authority.decision_id or item != authority_to_data(authority):
+                raise FieldEffectError("invalid_authority")
+            authorities[decision_id] = (authority, bool(current), updated_at)
+
+        consents: dict[str, tuple[EffectConsent, bool, int]] = {}
+        consent_keys = {"consent", "current", "schema_version", "updated_at"}
+        for consent_id, current, updated_at, document in connection.execute(
+            "SELECT consent_id,current,updated_at,document FROM field_effect_consents"
+        ):
+            raw = json.loads(document)
+            if (type(raw) is not dict or set(raw) != consent_keys
+                    or raw["schema_version"] != "field-effect-consent-state-v1"
+                    or type(raw["current"]) is not bool
+                    or type(raw["updated_at"]) is not int or raw["updated_at"] < 0
+                    or (raw["current"], raw["updated_at"]) != (bool(current), updated_at)
+                    or canonical_effect_json(raw) != document):
+                raise FieldEffectError("invalid_consent")
+            consent = EffectConsent.from_data(raw["consent"])
+            if consent_id != consent.consent_id:
+                raise FieldEffectError("invalid_consent")
+            consents[consent_id] = (consent, bool(current), updated_at)
+
+        operations: dict[str, FieldEffectOperation] = {}
+        for row in connection.execute(
+            "SELECT plan_id,decision_id,connection_name,library_name,work_id,destination,state,attempt,updated_at,document FROM field_effects"
+        ):
+            operation = FieldEffectOperation.from_json(row[9])
+            plan = operation.plan
+            expected = (plan.plan_id, plan.authority.decision_id, plan.connection,
+                        plan.library, plan.work_id, plan.destination, operation.state,
+                        operation.attempt, operation.updated_at)
+            if (row[:9] != expected or canonical_effect_json(operation.to_data()) != row[9]
+                    or plan.authority.decision_id not in authorities
+                    or plan.consent.consent_id not in consents
+                    or authorities[plan.authority.decision_id][0] != plan.authority
+                    or consents[plan.consent.consent_id][0] != plan.consent):
+                raise FieldEffectError("invalid_operation")
+            operations[plan.plan_id] = operation
+
+        event_keys = {"attempt", "decision_id", "desired_value", "destination",
+                      "event_id", "failure", "kind", "occurred_at", "origin",
+                      "plan_id", "pre_value", "schema_version", "sequence", "state"}
+        next_sequence: dict[str, int] = {}
+        last_events: dict[str, dict[str, object]] = {}
+        for event_id, plan_id, sequence, kind, occurred_at, document in connection.execute(
+            "SELECT event_id,plan_id,sequence,kind,occurred_at,document FROM field_effect_events ORDER BY plan_id,sequence"
+        ):
+            raw = json.loads(document)
+            operation = operations.get(plan_id)
+            expected_sequence = next_sequence.get(plan_id, 1)
+            if (operation is None or type(raw) is not dict or set(raw) != event_keys
+                    or raw["schema_version"] != "field-effect-event-v1"
+                    or type(raw["sequence"]) is not int or raw["sequence"] < 1
+                    or type(raw["attempt"]) is not int or not 0 <= raw["attempt"] <= 3
+                    or type(raw["occurred_at"]) is not int or raw["occurred_at"] < 0
+                    or type(raw["kind"]) is not str or type(raw["state"]) is not str
+                    or raw["failure"] not in FIELD_EFFECT_FAILURES
+                    or (raw["event_id"], raw["plan_id"], raw["sequence"], raw["kind"], raw["occurred_at"])
+                    != (event_id, plan_id, sequence, kind, occurred_at)
+                    or sequence != expected_sequence
+                    or raw["decision_id"] != operation.plan.authority.decision_id
+                    or raw["origin"] != operation.plan.authority.origin
+                    or raw["destination"] != operation.plan.destination
+                    or raw["pre_value"] != operation.plan.pre_value
+                    or raw["desired_value"] != operation.plan.desired_value
+                    or raw["state"] != kind
+                    or canonical_effect_json(raw) != document
+                    or event_id != "effect_event_" + hashlib.sha256(
+                        canonical_effect_json({key: value for key, value in raw.items()
+                                               if key != "event_id"}).encode()
+                    ).hexdigest()):
+                raise FieldEffectError("invalid_event")
+            next_sequence[plan_id] = expected_sequence + 1
+            last_events[plan_id] = raw
+        if (set(next_sequence) != set(operations)
+                or set(authorities) != {value.plan.authority.decision_id for value in operations.values()}
+                or set(consents) != {value.plan.consent.consent_id for value in operations.values()}):
+            raise FieldEffectError("invalid_event")
+        for plan_id, operation in operations.items():
+            last = last_events[plan_id]
+            if ((last["state"], last["attempt"], last["failure"])
+                    != (operation.state, operation.attempt, operation.failure)):
+                raise FieldEffectError("invalid_event")
+
+        action_keys = {"action_id", "attempt", "kind", "plan_id",
+                       "schema_version", "state", "updated_at"}
+        actions: dict[tuple[str, str], tuple[str, int]] = {}
+        for action_id, plan_id, kind, state, attempt, updated_at, document in connection.execute(
+            "SELECT action_id,plan_id,kind,state,attempt,updated_at,document FROM field_effect_actions"
+        ):
+            raw = json.loads(document)
+            if (plan_id not in operations or type(raw) is not dict or set(raw) != action_keys
+                    or raw["schema_version"] != "field-effect-action-v1"
+                    or type(raw["attempt"]) is not int or not 0 <= raw["attempt"] <= 3
+                    or type(raw["updated_at"]) is not int or raw["updated_at"] < 0
+                    or type(raw["kind"]) is not str or type(raw["state"]) is not str
+                    or (raw["action_id"], raw["plan_id"], raw["kind"], raw["state"],
+                        raw["attempt"], raw["updated_at"])
+                    != (action_id, plan_id, kind, state, attempt, updated_at)
+                    or canonical_effect_json(raw) != document
+                    or action_id != "effect_action_" + hashlib.sha256(
+                        f"{plan_id}:{kind}".encode()).hexdigest()):
+                raise FieldEffectError("invalid_action")
+            actions[(plan_id, kind)] = (state, attempt)
+        for plan_id, operation in operations.items():
+            targeted = actions.get((plan_id, "targeted_read"))
+            if ((operation.state == "reconciling") != (targeted is not None and targeted[0] in {"pending", "claimed"})
+                    or (targeted is not None and operation.state != "reconciling"
+                        and targeted[0] != "completed")):
+                raise FieldEffectError("invalid_action")
+        for (plan_id, kind), (state, _) in actions.items():
+            if (kind == "forward_reevaluation"
+                    and (state not in {"pending", "claimed", "completed"}
+                         or operations[plan_id].failure != "third_value")):
+                raise FieldEffectError("invalid_action")
+
+        cleanup_keys = {"attempt", "plan_id", "schema_version", "state", "updated_at"}
+        cleanups: set[str] = set()
+        for plan_id, state, attempt, updated_at, document in connection.execute(
+            "SELECT plan_id,state,attempt,updated_at,document FROM field_effect_cleanups"
+        ):
+            raw = json.loads(document)
+            operation = operations.get(plan_id)
+            if (operation is None or operation.plan.destination != "cover"
+                    or operation.state not in {"verified", "stale", "superseded", "abandoned"}
+                    or type(raw) is not dict or set(raw) != cleanup_keys
+                    or raw["schema_version"] != "field-effect-cleanup-v1"
+                    or type(raw["attempt"]) is not int or not 0 <= raw["attempt"] <= 3
+                    or type(raw["updated_at"]) is not int or raw["updated_at"] < 0
+                    or type(raw["state"]) is not str
+                    or (raw["plan_id"], raw["state"], raw["attempt"], raw["updated_at"])
+                    != (plan_id, state, attempt, updated_at)
+                    or canonical_effect_json(raw) != document):
+                raise FieldEffectError("invalid_cleanup")
+            cleanups.add(plan_id)
+        expected_cleanups = {plan_id for plan_id, operation in operations.items()
+                             if operation.plan.destination == "cover"
+                             and operation.state in {"verified", "stale", "superseded", "abandoned"}}
+        if cleanups != expected_cleanups:
+            raise FieldEffectError("invalid_cleanup")
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError, sqlite3.Error) as error:
+        raise MetadataReportError("database is unavailable or incompatible") from error
 
 
 def _canonical_json(value: object) -> str:
