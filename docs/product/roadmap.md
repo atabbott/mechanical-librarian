@@ -323,9 +323,10 @@ Exit: production writes are recoverable, idempotent, and fully audited.
 
 ## M5: Continuous operation
 
-F17a now delivers decision-only continuous review preparation, bounded polling,
-fair persisted work admission, restart recovery, and compact owner activity.
-Guarded apply composition and release publication remain separate outcomes.
+F17a delivers continuous review preparation. F17 now composes guarded apply for
+explicitly consented libraries with one fair mutation slot, exact-field guards,
+restart recovery, manual holds, and the permanent Activity surface. Release
+publication remains a separate outcome.
 
 The completed 0.12 checkpoint also provides a sealed, decision-only automatic
 policy posture after Preview qualification. Its automatic outcomes are durable

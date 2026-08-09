@@ -76,6 +76,8 @@ class AuthoritySnapshot:
     target_version: str
     decision_value: object
     source: Literal["persisted_review_case", "fake_service"]
+    pre_value: object = None
+    dependency_digests: tuple[str, ...] = ()
 
 
 class FieldEffectRepository(Protocol):
@@ -207,9 +209,13 @@ class GuardedFieldApplication:
 
     def start(self) -> tuple[int, int, int]:
         """Resume admission and complete bounded exact-current restart work."""
+        self.resume_admission()
+        return self.recover_startup()
+
+    def resume_admission(self) -> None:
+        """Resume this target without consuming repository-global recovery work."""
         with self._admission_lock:
             self._draining.clear()
-        return self.recover_startup()
 
     def begin_drain(self) -> None:
         """Reject new claims while allowing an already-claimed effect to finish."""

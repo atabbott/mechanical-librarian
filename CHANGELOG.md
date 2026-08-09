@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add continuous guarded application for explicitly consented Audiobookshelf
+  libraries. Current human and sealed qualified automatic decisions share the
+  same 14-destination kernel, exact-field value guards, one fair instance-wide
+  mutation slot, pause and library revocation, durable manual holds, policy
+  demotion, scoped capability suspension, restart recovery, and a quiet Activity
+  surface. Audiobookshelf still supplies no CAS, so the documented same-field
+  lost-update window remains; ambiguous requests are reconciled forward rather
+  than blindly retried. (#153)
+
 - Add the supported Audiobookshelf guarded-write canary: one API-key
   destination-minimal metadata/tags or digest-verified cover request follows a
   final authoritative pre-read and is followed by read-back/reconciliation. ABS
@@ -10,8 +19,8 @@
   permission, field incompatibility, and unexpected effect behavior suspend only
   the affected destination; claims enforce those scopes transactionally and the
   canary receipt binds the validated append-only event sequence. No
-  continuous activation, bulk, rollback, embedded-media, or production-library
-  write path is enabled. (#150)
+  continuous activation is delivered separately by #153; bulk, rollback,
+  embedded-media, and production qualification remain unavailable. (#150)
 
 - Add the supported single-container operational substrate: absent or
   exact-current startup, readiness/liveness, graceful claim draining, typed

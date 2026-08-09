@@ -1,7 +1,8 @@
 # Backups and recovery
 
-The 0.10 runtime performs no target or media writes. Its durable application
-state is the append-only report/ProposalSet/ReviewCase/shadow-review database,
+The installed runtime can apply field-local target updates only after explicit
+library consent. Its durable application state includes the append-only report,
+proposal, review, policy, field-effect, consent, action and audit records,
 current pointers, and report-bound cover artifact store.
 
 For important history, stop all invocations. Within that stopped consistency
@@ -48,10 +49,12 @@ pair or start with a new absent database path and empty artifact store, then
 regenerate supported reports. Never edit rows, pointers, or artifact files
 directly to force recovery.
 
-Restoring the matching application database and artifact store cannot change
-Audiobookshelf or media because this runtime has no such write authority.
+Restoring the matching application database and artifact store does not itself
+change Audiobookshelf. After restart, consent, pause, authority and exact-current
+gates are reloaded; only previously claimed work may continue without a new
+claim, and ambiguous work is read back before reconciliation.
 
-## Guarded fake-effect recovery
+## Guarded field-effect recovery
 
 Stop effect processing before copying the exact-current application database.
 Restart reads each persisted state rather than inferring completion: planned
@@ -76,9 +79,9 @@ nonterminal cover work exists. A capture failure blocks that cover alone.
 Capture is temp-file/fsync/atomic-rename/directory-fsync. Incomplete temporary
 or invalid final captures are rejected and cleaned where safely owned. Every
 terminal cover path persists cleanup and restart retries a failed removal.
-The ordinary installed product still cannot alter Audiobookshelf or embedded
-media. The separate qualification canary can alter only the synthetic item in
-the disposable Audiobookshelf container it creates and owns.
+The installed product can alter consented Audiobookshelf metadata and covers
+through supported APIs. It cannot alter embedded media. Qualification uses only
+disposable owned libraries and never a production service.
 
 ## Supported Audiobookshelf canary
 

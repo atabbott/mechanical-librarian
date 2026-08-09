@@ -442,12 +442,17 @@ generation-one overrides through admission, keeps new-library preview separate
 from fail-closed proposal execution, restarts pre-existing terminal work, and
 checks atomic extraction-publication transition failure. Generated
 OpenAPI and the authenticated browser flow cover activation and transition
-routes. The general exact installed-artifact lifecycle remains report-only and
-verifies no target, media, or artifact writes. The separately invoked F14 canary
-builds and installs the exact-head wheel outside its source snapshot, then uses
-that installed adapter only against its owned disposable synthetic library. Its
-receipt hashes the real validated event-ledger sequence rather than a derived
-operation summary.
+routes. F14 builds and installs the exact-head wheel outside its source snapshot,
+then uses that installed adapter only against its owned disposable synthetic
+library. Its receipt hashes the real validated event-ledger sequence rather than
+a derived operation summary. F17 additionally qualifies the installed continuous
+composition against owned disposable Audiobookshelf 2.26 and latest containers,
+using six to eight rights-verified real EPUBs. It round-trips every existing
+destination across mixed human and qualified automatic origins and proves
+field-local drift, one fair instance slot, pause/revoke, restart, ambiguity,
+manual hold, policy demotion, scoped suspension, audit and cover cleanup. Raw
+case identities, metadata, paths and media remain private; public evidence is
+aggregate only.
 
 Guarded-application tests use only synthetic immutable decisions and fake
 backup, capability, exact authority binding, distinct consent, dependency,

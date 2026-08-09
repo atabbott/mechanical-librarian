@@ -1,6 +1,25 @@
 {
   "components": {
     "schemas": {
+      "_ActivityConsentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "libraries": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "title": "Libraries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "libraries"
+        ],
+        "title": "_ActivityConsentRequest",
+        "type": "object"
+      },
       "_AttentionItem": {
         "additionalProperties": false,
         "properties": {
@@ -1608,6 +1627,10 @@
             "title": "Deterministic Disposition",
             "type": "string"
           },
+          "effect_capability": {
+            "title": "Effect Capability",
+            "type": "string"
+          },
           "human_decision": {
             "anyOf": [
               {
@@ -1617,6 +1640,10 @@
                 "type": "null"
               }
             ]
+          },
+          "manual_hold": {
+            "title": "Manual Hold",
+            "type": "boolean"
           },
           "manual_required": {
             "title": "Manual Required",
@@ -1667,8 +1694,10 @@
           "current",
           "deterministic_disposition",
           "destination",
+          "effect_capability",
           "human_decision",
           "automatic_decision",
+          "manual_hold",
           "manual_required",
           "needs_attention",
           "notices",
@@ -2232,6 +2261,251 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/activity": {
+      "get": {
+        "operationId": "activity_status_api_v1_activity_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Activity Status Api V1 Activity Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Activity Status"
+      }
+    },
+    "/api/v1/activity/consent": {
+      "post": {
+        "operationId": "enable_guarded_activity_api_v1_activity_consent_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_ActivityConsentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Enable Guarded Activity Api V1 Activity Consent Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Enable Guarded Activity"
+      }
+    },
+    "/api/v1/activity/{connection}/{library}/revoke": {
+      "post": {
+        "operationId": "revoke_guarded_activity_api_v1_activity__connection___library__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection",
+            "required": true,
+            "schema": {
+              "title": "Connection",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "library",
+            "required": true,
+            "schema": {
+              "title": "Library",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Revoke Guarded Activity Api V1 Activity  Connection   Library  Revoke Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Revoke Guarded Activity"
+      }
+    },
     "/api/v1/attention": {
       "get": {
         "operationId": "attention_api_v1_attention_get",
@@ -4728,6 +5002,111 @@
           }
         ],
         "summary": "Case Evidence"
+      }
+    },
+    "/api/v1/review-cases/{review_case_id}/fields/{destination}/return-to-automatic": {
+      "post": {
+        "operationId": "return_field_to_automatic_api_v1_review_cases__review_case_id__fields__destination__return_to_automatic_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_case_id",
+            "required": true,
+            "schema": {
+              "title": "Review Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "destination",
+            "required": true,
+            "schema": {
+              "title": "Destination",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Return Field To Automatic"
       }
     },
     "/api/v1/review-cases/{review_case_id}/history": {

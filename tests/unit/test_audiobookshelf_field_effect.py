@@ -32,6 +32,7 @@ from mechanical_librarian.domain.field_effect import (
     EffectConsent,
     FieldEffectOperation,
     FieldEffectPlan,
+    field_value_version,
 )
 
 
@@ -87,7 +88,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         self.directory.cleanup()
 
     def plan(self, destination: str, pre_value: object, desired_value: object,
-             target_version: str = "7") -> FieldEffectPlan:
+             target_version: str | None = None) -> FieldEffectPlan:
         authority = EffectAuthority(
             "human_decision_" + "a" * 64, "review_case_" + "b" * 64,
             "c" * 64, "fake_service", "human", "candidate", None, None,
@@ -100,7 +101,9 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
             connection="primary", library="books", work_id="item-1",
             destination=destination, pre_value=pre_value,
             desired_value=desired_value, target_fingerprint="c" * 64,
-            target_version=target_version, dependency_digests=("d" * 64,),
+            target_version=(target_version if target_version is not None else
+                            field_value_version(destination, pre_value)),
+            dependency_digests=("d" * 64,),
             authority=authority, consent=consent, capability_digest="e" * 64,
             created_at=1,
         )
@@ -108,10 +111,16 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
     def test_metadata_effect_is_destination_minimal_and_readable(self) -> None:
         plan = self.plan("title", "Before", "After")
         before = self.target.read(plan)
-        self.assertEqual((before.value, before.version), ("Before", "7"))
+        self.assertEqual(
+            (before.value, before.version),
+            ("Before", field_value_version("title", "Before")),
+        )
         self.assertEqual(self.target.apply(plan).outcome, "accepted")
         after = self.target.read(plan)
-        self.assertEqual((after.value, after.version), ("After", "8"))
+        self.assertEqual(
+            (after.value, after.version),
+            ("After", field_value_version("title", "After")),
+        )
         patch = next(request for request in self.requests if request.method == "PATCH")
         self.assertEqual(patch.headers["authorization"], "Bearer test-key")
 
@@ -140,11 +149,38 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         self.detail["media"]["metadata"]["tags"] = ["old"]
         self.assertEqual(self.target.read(self.plan("tags", ["old"], ["new"])).value, ["old"])
 
+    def test_empty_collections_and_service_series_shape_are_normalized(self) -> None:
+        metadata = self.detail["media"]["metadata"]
+        metadata["authors"] = []
+        metadata["genres"] = []
+        metadata["series"] = []
+        self.detail["media"]["tags"] = []
+        desired = {
+            "authors": ["New"], "genres": ["New"],
+            "series": [{"name": "New", "sequence": None}], "tags": ["New"],
+        }
+        for destination in ("authors", "genres", "series", "tags"):
+            with self.subTest(destination=destination):
+                self.assertIsNone(self.target.read(
+                    self.plan(destination, None, desired[destination])
+                ).value)
+        metadata["series"] = [{"id": "service-id", "name": "Old", "sequence": 2.5}]
+        self.assertEqual(
+            self.target.read(self.plan("series", None, desired["series"])).value,
+            [{"name": "Old", "sequence": "2.5"}],
+        )
+
     def test_immediate_prewrite_destination_or_version_drift_refuses_patch(self) -> None:
         plan = self.plan("title", "Before", "After", target_version="6")
         self.assertEqual(self.target.apply(plan).outcome, "conflict")
         self.assertFalse(any(request.method == "PATCH" for request in self.requests))
         self.assertFalse(any(request.method == "POST" for request in self.requests))
+
+    def test_unrelated_item_revision_does_not_block_the_field_local_effect(self) -> None:
+        plan = self.plan("title", "Before", "After")
+        self.detail["updatedAt"] = 99
+        self.detail["media"]["metadata"]["genres"] = ["externally changed"]
+        self.assertEqual(self.target.apply(plan).outcome, "accepted")
 
     def test_success_without_body_is_accepted_and_write_refusals_are_ambiguous(self) -> None:
         self.write_status = 204

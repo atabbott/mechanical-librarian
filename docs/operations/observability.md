@@ -15,6 +15,13 @@ narrow connection, library or category scope. A currentness conflict stays
 attached to its opaque work and field. Routine processing creates no external
 alert.
 
+Authenticated `GET /api/v1/activity` is the owner-facing, value-bounded status
+projection for continuous guarded application. It reports consented libraries,
+prepared origin counts, aggregate plan states, a bounded chronological ledger,
+pause, and scoped capability suspensions. It is not audit authority; canonical
+field-effect events remain the durable proof. Activity never exposes credentials,
+cover bytes, evidence excerpts, unrestricted paths, or a general queue console.
+
 Timing is disabled by default. Set the documented
 `review.diagnostic_timings_enabled` configuration field to retain at most 256
 stage duration/wait-class records in the owner-private data area. The closed

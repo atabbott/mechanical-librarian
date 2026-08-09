@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Run the disposable, field-local Audiobookshelf write qualification.
 
-This qualification owns every Docker resource it creates.  It uses generated
-EPUB and image bytes, a first-run bootstrap account and an isolated API token;
-it never reads the owner private lab or an existing library.
+This qualification owns every Docker resource it creates. By default it uses a
+generated EPUB; continuous qualification may instead supply a pre-frozen private
+operator batch of six to eight rights-verified EPUBs. It always creates a
+first-run bootstrap account and isolated API token and never touches an existing
+library.
 """
 
 from __future__ import annotations
@@ -48,7 +50,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
-from mechanical_librarian.domain.field_effect import EffectAuthority, EffectConsent, FieldEffectOperation, FieldEffectPlan
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority, EffectConsent, FieldEffectError, FieldEffectOperation,
+    FieldEffectPlan,
+)
 from mechanical_librarian.infrastructure.security.credentials import target_client_token
 
 
@@ -161,7 +166,8 @@ def _create_user(base: str, root_token: str, *, username: str, password: str,
     return _string(_mapping(response.get("user"), "user_response_invalid").get("id"), "user_response_invalid")
 
 
-def _snapshot(source_sha: str, versions: list[str] | None = None) -> None:
+def _snapshot(source_sha: str, versions: list[str] | None = None,
+              corpus: Path | None = None) -> None:
     """Run the immutable script against a wheel installed outside its snapshot."""
     archive = subprocess.run(
         ("git", "archive", "--format=tar", source_sha), cwd=ROOT,
@@ -188,6 +194,8 @@ def _snapshot(source_sha: str, versions: list[str] | None = None) -> None:
         environment.pop("PYTHONPATH", None)
         command = [sys.executable, str(snapshot / "scripts/qualify_audiobookshelf_field_effect.py"),
                    "--source-sha", source_sha, "--snapshot"]
+        if corpus is not None:
+            command.extend(("--corpus", str(corpus.resolve())))
         for version in versions or []:
             command.extend(("--version", version))
         result = subprocess.run(
@@ -219,9 +227,17 @@ def _epub(path: Path) -> None:
         archive.writestr("OEBPS/content.opf", "<?xml version='1.0'?><package xmlns='http://www.idpf.org/2007/opf' version='3.0' unique-identifier='book'><metadata xmlns:dc='http://purl.org/dc/elements/1.1/'><dc:identifier id='book'>synthetic-f14</dc:identifier><dc:title>Before</dc:title><dc:language>en</dc:language></metadata><manifest/><spine/></package>")
 
 
-def _plan(repository, *, item: str, destination: str, value: object, desired: object, observation, capabilities, clock: int) -> FieldEffectPlan:
+def _plan(repository, *, item: str, destination: str, value: object,
+          desired: object, observation, capabilities, clock: int,
+          origin: str = "human") -> FieldEffectPlan:
     decision = hashlib.sha256(destination.encode("ascii")).hexdigest()
-    authority = EffectAuthority("human_decision_" + decision, "review_case_" + "b" * 64, "c" * 64, "fake_service", "human", "candidate", None, None)
+    authority = EffectAuthority(
+        ("human_decision_" if origin == "human" else "automatic_decision_") + decision,
+        "review_case_" + "b" * 64, "c" * 64, "fake_service", origin,
+        "candidate",
+        None if origin == "human" else "resolved_policy_" + "a" * 64,
+        None if origin == "human" else "b" * 64,
+    )
     consent = EffectConsent.create(connection="canary", library="books", destination=destination, granted_at=clock)
     try:
         provisional = FieldEffectPlan.create(connection="canary", library="books", work_id=item, destination=destination, pre_value=value, desired_value=desired, target_fingerprint="c" * 64, target_version=observation.version, dependency_digests=("d" * 64,), authority=authority, consent=consent, capability_digest="e" * 64, created_at=clock)
@@ -237,12 +253,18 @@ def _value_digest(value: object) -> str:
 
 
 def _apply(service, repository, target, capabilities, writes: list[str], recovery,
-           item: str, destination: str, desired: object, clock: int) -> dict[str, object]:
+           item: str, destination: str, desired: object, clock: int,
+           origin: str = "human") -> dict[str, object]:
     placeholder = type("Plan", (), {"work_id": item, "destination": destination})()
-    before = target.read(placeholder)
+    try:
+        before = target.read(placeholder)
+    except FieldEffectError as error:
+        raise QualificationError("field_read_invalid_" + destination) from error
     if destination == "tags" and (type(before.value) is not list or not before.value or any(type(value) is not str for value in before.value)):
         raise RuntimeError("synthetic tag setup has unsupported response shape: " + type(before.value).__name__)
-    plan = _plan(repository, item=item, destination=destination, value=before.value, desired=desired, observation=before, capabilities=capabilities, clock=clock)
+    plan = _plan(repository, item=item, destination=destination, value=before.value,
+                 desired=desired, observation=before, capabilities=capabilities,
+                 clock=clock, origin=origin)
     write_count = len(writes)
     operation = service.apply(plan.plan_id)
     after = target.read(plan)
@@ -263,6 +285,7 @@ def _apply(service, repository, target, capabilities, writes: list[str], recover
         raise QualificationError("audit_sequence_evidence_invalid")
     return {
         "destination": destination,
+        "origin": origin,
         "state": persisted.state,
         "failure": persisted.failure or "none",
         "request_count": request_count,
@@ -340,7 +363,25 @@ def _latest_stable() -> str:
     return tag[1:]
 
 
-def qualify(version: str) -> dict[str, object]:
+def _corpus_sources(corpus: Path | None) -> tuple[Path, ...]:
+    if corpus is None:
+        return ()
+    if not corpus.is_dir():
+        raise QualificationError("operator_corpus_invalid")
+    sources = tuple(sorted(corpus.glob("*.epub")))
+    if not 6 <= len(sources) <= 8 or any(not source.is_file() for source in sources):
+        raise QualificationError("operator_corpus_invalid")
+    for source in sources:
+        try:
+            with zipfile.ZipFile(source) as archive:
+                if archive.testzip() is not None or "META-INF/container.xml" not in archive.namelist():
+                    raise QualificationError("operator_corpus_invalid")
+        except (OSError, zipfile.BadZipFile):
+            raise QualificationError("operator_corpus_invalid") from None
+    return sources
+
+
+def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
     image = IMAGES[version]
     owner = "ml-f14-" + uuid.uuid4().hex
     root = Path(tempfile.mkdtemp(prefix=owner + "-"))
@@ -351,7 +392,12 @@ def qualify(version: str) -> dict[str, object]:
         library_dir = root / "library"; library_dir.mkdir(mode=0o700)
         config_dir = root / "config"; config_dir.mkdir(mode=0o700)
         metadata_dir = root / "metadata"; metadata_dir.mkdir(mode=0o700)
-        _epub(library_dir / "synthetic.epub")
+        corpus_sources = _corpus_sources(corpus)
+        if corpus_sources:
+            for index, source in enumerate(corpus_sources, 1):
+                shutil.copyfile(source, library_dir / f"operator-{index:03d}.epub")
+        else:
+            _epub(library_dir / "synthetic.epub")
         _run("docker", "run", "-d", "--name", owner, "--label", OWNERSHIP_LABEL + "=" + owner, "-p", "127.0.0.1::80", "-v", str(config_dir) + ":/config", "-v", str(metadata_dir) + ":/metadata", "-v", str(library_dir) + ":/library:ro", image)
         port = _run("docker", "port", owner, "80/tcp").stdout.strip().rsplit(":", 1)[1]
         base = "http://127.0.0.1:" + port
@@ -377,14 +423,20 @@ def qualify(version: str) -> dict[str, object]:
         _request("POST", base, "/api/libraries/" + library_id + "/scan?force=1", token=root_token)
         deadline = time.monotonic() + 90
         item = None
+        items: list[object] = []
         while time.monotonic() < deadline:
             listing = _mapping(_request("GET", base, "/api/libraries/" + library_id + "/items?limit=10&page=0", token=root_token), "listing_invalid")
             results = listing.get("results")
-            if listing.get("total") == 1 and type(results) is list and len(results) == 1 and type(results[0]) is dict:
-                item = results[0].get("id"); break
+            expected = len(corpus_sources) or 1
+            if (listing.get("total") == expected and type(results) is list
+                    and len(results) == expected
+                    and all(type(value) is dict for value in results)):
+                item = results[0].get("id"); items = [value.get("id") for value in results]; break
             time.sleep(1)
         if not isinstance(item, str): raise RuntimeError("synthetic library did not scan")
         if not isinstance(item, str):
+            raise QualificationError("synthetic_library_did_not_scan")
+        if (not isinstance(items, list) or any(not isinstance(value, str) for value in items)):
             raise QualificationError("synthetic_library_did_not_scan")
         # The service must reject a key inherited from an active but read-only
         # user before the least-authority writer is allowed to mutate anything.
@@ -432,15 +484,45 @@ def qualify(version: str) -> dict[str, object]:
             raise QualificationError("writer_capability_not_allowed")
         recovery = _ObservedRecovery(PrivateCoverRecoveryStore(root / "recovery", lambda _: _raw_cover(base, writer_key, item, before_cover)))
         service = GuardedFieldApplication(repository, target, FakeBackupReadiness(), capabilities, current, FakeDependencyCurrentness(), current, recovery, FakeForwardReevaluation(), clock)
-        outcomes = [_apply(service, repository, target, capabilities, writes, recovery, item, "title", "After", clock()), _apply(service, repository, target, capabilities, writes, recovery, item, "tags", ["canary"], clock())]
-        _stable_cover_observation(target, item)
-        outcomes.append(_apply(service, repository, target, capabilities, writes, recovery, item, "cover", artifact.artifact_id, clock()))
+        if corpus_sources:
+            desired_values: list[tuple[str, object]] = [
+                ("title", "Guarded qualification title"),
+                ("subtitle", "Continuous qualification subtitle"),
+                ("authors", ["First Qualified Author", "Second Qualified Author"]),
+                ("series", [{"name": "Guarded Qualification", "sequence": "2.5"}]),
+                ("genres", ["Fiction", "Qualification"]),
+                ("publishedYear", "2025"),
+                ("publishedDate", "2025-02-03"),
+                ("publisher", "Qualification Press"),
+                ("description", "A bounded continuous guarded qualification value."),
+                ("isbn", "9780306406157"),
+                ("asin", "B000QUAL01"),
+                ("language", "fr"),
+                ("tags", ["continuous", "guarded"]),
+            ]
+            outcomes = [
+                _apply(service, repository, target, capabilities, writes, recovery,
+                       items[index % len(items)], destination, desired, clock(),
+                       "human" if index % 2 == 0 else "automatic_policy")
+                for index, (destination, desired) in enumerate(desired_values)
+            ]
+            cover_item = item
+            _stable_cover_observation(target, cover_item)
+            outcomes.append(_apply(
+                service, repository, target, capabilities, writes, recovery,
+                cover_item, "cover", artifact.artifact_id, clock(),
+                "automatic_policy",
+            ))
+        else:
+            outcomes = [_apply(service, repository, target, capabilities, writes, recovery, item, "title", "After", clock()), _apply(service, repository, target, capabilities, writes, recovery, item, "tags", ["canary"], clock())]
+            _stable_cover_observation(target, item)
+            outcomes.append(_apply(service, repository, target, capabilities, writes, recovery, item, "cover", artifact.artifact_id, clock()))
         repository.close()
         digest = _run("docker", "image", "inspect", image, "--format", "{{index .RepoDigests 0}}").stdout.strip()
         expected_digest = image.rsplit("@", 1)[1]
         if not digest.endswith("@" + expected_digest) or any(row["state"] != "verified" for row in outcomes):
             raise QualificationError("guarded_write_not_verified")
-        return {"version": version, "image_digest": expected_digest, "resolved_image_digest": digest.rsplit("@", 1)[1], "authentication": "api_key_accepted", "least_authority_refusal": True, "metadata_tags": all(row["destination"] in {"title", "tags"} and row["state"] == "verified" for row in outcomes[:2]), "cover": outcomes[-1]["destination"] == "cover" and outcomes[-1]["state"] == "verified", "outcomes": outcomes}
+        return {"version": version, "image_digest": expected_digest, "resolved_image_digest": digest.rsplit("@", 1)[1], "authentication": "api_key_accepted", "least_authority_refusal": True, "operator_cases": len(corpus_sources), "destinations": len(outcomes), "mixed_origins": {row["origin"] for row in outcomes} == {"human", "automatic_policy"} if corpus_sources else False, "metadata_tags": all(row["destination"] in {"title", "tags"} and row["state"] == "verified" for row in outcomes[:2]) if not corpus_sources else True, "cover": outcomes[-1]["destination"] == "cover" and outcomes[-1]["state"] == "verified", "outcomes": outcomes}
     finally:
         if base is not None and root_token is not None:
             for key_id in key_ids:
@@ -456,20 +538,21 @@ def main() -> None:
     parser.add_argument("--version", choices=tuple(IMAGES), action="append")
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--snapshot", action="store_true")
+    parser.add_argument("--corpus", type=Path)
     arguments = parser.parse_args()
     if not arguments.snapshot:
         source_sha = _run("git", "rev-parse", "HEAD").stdout.strip()
         source_blob = _run("git", "show", arguments.source_sha + ":scripts/qualify_audiobookshelf_field_effect.py").stdout.encode()
         if source_sha != arguments.source_sha or _run("git", "status", "--porcelain").stdout or hashlib.sha256(Path(__file__).read_bytes()).digest() != hashlib.sha256(source_blob).digest():
             raise QualificationError("source_head_mismatch")
-        _snapshot(arguments.source_sha, arguments.version)
+        _snapshot(arguments.source_sha, arguments.version, arguments.corpus)
         return
     import mechanical_librarian
     if not INSTALLED_ROOT or not Path(mechanical_librarian.__file__).resolve().is_relative_to(IMPORT_ROOT):
         raise QualificationError("snapshot_import_mismatch")
     latest = _latest_stable()
     values = arguments.version or list(IMAGES)
-    print(json.dumps({"schema": "audiobookshelf-field-effect-v1", "installed_artifact": True, "latest_stable_version": latest, "results": [qualify(value) for value in values]}, sort_keys=True))
+    print(json.dumps({"schema": "audiobookshelf-field-effect-v1", "installed_artifact": True, "latest_stable_version": latest, "operator_corpus": arguments.corpus is not None, "results": [qualify(value, arguments.corpus) for value in values]}, sort_keys=True))
 
 
 if __name__ == "__main__": main()

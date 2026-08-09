@@ -1,0 +1,75 @@
+# ADR-0039: Continuous guarded application without target CAS
+
+Status: Accepted
+
+## Context
+
+ADR-0037 and the Audiobookshelf canary proved the common guarded field-effect
+kernel, but Audiobookshelf does not provide a supported value-and-version
+compare-and-set operation. Continuous operation cannot depend on that service
+capability arriving later. The product must retain useful automatic and human
+application while making the remaining same-field race explicit and bounded.
+
+## Decision
+
+Compose the guarded Audiobookshelf adapter into the installed review runtime
+only after an authenticated owner grants library-scoped consent for the complete
+existing set of 14 ebook destinations. Any new destination, action kind, or
+authority scope requires fresh consent. Consent is not inferred from a decision,
+policy activation, configuration, or an earlier canary.
+
+Use the normalized value of the exact destination as the target version. A
+change to another Audiobookshelf item field therefore does not invalidate an
+otherwise current plan. A change to the planned destination does. Immediately
+before a claim, recheck durable decision authority, policy identity, consent,
+dependencies, backup readiness, capability state, pause state, and that exact
+field value. After the claim, issue exactly one destination-minimal request and
+read the destination back through the existing ADR-0037 reconciliation path.
+Audiobookshelf still has no CAS: another actor can change the same field between
+our final read and the service accepting our request. The product states that
+limitation and never blindly retries an ambiguous request.
+
+Run human and qualified automatic decisions through the same field-effect
+kernel. One instance-scoped mutation slot serializes every library and origin;
+durable selection alternates away from the last library when another is ready.
+Siblings remain independent. A manual decision supersedes only unclaimed
+automatic authority for that field. Coexisting human and automatic decisions
+form a durable manual hold; returning to automatic requests a fresh exact-current
+scan rather than deleting history or resurrecting old authority. A policy
+demotion or generation change prevents unclaimed automatic work from becoming
+current, while already claimed work finishes to its durable checkpoint.
+
+Pause and library consent revocation stop new claims. They do not interrupt a
+claimed service request. Startup recovers only claimed, applying, verifying, or
+reconciling work and its persisted actions and cleanup obligations. Backup
+readiness means the exact-current SQLite store passes its consistency check and
+is outside a transaction so the documented stopped-volume backup can be made;
+it is not a claim that an external backup copy exists.
+
+Add Activity as the only new permanent navigation destination. Before consent
+it presents readiness, representative before/after context, safety constraints,
+and one enable action. Afterwards it presents a quiet summary and chronological
+ledger with pause, resume, revoke, and grouped recovery. Library, Attention,
+Policy, and Detail retain their accepted hierarchy and language. Capability
+failure disables only the affected detail control and explains why; it does not
+create a queue console or dashboard.
+
+## Consequences
+
+The installed product can continuously apply current human and qualified
+automatic decisions to explicitly consented disposable or operator-selected
+Audiobookshelf libraries. Normal media mounts remain read-only; embedded-file
+writes, rollback/Undo, destructive operations, bulk approval, and production
+qualification remain out of scope. Cover upload continues to use the immutable
+artifact and private recovery seams.
+
+The remaining target race is intentionally visible and covered by qualification.
+Useful field-local progress no longer waits for Audiobookshelf to add CAS, but
+the product does not claim cross-system atomicity. All 14 destinations, both
+origins, multiple libraries, restart, drift, ambiguity, pause, revocation,
+policy demotion, manual hold, fairness, and capability suspension must qualify
+through the exact installed artifact and supported service versions.
+
+The database remains pre-release exact-current under ADR-0013. No migration,
+release, deployment, tag, package publication, or production-service authority
+is created by this decision.

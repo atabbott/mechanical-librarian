@@ -81,6 +81,7 @@ or support material.
 ## Consequences
 
 The database schema remains pre-release exact-current: only absent or this
-exact schema opens, with no migration. The canary adapter is not composed into
-ordinary continuous activation. Clearing, rollback/Undo, batching, embedded
-media writes, and production-library use remain unavailable.
+exact schema opens, with no migration. ADR-0039 later composes this adapter into
+ordinary continuous activation behind explicit library consent while preserving
+the no-CAS limitation and this kernel's gates. Clearing, rollback/Undo, batching,
+embedded media writes, and unattended destructive operation remain unavailable.

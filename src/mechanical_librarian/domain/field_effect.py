@@ -48,6 +48,15 @@ def canonical_json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
+def field_value_version(destination: str, value: object) -> str:
+    """Bind optimistic currentness to one normalized destination, not an item."""
+    normalized = None if value is None else validate_effect_value(destination, value)
+    return hashlib.sha256(canonical_json({
+        "destination": destination,
+        "value": normalized,
+    }).encode("utf-8")).hexdigest()
+
+
 def _digest(value: object) -> str:
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 

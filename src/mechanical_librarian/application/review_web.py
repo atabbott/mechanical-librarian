@@ -292,6 +292,7 @@ class InspectCurrentReviewCase:
                         None if decision is None else _decision_projection(decision)
                     ),
                     "automatic_decision": automatic_decision,
+                    "manual_hold": decision is not None and automatic_decision is not None,
                     "needs_attention": decision is None and automatic_decision is None and _needs_attention(proposal, snapshot.automatic_attention_destinations),
                     "notices": reasons,
                     "proposed_values": [

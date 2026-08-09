@@ -39,7 +39,17 @@ resource family below: authenticated `/api/v1` exact-current case detail,
 bounded evidence, bounded current-case admission history, session
 login/logout, an attention-first current-case library, and a separate exact
 field queue, plus one exact-version individual human decision. Library-wide
-activity/history, cross-case summaries, bulk and reversal remain #195.
+cross-case bibliographic history, bulk and reversal remain #195.
+
+Continuous guarded application adds authenticated `GET /api/v1/activity`,
+CSRF-protected library-envelope consent and revocation, existing pause/resume,
+and an exact field `return-to-automatic` command. Activity exposes bounded
+counts, configured/consented library identity, a value-limited representative
+example, plan events, and typed suspensions. It does not expose credentials,
+cover bytes, unrestricted paths, an arbitrary target, or a generic queue/apply
+command. Consent is restricted to configured libraries and the existing 14
+destinations; return-to-automatic requests a fresh scan and does not delete an
+immutable human decision.
 
 Progressive preparation adds authenticated
 `GET /api/v1/review-preparation` and CSRF-protected
