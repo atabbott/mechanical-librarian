@@ -1022,7 +1022,7 @@ def _installed_continuous_qualification(
                 if (returned.status_code != 204
                         or repository.field_effect_manual_hold_context(
                             case_id, automatic_destination
-                        ) is None):
+                        ) is not None):
                     raise QualificationError("installed_return_automatic_failed")
                 returned_automatic = True
                 returned_destination = automatic_destination
