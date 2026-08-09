@@ -1569,7 +1569,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
                 ),
                 "Guarded qualification title": original_alpha_title,
                 **{
-                    title: ("After" if index in {1, 6} else title)
+                    title: ("Before" if index == 6 else title)
                     for index, title in enumerate(
                         operator_metadata.values(), start=1
                     )
