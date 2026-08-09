@@ -68,7 +68,7 @@ class HumanDecisionTests(unittest.TestCase):
         resolved = next(
             value
             for value in self.case.proposals
-            if value["result"]["outcome"] != "unresolved_choice"
+            if value["result"]["outcome"] in {"keep", "reject", "defer", "ineligible"}
             and value["manual_required"] is False
         )
         with self.assertRaises(HumanDecisionError) as unsupported:
@@ -91,6 +91,30 @@ class HumanDecisionTests(unittest.TestCase):
             HumanDecision.from_json(
                 json.dumps(tampered, separators=(",", ":"), sort_keys=True)
             )
+
+    def test_owner_can_replace_an_automatic_actionable_selection(self) -> None:
+        resolved = json.loads(json.dumps(self.proposal))
+        resolved["result"]["outcome"] = "propose_change"
+        case = type(
+            "ResolvedCase", (), {
+                "review_case_id": self.case.review_case_id,
+                "target_fingerprint": self.case.target_fingerprint,
+                "proposals": (resolved,),
+            },
+        )()
+        selected = resolved["result"]["alternatives"][0]["value"]
+        decision = HumanDecision.create(
+            case,
+            proposal_id=resolved["proposal_id"],
+            target_fingerprint=self.case.target_fingerprint,
+            destination=resolved["destination"],
+            actor="owner",
+            outcome="accept",
+            selected_value=selected,
+            idempotency_key="domain-automatic-override-0001",
+            occurred_at=1_000,
+        )
+        decision.validate_for(case)
 
 
 if __name__ == "__main__":

@@ -455,7 +455,10 @@ then uses that installed adapter only against its owned disposable synthetic
 library. Its receipt hashes the real validated event-ledger sequence rather than
 a derived operation summary. F17 additionally qualifies the installed continuous
 composition against owned disposable Audiobookshelf 2.26 and latest containers,
-using six to eight rights-verified real EPUBs. It round-trips every existing
+mounting six to eight rights-verified real EPUBs beside a generated diagnostic
+control. Temporary private copies receive deterministic qualification metadata;
+all required destination coverage is bound to those real-work service identities,
+while the controls supply additional diagnostics. It round-trips every existing
 destination across mixed human and qualified automatic origins and proves
 field-local drift, one fair instance slot, pause/revoke, restart, ambiguity,
 manual hold, policy demotion, scoped suspension, audit and cover cleanup. Raw

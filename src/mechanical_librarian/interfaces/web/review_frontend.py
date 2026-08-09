@@ -1103,9 +1103,13 @@ if (guardedActivityRoot) {
       const controlStatus = element("p", "", "decision-status"); controlStatus.setAttribute("role", "status");
       pause.addEventListener("click", async () => { pause.disabled=true; try { await activityCall(`/api/v1/field-effects/${data.paused ? "resume" : "pause"}`, "POST"); renderGuardedActivity(await activityCall("/api/v1/activity")); } catch { pause.disabled=false; controlStatus.setAttribute("role", "alert"); controlStatus.textContent="Application control failed safely. Try again."; } });
       controls.append(pause);
-      const revoke = element("button", "Remove write permission", "activity-permission"); revoke.type="button";
-      revoke.addEventListener("click", async () => { revoke.disabled=true; try { for (const library of data.enabled_libraries) await activityCall(`/api/v1/activity/${encodeURIComponent(library.connection)}/${encodeURIComponent(library.library)}/revoke`, "POST"); renderGuardedActivity(await activityCall("/api/v1/activity")); } catch { revoke.disabled=false; controlStatus.setAttribute("role", "alert"); controlStatus.textContent="Permission was not removed. Try again."; } });
-      side.append(counts, controls, revoke, controlStatus);
+      const permissions = element("div", null, "activity-permissions");
+      for (const library of data.enabled_libraries) {
+        const revoke = element("button", `Remove write permission for ${library.library}`, "activity-permission"); revoke.type="button";
+        revoke.addEventListener("click", async () => { revoke.disabled=true; try { await activityCall(`/api/v1/activity/${encodeURIComponent(library.connection)}/${encodeURIComponent(library.library)}/revoke`, "POST"); renderGuardedActivity(await activityCall("/api/v1/activity")); } catch { revoke.disabled=false; controlStatus.setAttribute("role", "alert"); controlStatus.textContent=`Permission for ${library.library} was not removed. Try again.`; } });
+        permissions.append(revoke);
+      }
+      side.append(counts, controls, permissions, controlStatus);
       const ledger = element("section", null, "policy-paper activity-ledger");
       if (data.suspensions.length || data.last_failure || data.cleanup.pending || count("reconciling") || count("retryable")) {
         const recovery = element("section", null, "recovery-summary"); recovery.append(element("span", "", "activity-pulse"));

@@ -108,7 +108,9 @@ class HumanDecision:
         if type(result) is not dict:
             raise HumanDecisionError("invalid")
         actionable = (
-            result.get("outcome") == "unresolved_choice"
+            result.get("outcome") in {
+                "propose_change", "acceptable_choice", "unresolved_choice",
+            }
             or proposal["manual_required"] is True
         )
         if not actionable:
@@ -177,7 +179,9 @@ class HumanDecision:
             raise HumanDecisionError("stale")
         result = proposal["result"]
         if type(result) is not dict or not (
-            result.get("outcome") == "unresolved_choice"
+            result.get("outcome") in {
+                "propose_change", "acceptable_choice", "unresolved_choice",
+            }
             or proposal["manual_required"] is True
         ):
             raise HumanDecisionError("unsupported")

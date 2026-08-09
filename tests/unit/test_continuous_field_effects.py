@@ -138,6 +138,11 @@ class _HoldRepository(_Repository):
     def field_effect_manual_hold_context(self, review_case_id, destination):
         return self.hold
 
+    def clear_field_effect_manual_hold(self, review_case_id, destination, changed_at):
+        context = self.hold
+        self.hold = None
+        return context
+
 
 class _Authority:
     def resolve(self, decision):
@@ -172,17 +177,16 @@ class _DeniedCapability:
 
 
 class ContinuousGuardedApplicationTests(unittest.TestCase):
-    def test_failed_return_to_automatic_keeps_the_old_authority_held(self) -> None:
+    def test_return_to_automatic_clears_exact_current_hold_without_rescan(self) -> None:
         repository = _HoldRepository()
         service = ContinuousGuardedApplication(
             repository, {("primary", "alpha"): _Planner()},
             {("primary", "alpha"): _AllowedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1,
-            lambda *_: (_ for _ in ()).throw(RuntimeError("scan failed")),
+            lambda *_: self.fail("exact-current return must not rescan"),
         )
-        with self.assertRaisesRegex(RuntimeError, "scan failed"):
-            service.return_to_automatic("review_case", "title")
-        self.assertEqual(repository.hold, ("primary", "alpha"))
+        service.return_to_automatic("review_case", "title")
+        self.assertIsNone(repository.hold)
 
     def test_enable_refuses_read_only_capability_before_granting_consent(self) -> None:
         decision = self._decisions(1)[0]

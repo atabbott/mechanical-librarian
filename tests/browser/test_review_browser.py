@@ -892,7 +892,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertIn(
                         "Outcome value:", resolved_decision.text_content() or ""
                     )
-                    self.assertEqual(page.locator(".choices").count(), 2)
+                    self.assertEqual(page.locator(".choices").count(), 3)
                     page.go_forward()
                     page.wait_for_url(accepted_url)
                     page.get_by_role(
@@ -915,7 +915,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                             "button", name="Reject proposed change"
                         ),
                     )
-                    self.assertEqual(page.locator(".choices").count(), 0)
+                    self.assertEqual(page.locator(".choices").count(), 3)
                     self.assertEqual(page.locator(".decision-recorded").count(), 3)
                     decided_url = page.url
                     context.close()
@@ -938,7 +938,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         "heading", name="Current review case"
                     ).wait_for()
                     self.assertEqual(reopened.locator(".decision-recorded").count(), 3)
-                    self.assertEqual(reopened.locator(".choices").count(), 0)
+                    self.assertEqual(reopened.locator(".choices").count(), 3)
                     fresh.close()
                 browser.close()
             self.assertEqual(errors, [])
@@ -1056,7 +1056,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     ).wait_for(state="attached")
                     self.assertEqual(conflicts, 1)
                     self.assertEqual(conflict_page.locator(".decision-recorded").count(), 1)
-                    self.assertEqual(conflict_page.locator(".choices").count(), 2)
+                    self.assertEqual(conflict_page.locator(".choices").count(), 3)
                     self.assertEqual(conflict_page.get_by_role("button", name="Try again").count(), 0)
                     conflict_page.unroute("**/decisions")
                     conflict_page.route(

@@ -981,7 +981,9 @@ class SQLiteMetadataReportRepository:
             None,
         )
         if (type(target_fields) is not list or type(target_field) is not dict
-                or target_field.get("state") not in {"value", "absent", "empty"}):
+                or target_field.get("state") not in {
+                    "value", "null", "empty", "missing",
+                }):
             raise FieldEffectError("authority_binding")
         pre_value = (
             target_field.get("value")
@@ -1209,15 +1211,25 @@ class SQLiteMetadataReportRepository:
                 "SELECT pending.document FROM ("
                 "SELECT human.decision_id,human.occurred_at,human.document "
                 "FROM human_decisions human WHERE human.outcome='accept' AND "
+                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
+                "WHERE lineage.review_case_id=human.review_case_id) AND "
                 "human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
                 "WHERE current.review_case_id=human.review_case_id AND "
-                "current.destination=human.destination) UNION ALL "
+                "current.destination=human.destination) AND NOT EXISTS ("
+                "SELECT 1 FROM field_effect_manual_holds returned WHERE "
+                "returned.review_case_id=human.review_case_id AND "
+                "returned.destination=human.destination AND returned.active=0) UNION ALL "
                 "SELECT automatic.decision_id,automatic.occurred_at,automatic.document "
                 "FROM automatic_decisions automatic WHERE "
+                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
+                "WHERE lineage.review_case_id=automatic.review_case_id) AND "
                 "json_extract(automatic.document,'$.outcome')='candidate' AND NOT EXISTS ("
                 "SELECT 1 FROM human_decisions human WHERE "
                 "human.review_case_id=automatic.review_case_id AND "
-                "human.destination=automatic.destination) AND NOT EXISTS ("
+                "human.destination=automatic.destination AND NOT EXISTS ("
+                "SELECT 1 FROM field_effect_manual_holds returned WHERE "
+                "returned.review_case_id=automatic.review_case_id AND "
+                "returned.destination=automatic.destination AND returned.active=0)) AND NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=automatic.review_case_id AND "
                 "hold.destination=automatic.destination AND hold.active=1)"
@@ -1237,15 +1249,25 @@ class SQLiteMetadataReportRepository:
                 "WITH pending AS ("
                 "SELECT human.decision_id,human.review_case_id,'human' origin "
                 "FROM human_decisions human WHERE human.outcome='accept' AND "
+                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
+                "WHERE lineage.review_case_id=human.review_case_id) AND "
                 "human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
                 "WHERE current.review_case_id=human.review_case_id AND "
-                "current.destination=human.destination) UNION ALL "
+                "current.destination=human.destination) AND NOT EXISTS ("
+                "SELECT 1 FROM field_effect_manual_holds returned WHERE "
+                "returned.review_case_id=human.review_case_id AND "
+                "returned.destination=human.destination AND returned.active=0) UNION ALL "
                 "SELECT automatic.decision_id,automatic.review_case_id,'automatic' origin "
                 "FROM automatic_decisions automatic WHERE "
+                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
+                "WHERE lineage.review_case_id=automatic.review_case_id) AND "
                 "json_extract(automatic.document,'$.outcome')='candidate' AND NOT EXISTS ("
                 "SELECT 1 FROM human_decisions human WHERE "
                 "human.review_case_id=automatic.review_case_id AND "
-                "human.destination=automatic.destination) AND NOT EXISTS ("
+                "human.destination=automatic.destination AND NOT EXISTS ("
+                "SELECT 1 FROM field_effect_manual_holds returned WHERE "
+                "returned.review_case_id=automatic.review_case_id AND "
+                "returned.destination=automatic.destination AND returned.active=0)) AND NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=automatic.review_case_id AND "
                 "hold.destination=automatic.destination AND hold.active=1)) "
@@ -4464,28 +4486,44 @@ class SQLiteMetadataReportRepository:
             # derived inside this same exact-current transaction, never by a
             # later queue or apply worker.
             if state[1] == "automatic":
-                self._connection.execute("SAVEPOINT automatic_admission")
-                try:
-                    self._record_automatic_outcomes(outcome, evaluated_at)
-                except AutomaticDecisionError as error:
-                    # Keep the outer report/case/outcome projection intact. A
-                    # savepoint confines an admission defect to its candidate
-                    # rows while recording the fail-closed state in the same
-                    # outer transaction (which may belong to the pipeline).
-                    self._connection.execute("ROLLBACK TO automatic_admission")
-                    self._connection.execute("RELEASE automatic_admission")
-                    current = self.automatic_safety_state()
-                    message = str(error)
-                    category = message.removeprefix("category:") if message.startswith("category:") else None
-                    if category:
-                        categories = dict(current.category_suspensions)
-                        categories[category] = "automatic_admission_failed"
-                        safety = AutomaticSafetyState(current.paused, current.global_suspension, tuple(sorted(categories.items())))
+                attempted_categories: set[str] = set()
+                while True:
+                    self._connection.execute("SAVEPOINT automatic_admission")
+                    try:
+                        self._record_automatic_outcomes(outcome, evaluated_at)
+                    except AutomaticDecisionError as error:
+                        # Keep the outer report/case/outcome projection intact.
+                        # A category defect is suspended, then unaffected
+                        # categories are retried from the same exact outcome.
+                        self._connection.execute("ROLLBACK TO automatic_admission")
+                        self._connection.execute("RELEASE automatic_admission")
+                        current = self.automatic_safety_state()
+                        message = str(error)
+                        category = (
+                            message.removeprefix("category:")
+                            if message.startswith("category:") else None
+                        )
+                        if category:
+                            categories = dict(current.category_suspensions)
+                            categories[category] = "automatic_admission_failed"
+                            safety = AutomaticSafetyState(
+                                current.paused, current.global_suspension,
+                                tuple(sorted(categories.items())),
+                            )
+                            self._set_automatic_safety_state(safety, evaluated_at)
+                            if category not in attempted_categories:
+                                attempted_categories.add(category)
+                                continue
+                        else:
+                            safety = AutomaticSafetyState(
+                                current.paused, "automatic_authority_failed",
+                                current.category_suspensions,
+                            )
+                            self._set_automatic_safety_state(safety, evaluated_at)
+                        break
                     else:
-                        safety = AutomaticSafetyState(current.paused, "automatic_authority_failed", current.category_suspensions)
-                    self._set_automatic_safety_state(safety, evaluated_at)
-                else:
-                    self._connection.execute("RELEASE automatic_admission")
+                        self._connection.execute("RELEASE automatic_admission")
+                        break
             if owns_transaction:
                 self._connection.commit()
             return serialized
@@ -4526,11 +4564,16 @@ class SQLiteMetadataReportRepository:
         safety = self.automatic_safety_state()
         automatic_dispositions = {"candidate", "keep_current", "ignore"}
         required_bundles = {
-            "title_layout": ("title", "subtitle", "series"),
+            # Subtitle and series are closed witnesses for the selected title
+            # combination, not supported automatic write destinations.  The
+            # title action's non-empty combination IDs bind all three fields.
+            "title_layout": ("title",),
             "date_precision": ("publishedDate", "publishedYear"),
         }
         bundle_ids: dict[str, str] = {}
         for category, destinations in required_bundles.items():
+            if not safety.permits(category):
+                continue
             members = tuple(
                 field for field in outcome.outcomes
                 if field.policy_category == category and field.destination in destinations
@@ -4538,12 +4581,18 @@ class SQLiteMetadataReportRepository:
             all_automatic = bool(members) and all(
                 field.disposition in automatic_dispositions for field in members
             )
+            evidence_ids = tuple(
+                field.combination_ids
+                if category == "title_layout"
+                else field.citation_ids
+                for field in members
+            )
             coherent = (
                 len(members) == len(destinations)
                 and {field.destination for field in members} == set(destinations)
                 and all_automatic
-                and len({field.combination_ids for field in members}) == 1
-                and bool(members[0].combination_ids)
+                and len(set(evidence_ids)) == 1
+                and bool(evidence_ids[0])
             )
             if not coherent:
                 # A fully automatic but incoherent protected tuple is an
@@ -4552,7 +4601,10 @@ class SQLiteMetadataReportRepository:
                     raise AutomaticDecisionError("category:" + category)
                 continue
             bundle_ids[category] = "automatic_bundle_" + hashlib.sha256(
-                _canonical_json({"category": category, "combination_ids": list(members[0].combination_ids)}).encode("utf-8")
+                _canonical_json({
+                    "category": category,
+                    "evidence_ids": list(evidence_ids[0]),
+                }).encode("utf-8")
             ).hexdigest()
         decisions: list[AutomaticDecision] = []
         for field in outcome.outcomes:
@@ -5581,7 +5633,7 @@ class SQLiteMetadataReportRepository:
             if field is None or (field.disposition != decision.outcome) or any((field.proposal_id != decision.proposal_id, field.destination != decision.destination, field.rule_id != decision.rule_id, field.policy_category != decision.policy_category, field.policy_option != decision.policy_option)):
                 raise AutomaticDecisionError("stale")
             if decision.policy_category in {"title_layout", "date_precision"}:
-                required = ("title", "subtitle", "series") if decision.policy_category == "title_layout" else ("publishedDate", "publishedYear")
+                required = ("title",) if decision.policy_category == "title_layout" else ("publishedDate", "publishedYear")
                 members = tuple(
                     value for value in source.outcomes
                     if value.policy_category == decision.policy_category

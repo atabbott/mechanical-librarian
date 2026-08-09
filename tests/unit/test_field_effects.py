@@ -264,7 +264,17 @@ class FieldEffectTests(unittest.TestCase):
         self.assertIsNone(
             self.repository.field_effect_manual_hold_context(case_id, proposal["destination"])
         )
-        self.assertEqual(len(self.repository.pending_field_effect_decision_documents(10)), 1)
+        pending = self.repository.pending_field_effect_decision_documents(10)
+        self.assertEqual(len(pending), 1)
+        self.assertIn(automatic.decision_id, pending[0])
+        replacement = metadata_report("Replacement title", "3", "4")
+        self.repository.publish(replacement, lambda: True)
+        replacement_proposal = evaluate_report(replacement)
+        self.repository.publish_proposal(replacement_proposal)
+        self.repository.admit_review_case(replacement_proposal)
+        self.assertEqual(
+            self.repository.pending_field_effect_decision_documents(10), ()
+        )
 
     def plan(self, destination: str = "title", pre: object = "old",
              desired: object = "new", suffix: str = "a") -> FieldEffectOperation:

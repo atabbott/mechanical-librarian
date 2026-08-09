@@ -459,6 +459,55 @@ class ShadowDecisionTests(unittest.TestCase):
                 "unsupported_destination", decisions[destination].reason_code
             )
 
+    def test_evidence_backed_title_conflict_selects_only_the_supported_bundle(self) -> None:
+        report = _bibliographic_report(
+            current_title="Current Work",
+            local_claims=(_local_title("Synthetic Work"),),
+            providers=(
+                _source(
+                    "current_catalogue",
+                    "edition-current",
+                    titles=("Current Work",),
+                    series="Synthetic Series",
+                ),
+                _source(
+                    "supported_catalogue",
+                    "edition-supported",
+                    titles=("Synthetic Work",),
+                    series="Synthetic Series",
+                ),
+            ),
+        )
+        proposal = evaluate_report(report)
+        title_result = next(
+            value
+            for value in proposal.results
+            if value.destination.value == "title"
+        )
+        self.assertEqual("unresolved_choice", title_result.outcome.value)
+        packet = ShadowReviewPacket.create(
+            ReviewCase.create(proposal, report), proposal, report
+        )
+
+        title = next(
+            value
+            for value in decide_shadow_packet(packet).decisions
+            if value.destination == "title"
+        )
+
+        self.assertEqual("recommend_candidate", title.recommendation)
+        self.assertEqual("unique_supported_candidate", title.reason_code)
+        selected = next(
+            candidate
+            for proposal_value in packet.proposals
+            if proposal_value["proposal_id"] == title.proposal_id
+            for candidate in proposal_value["candidates"]
+            if candidate["candidate_id"] == title.candidate_id
+        )
+        self.assertEqual(
+            {"kind": "text", "value": "Synthetic Work"}, selected["value"]
+        )
+
     def test_missing_excluded_wrong_or_unbound_witness_keeps_title_manual(self) -> None:
         packet = _combination_packet()
         controls = (
