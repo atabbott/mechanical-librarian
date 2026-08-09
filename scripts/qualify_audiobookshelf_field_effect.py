@@ -291,10 +291,21 @@ def _operator_epub(source: Path, destination: Path, index: int) -> tuple[str, st
             "{http://www.idpf.org/2007/opf}scheme": "ISBN",
         }).text = isbn
         ET.SubElement(metadata, dc + "title").text = title
-        for author in ("Synthetic Author", "Second Qualified Author"):
+        subtitle = ET.SubElement(metadata, dc + "title", {"id": "qualification-subtitle"})
+        subtitle.text = "Continuous qualification subtitle"
+        ET.SubElement(metadata, "{http://www.idpf.org/2007/opf}meta", {
+            "refines": "#qualification-subtitle", "property": "title-type",
+        }).text = "subtitle"
+        for author in ("Synthetic Author",):
             ET.SubElement(metadata, dc + "creator", {
                 "{http://www.idpf.org/2007/opf}role": "aut",
             }).text = author
+        ET.SubElement(metadata, "{http://www.idpf.org/2007/opf}meta", {
+            "property": "belongs-to-collection",
+        }).text = "Guarded Qualification"
+        ET.SubElement(metadata, "{http://www.idpf.org/2007/opf}meta", {
+            "property": "group-position",
+        }).text = "2.5"
         ET.SubElement(metadata, dc + "language").text = "fr"
         ET.SubElement(metadata, dc + "publisher").text = "Qualification Press"
         ET.SubElement(metadata, dc + "date").text = "2025-02-03"
@@ -525,7 +536,7 @@ def _qualification_hardcover_client(
                     requested_isbn, "Guarded qualification title"
                 )
                 authors = ["Synthetic Author"]
-                contribution_authors = (*authors, "Second Qualified Author")
+                contribution_authors = tuple(authors)
             else:
                 observations["title"] = observations.get("title", 0) + 1
                 requested_isbn = "9780306406157"
@@ -541,9 +552,7 @@ def _qualification_hardcover_client(
                         for value in raw_authors
                     ]
                 )
-                contribution_authors = (
-                    "Synthetic Author", "Second Qualified Author"
-                )
+                contribution_authors = ("Synthetic Author",)
         except (UnicodeError, json.JSONDecodeError):
             raise QualificationError("installed_provider_request_invalid") from None
         operator_title = requested_title in isbn_titles.values()
