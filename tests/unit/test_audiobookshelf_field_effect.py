@@ -175,6 +175,69 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             AudiobookshelfFieldEffectCapabilities(client_factory=lambda: httpx.Client(), endpoint="invalid", library_id="", maximum_response_bytes=1)
 
+    def test_target_accepts_the_application_owned_artifact_reader_contract(self) -> None:
+        class ArtifactReader:
+            def read_original_digest(self, digest: str) -> bytes:
+                self.digest = digest
+                return _PNG
+
+        reader = ArtifactReader()
+        target = AudiobookshelfFieldEffectTarget(
+            client_factory=lambda: httpx.Client(),
+            endpoint="https://abs.example.invalid",
+            library_id="library-1",
+            artifacts=reader,
+        )
+
+        self.assertIsInstance(target, AudiobookshelfFieldEffectTarget)
+
+    def test_client_construction_and_deep_json_fail_closed(self) -> None:
+        def unavailable_client() -> httpx.Client:
+            raise RuntimeError("synthetic credential unavailable")
+
+        capabilities = AudiobookshelfFieldEffectCapabilities(
+            client_factory=unavailable_client,
+            endpoint="https://abs.example.invalid", library_id="library-1",
+        )
+        plan = self.plan("title", "Before", "After")
+        self.assertEqual(capabilities.result(plan).category, "connection_unavailable")
+        target = AudiobookshelfFieldEffectTarget(
+            client_factory=unavailable_client,
+            endpoint="https://abs.example.invalid", library_id="library-1",
+            artifacts=self.artifacts,
+        )
+        with self.assertRaises(TargetServiceUnavailable) as raised:
+            target.read(plan)
+        self.assertEqual(
+            (raised.exception.scope, raised.exception.reason),
+            ("connection", "connection_unavailable"),
+        )
+
+        nested = b'{"value":' + b"[" * 101 + b"0" + b"]" * 101 + b"}"
+        deep_client = lambda: httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, headers={"content-type": "application/json"}, content=nested
+            )
+        ))
+        deep_capabilities = AudiobookshelfFieldEffectCapabilities(
+            client_factory=deep_client,
+            endpoint="https://abs.example.invalid", library_id="library-1",
+        )
+        self.assertEqual(
+            deep_capabilities.result(plan).category, "connection_unavailable"
+        )
+        deep_target = AudiobookshelfFieldEffectTarget(
+            client_factory=deep_client,
+            endpoint="https://abs.example.invalid", library_id="library-1",
+            artifacts=self.artifacts,
+        )
+        with self.assertRaises(TargetServiceUnavailable) as raised:
+            deep_target.read(plan)
+        self.assertEqual(
+            (raised.exception.scope, raised.exception.reason),
+            ("destination", "field_unavailable"),
+        )
+
     def test_capability_is_field_local_and_malformed_or_unavailable_state_fails_closed(self) -> None:
         user = {
             "isActive": True,

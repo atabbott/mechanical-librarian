@@ -161,7 +161,7 @@ def _create_user(base: str, root_token: str, *, username: str, password: str,
     return _string(_mapping(response.get("user"), "user_response_invalid").get("id"), "user_response_invalid")
 
 
-def _snapshot(source_sha: str) -> None:
+def _snapshot(source_sha: str, versions: list[str] | None = None) -> None:
     """Run the immutable script against a wheel installed outside its snapshot."""
     archive = subprocess.run(
         ("git", "archive", "--format=tar", source_sha), cwd=ROOT,
@@ -186,9 +186,12 @@ def _snapshot(source_sha: str) -> None:
         environment = os.environ.copy()
         environment["MECHANICAL_LIBRARIAN_QUALIFICATION_INSTALL"] = str(installed)
         environment.pop("PYTHONPATH", None)
+        command = [sys.executable, str(snapshot / "scripts/qualify_audiobookshelf_field_effect.py"),
+                   "--source-sha", source_sha, "--snapshot"]
+        for version in versions or []:
+            command.extend(("--version", version))
         result = subprocess.run(
-            (sys.executable, str(snapshot / "scripts/qualify_audiobookshelf_field_effect.py"),
-             "--source-sha", source_sha, "--snapshot"),
+            command,
             cwd=snapshot, check=False, env=environment,
         )
     if result.returncode != 0:
@@ -199,7 +202,10 @@ def _wait(base: str) -> None:
     deadline = time.monotonic() + 90
     while time.monotonic() < deadline:
         try:
-            if isinstance(_request("GET", base, "/status"), dict):
+            status = _request("GET", base, "/status")
+            if (type(status) is dict and status.get("app") == "audiobookshelf"
+                    and type(status.get("serverVersion")) is str
+                    and bool(status["serverVersion"])):
                 return
         except (OSError, urllib.error.URLError, urllib.error.HTTPError, TimeoutError):
             time.sleep(1)
@@ -456,7 +462,7 @@ def main() -> None:
         source_blob = _run("git", "show", arguments.source_sha + ":scripts/qualify_audiobookshelf_field_effect.py").stdout.encode()
         if source_sha != arguments.source_sha or _run("git", "status", "--porcelain").stdout or hashlib.sha256(Path(__file__).read_bytes()).digest() != hashlib.sha256(source_blob).digest():
             raise QualificationError("source_head_mismatch")
-        _snapshot(arguments.source_sha)
+        _snapshot(arguments.source_sha, arguments.version)
         return
     import mechanical_librarian
     if not INSTALLED_ROOT or not Path(mechanical_librarian.__file__).resolve().is_relative_to(IMPORT_ROOT):

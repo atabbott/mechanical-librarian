@@ -145,6 +145,10 @@ class CoverRecovery(Protocol):
     def remove(self, plan_id: str) -> None: ...
 
 
+class CoverArtifactReader(Protocol):
+    def read_original_digest(self, digest: str) -> bytes: ...
+
+
 class ForwardReevaluation(Protocol):
     def emit(self, plan: FieldEffectPlan) -> None: ...
 

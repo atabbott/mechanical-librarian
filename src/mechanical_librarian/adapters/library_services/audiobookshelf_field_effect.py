@@ -15,9 +15,9 @@ from urllib.parse import quote
 
 import httpx
 
-from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.application.field_effects import (
     CapabilityObservation,
+    CoverArtifactReader,
     TargetEffectResult,
     TargetObservation,
     TargetServiceUnavailable,
@@ -52,7 +52,11 @@ class AudiobookshelfFieldEffectCapabilities:
         return self.result(plan)
 
     def result(self, plan: FieldEffectPlan) -> AudiobookshelfCapabilityResult:
-        with self._client_factory() as client:
+        try:
+            client = self._client_factory()
+        except Exception:
+            return self._result(plan.destination, "connection_unavailable", False, False)
+        with client:
             try:
                 me = _json_response(client, "GET", self._endpoint + "/api/me", None, self._maximum_response_bytes)
             except (httpx.HTTPError, OSError, ValueError):
@@ -96,12 +100,12 @@ class AudiobookshelfFieldEffectTarget:
     """One API-key-authenticated target for a single configured ABS library."""
 
     def __init__(self, *, client_factory: Callable[[], httpx.Client], endpoint: str,
-                 library_id: str, artifacts: CoverArtifactStore,
+                 library_id: str, artifacts: CoverArtifactReader,
                  maximum_response_bytes: int = 1_048_576) -> None:
         if (not callable(client_factory) or type(endpoint) is not str
                 or not endpoint.startswith(("http://", "https://"))
                 or type(library_id) is not str or not library_id
-                or type(artifacts) is not CoverArtifactStore
+                or not callable(getattr(artifacts, "read_original_digest", None))
                 or type(maximum_response_bytes) is not int
                 or not 1024 <= maximum_response_bytes <= 4_194_304):
             raise ValueError("Audiobookshelf field-effect target is invalid")
@@ -112,7 +116,7 @@ class AudiobookshelfFieldEffectTarget:
         self._maximum_response_bytes = maximum_response_bytes
 
     def read(self, plan: FieldEffectPlan) -> TargetObservation:
-        with self._client_factory() as client:
+        with self._client() as client:
             detail = self._item(client, plan.work_id)
             value = self._value(client, detail, plan)
             # ABS cover retrieval is separate from the item response.  Bind a
@@ -146,7 +150,7 @@ class AudiobookshelfFieldEffectTarget:
                     return TargetEffectResult("conflict")
             else:
                 media_payload = _media_payload(plan.destination, plan.desired_value)
-            with self._client_factory() as client:
+            with self._client() as client:
                 detail = self._item(client, plan.work_id)
                 current = self._value(client, detail, plan)
                 if plan.destination == "cover":
@@ -182,6 +186,14 @@ class AudiobookshelfFieldEffectTarget:
         return TargetEffectResult(
             "ambiguous", "destination", "unexpected_effect_behavior"
         )
+
+    def _client(self) -> httpx.Client:
+        try:
+            return self._client_factory()
+        except Exception as error:
+            raise TargetServiceUnavailable(
+                "connection", "connection_unavailable"
+            ) from error
 
     def _item(self, client: httpx.Client, work_id: str) -> dict[str, Any]:
         try:
@@ -282,10 +294,57 @@ def _json_response(client: httpx.Client, method: str, url: str, params: dict[str
         raise _ResponseStatusError(status)
     if headers.get("content-type", "").split(";", 1)[0].lower() != "application/json":
         raise ValueError("Audiobookshelf response invalid")
-    value = json.loads(body.decode("utf-8", "strict"))
+    _json_depth(body)
+    try:
+        value = json.loads(
+            body.decode("utf-8", "strict"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (json.JSONDecodeError, RecursionError, UnicodeError, ValueError) as error:
+        raise ValueError("Audiobookshelf response invalid") from error
     if type(value) is not dict:
         raise ValueError("Audiobookshelf response invalid")
     return value
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("Audiobookshelf response duplicate field")
+        value[key] = item
+    return value
+
+
+def _reject_json_constant(_: str) -> float:
+    raise ValueError("Audiobookshelf response non-finite value")
+
+
+def _json_depth(payload: bytes) -> None:
+    depth = 0
+    quoted = False
+    escaped = False
+    for byte in payload:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif byte == 92:
+                escaped = True
+            elif byte == 34:
+                quoted = False
+        elif byte == 34:
+            quoted = True
+        elif byte in (91, 123):
+            depth += 1
+            if depth > 100:
+                raise ValueError("Audiobookshelf response depth invalid")
+        elif byte in (93, 125):
+            depth -= 1
+            if depth < 0:
+                raise ValueError("Audiobookshelf response depth invalid")
+    if quoted or escaped or depth:
+        raise ValueError("Audiobookshelf response depth invalid")
 
 
 def _write_status(client: httpx.Client, method: str, url: str, **kwargs: Any) -> int:
