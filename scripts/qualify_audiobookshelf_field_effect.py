@@ -391,7 +391,9 @@ def _corpus_sources(corpus: Path | None) -> tuple[Path, ...]:
     return sources
 
 
-def _wait_for_preparation(client: TestClient, library_count: int) -> dict[str, object]:
+def _wait_for_preparation(
+    client: TestClient, library_count: int, *, allow_failures: bool = False,
+) -> dict[str, object]:
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
         response = client.get("/api/v1/review-preparation")
@@ -405,6 +407,8 @@ def _wait_for_preparation(client: TestClient, library_count: int) -> dict[str, o
                     "completed", "completed_with_failures"
                 } for value in libraries)):
             if any(value.get("state") != "completed" for value in libraries):
+                if allow_failures:
+                    return state
                 summary = ",".join(
                     f"{value.get('library')}:{value.get('ready')}:{value.get('blocked')}"
                     for value in libraries
@@ -499,7 +503,19 @@ def _installed_continuous_qualification(
                 )
                 if requested.status_code not in {202, 409}:
                     raise QualificationError("installed_scan_request_failed")
-            _wait_for_preparation(client, len(libraries))
+            initial = _wait_for_preparation(
+                client, len(libraries), allow_failures=True
+            )
+            if any(value.get("state") != "completed"
+                   for value in initial.get("libraries", [])):
+                for name, _, _ in libraries:
+                    retried = client.post(
+                        f"/api/v1/review-preparation/canary/{name}/retry",
+                        headers=mutation_headers,
+                    )
+                    if retried.status_code not in {202, 409}:
+                        raise QualificationError("installed_preparation_retry_failed")
+                _wait_for_preparation(client, len(libraries))
             listing = client.get("/api/v1/library?lens=all&limit=50")
             if listing.status_code != 200:
                 raise QualificationError("installed_library_unavailable")
