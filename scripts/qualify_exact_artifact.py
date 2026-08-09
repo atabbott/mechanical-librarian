@@ -975,7 +975,7 @@ except GuardedApplicationError as error:
 else:
     raise RuntimeError("pause admission")
 repository.set_field_effect_paused(False, clock())
-revoked = plan("genres", "7", (), ("fiction",))
+revoked = plan("genres", "7", [], ["fiction"])
 if restarted.supersede(revoked.authority.decision_id) != 1:
     raise RuntimeError("revocation")
 if restarted.status(revoked.plan_id).state != "superseded":
