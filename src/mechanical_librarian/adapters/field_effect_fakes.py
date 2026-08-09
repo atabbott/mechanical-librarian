@@ -28,6 +28,7 @@ class FakeTargetService:
         self._effects: dict[str, TargetEffectResult] = {}
         self._lock = threading.RLock()
         self.fail_next = False
+        self.fail_read_next = False
         self.ambiguous_next: str | None = None
         self.before_apply: Callable[[FieldEffectPlan], None] | None = None
         self.after_apply: Callable[[FieldEffectPlan], None] | None = None
@@ -40,6 +41,9 @@ class FakeTargetService:
 
     def read(self, plan: FieldEffectPlan) -> TargetObservation:
         with self._lock:
+            if self.fail_read_next:
+                self.fail_read_next = False
+                raise RuntimeError("synthetic target read failure")
             key = self._key(plan)
             return TargetObservation(
                 self._values.get(key), self._versions.get(key, "missing")

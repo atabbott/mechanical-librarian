@@ -79,6 +79,7 @@ class ReviewWebRepository(Protocol):
     ) -> str: ...
     def review_case_exists(self, review_case_id: str) -> bool: ...
     def get_review_case(self, review_case_id: str) -> str: ...
+    def review_case_ready_at(self, review_case_id: str) -> int | None: ...
     def read_current_review_case(
         self, review_case_id: str, history_limit: int | None
     ) -> CurrentReviewCaseSnapshot: ...
@@ -471,6 +472,11 @@ class RecordHumanDecision:
             ):
                 raise ReviewWebError("stale")
             case = ReviewCase.create_from_data(raw["case"])
+            try:
+                ready_at = self._repository.review_case_ready_at(review_case_id)
+            except Exception:
+                # This timestamp is advisory and cannot gate an owner decision.
+                ready_at = None
             decision = HumanDecision.create(
                 case,
                 proposal_id=proposal_id,
@@ -482,12 +488,19 @@ class RecordHumanDecision:
                 idempotency_key=idempotency_key,
                 occurred_at=self._clock(),
             )
-            with self._timing.measure("human_wait", "owner"):
-                stored = HumanDecision.from_json(
-                    self._repository.record_human_decision(decision)
-                )
+            stored = HumanDecision.from_json(
+                self._repository.record_human_decision(decision)
+            )
             if stored.request_digest != decision.request_digest:
                 raise ReviewWebError("persistence")
+            if (type(ready_at) is int and ready_at >= 0
+                    and stored.occurred_at >= ready_at):
+                self._timing.record(
+                    "human_wait",
+                    "owner",
+                    (stored.occurred_at - ready_at) * 1_000,
+                    recorded_at=stored.occurred_at,
+                )
             return {
                 **_decision_projection(stored),
                 "schema_version": "human-decision-ack-v1",

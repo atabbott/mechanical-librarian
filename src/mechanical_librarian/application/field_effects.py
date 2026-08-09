@@ -313,8 +313,13 @@ class GuardedFieldApplication:
         operation = self._repository.get_field_effect(plan_id)
         if operation.state != "reconciling":
             return operation
-        with self._timing.measure("reconciliation", "recovery"):
-            observed = self._target.read(operation.plan)
+        try:
+            with self._timing.measure("reconciliation", "recovery"):
+                observed = self._target.read(operation.plan)
+        except Exception:
+            return self._repository.complete_field_effect_reconciliation(
+                plan_id, "retryable", "target_failure", self._clock()
+            )
         if observed.value == operation.plan.desired_value:
             result = self._repository.complete_field_effect_reconciliation(
                 plan_id, "verified", None, self._clock()

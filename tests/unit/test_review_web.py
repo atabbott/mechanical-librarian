@@ -92,6 +92,12 @@ class _Repository:
         self.policy_transition = None
         self.shadow_mode = "review"
         self.shadow_outcomes: tuple[tuple[str, int], ...] = ()
+        self.case_ready_at = 990
+
+    def review_case_ready_at(self, review_case_id: str) -> int | None:
+        if review_case_id != self.case.review_case_id:
+            return None
+        return self.case_ready_at
 
     def current_unapplied_count(self, library: str) -> int:
         self.policy_count_calls.append(library)
@@ -1199,8 +1205,11 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(accepted.status_code, 200, accepted.text)
         self.assertEqual(accepted.json()["outcome"], "accept")
         self.assertEqual(
-            [(value.stage, value.wait_class) for value in timings.list()],
-            [("human_wait", "owner")],
+            [
+                (value.stage, value.wait_class, value.duration_ms)
+                for value in timings.list()
+            ],
+            [("human_wait", "owner", 10_000)],
         )
         refreshed = self.client.get(
             f"/api/v1/review-cases/{self.case.review_case_id}"
@@ -1225,6 +1234,7 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(
             replay.json()["decision_id"], accepted.json()["decision_id"]
         )
+        self.assertEqual(len(timings.list()), 1)
         conflict_payload = {**payload, "outcome": "reject", "selected_value": None}
         conflict = self.client.post(
             f"/api/v1/review-cases/{self.case.review_case_id}/decisions",

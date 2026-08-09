@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from mechanical_librarian.application.catalogue import CatalogueEntry
+from mechanical_librarian.application.metadata_report import CredentialError
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.metadata_report import ProviderStatus
 
@@ -69,9 +70,10 @@ _provider_failure_disposition = provider_failure_disposition
 class ReviewPipelineError(RuntimeError):
     """A fixed, value-free review-preparation failure."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, *, root: str | None = None) -> None:
         super().__init__(code)
         self.code = code
+        self.root = root
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +199,7 @@ class ReviewPipelineRepository(Protocol):
         code: str,
         retryable: bool,
         completed_at: int,
+        failure_root: str | None = None,
     ) -> None: ...
 
     def close(self) -> None: ...
@@ -398,8 +401,6 @@ class ReviewPreparationPipeline:
         claim_next: bool,
     ) -> PipelineAction | None:
         timing = {
-            "extraction": ("extraction", "none"),
-            "provider": ("provider_search", "provider"),
             "proposal": ("policy_evaluation", "none"),
             "admission": ("policy_evaluation", "none"),
             "projection": ("policy_evaluation", "none"),
@@ -478,6 +479,17 @@ class ReviewPreparationPipeline:
                 action,
                 error.code,
                 error.code in {"stale", "transient"},
+                error.root,
+            )
+        except CredentialError as error:
+            if output_transaction:
+                repository.rollback_review_pipeline_output()
+            self._fail(
+                repository,
+                action,
+                "authentication",
+                False,
+                error.provider,
             )
         except Exception:
             if output_transaction:
@@ -531,10 +543,11 @@ class ReviewPreparationPipeline:
         action: PipelineAction,
         code: str,
         retryable: bool,
+        failure_root: str | None = None,
     ) -> None:
         try:
             repository.fail_review_pipeline_action(
-                action, code, retryable, self._clock()
+                action, code, retryable, self._clock(), failure_root
             )
         except ReviewPipelineError:
             raise

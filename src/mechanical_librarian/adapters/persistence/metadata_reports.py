@@ -261,7 +261,8 @@ _REVIEW_WORK_SQL = (
     "stage TEXT NOT NULL CHECK(stage IN ('extraction','provider','proposal','admission','projection','complete')), "
     "state TEXT NOT NULL CHECK(state IN ('queued','running','complete','failed','stale')), attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt BETWEEN 0 AND 3), recovery_attempt INTEGER NOT NULL DEFAULT 0 CHECK(recovery_attempt BETWEEN 0 AND 3), "
     "report_id TEXT REFERENCES metadata_reports(report_id), proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
-    "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('provider','configuration','stale','transient','projection','failed','currentness')), "
+    "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('provider','configuration','authentication','stale','transient','projection','failed','currentness')), "
+    "failure_root TEXT CHECK(failure_root IS NULL OR (failure_code='authentication' AND typeof(failure_root)='text' AND length(CAST(failure_root AS BLOB)) BETWEEN 1 AND 64 AND failure_root NOT GLOB '*[^a-z0-9_-]*' AND substr(failure_root,1,1) GLOB '[a-z]')), "
     "updated_at INTEGER NOT NULL CHECK(updated_at>=0), UNIQUE(scan_id,item_id))"
 )
 _REVIEW_ABSENCES_SQL = (
@@ -1455,16 +1456,16 @@ class SQLiteMetadataReportRepository:
                     "field_suspended", "owner_pause", "runtime"
                 ))
             authentication = self._connection.execute(
-                "SELECT DISTINCT connection_name,library_name "
+                "SELECT failure_root "
                 "FROM review_preparation_work "
-                "WHERE stage='provider' AND state='failed' "
-                "AND failure_code='configuration' "
-                "ORDER BY connection_name,library_name LIMIT 64"
+                "WHERE state='failed' AND failure_code='authentication' "
+                "AND failure_root IS NOT NULL "
+                "GROUP BY failure_root ORDER BY failure_root LIMIT 64"
             ).fetchall()
-            for connection, library in authentication:
+            for (provider_root,) in authentication:
                 signals.append(_operational_signal(
                     "authentication_failure", "provider_authentication",
-                    "library", connection=connection, library=library,
+                    "connection", connection=provider_root,
                 ))
             rows = self._connection.execute(
                 "SELECT connection_name,library_name,work_id,destination,state,document "
@@ -1790,7 +1791,8 @@ class SQLiteMetadataReportRepository:
                 "UPDATE review_preparation_scans SET state='queued' WHERE state='discovering'"
             )
             self._connection.execute(
-                "UPDATE review_preparation_work SET state='failed',failure_code='failed' "
+                "UPDATE review_preparation_work SET state='failed',failure_code='failed',"
+                "failure_root=NULL "
                 "WHERE state='running' AND attempt>=3"
             )
             self._connection.execute(
@@ -1821,7 +1823,8 @@ class SQLiteMetadataReportRepository:
                         "UPDATE review_preparation_work SET stage='extraction',"
                         "state='queued',attempt=0,recovery_attempt=0,library_id=?,producer_fingerprint=?,"
                         "report_id=NULL,"
-                        "proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL "
+                        "proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL,"
+                        "failure_root=NULL "
                         "WHERE scan_id=?",
                         (library_id, producer_fingerprint, row[0]),
                     )
@@ -2159,8 +2162,8 @@ class SQLiteMetadataReportRepository:
                     "work_id,scan_id,ordinal,connection_name,library_name,library_id,"
                     "item_id,file_identity,source_revision,source_fingerprint,producer_fingerprint,"
                     "catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,"
-                    "report_id,proposal_set_id,review_case_id,failure_code,updated_at"
-                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    "report_id,proposal_set_id,review_case_id,failure_code,failure_root,updated_at"
+                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT(work_id) DO UPDATE SET ordinal=excluded.ordinal,"
                     "library_id=excluded.library_id,file_identity=excluded.file_identity,"
                     "source_revision=excluded.source_revision,"
@@ -2170,7 +2173,7 @@ class SQLiteMetadataReportRepository:
                     "catalogue_fingerprint=excluded.catalogue_fingerprint,"
                     "stage=excluded.stage,state=excluded.state,attempt=0,recovery_attempt=0,"
                     "report_id=excluded.report_id,proposal_set_id=excluded.proposal_set_id,"
-                    "review_case_id=excluded.review_case_id,failure_code=NULL,"
+                    "review_case_id=excluded.review_case_id,failure_code=NULL,failure_root=NULL,"
                     "updated_at=excluded.updated_at",
                     (
                         work_id,
@@ -2193,6 +2196,7 @@ class SQLiteMetadataReportRepository:
                         report_id,
                         proposal_set_id,
                         review_case_id,
+                        None,
                         None,
                         completed_at,
                     ),
@@ -2447,6 +2451,7 @@ class SQLiteMetadataReportRepository:
                 "state=CASE WHEN recovery_attempt<2 THEN 'queued' ELSE 'failed' END,"
                 "attempt=0,recovery_attempt=recovery_attempt+1,report_id=NULL,"
                 "proposal_set_id=NULL,review_case_id=NULL,failure_code='transient',"
+                "failure_root=NULL,"
                 "updated_at=? WHERE work_id=? AND stage='extraction' "
                 "AND state='running' AND attempt=?",
                 (completed_at, action.action_id, action.attempt),
@@ -2455,7 +2460,7 @@ class SQLiteMetadataReportRepository:
             state = "queued" if provider_failure_code is None else "failed"
             updated = self._connection.execute(
                 "UPDATE review_preparation_work SET stage=?,state=?,attempt=0,"
-                "report_id=?,failure_code=?,updated_at=? WHERE work_id=? "
+                "report_id=?,failure_code=?,failure_root=NULL,updated_at=? WHERE work_id=? "
                 "AND stage='extraction' AND state='running' AND attempt=?",
                 (
                     "proposal" if provider_failure_code is None else "provider",
@@ -2529,6 +2534,7 @@ class SQLiteMetadataReportRepository:
         code: str,
         retryable: bool,
         completed_at: int,
+        failure_root: str | None = None,
     ) -> None:
         if action.stage == "discovery":
             try:
@@ -2551,6 +2557,7 @@ class SQLiteMetadataReportRepository:
         if code not in {
             "provider",
             "configuration",
+            "authentication",
             "stale",
             "transient",
             "projection",
@@ -2558,6 +2565,15 @@ class SQLiteMetadataReportRepository:
             "currentness",
         }:
             code = "failed"
+        if (failure_root is not None and (
+                code != "authentication"
+                or type(failure_root) is not str
+                or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", failure_root) is None
+        )):
+            code = "failed"
+            failure_root = None
+        if code != "authentication":
+            failure_root = None
         state = "queued" if retryable and action.attempt < 3 else (
             "stale" if code in {"stale", "currentness"} else "failed"
         )
@@ -2569,7 +2585,7 @@ class SQLiteMetadataReportRepository:
                     "state=CASE WHEN recovery_attempt<2 THEN 'queued' ELSE 'failed' END,"
                     "attempt=0,recovery_attempt=recovery_attempt+1,"
                     "report_id=NULL,proposal_set_id=NULL,review_case_id=NULL,"
-                    "failure_code='transient',updated_at=? WHERE work_id=? AND stage=? "
+                    "failure_code='transient',failure_root=NULL,updated_at=? WHERE work_id=? AND stage=? "
                     "AND state='running' AND attempt=?",
                     (completed_at, action.action_id, action.stage, action.attempt),
                 ).rowcount
@@ -2580,11 +2596,12 @@ class SQLiteMetadataReportRepository:
                     ).fetchone()[0]
             else:
                 updated = self._connection.execute(
-                    "UPDATE review_preparation_work SET state=?,failure_code=?,updated_at=? "
+                    "UPDATE review_preparation_work SET state=?,failure_code=?,failure_root=?,updated_at=? "
                     "WHERE work_id=? AND stage=? AND state='running' AND attempt=?",
                     (
                         state,
                         code,
+                        failure_root,
                         completed_at,
                         action.action_id,
                         action.stage,
@@ -3061,6 +3078,25 @@ class SQLiteMetadataReportRepository:
         except (sqlite3.Error, ReviewCaseValueError, ReportValueError) as error:
             raise MetadataReportError("review case evidence is unavailable") from error
 
+    def review_case_ready_at(self, review_case_id: str) -> int | None:
+        """Return the exact preparation-complete checkpoint for advisory timing."""
+        try:
+            row = self._connection.execute(
+                "SELECT updated_at FROM review_preparation_work "
+                "WHERE review_case_id=? AND stage='complete' AND state='complete' "
+                "ORDER BY updated_at DESC,work_id LIMIT 1",
+                (review_case_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            if len(row) != 1 or type(row[0]) is not int or row[0] < 0:
+                raise MetadataReportError("review case readiness is unavailable")
+            return row[0]
+        except sqlite3.Error as error:
+            raise MetadataReportError(
+                "review case readiness is unavailable"
+            ) from error
+
     def get_review_model_advice(self, review_case_id: str) -> dict[str, object]:
         try:
             row = self._connection.execute(
@@ -3530,7 +3566,7 @@ class SQLiteMetadataReportRepository:
         ):
             self._connection.execute(
                 "UPDATE review_preparation_work SET stage='projection',state='queued',"
-                "attempt=0,recovery_attempt=0,failure_code=NULL,updated_at=? WHERE work_id=?",
+                "attempt=0,recovery_attempt=0,failure_code=NULL,failure_root=NULL,updated_at=? WHERE work_id=?",
                 (updated_at, row[0]),
             )
         else:
@@ -4115,7 +4151,7 @@ class SQLiteMetadataReportRepository:
         self._connection.execute(
             "UPDATE review_preparation_work SET stage=?,state='queued',attempt=0,"
             "recovery_attempt=0,report_id=?,proposal_set_id=NULL,review_case_id=NULL,"
-            "failure_code=NULL,updated_at=? WHERE work_id=?",
+            "failure_code=NULL,failure_root=NULL,updated_at=? WHERE work_id=?",
             (
                 restart_stage,
                 None if restart_stage == "extraction" else report_id,

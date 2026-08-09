@@ -23,6 +23,7 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.application.metadata_report import (
+    CredentialError,
     CurrentnessError,
     GenerateMetadataReport,
     InspectionResult,
@@ -40,6 +41,7 @@ from mechanical_librarian.application.metadata_report import (
     provider_observation,
     qualify_provider_observation,
 )
+from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverDesignation,
@@ -2106,6 +2108,79 @@ class MetadataReportTests(unittest.TestCase):
         with self.assertRaises(MetadataReportError):
             service.run("item-1", 0)
         self.assertTrue(repository.closed)
+
+    def test_actual_extraction_and_provider_boundaries_have_separate_timings(self) -> None:
+        class Timings:
+            def __init__(self) -> None:
+                self.values = []
+
+            def append(self, timing) -> None:
+                self.values.append(timing)
+
+        class Provider:
+            def observe(self, plan, *, deadline=None):
+                return ProviderObservation("catalogue", ProviderStatus.NO_MATCH)
+
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        snapshot = TargetSnapshot("ebook", "Title", (selected,))
+        timings = Timings()
+        ticks = iter((0, 2_000_000, 3_000_000, 8_000_000))
+        service = GenerateMetadataReport(
+            target=_Target([snapshot, snapshot]),
+            inspector=_Inspector(InspectionResult("c" * 64, ())),
+            repository_factory=_Repository,
+            providers=(ProviderBinding("catalogue", True, Provider),),
+            connection=TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/target"
+            ),
+            library=LibraryConfiguration(
+                "ebooks", "primary", "library-id", "ebook", "books",
+                ("catalogue",),
+            ),
+            mount=MediaMountConfiguration(
+                "books", "/media", "/library", True
+            ),
+            limits=ReportLimits(),
+            timing=StageTimer(
+                timings, monotonic_ns=lambda: next(ticks), clock=lambda: 9
+            ),
+        )
+        service.run("item-1", 0)
+        self.assertEqual(
+            [
+                (value.stage, value.wait_class, value.duration_ms)
+                for value in timings.values
+            ],
+            [("extraction", "none", 2), ("provider_search", "provider", 5)],
+        )
+
+    def test_provider_factory_credential_failure_binds_public_provider_identity(self) -> None:
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+
+        def unavailable():
+            raise CredentialError("private credential detail")
+
+        service = GenerateMetadataReport(
+            target=_Target([TargetSnapshot("ebook", "Title", (selected,))]),
+            inspector=_Inspector(InspectionResult("c" * 64, ())),
+            repository_factory=_Repository,
+            providers=(ProviderBinding("catalogue", True, unavailable),),
+            connection=TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/target"
+            ),
+            library=LibraryConfiguration(
+                "ebooks", "primary", "library-id", "ebook", "books",
+                ("catalogue",),
+            ),
+            mount=MediaMountConfiguration(
+                "books", "/media", "/library", True
+            ),
+            limits=ReportLimits(),
+        )
+        with self.assertRaises(CredentialError) as raised:
+            service.run("item-1", 0)
+        self.assertEqual(raised.exception.provider, "catalogue")
+
     def test_field_results_are_complete_canonical_and_separate_from_claims(self) -> None:
         results = derive_field_results(())
         report = MetadataReport.create(

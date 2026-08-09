@@ -1581,6 +1581,10 @@ class _SerializedReviewRepository:
         with self._lock:
             return self._repository.get_review_case(review_case_id)
 
+    def review_case_ready_at(self, review_case_id: str) -> int | None:
+        with self._lock:
+            return self._repository.review_case_ready_at(review_case_id)
+
     def read_current_review_case(
         self, review_case_id: str, history_limit: int | None
     ) -> CurrentReviewCaseSnapshot:

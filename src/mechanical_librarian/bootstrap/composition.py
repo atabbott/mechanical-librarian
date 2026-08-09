@@ -72,6 +72,7 @@ from mechanical_librarian.application.metadata_report import (
     CoverReadError,
     CoverSourceChangedError,
     CoverTimeoutError,
+    CredentialError,
     CurrentnessError,
     ItemInspectionError,
     ArtifactAuthorityError,
@@ -577,7 +578,7 @@ class _NonClosingRepository:
         return None
 
 
-def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True, repository_authority: object | None = None, pipeline_repository=None, review_claim_next: bool = False) -> str:
+def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True, repository_authority: object | None = None, pipeline_repository=None, review_claim_next: bool = False, timing=None) -> str:
     """Compose one report solely from an already validated configuration snapshot."""
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if mount is None:
@@ -697,6 +698,7 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
             )
         ),
         require_singular_target=review_action is not None,
+        timing=timing,
     )
     return service.run(item, file_index, expected_file_identity)
 
@@ -954,7 +956,14 @@ def create_review_pipeline(
                 repository_authority=database_authority,
                 pipeline_repository=pipeline_repository,
                 review_claim_next=claim_next,
+                timing=timing,
             )
+        except CredentialError as error:
+            if error.provider is None:
+                raise ReviewPipelineError("authentication") from error
+            raise ReviewPipelineError(
+                "authentication", root=error.provider
+            ) from error
         except (CurrentnessError, TargetNotFoundError) as error:
             raise ReviewPipelineError("stale") from error
         value = MetadataReport.from_json(serialized)

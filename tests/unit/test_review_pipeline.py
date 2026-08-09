@@ -13,6 +13,7 @@ import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.metadata_report import (
+    CredentialError,
     MetadataReportError,
     TargetNotFoundError,
 )
@@ -105,7 +106,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             ("provider", False),
         )
 
-    def test_persisted_provider_authentication_failure_projects_to_status(self) -> None:
+    def test_actual_provider_credential_failure_projects_once_at_provider_scope(self) -> None:
         repository = open_repository(self.path)
         repository.request_review_scan(
             "primary", "fiction", "lib-1", _PRODUCER, 10
@@ -115,19 +116,30 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         repository.complete_review_discovery(
             discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 12
         )
-        repository._connection.execute(
-            "UPDATE review_preparation_work SET stage='provider',state='failed',"
-            "failure_code='configuration',updated_at=16"
+        repository.close()
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(self.path),
+            libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+            discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            extract=lambda *_: (_ for _ in ()).throw(
+                CredentialError("credential unavailable", provider="hardcover-main")
+            ),
+            providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            clock=lambda: 16,
         )
-        repository._connection.commit()
+        self.assertTrue(pipeline.run_next())
+        repository = open_repository(self.path)
         signals = repository.operational_snapshot()["signals"]
         repository.close()
         self.assertIn({
             "kind": "authentication_failure",
             "cause": "provider_authentication",
-            "scope": "library",
-            "connection": "primary",
-            "library": "fiction",
+            "scope": "connection",
+            "connection": "hardcover-main",
+            "library": None,
             "category": None,
             "work_id": None,
             "field": None,
@@ -1475,8 +1487,6 @@ class ReviewPipelineConcurrencyTests(unittest.TestCase):
         self.assertEqual(
             [(value.stage, value.wait_class) for value in timings.values],
             [
-                ("extraction", "none"),
-                ("provider_search", "provider"),
                 ("policy_evaluation", "none"),
                 ("policy_evaluation", "none"),
                 ("policy_evaluation", "none"),

@@ -126,13 +126,36 @@ class StageTimer:
             if self._repository is not None:
                 try:
                     elapsed = self._monotonic_ns() - started
-                    duration_ms = min(max(elapsed // 1_000_000, 0), 86_400_000)
-                    self._repository.append(
-                        StageTiming(stage, duration_ms, wait_class, self._clock())
-                    )
                 except Exception:
                     # Diagnostics are deliberately unable to affect durable work.
                     pass
+                else:
+                    self.record(stage, wait_class, elapsed // 1_000_000)
+
+    def record(
+        self,
+        stage: str,
+        wait_class: str,
+        duration_ms: int,
+        *,
+        recorded_at: int | None = None,
+    ) -> None:
+        """Append one already-observed duration without affecting its authority."""
+        if self._repository is None:
+            return
+        try:
+            bounded = min(max(duration_ms, 0), 86_400_000)
+            self._repository.append(
+                StageTiming(
+                    stage,
+                    bounded,
+                    wait_class,
+                    self._clock() if recorded_at is None else recorded_at,
+                )
+            )
+        except Exception:
+            # Diagnostics are deliberately unable to affect durable work.
+            pass
 
 
 class SupportExporter(Protocol):
