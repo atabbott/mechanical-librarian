@@ -986,7 +986,7 @@ if (root) {
           const hold = element("p", "Manual hold · automatic is off for this field.", "decision-recorded");
           const release = element("button", "Return to automatic policy", "inline-action"); release.type = "button";
           const status = element("p", "", "decision-status");
-          release.addEventListener("click",async()=>{release.disabled=true;status.textContent="Requesting fresh evaluation…";const send=()=>fetch(`/api/v1/review-cases/${id}/fields/${encodeURIComponent(field.destination)}/return-to-automatic`,{method:"POST",headers:{"x-csrf-token":csrf}});try{let r=await send();if(r.status===403){csrf=await refreshCsrf();r=await send();}if(!r.ok)throw 0;status.textContent="Fresh evaluation requested; hold remains until it is ready.";}catch{release.disabled=false;status.textContent="Hold unchanged. Try again.";}});
+          release.addEventListener("click",async()=>{release.disabled=true;status.textContent="Requesting fresh evaluation…";const send=()=>fetch(`/api/v1/review-cases/${id}/fields/${encodeURIComponent(field.destination)}/return-to-automatic`,{method:"POST",headers:{"x-csrf-token":csrf}});try{let r=await send();if(r.status===403){csrf=await refreshCsrf();r=await send();}if(!r.ok)throw 0;status.textContent="Automatic policy resumes after fresh checks.";}catch{release.disabled=false;status.textContent="Hold unchanged. Try again.";}});
           row.append(hold, release, status);
         }
         inner.append(row);

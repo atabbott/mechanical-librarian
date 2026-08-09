@@ -190,11 +190,12 @@ class ContinuousGuardedApplication:
         )
         if context is None:
             raise GuardedApplicationError("manual_hold")
-        # The active hold is intentionally retained.  The requested scan creates
-        # a new exact-current review lineage; only that replacement lineage may
-        # supply automatic authority.  Clearing this hold here would make the
-        # superseded automatic decision pending again before the scan finishes.
         self._request_scan(*context)
+        if self._repository.clear_field_effect_manual_hold(
+            review_case_id, destination, self._clock()
+        ) is None:
+            raise GuardedApplicationError("manual_hold")
+        self._wake.set()
 
     def status(self, plan_id: str) -> FieldEffectOperation:
         return self._repository.get_field_effect(plan_id)

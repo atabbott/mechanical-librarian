@@ -382,7 +382,7 @@ _FIELD_EFFECT_MANUAL_HOLDS_SQL = (
 _FIELD_EFFECTS_SQL = (
     "CREATE TABLE field_effects ("
     "plan_id TEXT PRIMARY KEY NOT NULL CHECK(plan_id GLOB 'effect_plan_[0-9a-f]*' AND length(plan_id)=76), "
-    "decision_id TEXT NOT NULL UNIQUE, connection_name TEXT NOT NULL, library_name TEXT NOT NULL, "
+    "decision_id TEXT NOT NULL, connection_name TEXT NOT NULL, library_name TEXT NOT NULL, "
     "work_id TEXT NOT NULL, destination TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN "
     "('planned','claimed','applying','reconciling','retryable','verified','stale','superseded','abandoned')), "
     "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
@@ -1234,7 +1234,8 @@ class SQLiteMetadataReportRepository:
                 "hold.review_case_id=automatic.review_case_id AND "
                 "hold.destination=automatic.destination AND hold.active=1)"
                 ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
-                "WHERE effect.decision_id=pending.decision_id) " + cursor +
+                "WHERE effect.decision_id=pending.decision_id AND "
+                "effect.state NOT IN ('superseded','abandoned')) " + cursor +
                 "ORDER BY pending.occurred_at,pending.decision_id LIMIT ?",
                 (*parameters, limit),
             ).fetchall()
@@ -1275,7 +1276,8 @@ class SQLiteMetadataReportRepository:
                 "FROM pending JOIN current_review_case_lineages lineage "
                 "ON lineage.review_case_id=pending.review_case_id "
                 "WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
-                "WHERE effect.decision_id=pending.decision_id) "
+                "WHERE effect.decision_id=pending.decision_id AND "
+                "effect.state NOT IN ('superseded','abandoned')) "
                 "GROUP BY lineage.connection_name,lineage.library_name,pending.origin "
                 "ORDER BY lineage.connection_name,lineage.library_name,pending.origin"
             ).fetchall()
@@ -1370,6 +1372,25 @@ class SQLiteMetadataReportRepository:
                 "WHERE review_case_id=? AND destination=? AND active=1",
                 (changed_at, document, review_case_id, destination),
             ).rowcount
+            automatic = self._connection.execute(
+                "SELECT decision_id FROM automatic_decisions "
+                "WHERE review_case_id=? AND destination=?",
+                (review_case_id, destination),
+            ).fetchone()
+            if updated == 1 and automatic is not None:
+                authority = self._connection.execute(
+                    "SELECT document FROM field_effect_authorities WHERE decision_id=?",
+                    (automatic[0],),
+                ).fetchone()
+                if authority is not None:
+                    authority_document = json.loads(authority[0])
+                    authority_document["current"] = True
+                    authority_document["updated_at"] = changed_at
+                    self._connection.execute(
+                        "UPDATE field_effect_authorities SET current=1,updated_at=?,document=? "
+                        "WHERE decision_id=?",
+                        (changed_at, canonical_effect_json(authority_document), automatic[0]),
+                    )
             self._connection.commit()
             return context if updated == 1 else None
         except sqlite3.Error as error:
@@ -1517,6 +1538,22 @@ class SQLiteMetadataReportRepository:
                 attempted_identity.pop("created_at")
                 if persisted_identity != attempted_identity:
                     raise FieldEffectError("idempotency_conflict")
+                if (persisted.state in {"superseded", "abandoned"}
+                        and operation.plan.authority.origin == "automatic_policy"
+                        and self._connection.execute(
+                            "SELECT current FROM field_effect_authorities WHERE decision_id=?",
+                            (operation.plan.authority.decision_id,),
+                        ).fetchone() == (1,)):
+                    self._connection.execute(
+                        "UPDATE field_effects SET state='planned',attempt=0,updated_at=?,document=? "
+                        "WHERE plan_id=? AND state IN ('superseded','abandoned')",
+                        (operation.updated_at, document, operation.plan.plan_id),
+                    )
+                    self._record_field_effect_event(
+                        operation, "planned", operation.updated_at
+                    )
+                    self._connection.commit()
+                    return operation
                 self._connection.commit()
                 return persisted
             authority_document = canonical_effect_json({
@@ -1533,8 +1570,18 @@ class SQLiteMetadataReportRepository:
                     "INSERT INTO field_effect_authorities(decision_id,current,updated_at,document) VALUES(?,1,?,?)",
                     (operation.plan.authority.decision_id, operation.updated_at, authority_document),
                 )
-            elif authority_existing[0] != authority_document:
-                raise FieldEffectError("authority_conflict")
+            else:
+                persisted_authority = json.loads(authority_existing[0])
+                if (persisted_authority.get("authority")
+                        != operation.plan.to_data()["authority"]):
+                    raise FieldEffectError("authority_conflict")
+                if persisted_authority.get("current") is not True:
+                    self._connection.execute(
+                        "UPDATE field_effect_authorities SET current=1,updated_at=?,document=? "
+                        "WHERE decision_id=?",
+                        (operation.updated_at, authority_document,
+                         operation.plan.authority.decision_id),
+                    )
             consent_document = canonical_effect_json({
                 "consent": operation.plan.consent.to_data(), "current": True,
                 "schema_version": "field-effect-consent-state-v1",
@@ -5491,6 +5538,11 @@ class SQLiteMetadataReportRepository:
                     "WHERE review_case_id=? AND destination=?",
                     (decision.review_case_id, decision.destination),
                 ).fetchone()
+            automatic = self._connection.execute(
+                "SELECT decision_id FROM automatic_decisions "
+                "WHERE review_case_id=? AND destination=?",
+                (decision.review_case_id, decision.destination),
+            ).fetchone()
             if previous is not None:
                 effect = self._connection.execute(
                     "SELECT state FROM field_effects WHERE decision_id=?",
@@ -5556,12 +5608,16 @@ class SQLiteMetadataReportRepository:
                 self._revoke_field_effect_authority_in_transaction(
                     previous[0], decision.occurred_at, required=False
                 )
-                if previous[1] == "automatic":
-                    self._set_field_effect_manual_hold(
-                        decision.review_case_id,
-                        decision.destination,
-                        decision.occurred_at,
+            if automatic is not None:
+                if previous is None or automatic[0] != previous[0]:
+                    self._revoke_field_effect_authority_in_transaction(
+                        automatic[0], decision.occurred_at, required=False
                     )
+                self._set_field_effect_manual_hold(
+                    decision.review_case_id,
+                    decision.destination,
+                    decision.occurred_at,
+                )
             if self._binding is not None:
                 self._binding.require_current()
             self._connection.commit()
@@ -7197,7 +7253,6 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_field_effect_consents_1", None),
         ("index", "sqlite_autoindex_field_effect_manual_holds_1", None),
         ("index", "sqlite_autoindex_field_effects_1", None),
-        ("index", "sqlite_autoindex_field_effects_2", None),
         ("index", "sqlite_autoindex_metadata_reports_1", None),
         ("index", "sqlite_autoindex_metadata_reports_2", None),
         ("index", "sqlite_autoindex_metadata_policy_drafts_1", None),

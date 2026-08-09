@@ -177,7 +177,7 @@ class _DeniedCapability:
 
 
 class ContinuousGuardedApplicationTests(unittest.TestCase):
-    def test_return_to_automatic_retains_hold_and_requests_fresh_scan(self) -> None:
+    def test_return_to_automatic_requests_scan_before_clearing_hold(self) -> None:
         repository = _HoldRepository()
         scans = []
         service = ContinuousGuardedApplication(
@@ -187,7 +187,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
             lambda *context: scans.append(context),
         )
         service.return_to_automatic("review_case", "title")
-        self.assertEqual(repository.hold, ("primary", "alpha"))
+        self.assertIsNone(repository.hold)
         self.assertEqual(scans, [("primary", "alpha")])
 
     def test_enable_refuses_read_only_capability_before_granting_consent(self) -> None:
