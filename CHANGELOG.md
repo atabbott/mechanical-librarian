@@ -7,9 +7,12 @@
   same 14-destination kernel, exact-field value guards, one fair instance-wide
   mutation slot, pause and library revocation, durable manual holds, policy
   demotion, scoped capability suspension, restart recovery, and a quiet Activity
-  surface. Audiobookshelf still supplies no CAS, so the documented same-field
+  surface. Consent is exact-policy-bound, write capability is proven before
+  enablement, blocked work is paged fairly, and restart recovery drains every
+  bounded page. Audiobookshelf still supplies no CAS, so the documented same-field
   lost-update window remains; ambiguous requests are reconciled forward rather
-  than blindly retried. (#153)
+  than blindly retried. Continuous operation is product-owned and does not wait
+  for an upstream CAS feature. (#153)
 
 - Add the supported Audiobookshelf guarded-write canary: one API-key
   destination-minimal metadata/tags or digest-verified cover request follows a

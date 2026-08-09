@@ -238,7 +238,8 @@ def _plan(repository, *, item: str, destination: str, value: object,
         None if origin == "human" else "resolved_policy_" + "a" * 64,
         None if origin == "human" else "b" * 64,
     )
-    consent = EffectConsent.create(connection="canary", library="books", destination=destination, granted_at=clock)
+    consent = EffectConsent.create(connection="canary", library="books", destination=destination,
+                                   envelope_identity="a" * 64, granted_at=clock)
     try:
         provisional = FieldEffectPlan.create(connection="canary", library="books", work_id=item, destination=destination, pre_value=value, desired_value=desired, target_fingerprint="c" * 64, target_version=observation.version, dependency_digests=("d" * 64,), authority=authority, consent=consent, capability_digest="e" * 64, created_at=clock)
         plan = FieldEffectPlan.create(connection="canary", library="books", work_id=item, destination=destination, pre_value=value, desired_value=desired, target_fingerprint="c" * 64, target_version=observation.version, dependency_digests=("d" * 64,), authority=authority, consent=consent, capability_digest=capabilities.observe(provisional).digest, created_at=clock)

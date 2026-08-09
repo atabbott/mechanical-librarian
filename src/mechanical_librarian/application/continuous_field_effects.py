@@ -66,6 +66,9 @@ class ContinuousGuardedApplication:
         self._thread: threading.Thread | None = None
         self._last_library: str | None = None
         self._last_failure: str | None = None
+        self._schedule_cursor: tuple[int, str] | None = None
+        self._capability_cache: dict[str, tuple[int, dict[str, object]]] = {}
+        self._capability_lock = threading.Lock()
         self._serialize: Callable[[Callable[[], object]], object] = lambda call: call()
 
     def attach_serialization(
@@ -82,14 +85,34 @@ class ContinuousGuardedApplication:
         for application in self._applications.values():
             application.resume_admission()
         recovered = actions = cleanups = 0
-        for plan_id in self._repository.pending_field_effect_plan_ids(100):
-            self.apply(plan_id)
-            recovered += 1
-        for plan_id in self._repository.pending_field_effect_action_plan_ids(100):
-            self.reconcile(plan_id)
-            actions += 1
+        seen_plans: set[str] = set()
+        while True:
+            plan_ids = self._repository.pending_field_effect_plan_ids(100)
+            if not plan_ids:
+                break
+            if any(plan_id in seen_plans for plan_id in plan_ids):
+                raise GuardedApplicationError("recovery")
+            for plan_id in plan_ids:
+                seen_plans.add(plan_id)
+                self.apply(plan_id)
+                recovered += 1
+        seen_actions: set[str] = set()
+        while True:
+            plan_ids = self._repository.pending_field_effect_action_plan_ids(100)
+            if not plan_ids:
+                break
+            if any(plan_id in seen_actions for plan_id in plan_ids):
+                raise GuardedApplicationError("recovery")
+            for plan_id in plan_ids:
+                seen_actions.add(plan_id)
+                self.reconcile(plan_id)
+                actions += 1
         first = next(iter(self._applications.values()))
-        cleanups = first.run_pending_cleanups(limit=100)
+        while True:
+            completed = first.run_pending_cleanups(limit=100)
+            cleanups += completed
+            if completed < 100:
+                break
         self._thread = threading.Thread(
             target=self._run, name="guarded-field-application", daemon=True
         )
@@ -121,6 +144,9 @@ class ContinuousGuardedApplication:
         documents = self._repository.pending_field_effect_decision_documents(100)
         if not documents:
             raise GuardedApplicationError("not_ready")
+        readiness = self._capability_readiness(libraries, force=True)
+        if any(item["state"] != "allowed" for item in readiness):
+            raise GuardedApplicationError("capability")
         connection = self._libraries[0][0]
         destinations = tuple(sorted(SUPPORTED_DESTINATIONS))
         self._repository.grant_field_effect_consents(
@@ -154,8 +180,8 @@ class ContinuousGuardedApplication:
     def return_to_automatic(
         self, review_case_id: str, destination: str,
     ) -> None:
-        context = self._repository.field_effect_manual_hold_context(
-            review_case_id, destination
+        context = self._repository.clear_field_effect_manual_hold(
+            review_case_id, destination, self._clock()
         )
         if context is None:
             raise GuardedApplicationError("manual_hold")
@@ -177,10 +203,16 @@ class ContinuousGuardedApplication:
             return application.reconcile(plan_id)
 
     def schedule(self, limit: int = 100) -> int:
-        documents = self._repository.pending_field_effect_decision_documents(limit)
+        documents = self._repository.pending_field_effect_decision_documents(
+            limit, self._schedule_cursor
+        )
+        if not documents and self._schedule_cursor is not None:
+            self._schedule_cursor = None
+            documents = self._repository.pending_field_effect_decision_documents(limit)
         planned = 0
         for document in documents:
             decision = self._decision(document)
+            self._schedule_cursor = (decision.occurred_at, decision.decision_id)
             snapshot = self._authority.resolve(decision)
             key = (snapshot.connection, snapshot.library)
             application = self._applications.get(key)
@@ -271,6 +303,9 @@ class ContinuousGuardedApplication:
             if all(self._consented(connection, library, destination)
                    for destination in SUPPORTED_DESTINATIONS):
                 enabled.append({"connection": connection, "library": library})
+        capabilities = self._capability_readiness(
+            tuple(library for _, library in self._libraries), force=False
+        )
         return {
             **data,
             "backup_ready": self._repository.field_effect_backup_ready(),
@@ -278,6 +313,7 @@ class ContinuousGuardedApplication:
                 {"connection": connection, "library": library}
                 for connection, library in self._libraries
             ],
+            "capabilities": capabilities,
             "enabled_libraries": enabled,
             "example": example,
             "last_failure": self._last_failure,
@@ -288,6 +324,51 @@ class ContinuousGuardedApplication:
             },
             "schema_version": "continuous-field-activity-v1",
         }
+
+    def _capability_readiness(
+        self, libraries: tuple[str, ...], *, force: bool,
+    ) -> list[dict[str, object]]:
+        """Project least-authority readiness before consent can be granted."""
+        now = self._clock()
+        representatives: dict[str, str] = {}
+        cursor: tuple[int, str] | None = None
+        while len(representatives) < len(libraries):
+            documents = self._repository.pending_field_effect_decision_documents(100, cursor)
+            if not documents:
+                break
+            for document in documents:
+                decision = self._decision(document)
+                cursor = (decision.occurred_at, decision.decision_id)
+                try:
+                    snapshot = self._authority.resolve(decision)
+                except (FieldEffectError, GuardedApplicationError, ValueError):
+                    continue
+                if snapshot.library in libraries:
+                    representatives.setdefault(snapshot.library, snapshot.work_id)
+        results: list[dict[str, object]] = []
+        for connection, library in self._libraries:
+            if library not in libraries:
+                continue
+            with self._capability_lock:
+                cached = self._capability_cache.get(library)
+            if not force and cached is not None and now - cached[0] <= 30:
+                results.append(dict(cached[1]))
+                continue
+            work_id = representatives.get(library)
+            state = "not_ready"
+            if work_id is not None:
+                state = "allowed"
+                observer = self._capabilities[(connection, library)]
+                for destination in sorted(SUPPORTED_DESTINATIONS):
+                    observed = observer.observe(_CapabilityProbe(work_id, destination))  # type: ignore[arg-type]
+                    if observed.category != "allowed":
+                        state = observed.category
+                        break
+            result = {"connection": connection, "library": library, "state": state}
+            with self._capability_lock:
+                self._capability_cache[library] = (now, result)
+            results.append(dict(result))
+        return results
 
     def _run(self) -> None:
         while not self._stop.is_set():

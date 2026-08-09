@@ -1067,7 +1067,9 @@ if (guardedActivityRoot) {
       const actions = element("div", null, "policy-actions activity-actions");
       const enable = element("button", "Enable guarded writes", "primary-button"); enable.type = "button";
       const status = element("p", "", "decision-status"); status.setAttribute("role", "status");
-      enable.disabled = !data.backup_ready || !data.prepared.total;
+      const blockedCapability = data.capabilities.find(item => item.state !== "allowed");
+      enable.disabled = !data.backup_ready || !data.prepared.total || Boolean(blockedCapability);
+      if (blockedCapability) status.textContent = blockedCapability.state === "not_ready" ? "Prepare at least one accepted decision in each selected library before enabling writes." : `Audiobookshelf write access is unavailable (${friendly(blockedCapability.state)}). Review remains read-only.`;
       enable.addEventListener("click", async () => {
         enable.disabled = true; status.textContent = "Enabling guarded writes…";
         try { renderGuardedActivity(await activityCall("/api/v1/activity/consent", "POST", {libraries: data.configured_libraries.map(item => item.library)})); }

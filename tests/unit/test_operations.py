@@ -24,7 +24,8 @@ def _plan() -> FieldEffectPlan:
                                 "review_case_" + "b" * 64, "c" * 64, "fake_service",
                                 "human", "candidate", None, None)
     consent = EffectConsent.create(connection="connection", library="library",
-                                   destination="cover", granted_at=1)
+                                   destination="cover", envelope_identity="a" * 64,
+                                   granted_at=1)
     return FieldEffectPlan.create(
         connection="connection", library="library", work_id="work",
         destination="cover", pre_value=None, desired_value="cover_" + "d" * 64,

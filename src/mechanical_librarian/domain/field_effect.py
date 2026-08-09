@@ -161,36 +161,45 @@ class EffectConsent:
     library: str
     destination: str
     action: Literal["apply_field"]
+    envelope_identity: str
     granted_at: int
 
     @classmethod
     def create(cls, *, connection: str, library: str, destination: str,
-               granted_at: int) -> Self:
+               envelope_identity: str, granted_at: int) -> Self:
         if (any(type(value) is not str or _IDENTITY.fullmatch(value) is None
                 for value in (connection, library))
                 or destination not in SUPPORTED_DESTINATIONS
+                or type(envelope_identity) is not str
+                or _HEX.fullmatch(envelope_identity) is None
                 or type(granted_at) is not int or granted_at < 0):
             raise FieldEffectError("invalid_consent")
         identity = _digest({"action": "apply_field", "connection": connection,
-                            "destination": destination, "granted_at": granted_at,
+                            "destination": destination,
+                            "envelope_identity": envelope_identity,
+                            "granted_at": granted_at,
                             "library": library})
         return cls("effect_consent_" + identity, connection, library,
-                   destination, "apply_field", granted_at)
+                   destination, "apply_field", envelope_identity, granted_at)
 
     def to_data(self) -> dict[str, object]:
         return {"action": self.action, "connection": self.connection,
                 "consent_id": self.consent_id, "destination": self.destination,
+                "envelope_identity": self.envelope_identity,
                 "granted_at": self.granted_at, "library": self.library,
-                "schema_version": "field-effect-consent-v1"}
+                "schema_version": "field-effect-consent-v2"}
 
     @classmethod
     def from_data(cls, raw: object) -> Self:
-        keys = {"action", "connection", "consent_id", "destination", "granted_at",
+        keys = {"action", "connection", "consent_id", "destination",
+                "envelope_identity", "granted_at",
                 "library", "schema_version"}
-        if type(raw) is not dict or set(raw) != keys or raw.get("schema_version") != "field-effect-consent-v1" or raw.get("action") != "apply_field":
+        if type(raw) is not dict or set(raw) != keys or raw.get("schema_version") != "field-effect-consent-v2" or raw.get("action") != "apply_field":
             raise FieldEffectError("invalid_consent")
         value = cls.create(connection=raw["connection"], library=raw["library"],
-                           destination=raw["destination"], granted_at=raw["granted_at"])
+                           destination=raw["destination"],
+                           envelope_identity=raw["envelope_identity"],
+                           granted_at=raw["granted_at"])
         if value.consent_id != raw["consent_id"]:
             raise FieldEffectError("invalid_consent")
         return value

@@ -9,6 +9,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
@@ -148,6 +149,103 @@ class FieldEffectTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.repository.close()
         self.temporary.cleanup()
+
+    def test_consent_is_invalidated_when_resolved_policy_semantics_change(self) -> None:
+        repository_type = type(self.repository)
+        with patch.object(repository_type, "current_resolved_policy_id", return_value="a" * 64):
+            first = self.repository.grant_field_effect_consents(
+                "primary", ("books",), ("title",), 1
+            )[0]
+            self.assertEqual(
+                self.repository.current_field_effect_consent("primary", "books", "title"),
+                first,
+            )
+        with patch.object(repository_type, "current_resolved_policy_id", return_value="b" * 64):
+            with self.assertRaises(FieldEffectError):
+                self.repository.current_field_effect_consent("primary", "books", "title")
+            self.assertFalse(self.repository.field_effect_consent_is_current(first))
+            second = self.repository.grant_field_effect_consents(
+                "primary", ("books",), ("title",), 2
+            )[0]
+            self.assertNotEqual(first.consent_id, second.consent_id)
+
+    def test_manual_hold_is_durable_and_return_to_automatic_clears_it(self) -> None:
+        report = metadata_report("Old title", "1", "2")
+        self.repository.publish(report, lambda: True)
+        proposal_set = evaluate_report(report)
+        self.repository.publish_proposal(proposal_set)
+        case_id = json.loads(self.repository.admit_review_case(proposal_set))["review_case_id"]
+        case = ReviewCase.create_from_data(
+            json.loads(self.repository.get_review_case(case_id))["case"]
+        )
+        proposal = next(value for value in case.proposals
+                        if value["result"]["outcome"] == "unresolved_choice")
+        selected = proposal["result"]["alternatives"][0]["value"]
+        human = HumanDecision.create(
+            case, proposal_id=proposal["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination=proposal["destination"], actor="owner", outcome="accept",
+            selected_value=selected, idempotency_key="manual-hold-human-0001",
+            occurred_at=10,
+        )
+        self.repository.record_human_decision(human)
+        automatic = AutomaticDecision.create(
+            review_case_id=case.review_case_id, report_id=case.report_id,
+            proposal_set_id=case.proposal_set_id,
+            proposal_id=proposal["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination=proposal["destination"], outcome="candidate",
+            candidate_id=proposal["result"]["alternatives"][0]["alternative_id"],
+            resolved_policy_id=self.repository.current_resolved_policy_id("books"),
+            policy_generation=1, rule_id="shadow_rule_" + "1" * 64,
+            policy_category="title_layout", policy_option="preserve",
+            qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
+            source_outcome_id="shadow_outcome_" + "3" * 64, occurred_at=9,
+            bundle_id="automatic_bundle_" + "4" * 64,
+        )
+        self.repository._connection.execute(
+            "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
+            "idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
+            (automatic.decision_id, automatic.review_case_id, automatic.destination,
+             automatic.idempotency_digest, automatic.occurred_at, automatic.to_json()),
+        )
+        non_candidate = AutomaticDecision.create(
+            review_case_id=case.review_case_id, report_id=case.report_id,
+            proposal_set_id=case.proposal_set_id,
+            proposal_id=proposal["proposal_id"],
+            target_fingerprint=case.target_fingerprint, destination="subtitle",
+            outcome="keep_current", candidate_id=None,
+            resolved_policy_id=self.repository.current_resolved_policy_id("books"),
+            policy_generation=1, rule_id="shadow_rule_" + "2" * 64,
+            policy_category="title_layout", policy_option="preserve",
+            qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
+            source_outcome_id="shadow_outcome_" + "5" * 64, occurred_at=8,
+            bundle_id="automatic_bundle_" + "6" * 64,
+        )
+        self.repository._connection.execute(
+            "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
+            "idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
+            (non_candidate.decision_id, non_candidate.review_case_id,
+             non_candidate.destination, non_candidate.idempotency_digest,
+             non_candidate.occurred_at, non_candidate.to_json()),
+        )
+
+        self.repository.field_effect_manual_override(case_id, proposal["destination"], 11)
+        self.assertEqual(
+            self.repository.field_effect_manual_hold_context(case_id, proposal["destination"]),
+            ("primary", "books"),
+        )
+        self.assertEqual(len(self.repository.pending_field_effect_decision_documents(10)), 1)
+        self.assertEqual(
+            self.repository.clear_field_effect_manual_hold(
+                case_id, proposal["destination"], 12
+            ),
+            ("primary", "books"),
+        )
+        self.assertIsNone(
+            self.repository.field_effect_manual_hold_context(case_id, proposal["destination"])
+        )
+        self.assertEqual(len(self.repository.pending_field_effect_decision_documents(10)), 2)
 
     def plan(self, destination: str = "title", pre: object = "old",
              desired: object = "new", suffix: str = "a") -> FieldEffectOperation:
@@ -1282,7 +1380,8 @@ class FieldEffectDomainTests(unittest.TestCase):
             "c" * 64, "fake_service", "human", "candidate", None, None,
         )
         consent = EffectConsent.create(
-            connection="primary", library="books", destination="title", granted_at=1
+            connection="primary", library="books", destination="title",
+            envelope_identity="a" * 64, granted_at=1
         )
 
         def create(work_id: object, target_version: object) -> FieldEffectPlan:
@@ -1316,7 +1415,8 @@ class FieldEffectDomainTests(unittest.TestCase):
             "c" * 64, "fake_service", "human", "candidate", None, None,
         )
         consent = EffectConsent.create(
-            connection="primary", library="books", destination="series", granted_at=1
+            connection="primary", library="books", destination="series",
+            envelope_identity="a" * 64, granted_at=1
         )
         plan = FieldEffectPlan.create(
             connection="primary", library="books", work_id="book-1",

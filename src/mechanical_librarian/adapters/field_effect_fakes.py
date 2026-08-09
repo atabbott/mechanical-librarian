@@ -160,7 +160,7 @@ class FakeConsentCurrentness:
     def allow(self, *, connection: str, library: str, destination: str) -> None:
         consent = EffectConsent.create(
             connection=connection, library=library, destination=destination,
-            granted_at=1,
+            envelope_identity="a" * 64, granted_at=1,
         )
         self.allowed[(connection, library, destination, "apply_field")] = consent
     def resolve(self, *, connection: str, library: str,

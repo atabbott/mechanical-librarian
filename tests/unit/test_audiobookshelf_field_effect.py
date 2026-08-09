@@ -95,6 +95,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         )
         consent = EffectConsent.create(
             connection="primary", library="books", destination=destination,
+            envelope_identity="a" * 64,
             granted_at=1,
         )
         return FieldEffectPlan.create(

@@ -51,6 +51,7 @@ from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
     FIELD_EFFECT_FAILURES,
+    SUPPORTED_DESTINATIONS,
     FieldEffectError,
     FieldEffectOperation,
     authority_to_data,
@@ -367,6 +368,16 @@ _FIELD_EFFECT_CONSENTS_SQL = (
     "consent_id TEXT PRIMARY KEY NOT NULL CHECK(consent_id GLOB 'effect_consent_[0-9a-f]*' AND length(consent_id)=79), "
     "current INTEGER NOT NULL CHECK(current IN (0,1)), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 4096))"
+)
+_FIELD_EFFECT_MANUAL_HOLDS_SQL = (
+    "CREATE TABLE field_effect_manual_holds ("
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "destination TEXT NOT NULL CHECK(length(destination) BETWEEN 1 AND 64), "
+    "active INTEGER NOT NULL CHECK(active IN (0,1)), "
+    "updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND "
+    "length(CAST(document AS BLOB)) BETWEEN 2 AND 4096), "
+    "PRIMARY KEY(review_case_id,destination))"
 )
 _FIELD_EFFECTS_SQL = (
     "CREATE TABLE field_effects ("
@@ -1003,9 +1014,10 @@ class SQLiteMetadataReportRepository:
         if lineage is None:
             return False
         if self._connection.execute(
-            "SELECT 1 FROM human_decisions human JOIN automatic_decisions automatic "
-            "ON automatic.review_case_id=human.review_case_id "
-            "AND automatic.destination=human.destination "
+            "SELECT 1 FROM automatic_decisions automatic "
+            "JOIN field_effect_manual_holds hold "
+            "ON hold.review_case_id=automatic.review_case_id "
+            "AND hold.destination=automatic.destination AND hold.active=1 "
             "WHERE automatic.decision_id=? LIMIT 1", (authority.decision_id,),
         ).fetchone() == (1,):
             return False
@@ -1031,6 +1043,7 @@ class SQLiteMetadataReportRepository:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             for library in libraries:
+                envelope_identity = self.field_effect_consent_envelope_identity(library)
                 for destination in destinations:
                     row = self._connection.execute(
                         "SELECT document FROM field_effect_consents WHERE current=1 "
@@ -1045,11 +1058,24 @@ class SQLiteMetadataReportRepository:
                         consent = EffectConsent.from_data(raw["consent"])
                         if raw.get("current") is not True:
                             raise FieldEffectError("invalid_consent")
-                        granted.append(consent)
-                        continue
+                        if consent.envelope_identity == envelope_identity:
+                            granted.append(consent)
+                            continue
+                        revoked = canonical_effect_json({
+                            "consent": consent.to_data(), "current": False,
+                            "schema_version": "field-effect-consent-state-v1",
+                            "updated_at": granted_at,
+                        })
+                        self._connection.execute(
+                            "UPDATE field_effect_consents SET current=0,updated_at=?,document=? "
+                            "WHERE consent_id=? AND current=1",
+                            (granted_at, revoked, consent.consent_id),
+                        )
                     consent = EffectConsent.create(
                         connection=connection, library=library,
-                        destination=destination, granted_at=granted_at,
+                        destination=destination,
+                        envelope_identity=envelope_identity,
+                        granted_at=granted_at,
                     )
                     document = canonical_effect_json({
                         "consent": consent.to_data(), "current": True,
@@ -1088,7 +1114,10 @@ class SQLiteMetadataReportRepository:
             raw = json.loads(row[0])
             if raw.get("current") is not True:
                 raise FieldEffectError("consent")
-            return EffectConsent.from_data(raw["consent"])
+            consent = EffectConsent.from_data(raw["consent"])
+            if consent.envelope_identity != self.field_effect_consent_envelope_identity(library):
+                raise FieldEffectError("consent")
+            return consent
         except FieldEffectError:
             raise
         except (json.JSONDecodeError, KeyError, sqlite3.Error,
@@ -1096,10 +1125,31 @@ class SQLiteMetadataReportRepository:
             raise FieldEffectError("persistence") from error
 
     def field_effect_consent_is_current(self, consent: EffectConsent) -> bool:
-        return self._connection.execute(
+        persisted = self._connection.execute(
             "SELECT current FROM field_effect_consents WHERE consent_id=?",
             (consent.consent_id,),
         ).fetchone() == (1,)
+        if not persisted:
+            return False
+        try:
+            return consent.envelope_identity == self.field_effect_consent_envelope_identity(
+                consent.library
+            )
+        except (FieldEffectError, MetadataReportError):
+            return False
+
+    def field_effect_consent_envelope_identity(self, library: str) -> str:
+        """Bind consent to the exact current automatic policy semantics."""
+        if type(library) is not str or not library:
+            raise FieldEffectError("invalid_consent")
+        document = canonical_effect_json({
+            "action": "apply_field",
+            "destinations": sorted(SUPPORTED_DESTINATIONS),
+            "library": library,
+            "resolved_policy_id": self.current_resolved_policy_id(library),
+            "schema_version": "field-effect-consent-envelope-v1",
+        })
+        return hashlib.sha256(document.encode("utf-8")).hexdigest()
 
     def revoke_library_field_effect_consents(
         self, connection: str, library: str, changed_at: int,
@@ -1139,23 +1189,36 @@ class SQLiteMetadataReportRepository:
                 raise
             raise FieldEffectError("persistence") from error
 
-    def pending_field_effect_decision_documents(self, limit: int) -> tuple[str, ...]:
+    def pending_field_effect_decision_documents(
+        self, limit: int, after: tuple[int, str] | None = None,
+    ) -> tuple[str, ...]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise FieldEffectError("invalid_limit")
+        if (after is not None and (type(after) is not tuple or len(after) != 2
+                or type(after[0]) is not int or after[0] < 0
+                or type(after[1]) is not str or not after[1])):
+            raise FieldEffectError("invalid_limit")
         try:
+            cursor = ""
+            parameters: tuple[object, ...] = ()
+            if after is not None:
+                cursor = ("AND (pending.occurred_at>? OR "
+                          "(pending.occurred_at=? AND pending.decision_id>?)) ")
+                parameters = (after[0], after[0], after[1])
             rows = self._connection.execute(
                 "SELECT pending.document FROM ("
                 "SELECT decision_id,occurred_at,document FROM human_decisions "
                 "WHERE outcome='accept' UNION ALL "
                 "SELECT automatic.decision_id,automatic.occurred_at,automatic.document "
-                "FROM automatic_decisions automatic WHERE NOT EXISTS ("
-                "SELECT 1 FROM human_decisions human WHERE "
-                "human.review_case_id=automatic.review_case_id AND "
-                "human.destination=automatic.destination)"
+                "FROM automatic_decisions automatic WHERE "
+                "json_extract(automatic.document,'$.outcome')='candidate' AND NOT EXISTS ("
+                "SELECT 1 FROM field_effect_manual_holds hold WHERE "
+                "hold.review_case_id=automatic.review_case_id AND "
+                "hold.destination=automatic.destination AND hold.active=1)"
                 ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
-                "WHERE effect.decision_id=pending.decision_id) "
+                "WHERE effect.decision_id=pending.decision_id) " + cursor +
                 "ORDER BY pending.occurred_at,pending.decision_id LIMIT ?",
-                (limit,),
+                (*parameters, limit),
             ).fetchall()
             return tuple(row[0] for row in rows)
         except sqlite3.Error as error:
@@ -1175,6 +1238,19 @@ class SQLiteMetadataReportRepository:
             "WHERE automatic.review_case_id=? AND automatic.destination=?",
             (review_case_id, destination),
         ).fetchall()
+        if rows:
+            document = canonical_effect_json({
+                "active": True, "destination": destination,
+                "review_case_id": review_case_id,
+                "schema_version": "field-effect-manual-hold-v1",
+                "updated_at": changed_at,
+            })
+            self._connection.execute(
+                "INSERT INTO field_effect_manual_holds(review_case_id,destination,active,updated_at,document) "
+                "VALUES(?,?,1,?,?) ON CONFLICT(review_case_id,destination) DO UPDATE SET "
+                "active=1,updated_at=excluded.updated_at,document=excluded.document",
+                (review_case_id, destination, changed_at, document),
+            )
         superseded = 0
         for (decision_id,) in rows:
             if self._connection.execute(
@@ -1192,13 +1268,37 @@ class SQLiteMetadataReportRepository:
         row = self._connection.execute(
             "SELECT lineage.connection_name,lineage.library_name "
             "FROM current_review_case_lineages lineage "
-            "WHERE lineage.review_case_id=? AND EXISTS (SELECT 1 FROM human_decisions "
-            "WHERE review_case_id=? AND destination=?) AND EXISTS (SELECT 1 FROM "
-            "automatic_decisions WHERE review_case_id=? AND destination=?)",
-            (review_case_id, review_case_id, destination,
-             review_case_id, destination),
+            "JOIN field_effect_manual_holds hold ON hold.review_case_id=lineage.review_case_id "
+            "WHERE lineage.review_case_id=? AND hold.destination=? AND hold.active=1",
+            (review_case_id, destination),
         ).fetchone()
         return None if row is None else (row[0], row[1])
+
+    def clear_field_effect_manual_hold(
+        self, review_case_id: str, destination: str, changed_at: int,
+    ) -> tuple[str, str] | None:
+        """Atomically clear an active hold and return its rescan lineage."""
+        context = self.field_effect_manual_hold_context(review_case_id, destination)
+        if context is None:
+            return None
+        document = canonical_effect_json({
+            "active": False, "destination": destination,
+            "review_case_id": review_case_id,
+            "schema_version": "field-effect-manual-hold-v1",
+            "updated_at": changed_at,
+        })
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            updated = self._connection.execute(
+                "UPDATE field_effect_manual_holds SET active=0,updated_at=?,document=? "
+                "WHERE review_case_id=? AND destination=? AND active=1",
+                (changed_at, document, review_case_id, destination),
+            ).rowcount
+            self._connection.commit()
+            return context if updated == 1 else None
+        except sqlite3.Error as error:
+            self._connection.rollback()
+            raise FieldEffectError("persistence") from error
 
     def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool:
         if (type(digests) is not tuple or not digests
@@ -6605,6 +6705,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_FIELD_EFFECT_SUSPENSIONS_SQL)
             connection.execute(_FIELD_EFFECT_AUTHORITIES_SQL)
             connection.execute(_FIELD_EFFECT_CONSENTS_SQL)
+            connection.execute(_FIELD_EFFECT_MANUAL_HOLDS_SQL)
             connection.execute(_FIELD_EFFECTS_SQL)
             connection.execute(_FIELD_EFFECT_EVENTS_SQL)
             connection.execute(_FIELD_EFFECT_ACTIONS_SQL)
@@ -6935,6 +7036,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_field_effect_authorities_1", None),
         ("index", "sqlite_autoindex_field_effect_cleanups_1", None),
         ("index", "sqlite_autoindex_field_effect_consents_1", None),
+        ("index", "sqlite_autoindex_field_effect_manual_holds_1", None),
         ("index", "sqlite_autoindex_field_effects_1", None),
         ("index", "sqlite_autoindex_field_effects_2", None),
         ("index", "sqlite_autoindex_metadata_reports_1", None),
@@ -6983,6 +7085,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "field_effect_authorities", _FIELD_EFFECT_AUTHORITIES_SQL),
         ("table", "field_effect_cleanups", _FIELD_EFFECT_CLEANUPS_SQL),
         ("table", "field_effect_consents", _FIELD_EFFECT_CONSENTS_SQL),
+        ("table", "field_effect_manual_holds", _FIELD_EFFECT_MANUAL_HOLDS_SQL),
         ("table", "field_effect_events", _FIELD_EFFECT_EVENTS_SQL),
         ("table", "field_effects", _FIELD_EFFECTS_SQL),
         ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
@@ -7113,6 +7216,23 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             if consent_id != consent.consent_id:
                 raise FieldEffectError("invalid_consent")
             consents[consent_id] = (consent, bool(current), updated_at)
+
+        for review_case_id, destination, active, updated_at, document in connection.execute(
+            "SELECT review_case_id,destination,active,updated_at,document "
+            "FROM field_effect_manual_holds"
+        ):
+            raw = json.loads(document)
+            if (type(raw) is not dict or set(raw) != {
+                    "active", "destination", "review_case_id", "schema_version",
+                    "updated_at"}
+                    or raw["schema_version"] != "field-effect-manual-hold-v1"
+                    or type(raw["active"]) is not bool
+                    or type(raw["updated_at"]) is not int or raw["updated_at"] < 0
+                    or (raw["review_case_id"], raw["destination"], raw["active"],
+                        raw["updated_at"]) != (review_case_id, destination,
+                                                bool(active), updated_at)
+                    or canonical_effect_json(raw) != document):
+                raise FieldEffectError("invalid_manual_hold")
 
         operations: dict[str, FieldEffectOperation] = {}
         for row in connection.execute(

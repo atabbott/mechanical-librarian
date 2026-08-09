@@ -15,8 +15,11 @@ application while making the remaining same-field race explicit and bounded.
 Compose the guarded Audiobookshelf adapter into the installed review runtime
 only after an authenticated owner grants library-scoped consent for the complete
 existing set of 14 ebook destinations. Any new destination, action kind, or
-authority scope requires fresh consent. Consent is not inferred from a decision,
-policy activation, configuration, or an earlier canary.
+authority scope requires fresh consent. Consent also binds the exact resolved
+policy semantics and qualified automatic categories, so a semantic policy
+change invalidates it before scheduling and again at claim. Consent is not
+inferred from a decision, policy activation, configuration, or an earlier
+canary.
 
 Use the normalized value of the exact destination as the target version. A
 change to another Audiobookshelf item field therefore does not invalidate an
@@ -33,9 +36,9 @@ Run human and qualified automatic decisions through the same field-effect
 kernel. One instance-scoped mutation slot serializes every library and origin;
 durable selection alternates away from the last library when another is ready.
 Siblings remain independent. A manual decision supersedes only unclaimed
-automatic authority for that field. Coexisting human and automatic decisions
-form a durable manual hold; returning to automatic requests a fresh exact-current
-scan rather than deleting history or resurrecting old authority. A policy
+automatic authority for that field and records an explicit active manual hold.
+Returning to automatic atomically clears that hold before requesting a fresh
+exact-current scan; immutable decision and effect history remains intact. A policy
 demotion or generation change prevents unclaimed automatic work from becoming
 current, while already claimed work finishes to its durable checkpoint.
 
@@ -64,8 +67,8 @@ qualification remain out of scope. Cover upload continues to use the immutable
 artifact and private recovery seams.
 
 The remaining target race is intentionally visible and covered by qualification.
-Useful field-local progress no longer waits for Audiobookshelf to add CAS, but
-the product does not claim cross-system atomicity. All 14 destinations, both
+Useful field-local progress is an owned product capability and has no upstream
+CAS prerequisite, but the product does not claim cross-system atomicity. All 14 destinations, both
 origins, multiple libraries, restart, drift, ambiguity, pause, revocation,
 policy demotion, manual hold, fairness, and capability suspension must qualify
 through the exact installed artifact and supported service versions.
