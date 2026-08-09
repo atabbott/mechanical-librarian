@@ -32,6 +32,7 @@ class FakeTargetService:
         self.fail_next = False
         self.fail_read_next = False
         self.unavailable_scope_next: str | None = None
+        self.unavailable_reason_next: str | None = None
         self.fail_reads_for: set[str] = set()
         self.fail_read_after_apply_for: set[str] = set()
         self.ambiguous_next: str | None = None
@@ -49,7 +50,8 @@ class FakeTargetService:
         with self._lock:
             if self.unavailable_scope_next is not None:
                 scope, self.unavailable_scope_next = self.unavailable_scope_next, None
-                raise TargetServiceUnavailable(scope)
+                reason, self.unavailable_reason_next = self.unavailable_reason_next, None
+                raise TargetServiceUnavailable(scope, reason)
             if self.fail_read_next or plan.plan_id in self.fail_reads_for:
                 self.fail_read_next = False
                 raise RuntimeError("synthetic target read failure")

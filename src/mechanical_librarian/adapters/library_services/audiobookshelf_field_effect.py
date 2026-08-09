@@ -29,6 +29,12 @@ from mechanical_librarian.domain.field_effect import FieldEffectPlan
 AudiobookshelfCapabilityResult = CapabilityObservation
 
 
+class _ResponseStatusError(ValueError):
+    def __init__(self, status: int) -> None:
+        super().__init__(str(status))
+        self.status = status
+
+
 class AudiobookshelfFieldEffectCapabilities:
     """Read the API-key's real field-local write capability, never a version."""
     def __init__(self, *, client_factory: Callable[[], httpx.Client], endpoint: str,
@@ -180,8 +186,22 @@ class AudiobookshelfFieldEffectTarget:
     def _item(self, client: httpx.Client, work_id: str) -> dict[str, Any]:
         try:
             detail = _json_response(client, "GET", f"{self._endpoint}/api/items/{quote(work_id, safe='')}", {"expanded": "1"}, self._maximum_response_bytes)
-        except (httpx.HTTPError, UnicodeError, ValueError, json.JSONDecodeError) as error:
-            raise TargetServiceUnavailable("connection") from error
+        except _ResponseStatusError as error:
+            if error.status in {401, 404}:
+                raise TargetServiceUnavailable("connection") from error
+            if error.status == 403:
+                raise TargetServiceUnavailable(
+                    "destination", "insufficient_permission"
+                ) from error
+            raise TargetServiceUnavailable(
+                "destination", "unexpected_effect_behavior"
+            ) from error
+        except (httpx.HTTPError, OSError) as error:
+            raise TargetServiceUnavailable(
+                "destination", "unexpected_effect_behavior"
+            ) from error
+        except (UnicodeError, ValueError, json.JSONDecodeError) as error:
+            raise TargetServiceUnavailable("destination", "field_unavailable") from error
         if (type(detail) is not dict or detail.get("id") != work_id
                 or detail.get("libraryId") != self._library_id
                 or detail.get("mediaType") != "book" or type(detail.get("media")) is not dict):
@@ -189,12 +209,17 @@ class AudiobookshelfFieldEffectTarget:
         try:
             _version(detail)
         except ValueError as error:
-            raise TargetServiceUnavailable("connection") from error
+            raise TargetServiceUnavailable("destination", "field_unavailable") from error
         return detail
 
     def _value(self, client: httpx.Client, detail: dict[str, Any], plan: FieldEffectPlan) -> object:
         if plan.destination == "cover":
-            status, headers, body = _bytes_response(client, f"{self._endpoint}/api/items/{quote(plan.work_id, safe='')}/cover", {"raw": "1"}, 8 * 1024 * 1024)
+            try:
+                status, headers, body = _bytes_response(client, f"{self._endpoint}/api/items/{quote(plan.work_id, safe='')}/cover", {"raw": "1"}, 8 * 1024 * 1024)
+            except (httpx.HTTPError, OSError) as error:
+                raise TargetServiceUnavailable(
+                    "destination", "unexpected_effect_behavior"
+                ) from error
             if status == 404:
                 return None
             if status != 200:
@@ -202,7 +227,7 @@ class AudiobookshelfFieldEffectTarget:
                     "connection" if status == 401 else "destination",
                     ("connection_unavailable" if status == 401 else
                      "insufficient_permission" if status == 403 else
-                     "field_unavailable"),
+                     "unexpected_effect_behavior"),
                 )
             media_type = headers.get("content-type", "").split(";", 1)[0].lower()
             try:
@@ -249,7 +274,9 @@ def _json_response(client: httpx.Client, method: str, url: str, params: dict[str
     if method != "GET":
         raise ValueError("Audiobookshelf response invalid")
     status, headers, body = _bytes_response(client, url, params or {}, maximum)
-    if status != 200 or headers.get("content-type", "").split(";", 1)[0].lower() != "application/json":
+    if status != 200:
+        raise _ResponseStatusError(status)
+    if headers.get("content-type", "").split(";", 1)[0].lower() != "application/json":
         raise ValueError("Audiobookshelf response invalid")
     value = json.loads(body.decode("utf-8", "strict"))
     if type(value) is not dict:

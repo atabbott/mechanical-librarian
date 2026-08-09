@@ -438,6 +438,24 @@ class FieldEffectTests(unittest.TestCase):
             "connection_unavailable",
         )
 
+    def test_verification_and_reconciliation_persist_typed_unexpected_behavior(self) -> None:
+        operation = self.plan(suffix="9")
+
+        def fail_verification(_: object) -> None:
+            self.target.unavailable_scope_next = "destination"
+            self.target.unavailable_reason_next = "unexpected_effect_behavior"
+
+        self.target.after_apply = fail_verification
+        result = self.service.apply(operation.plan.plan_id)
+        self.assertEqual(result.state, "reconciling")
+        self.assertEqual(
+            self.repository.field_effect_capability_suspension("primary", "title"),
+            "unexpected_effect_behavior",
+        )
+        self.target.unavailable_scope_next = "destination"
+        self.target.unavailable_reason_next = "unexpected_effect_behavior"
+        self.assertEqual(self.service.reconcile(operation.plan.plan_id).state, "retryable")
+
     def test_audit_documents_are_the_persisted_gap_free_event_sequence(self) -> None:
         operation = self.plan(suffix="7")
         verified = self.service.apply(operation.plan.plan_id)

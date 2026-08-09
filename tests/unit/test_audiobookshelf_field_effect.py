@@ -226,7 +226,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
             )),
             endpoint="https://abs.example.invalid", library_id="library-1", artifacts=self.artifacts,
         )
-        with self.assertRaisesRegex(TargetServiceUnavailable, "connection"):
+        with self.assertRaisesRegex(TargetServiceUnavailable, "unexpected_effect_behavior"):
             encoded.read(plan)
 
         oversized = AudiobookshelfFieldEffectTarget(
@@ -236,8 +236,47 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
             endpoint="https://abs.example.invalid", library_id="library-1", artifacts=self.artifacts,
             maximum_response_bytes=1024,
         )
-        with self.assertRaisesRegex(TargetServiceUnavailable, "connection"):
+        with self.assertRaisesRegex(TargetServiceUnavailable, "field_unavailable"):
             oversized.read(plan)
+
+    def test_target_read_failures_preserve_connection_permission_and_unexpected_scope(self) -> None:
+        plan = self.plan("title", "Before", "After")
+        expected = {
+            401: ("connection", "connection_unavailable"),
+            403: ("destination", "insufficient_permission"),
+            500: ("destination", "unexpected_effect_behavior"),
+        }
+        for status, disposition in expected.items():
+            with self.subTest(status=status):
+                target = AudiobookshelfFieldEffectTarget(
+                    client_factory=lambda status=status: httpx.Client(
+                        transport=httpx.MockTransport(
+                            lambda request: httpx.Response(status)
+                        )
+                    ),
+                    endpoint="https://abs.example.invalid", library_id="library-1",
+                    artifacts=self.artifacts,
+                )
+                with self.assertRaises(TargetServiceUnavailable) as raised:
+                    target.read(plan)
+                self.assertEqual(
+                    (raised.exception.scope, raised.exception.reason), disposition
+                )
+        transport = AudiobookshelfFieldEffectTarget(
+            client_factory=lambda: httpx.Client(transport=httpx.MockTransport(
+                lambda request: (_ for _ in ()).throw(
+                    httpx.ReadError("lost", request=request)
+                )
+            )),
+            endpoint="https://abs.example.invalid", library_id="library-1",
+            artifacts=self.artifacts,
+        )
+        with self.assertRaises(TargetServiceUnavailable) as raised:
+            transport.read(plan)
+        self.assertEqual(
+            (raised.exception.scope, raised.exception.reason),
+            ("destination", "unexpected_effect_behavior"),
+        )
 
     def test_post_dispatch_status_and_transport_loss_reconcile_through_application(self) -> None:
         for outcome in (401, 403, 500, "transport_loss"):
