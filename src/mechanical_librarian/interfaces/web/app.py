@@ -1119,11 +1119,7 @@ def create_review_app(
             )
         )
         if isinstance(field_application, ContinuousGuardedApplication):
-            serialized_field_effect_call(
-                lambda: field_application.activate_human_override(
-                    review_case_id, payload.destination
-                )
-            )
+            field_application.wake()
         return acknowledgement
 
     def serialized_field_effect_call(callable_):

@@ -544,6 +544,10 @@ class ReviewWebTests(unittest.TestCase):
         stylesheet = self.client.get("/assets/review.css").text
         self.assertIn(".activity-page:focus-visible { outline: none; }", stylesheet)
         self.assertIn(".policy-paper, .policy-summary {", stylesheet)
+        self.assertIn(".activity-libraries { display: grid;", stylesheet)
+        activity_script = self.client.get("/assets/activity.js").text
+        self.assertIn('libraries.querySelectorAll("input:checked")', activity_script)
+        self.assertIn("!library.prepared.total", activity_script)
         self.assertEqual(self.client.get("/api/v1/activity").json()["prepared"]["total"], 2)
         denied = self.client.post(
             "/api/v1/activity/consent",
@@ -2330,7 +2334,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 open_repository(database, create=False)
             self.assertEqual(database.read_bytes(), before)
 
-    def test_concurrent_http_decisions_publish_exactly_one_fact_and_event(
+    def test_concurrent_http_decisions_preserve_both_immutable_revisions(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2398,18 +2402,18 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                             ),
                         )
                     )
-                self.assertEqual(statuses, [200, 409])
+                self.assertEqual(statuses, [200, 200])
                 self.assertEqual(
                     repository._connection.execute(
                         "SELECT count(*) FROM human_decisions"
                     ).fetchone(),
-                    (1,),
+                    (2,),
                 )
                 self.assertEqual(
                     repository._connection.execute(
                         "SELECT count(*) FROM human_decision_events"
                     ).fetchone(),
-                    (1,),
+                    (2,),
                 )
                 library = client.get(
                     "/api/v1/library?lens=no_attention_needed"
@@ -2582,9 +2586,12 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 idempotency_key="sqlite-decision-0002",
                 occurred_at=1_003,
             )
-            with self.assertRaises(HumanDecisionError) as already:
-                repository.record_human_decision(duplicate)
-            self.assertEqual(already.exception.code, "already_decided")
+            self.assertEqual(
+                HumanDecision.from_json(
+                    repository.record_human_decision(duplicate)
+                ).decision_id,
+                duplicate.decision_id,
+            )
             self.assertEqual(repository.count_current_attention_fields(None), 0)
             self.assertEqual(
                 repository.get_review_case_history(case_id, 10)[0]["kind"],
@@ -2595,10 +2602,14 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             reopened = open_repository(database, create=False)
             try:
                 documents = reopened.get_review_case_decisions(case_id)
-                self.assertEqual(len(documents), 1)
+                self.assertEqual(len(documents), 2)
                 self.assertEqual(
                     HumanDecision.from_json(documents[0]).decision_id,
                     decision.decision_id,
+                )
+                self.assertEqual(
+                    HumanDecision.from_json(documents[1]).decision_id,
+                    duplicate.decision_id,
                 )
                 self.assertEqual(
                     HumanDecision.from_json(
@@ -2629,7 +2640,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                         "SELECT (SELECT count(*) FROM human_decisions),"
                         "(SELECT count(*) FROM human_decision_events)"
                     ).fetchone(),
-                    (1, 1),
+                    (2, 2),
                 )
                 with self.assertRaises(ReviewWebError) as replay_conflict:
                     RecordHumanDecision(reopened, lambda: 2_001).run(
@@ -2645,8 +2656,19 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 self.assertEqual(
                     replay_conflict.exception.code, "idempotency_conflict"
                 )
+                stale_decision = HumanDecision.create(
+                    case,
+                    proposal_id=proposal["proposal_id"],
+                    target_fingerprint=case.target_fingerprint,
+                    destination=proposal["destination"],
+                    actor="owner",
+                    outcome="reject",
+                    selected_value=None,
+                    idempotency_key="sqlite-decision-0003",
+                    occurred_at=2_002,
+                )
                 with self.assertRaises(HumanDecisionError) as stale:
-                    reopened.record_human_decision(duplicate)
+                    reopened.record_human_decision(stale_decision)
                 self.assertEqual(stale.exception.code, "stale")
             finally:
                 reopened.close()

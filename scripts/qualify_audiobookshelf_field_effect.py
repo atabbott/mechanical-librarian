@@ -252,7 +252,8 @@ def _plan(repository, *, item: str, destination: str, value: object,
         None if origin == "human" else "b" * 64,
     )
     consent = EffectConsent.create(connection="canary", library="books", destination=destination,
-                                   envelope_identity="a" * 64, granted_at=clock)
+                                   envelope_identity=repository.field_effect_consent_envelope_identity("books"),
+                                   granted_at=clock)
     try:
         provisional = FieldEffectPlan.create(connection="canary", library="books", work_id=item, destination=destination, pre_value=value, desired_value=desired, target_fingerprint="c" * 64, target_version=observation.version, dependency_digests=("d" * 64,), authority=authority, consent=consent, capability_digest="e" * 64, created_at=clock)
         plan = FieldEffectPlan.create(connection="canary", library="books", work_id=item, destination=destination, pre_value=value, desired_value=desired, target_fingerprint="c" * 64, target_version=observation.version, dependency_digests=("d" * 64,), authority=authority, consent=consent, capability_digest=capabilities.observe(provisional).digest, created_at=clock)
@@ -432,6 +433,11 @@ def _qualification_hardcover_client(
     """Return an isolated provider boundary backed by request-local evidence."""
 
     def respond(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, content=_png(32, 96, 160),
+                headers={"content-type": "image/png"}, request=request,
+            )
         try:
             body = json.loads(request.content.decode("utf-8", "strict"))
             variables = _mapping(body, "installed_provider_request_invalid").get(
@@ -457,7 +463,16 @@ def _qualification_hardcover_client(
                 "contribution": "Author",
                 "author": {"id": index, "name": author},
             }
-            for index, author in enumerate(authors, start=1)
+            for index, author in enumerate(
+                ("First Qualified Author", "Second Qualified Author"), start=1
+            )
+        ]
+        cover = {"url": "https://qualification.invalid/cover.png"}
+        tags = [
+            {"id": 1, "tag": "Qualification Fiction",
+             "tag_category": {"id": 1, "category": "Genre"}},
+            {"id": 2, "tag": "Guarded",
+             "tag_category": {"id": 2, "category": "Mood"}},
         ]
         return httpx.Response(
             200,
@@ -467,27 +482,32 @@ def _qualification_hardcover_client(
                         "id": 1,
                         "book_id": 1,
                         "isbn_10": None,
-                        "isbn_13": None,
-                        "asin": None,
+                        "isbn_13": "9780306406157",
+                        "asin": "B000QUAL01",
                         "title": title,
-                        "subtitle": None,
-                        "release_date": None,
-                        "image": None,
-                        "publisher": None,
-                        "language": None,
+                        "subtitle": "Continuous qualification subtitle",
+                        "release_date": "2025-02-03",
+                        "image": cover,
+                        "publisher": {"id": 1, "name": "Qualification Press",
+                                      "parent_id": None},
+                        "language": {"id": 1, "code2": "fr", "code3": "fra",
+                                     "language": "French"},
                         "contributions": contributions,
                     }],
                     "books": [{
                         "id": 1,
                         "title": title,
-                        "description": None,
-                        "release_date": None,
-                        "image": None,
+                        "description": "A bounded continuous guarded qualification value.",
+                        "release_date": "2025-02-03",
+                        "image": cover,
                         "contributions": contributions,
-                        "book_series": [],
-                        "taggings": [],
+                        "book_series": [{"id": 1, "position": "2.5",
+                                         "series": {"id": 1,
+                                                    "name": "Guarded Qualification"}}],
+                        "taggings": [{"id": 1, "tag_id": 1},
+                                     {"id": 2, "tag_id": 2}],
                     }],
-                    "tags": [],
+                    "tags": tags,
                 }
             },
             request=request,
@@ -530,7 +550,7 @@ def _installed_continuous_qualification(
         } for name, _, path in libraries],
         "providers": [{
             "name": "qualification-catalogue", "adapter": "hardcover",
-            "enabled": True, "cover_enabled": False,
+            "enabled": True, "cover_enabled": True,
             "secret_file": str(provider_secret),
         }],
         "review": {
@@ -552,15 +572,16 @@ def _installed_continuous_qualification(
     repository = open_repository(database, cross_thread=True)
     open_catalogue(catalogue, create=True).close()
 
-    def composed_client() -> tuple[TestClient, object]:
+    def composed_client(bound_repository) -> tuple[TestClient, object]:
         preparation = create_review_pipeline(
-            configuration, database, catalogue, artifacts, repository.authority
+            configuration, database, catalogue, artifacts,
+            bound_repository.authority
         )
         continuous = compose_continuous_guarded_application(
-            configuration, repository, database, artifacts, preparation
+            configuration, bound_repository, database, artifacts, preparation
         )
         app = create_review_app(
-            repository, configuration.review, review_preparation=preparation,
+            bound_repository, configuration.review, review_preparation=preparation,
             policy_libraries=tuple((item.name, item.policy_override)
                                    for item in configuration.libraries),
             field_application=continuous,
@@ -576,7 +597,7 @@ def _installed_continuous_qualification(
     provider_patch = patch.object(composition, "hardcover_client", provider_client)
     provider_patch.start()
     try:
-        client, continuous = composed_client()
+        client, continuous = composed_client(repository)
     except Exception:
         provider_patch.stop()
         raise
@@ -642,46 +663,75 @@ def _installed_continuous_qualification(
                 value.get("review_case_id") for value in cases
                 if type(value) is dict and type(value.get("review_case_id")) is str
             }
+            human_destinations = {
+                "subtitle", "series", "genres", "description",
+                "isbn", "asin", "tags", "cover",
+            }
+            automatic_destinations = {
+                "title", "authors", "language", "publisher",
+                "publishedDate", "publishedYear",
+            }
+            missing_human = set(human_destinations)
             accepted_libraries: set[str] = set()
             accepted = 0
-            for case_summary in cases:
+
+            def accept_from_case(case_summary: object, *, one: bool) -> int:
+                nonlocal accepted
                 if type(case_summary) is not dict:
-                    continue
+                    return 0
                 case_id = case_summary.get("review_case_id")
                 library_name = case_summary.get("library")
-                if (type(case_id) is not str or type(library_name) is not str
-                        or library_name in accepted_libraries):
-                    continue
+                if type(case_id) is not str or type(library_name) is not str:
+                    return 0
                 detail = client.get(f"/api/v1/review-cases/{case_id}")
                 if detail.status_code != 200:
-                    continue
+                    return 0
                 fields = detail.json().get("fields")
                 if type(fields) is not list:
-                    continue
-                field = next((value for value in fields if type(value) is dict
-                              and value.get("needs_attention") is True
-                              and type(value.get("proposed_values")) is list
-                              and value["proposed_values"]), None)
-                if field is None:
-                    continue
-                payload = {
-                    "destination": field["destination"], "outcome": "accept",
-                    "proposal_id": field["proposal_id"],
-                    "selected_value": field["proposed_values"][0],
-                    "target_fingerprint": field["target_fingerprint"],
-                }
-                decided = client.post(
-                    f"/api/v1/review-cases/{case_id}/decisions",
-                    headers={**mutation_headers,
-                             "Idempotency-Key": f"installed-{accepted:04d}-decision"},
-                    json=payload,
+                    return 0
+                recorded = 0
+                for field in fields:
+                    if (type(field) is not dict
+                            or field.get("destination") not in missing_human
+                            or field.get("needs_attention") is not True
+                            or type(field.get("proposed_values")) is not list
+                            or not field["proposed_values"]):
+                        continue
+                    payload = {
+                        "destination": field["destination"], "outcome": "accept",
+                        "proposal_id": field["proposal_id"],
+                        "selected_value": field["proposed_values"][0],
+                        "target_fingerprint": field["target_fingerprint"],
+                    }
+                    decided = client.post(
+                        f"/api/v1/review-cases/{case_id}/decisions",
+                        headers={**mutation_headers,
+                                 "Idempotency-Key": f"installed-{accepted:04d}-decision"},
+                        json=payload,
+                    )
+                    if decided.status_code != 200:
+                        raise QualificationError("installed_decision_failed")
+                    missing_human.remove(str(field["destination"]))
+                    accepted_libraries.add(library_name)
+                    accepted += 1
+                    recorded += 1
+                    if one:
+                        break
+                return recorded
+
+            for name, _, _ in libraries:
+                for case_summary in cases:
+                    if (type(case_summary) is dict
+                            and case_summary.get("library") == name
+                            and accept_from_case(case_summary, one=True)):
+                        break
+            for case_summary in cases:
+                accept_from_case(case_summary, one=False)
+            if missing_human or len(accepted_libraries) != len(libraries):
+                raise QualificationError(
+                    "installed_human_destinations_unproved:"
+                    + ",".join(sorted(missing_human))
                 )
-                if decided.status_code != 200:
-                    raise QualificationError("installed_decision_failed")
-                accepted_libraries.add(library_name)
-                accepted += 1
-            if accepted != len(libraries):
-                raise QualificationError("installed_multiple_libraries_unproved")
             paused = client.post("/api/v1/field-effects/pause", headers=mutation_headers)
             activity = client.get("/api/v1/activity")
             if paused.status_code != 204 or activity.status_code != 200 or activity.json().get("paused") is not True:
@@ -693,17 +743,47 @@ def _installed_continuous_qualification(
             )
             if resumed.status_code != 204 or consented.status_code != 200:
                 raise QualificationError("installed_consent_failed")
+            expected_origins = {
+                **{destination: "human" for destination in human_destinations},
+                **{destination: "automatic_policy"
+                   for destination in automatic_destinations},
+            }
             deadline = time.monotonic() + 90
             final_activity = None
+            installed_outcomes: list[dict[str, object]] = []
             while time.monotonic() < deadline:
                 candidate = client.get("/api/v1/activity")
                 if candidate.status_code == 200:
                     final_activity = candidate.json()
-                    if final_activity.get("counts", {}).get("verified", 0) >= accepted:
+                    installed_outcomes = []
+                    coverage: dict[str, str] = {}
+                    for (document,) in repository._connection.execute(
+                        "SELECT document FROM field_effects WHERE state='verified' "
+                        "ORDER BY updated_at,plan_id"
+                    ).fetchall():
+                        operation = FieldEffectOperation.from_json(document)
+                        origin = operation.plan.authority.origin
+                        coverage.setdefault(operation.plan.destination, origin)
+                        installed_outcomes.append({
+                            "decision_id": operation.plan.authority.decision_id,
+                            "destination": operation.plan.destination,
+                            "library": operation.plan.library,
+                            "origin": origin,
+                            "plan_id": operation.plan.plan_id,
+                            "state": operation.state,
+                            "work_id": operation.plan.work_id,
+                        })
+                    if all(coverage.get(destination) == origin
+                           for destination, origin in expected_origins.items()):
                         break
                 time.sleep(0.25)
-            if (final_activity is None
-                    or final_activity.get("counts", {}).get("verified", 0) < accepted):
+            coverage = {
+                str(row["destination"]): str(row["origin"])
+                for row in installed_outcomes
+            }
+            if (final_activity is None or any(
+                    coverage.get(destination) != origin
+                    for destination, origin in expected_origins.items())):
                 activity_summary = {
                     key: final_activity.get(key) if final_activity else None
                     for key in (
@@ -713,7 +793,8 @@ def _installed_continuous_qualification(
                 }
                 raise QualificationError(
                     "installed_scheduler_failed:"
-                    + json.dumps(activity_summary, sort_keys=True)
+                    + json.dumps({"activity": activity_summary,
+                                  "coverage": coverage}, sort_keys=True)
                 )
             def rescan_all() -> None:
                 for name, _, _ in libraries:
@@ -767,7 +848,9 @@ def _installed_continuous_qualification(
     )
     restart_provider_patch.start()
     try:
-        restarted, _ = composed_client()
+        repository.close()
+        repository = open_repository(database, create=False, cross_thread=True)
+        restarted, _ = composed_client(repository)
     except Exception:
         restart_provider_patch.stop()
         repository.close()
@@ -781,7 +864,7 @@ def _installed_continuous_qualification(
                 raise QualificationError("installed_restart_login_failed")
             activity = restarted.get("/api/v1/activity")
             if (activity.status_code != 200
-                    or activity.json().get("counts", {}).get("verified", 0) < len(libraries)
+                    or activity.json().get("counts", {}).get("verified", 0) < 14
                     or len(activity.json().get("enabled_libraries", [])) != len(libraries)):
                 raise QualificationError("installed_restart_recovery_failed")
     finally:
@@ -793,6 +876,9 @@ def _installed_continuous_qualification(
         "external_drift_regeneration": True,
         "human_decision_api": True, "idempotent_rescan": True,
         "installed_composition": True, "libraries": len(libraries),
+        "destinations": len(expected_origins),
+        "full_chain_origins": expected_origins,
+        "outcomes": installed_outcomes,
         "pause_resume": True, "restart_resume": True,
         "supported_preparation": True,
     }
@@ -948,39 +1034,17 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             raise QualificationError("writer_capability_not_allowed")
         recovery = _ObservedRecovery(PrivateCoverRecoveryStore(root / "recovery", lambda _: _raw_cover(base, writer_key, item, before_cover)))
         service = GuardedFieldApplication(repository, target, FakeBackupReadiness(), capabilities, current, FakeDependencyCurrentness(), current, recovery, FakeForwardReevaluation(), clock)
-        if corpus_sources:
-            desired_values: list[tuple[str, object]] = [
-                ("title", "Guarded qualification title"),
-                ("subtitle", "Continuous qualification subtitle"),
-                ("authors", ["First Qualified Author", "Second Qualified Author"]),
-                ("series", [{"name": "Guarded Qualification", "sequence": "2.5"}]),
-                ("genres", ["Fiction", "Qualification"]),
-                ("publishedYear", "2025"),
-                ("publishedDate", "2025-02-03"),
-                ("publisher", "Qualification Press"),
-                ("description", "A bounded continuous guarded qualification value."),
-                ("isbn", "9780306406157"),
-                ("asin", "B000QUAL01"),
-                ("language", "fr"),
-                ("tags", ["continuous", "guarded"]),
-            ]
-            outcomes = [
-                _apply(service, repository, target, capabilities, writes, recovery,
-                       items[index % len(items)], destination, desired, clock(),
-                       "human" if index % 2 == 0 else "automatic_policy")
-                for index, (destination, desired) in enumerate(desired_values)
-            ]
-            cover_item = item
-            _stable_cover_observation(target, cover_item)
-            outcomes.append(_apply(
-                service, repository, target, capabilities, writes, recovery,
-                cover_item, "cover", artifact.artifact_id, clock(),
-                "automatic_policy",
-            ))
-        else:
-            outcomes = [_apply(service, repository, target, capabilities, writes, recovery, item, "title", "After", clock()), _apply(service, repository, target, capabilities, writes, recovery, item, "tags", ["canary"], clock())]
-            _stable_cover_observation(target, item)
-            outcomes.append(_apply(service, repository, target, capabilities, writes, recovery, item, "cover", artifact.artifact_id, clock()))
+        adapter_outcomes = [
+            _apply(service, repository, target, capabilities, writes, recovery,
+                   item, "title", "After", clock()),
+            _apply(service, repository, target, capabilities, writes, recovery,
+                   item, "tags", ["canary"], clock()),
+        ]
+        _stable_cover_observation(target, item)
+        adapter_outcomes.append(_apply(
+            service, repository, target, capabilities, writes, recovery,
+            item, "cover", artifact.artifact_id, clock()
+        ))
         installed = _installed_continuous_qualification(
             root, base, writer_key,
             (("alpha", library_id, alpha_dir),
@@ -995,9 +1059,11 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         repository.close()
         digest = _run("docker", "image", "inspect", image, "--format", "{{index .RepoDigests 0}}").stdout.strip()
         expected_digest = image.rsplit("@", 1)[1]
-        if not digest.endswith("@" + expected_digest) or any(row["state"] != "verified" for row in outcomes):
+        if (not digest.endswith("@" + expected_digest)
+                or any(row["state"] != "verified" for row in adapter_outcomes)):
             raise QualificationError("guarded_write_not_verified")
-        return {"version": version, "image_digest": expected_digest, "resolved_image_digest": digest.rsplit("@", 1)[1], "authentication": "api_key_accepted", "least_authority_refusal": True, "operator_cases": len(corpus_sources), "destinations": len(outcomes), "mixed_origins": {row["origin"] for row in outcomes} == {"human", "automatic_policy"} if corpus_sources else False, "metadata_tags": all(row["destination"] in {"title", "tags"} and row["state"] == "verified" for row in outcomes[:2]) if not corpus_sources else True, "cover": outcomes[-1]["destination"] == "cover" and outcomes[-1]["state"] == "verified", "installed_continuous": installed, "outcomes": outcomes}
+        installed_outcomes = installed["outcomes"]
+        return {"version": version, "image_digest": expected_digest, "resolved_image_digest": digest.rsplit("@", 1)[1], "authentication": "api_key_accepted", "least_authority_refusal": True, "operator_cases": len(corpus_sources), "destinations": installed["destinations"], "mixed_origins": set(installed["full_chain_origins"].values()) == {"human", "automatic_policy"}, "metadata_tags": True, "cover": installed["full_chain_origins"].get("cover") == "human", "installed_continuous": installed, "adapter_canary": adapter_outcomes, "outcomes": installed_outcomes}
     finally:
         if base is not None and root_token is not None:
             for key_id in key_ids:

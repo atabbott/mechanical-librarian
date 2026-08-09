@@ -88,14 +88,15 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         self.directory.cleanup()
 
     def plan(self, destination: str, pre_value: object, desired_value: object,
-             target_version: str | None = None) -> FieldEffectPlan:
+             target_version: str | None = None,
+             envelope_identity: str = "a" * 64) -> FieldEffectPlan:
         authority = EffectAuthority(
             "human_decision_" + "a" * 64, "review_case_" + "b" * 64,
             "c" * 64, "fake_service", "human", "candidate", None, None,
         )
         consent = EffectConsent.create(
             connection="primary", library="books", destination=destination,
-            envelope_identity="a" * 64,
+            envelope_identity=envelope_identity,
             granted_at=1,
         )
         return FieldEffectPlan.create(
@@ -409,11 +410,14 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                     endpoint="https://abs.example.invalid", library_id="library-1",
                     artifacts=self.artifacts,
                 )
-                plan = self.plan("cover", None, self.cover)
                 root = Path(self.directory.name) / ("cover-" + phase)
                 root.mkdir()
                 os.chmod(root, 0o700)
                 repository = open_repository(root / "effects.sqlite")
+                plan = self.plan(
+                    "cover", None, self.cover,
+                    envelope_identity=repository.field_effect_consent_envelope_identity("books"),
+                )
                 repository.record_field_effect(FieldEffectOperation(plan, updated_at=1))
                 current = type("Current", (), {"current": lambda self, value: True})()
                 ticks = iter(range(100, 200))
@@ -459,11 +463,14 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                     client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handle)),
                     endpoint="https://abs.example.invalid", library_id="library-1", artifacts=self.artifacts,
                 )
-                plan = self.plan("title", "Before", "After")
                 root = Path(self.directory.name) / ("case-" + str(outcome))
                 root.mkdir()
                 os.chmod(root, 0o700)
                 repository = open_repository(root / "effects.sqlite")
+                plan = self.plan(
+                    "title", "Before", "After",
+                    envelope_identity=repository.field_effect_consent_envelope_identity("books"),
+                )
                 repository.record_field_effect(FieldEffectOperation(plan, updated_at=1))
                 current = type("Current", (), {"current": lambda self, value: True})()
                 ticks = iter(range(10, 100))

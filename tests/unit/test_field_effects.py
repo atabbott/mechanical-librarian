@@ -132,7 +132,9 @@ class FieldEffectTests(unittest.TestCase):
         self.dependencies = FakeDependencyCurrentness()
         self.backup = FakeBackupReadiness()
         self.capabilities = FakeCapabilityObserver(CAPABILITY)
-        self.consent = FakeConsentCurrentness()
+        self.consent = FakeConsentCurrentness(
+            self.repository.field_effect_consent_envelope_identity
+        )
         self.preclaim = FakePreclaimHook()
         self.claim_hook = FakePreclaimHook()
         self.recovery_hook = FakePreclaimHook()
@@ -185,7 +187,7 @@ class FieldEffectTests(unittest.TestCase):
             ),
         )
 
-    def test_manual_hold_is_durable_and_return_to_automatic_clears_it(self) -> None:
+    def test_manual_hold_is_durable_and_old_automatic_never_reactivates(self) -> None:
         report = metadata_report("Old title", "1", "2")
         self.repository.publish(report, lambda: True)
         proposal_set = evaluate_report(report)
@@ -204,7 +206,6 @@ class FieldEffectTests(unittest.TestCase):
             selected_value=selected, idempotency_key="manual-hold-human-0001",
             occurred_at=10,
         )
-        self.repository.record_human_decision(human)
         automatic = AutomaticDecision.create(
             review_case_id=case.review_case_id, report_id=case.report_id,
             proposal_set_id=case.proposal_set_id,
@@ -245,6 +246,8 @@ class FieldEffectTests(unittest.TestCase):
              non_candidate.destination, non_candidate.idempotency_digest,
              non_candidate.occurred_at, non_candidate.to_json()),
         )
+        self.repository._connection.commit()
+        self.repository.record_human_decision(human)
 
         self.repository.field_effect_manual_override(case_id, proposal["destination"], 11)
         self.assertEqual(
@@ -261,7 +264,7 @@ class FieldEffectTests(unittest.TestCase):
         self.assertIsNone(
             self.repository.field_effect_manual_hold_context(case_id, proposal["destination"])
         )
-        self.assertEqual(len(self.repository.pending_field_effect_decision_documents(10)), 2)
+        self.assertEqual(len(self.repository.pending_field_effect_decision_documents(10)), 1)
 
     def plan(self, destination: str = "title", pre: object = "old",
              desired: object = "new", suffix: str = "a") -> FieldEffectOperation:
@@ -675,6 +678,21 @@ class FieldEffectTests(unittest.TestCase):
             self.service.apply(consent.plan.plan_id)
         self.assertEqual(self.service.status(consent.plan.plan_id).state, "superseded")
         self.assertEqual(self.target.read(consent.plan).value, consent.plan.pre_value)
+
+    def test_semantic_consent_drift_wins_the_atomic_claim_race(self) -> None:
+        operation = self.plan(suffix="e")
+        repository_type = type(self.repository)
+        with patch.object(
+            repository_type,
+            "field_effect_consent_envelope_identity",
+            return_value="f" * 64,
+        ):
+            with self.assertRaisesRegex(Exception, "claim_conflict"):
+                self.service.apply(operation.plan.plan_id)
+        self.assertEqual(self.service.status(operation.plan.plan_id).state, "planned")
+        self.assertEqual(
+            self.target.read(operation.plan).value, operation.plan.pre_value
+        )
 
     def test_newer_report_wins_claim_before_case_retirement(self) -> None:
         report = metadata_report("Old title", "1", "2")

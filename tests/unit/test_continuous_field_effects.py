@@ -108,6 +108,16 @@ class _PagedRepository:
                       if (value.occurred_at, value.decision_id) > after]
         return tuple(value.to_json() for value in values[:limit])
 
+    def pending_field_effect_decision_counts(self):
+        counts = {}
+        for value in self.decisions:
+            library = "beta" if value.occurred_at == 101 else "alpha"
+            counts[library] = counts.get(library, 0) + 1
+        return tuple({
+            "connection": "primary", "library": library,
+            "origin": "human", "count": count,
+        } for library, count in sorted(counts.items()))
+
     def current_field_effect_consent(self, connection, library, destination):
         if library == "alpha":
             raise FieldEffectError("consent")
@@ -118,6 +128,15 @@ class _PagedRepository:
 
     def grant_field_effect_consents(self, *arguments):
         raise AssertionError("consent must not be granted before capability proof")
+
+
+class _HoldRepository(_Repository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.hold = ("primary", "alpha")
+
+    def field_effect_manual_hold_context(self, review_case_id, destination):
+        return self.hold
 
 
 class _Authority:
@@ -153,6 +172,18 @@ class _DeniedCapability:
 
 
 class ContinuousGuardedApplicationTests(unittest.TestCase):
+    def test_failed_return_to_automatic_keeps_the_old_authority_held(self) -> None:
+        repository = _HoldRepository()
+        service = ContinuousGuardedApplication(
+            repository, {("primary", "alpha"): _Planner()},
+            {("primary", "alpha"): _AllowedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 1,
+            lambda *_: (_ for _ in ()).throw(RuntimeError("scan failed")),
+        )
+        with self.assertRaisesRegex(RuntimeError, "scan failed"):
+            service.return_to_automatic("review_case", "title")
+        self.assertEqual(repository.hold, ("primary", "alpha"))
+
     def test_enable_refuses_read_only_capability_before_granting_consent(self) -> None:
         decision = self._decisions(1)[0]
         repository = _PagedRepository([decision])

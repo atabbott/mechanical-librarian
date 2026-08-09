@@ -299,7 +299,8 @@ _REVIEW_LOGIN_FAILURES_SQL = (
 )
 _HUMAN_DECISIONS_SQL = (
     "CREATE TABLE human_decisions ("
-    "decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79), "
+    "ordinal INTEGER PRIMARY KEY NOT NULL, "
+    "decision_id TEXT NOT NULL UNIQUE CHECK(decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79), "
     "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
     "proposal_id TEXT NOT NULL CHECK(proposal_id GLOB 'review_proposal_[0-9a-f]*' AND length(proposal_id)=80), "
     "target_fingerprint TEXT NOT NULL CHECK(length(target_fingerprint)=64 AND target_fingerprint NOT GLOB '*[^0-9a-f]*'), "
@@ -310,8 +311,7 @@ _HUMAN_DECISIONS_SQL = (
     "idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64 AND idempotency_digest NOT GLOB '*[^0-9a-f]*'), "
     "request_digest TEXT NOT NULL CHECK(length(request_digest)=64 AND request_digest NOT GLOB '*[^0-9a-f]*'), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
-    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536), "
-    "UNIQUE(review_case_id,destination))"
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536))"
 )
 _HUMAN_DECISION_EVENTS_SQL = (
     "CREATE TABLE human_decision_events ("
@@ -1207,11 +1207,17 @@ class SQLiteMetadataReportRepository:
                 parameters = (after[0], after[0], after[1])
             rows = self._connection.execute(
                 "SELECT pending.document FROM ("
-                "SELECT decision_id,occurred_at,document FROM human_decisions "
-                "WHERE outcome='accept' UNION ALL "
+                "SELECT human.decision_id,human.occurred_at,human.document "
+                "FROM human_decisions human WHERE human.outcome='accept' AND "
+                "human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
+                "WHERE current.review_case_id=human.review_case_id AND "
+                "current.destination=human.destination) UNION ALL "
                 "SELECT automatic.decision_id,automatic.occurred_at,automatic.document "
                 "FROM automatic_decisions automatic WHERE "
                 "json_extract(automatic.document,'$.outcome')='candidate' AND NOT EXISTS ("
+                "SELECT 1 FROM human_decisions human WHERE "
+                "human.review_case_id=automatic.review_case_id AND "
+                "human.destination=automatic.destination) AND NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=automatic.review_case_id AND "
                 "hold.destination=automatic.destination AND hold.active=1)"
@@ -1224,6 +1230,42 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
+    def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]:
+        """Return exact current prepared counts grouped by library and origin."""
+        try:
+            rows = self._connection.execute(
+                "WITH pending AS ("
+                "SELECT human.decision_id,human.review_case_id,'human' origin "
+                "FROM human_decisions human WHERE human.outcome='accept' AND "
+                "human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
+                "WHERE current.review_case_id=human.review_case_id AND "
+                "current.destination=human.destination) UNION ALL "
+                "SELECT automatic.decision_id,automatic.review_case_id,'automatic' origin "
+                "FROM automatic_decisions automatic WHERE "
+                "json_extract(automatic.document,'$.outcome')='candidate' AND NOT EXISTS ("
+                "SELECT 1 FROM human_decisions human WHERE "
+                "human.review_case_id=automatic.review_case_id AND "
+                "human.destination=automatic.destination) AND NOT EXISTS ("
+                "SELECT 1 FROM field_effect_manual_holds hold WHERE "
+                "hold.review_case_id=automatic.review_case_id AND "
+                "hold.destination=automatic.destination AND hold.active=1)) "
+                "SELECT lineage.connection_name,lineage.library_name,pending.origin,count(*) "
+                "FROM pending JOIN current_review_case_lineages lineage "
+                "ON lineage.review_case_id=pending.review_case_id "
+                "WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
+                "WHERE effect.decision_id=pending.decision_id) "
+                "GROUP BY lineage.connection_name,lineage.library_name,pending.origin "
+                "ORDER BY lineage.connection_name,lineage.library_name,pending.origin"
+            ).fetchall()
+            return tuple({
+                "connection": connection,
+                "library": library,
+                "origin": origin,
+                "count": count,
+            } for connection, library, origin, count in rows)
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
     def field_effect_manual_override(
         self, review_case_id: str, destination: str, changed_at: int,
     ) -> int:
@@ -1231,36 +1273,48 @@ class SQLiteMetadataReportRepository:
         if (type(review_case_id) is not str or type(destination) is not str
                 or type(changed_at) is not int or changed_at < 0):
             raise FieldEffectError("authority_binding")
-        rows = self._connection.execute(
-            "SELECT automatic.decision_id FROM automatic_decisions automatic "
-            "JOIN human_decisions human ON human.review_case_id=automatic.review_case_id "
-            "AND human.destination=automatic.destination "
-            "WHERE automatic.review_case_id=? AND automatic.destination=?",
-            (review_case_id, destination),
-        ).fetchall()
-        if rows:
-            document = canonical_effect_json({
-                "active": True, "destination": destination,
-                "review_case_id": review_case_id,
-                "schema_version": "field-effect-manual-hold-v1",
-                "updated_at": changed_at,
-            })
-            self._connection.execute(
-                "INSERT INTO field_effect_manual_holds(review_case_id,destination,active,updated_at,document) "
-                "VALUES(?,?,1,?,?) ON CONFLICT(review_case_id,destination) DO UPDATE SET "
-                "active=1,updated_at=excluded.updated_at,document=excluded.document",
-                (review_case_id, destination, changed_at, document),
-            )
-        superseded = 0
-        for (decision_id,) in rows:
-            if self._connection.execute(
-                "SELECT 1 FROM field_effect_authorities WHERE decision_id=?",
-                (decision_id,),
-            ).fetchone() == (1,):
-                superseded += self.revoke_field_effect_authority(
-                    decision_id, changed_at
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            rows = self._connection.execute(
+                "SELECT automatic.decision_id FROM automatic_decisions automatic "
+                "JOIN human_decisions human ON human.review_case_id=automatic.review_case_id "
+                "AND human.destination=automatic.destination "
+                "WHERE automatic.review_case_id=? AND automatic.destination=?",
+                (review_case_id, destination),
+            ).fetchall()
+            if rows:
+                self._set_field_effect_manual_hold(
+                    review_case_id, destination, changed_at
                 )
-        return superseded
+            superseded = sum(
+                self._revoke_field_effect_authority_in_transaction(
+                    decision_id, changed_at, required=False
+                )
+                for (decision_id,) in rows
+            )
+            self._connection.commit()
+            return superseded
+        except (sqlite3.Error, FieldEffectError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError):
+                raise
+            raise FieldEffectError("persistence") from error
+
+    def _set_field_effect_manual_hold(
+        self, review_case_id: str, destination: str, changed_at: int,
+    ) -> None:
+        document = canonical_effect_json({
+            "active": True, "destination": destination,
+            "review_case_id": review_case_id,
+            "schema_version": "field-effect-manual-hold-v1",
+            "updated_at": changed_at,
+        })
+        self._connection.execute(
+            "INSERT INTO field_effect_manual_holds(review_case_id,destination,active,updated_at,document) "
+            "VALUES(?,?,1,?,?) ON CONFLICT(review_case_id,destination) DO UPDATE SET "
+            "active=1,updated_at=excluded.updated_at,document=excluded.document",
+            (review_case_id, destination, changed_at, document),
+        )
 
     def field_effect_manual_hold_context(
         self, review_case_id: str, destination: str,
@@ -1371,6 +1425,11 @@ class SQLiteMetadataReportRepository:
                     "SELECT state,count(*) FROM field_effects GROUP BY state"
                 ).fetchall()
             }
+            cleanup = self._connection.execute(
+                "SELECT count(*),"
+                "coalesce(sum(CASE WHEN attempt>=3 THEN 1 ELSE 0 END),0) "
+                "FROM field_effect_cleanups WHERE state='pending'"
+            ).fetchone()
             events = [{
                 "destination": destination,
                 "failure": failure,
@@ -1406,6 +1465,7 @@ class SQLiteMetadataReportRepository:
                     for row in consent_rows
                 ],
                 "counts": counts,
+                "cleanup": {"pending": cleanup[0], "exhausted": cleanup[1]},
                 "events": events,
                 "paused": self.field_effect_paused(),
                 "suspensions": suspensions,
@@ -1631,6 +1691,13 @@ class SQLiteMetadataReportRepository:
                 (persisted.plan.consent.consent_id,),
             ).fetchone() != (1,):
                 raise FieldEffectError("consent")
+            if (
+                persisted.plan.consent.envelope_identity
+                != self.field_effect_consent_envelope_identity(
+                    persisted.plan.library
+                )
+            ):
+                raise FieldEffectError("consent")
             authority = persisted.plan.authority
             if authority.source == "persisted_review_case":
                 try:
@@ -1720,12 +1787,29 @@ class SQLiteMetadataReportRepository:
     def revoke_field_effect_authority(self, decision_id: str, changed_at: int) -> int:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
-            row = self._connection.execute(
-                "SELECT document FROM field_effect_authorities WHERE decision_id=?",
-                (decision_id,),
-            ).fetchone()
-            if row is None:
+            count = self._revoke_field_effect_authority_in_transaction(
+                decision_id, changed_at, required=True
+            )
+            self._connection.commit()
+            return count
+        except (sqlite3.Error, FieldEffectError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError):
+                raise
+            raise FieldEffectError("persistence") from error
+
+    def _revoke_field_effect_authority_in_transaction(
+        self, decision_id: str, changed_at: int, *, required: bool,
+    ) -> int:
+        row = self._connection.execute(
+            "SELECT document,current FROM field_effect_authorities WHERE decision_id=?",
+            (decision_id,),
+        ).fetchone()
+        if row is None:
+            if required:
                 raise FieldEffectError("authority")
+            return 0
+        if row[1] == 1:
             raw = json.loads(row[0])
             raw["current"] = False
             raw["updated_at"] = changed_at
@@ -1733,24 +1817,18 @@ class SQLiteMetadataReportRepository:
                 "UPDATE field_effect_authorities SET current=0,updated_at=?,document=? WHERE decision_id=?",
                 (changed_at, canonical_effect_json(raw), decision_id),
             )
-            rows = self._connection.execute(
-                "SELECT document,state FROM field_effects WHERE decision_id=? AND state IN ('planned','retryable')",
-                (decision_id,),
-            ).fetchall()
-            for document, state in rows:
-                operation = FieldEffectOperation.from_json(document).transition(
-                    "superseded", at=changed_at, failure="authority_superseded"
-                )
-                self._update_field_effect(operation, state)
-                self._record_field_effect_event(operation, "superseded", changed_at)
-                self._schedule_field_effect_cleanup(operation, changed_at)
-            self._connection.commit()
-            return len(rows)
-        except (sqlite3.Error, FieldEffectError) as error:
-            self._connection.rollback()
-            if isinstance(error, FieldEffectError):
-                raise
-            raise FieldEffectError("persistence") from error
+        rows = self._connection.execute(
+            "SELECT document,state FROM field_effects WHERE decision_id=? AND state IN ('planned','retryable')",
+            (decision_id,),
+        ).fetchall()
+        for document, state in rows:
+            operation = FieldEffectOperation.from_json(document).transition(
+                "superseded", at=changed_at, failure="authority_superseded"
+            )
+            self._update_field_effect(operation, state)
+            self._record_field_effect_event(operation, "superseded", changed_at)
+            self._schedule_field_effect_cleanup(operation, changed_at)
+        return len(rows)
 
     def revoke_field_effect_consent(self, consent_id: str, changed_at: int) -> int:
         try:
@@ -1910,7 +1988,7 @@ class SQLiteMetadataReportRepository:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise FieldEffectError("invalid_limit")
         return tuple(row[0] for row in self._connection.execute(
-            "SELECT plan_id FROM field_effect_cleanups WHERE state='pending' "
+            "SELECT plan_id FROM field_effect_cleanups WHERE state='pending' AND attempt<3 "
             "ORDER BY updated_at,plan_id LIMIT ?", (limit,),
         ).fetchall())
 
@@ -5242,7 +5320,7 @@ class SQLiteMetadataReportRepository:
                 "actor,outcome,selected_value_document,idempotency_digest,"
                 "request_digest,occurred_at,document "
                 "FROM human_decisions WHERE review_case_id=? "
-                "ORDER BY occurred_at,decision_id",
+                "ORDER BY ordinal",
                 (review_case_id,),
             ).fetchall()
             documents = []
@@ -5350,19 +5428,26 @@ class SQLiteMetadataReportRepository:
                 raise HumanDecisionError("stale")
             case = ReviewCase.create_from_data(case_envelope["case"])
             decision.validate_for(case)
-            existing = self._connection.execute(
-                "SELECT 1 FROM human_decisions "
-                "WHERE review_case_id=? AND destination=?",
+            previous = self._connection.execute(
+                "SELECT decision_id,'human' FROM human_decisions "
+                "WHERE review_case_id=? AND destination=? ORDER BY ordinal DESC LIMIT 1",
                 (decision.review_case_id, decision.destination),
             ).fetchone()
-            if existing is not None:
-                raise HumanDecisionError("already_decided")
-            automatic = self._connection.execute(
-                "SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
-                (decision.review_case_id, decision.destination),
-            ).fetchone()
-            if automatic is not None:
-                raise HumanDecisionError("already_decided")
+            if previous is None:
+                previous = self._connection.execute(
+                    "SELECT decision_id,'automatic' FROM automatic_decisions "
+                    "WHERE review_case_id=? AND destination=?",
+                    (decision.review_case_id, decision.destination),
+                ).fetchone()
+            if previous is not None:
+                effect = self._connection.execute(
+                    "SELECT state FROM field_effects WHERE decision_id=?",
+                    (previous[0],),
+                ).fetchone()
+                if effect is not None and effect[0] not in {
+                    "planned", "retryable", "superseded", "abandoned"
+                }:
+                    raise HumanDecisionError("already_decided")
             selected = _canonical_json(decision.selected_value)
             self._connection.execute(
                 "INSERT INTO human_decisions("
@@ -5415,6 +5500,16 @@ class SQLiteMetadataReportRepository:
                     event_document,
                 ),
             )
+            if previous is not None:
+                self._revoke_field_effect_authority_in_transaction(
+                    previous[0], decision.occurred_at, required=False
+                )
+                if previous[1] == "automatic":
+                    self._set_field_effect_manual_hold(
+                        decision.review_case_id,
+                        decision.destination,
+                        decision.occurred_at,
+                    )
             if self._binding is not None:
                 self._binding.require_current()
             self._connection.commit()
@@ -7037,7 +7132,6 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_human_decision_events_2", None),
         ("index", "sqlite_autoindex_human_decisions_1", None),
         ("index", "sqlite_autoindex_human_decisions_2", None),
-        ("index", "sqlite_autoindex_human_decisions_3", None),
         ("index", "sqlite_autoindex_automatic_decisions_1", None),
         ("index", "sqlite_autoindex_automatic_decisions_2", None),
         ("index", "sqlite_autoindex_automatic_decisions_3", None),

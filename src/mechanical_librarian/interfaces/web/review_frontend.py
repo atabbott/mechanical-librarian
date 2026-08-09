@@ -414,6 +414,12 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .consent-summary small, .activity-example small { margin-top: 3px; color: var(--ink-soft); font-size: .7rem; }
 .activity-example { display: flex; align-items: center; gap: 11px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-strong); }
 .assurance-list { display: flex; flex-wrap: wrap; gap: 7px 22px; margin: 0; padding: 0; color: var(--ink-soft); font-size: .76rem; list-style-position: inside; }
+.activity-libraries { display: grid; gap: 7px; margin: 0; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-strong); }
+.activity-libraries legend { padding: 0 6px; color: var(--ink-soft); font-size: .66rem; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
+.activity-libraries label { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 8px; border-radius: var(--radius); font-size: .76rem; }
+.activity-libraries label:has(input:checked) { background: var(--accent-soft); }
+.activity-libraries input { width: 20px; min-height: 20px; flex: 0 0 20px; accent-color: var(--accent); }
+.activity-libraries label:has(input:disabled) { color: var(--ink-soft); }
 .activity-actions { justify-content: flex-start; }
 .application-activity { display: grid; grid-template-columns: minmax(250px, .34fr) minmax(0, .66fr); gap: 16px; align-items: start; }
 .application-summary { display: grid; gap: 10px; }
@@ -967,8 +973,8 @@ if (root) {
         row.append(element("h3", field.destination), element("p", `${friendly(field.deterministic_disposition)} · Current: ${format(field.current.value)} · Outcome value: ${format(outcomeValue)}`));
         if (field.human_decision) row.append(element("p", `Human decision: ${friendly(field.human_decision.outcome)} by ${field.human_decision.actor}.`, "decision-recorded"));
         if (field.automatic_decision) row.append(element("p", `Handled automatically: ${friendly(field.automatic_decision.outcome)} · policy origin.`, "decision-recorded"));
-        if (field.automatic_decision && !field.human_decision) {
-          const edit = element("button", "Choose human override", "inline-action"); edit.type = "button";
+        if (field.automatic_decision || field.human_decision) {
+          const edit = element("button", field.human_decision ? "Change human decision" : "Choose human override", "inline-action"); edit.type = "button";
           const choices = element("fieldset", null, "choices"); choices.hidden = true; choices.append(element("legend", `Override ${field.destination}`));
           field.proposed_values.forEach((value, index) => choices.append(choiceButton(field, field.proposed_values.length === 1 ? "Accept proposed value" : `Accept proposed value ${index + 1}`, "accept", value)));
           choices.append(choiceButton(field, "Keep current value", "keep_current", null), choiceButton(field, "Reject proposed change", "reject", null));
@@ -1064,18 +1070,26 @@ if (guardedActivityRoot) {
       example.append(mark, exampleText);
       const assurances = element("ul", null, "assurance-list");
       for (const copy of ["Automatic work never waits for unrelated manual review.", "Pausing stops new claims; claimed work may finish safely.", "Queued decisions remain reusable and editable."]) assurances.append(element("li", copy));
+      const libraries = element("fieldset", null, "activity-libraries"); libraries.append(element("legend", "Libraries to enable"));
+      const capabilityByLibrary = new Map(data.capabilities.map(item => [item.library, item.state]));
+      for (const library of data.configured_libraries) {
+        const label = element("label"); const choice = element("input"); choice.type = "checkbox"; choice.value = library.library;
+        const state = capabilityByLibrary.get(library.library) || "not_ready"; choice.disabled = state !== "allowed" || !library.prepared.total; choice.checked = !choice.disabled;
+        label.append(choice, document.createTextNode(` ${library.library} · ${library.prepared.total} prepared (${library.prepared.automatic} automatic, ${library.prepared.human} human)${choice.disabled ? ` · ${friendly(state)}` : ""}`)); libraries.append(label);
+      }
       const actions = element("div", null, "policy-actions activity-actions");
       const enable = element("button", "Enable guarded writes", "primary-button"); enable.type = "button";
       const status = element("p", "", "decision-status"); status.setAttribute("role", "status");
-      const blockedCapability = data.capabilities.find(item => item.state !== "allowed");
-      enable.disabled = !data.backup_ready || !data.prepared.total || Boolean(blockedCapability);
-      if (blockedCapability) status.textContent = blockedCapability.state === "not_ready" ? "Prepare at least one accepted decision in each selected library before enabling writes." : `Audiobookshelf write access is unavailable (${friendly(blockedCapability.state)}). Review remains read-only.`;
+      const selectedLibraries = () => [...libraries.querySelectorAll("input:checked")].map(item => item.value);
+      const refreshEnable = () => { enable.disabled = !data.backup_ready || !selectedLibraries().length; };
+      libraries.addEventListener("change", refreshEnable); refreshEnable();
+      if (!selectedLibraries().length) status.textContent = "Prepare at least one accepted decision in a write-capable library before enabling writes.";
       enable.addEventListener("click", async () => {
         enable.disabled = true; status.textContent = "Enabling guarded writes…";
-        try { renderGuardedActivity(await activityCall("/api/v1/activity/consent", "POST", {libraries: data.configured_libraries.map(item => item.library)})); }
+        try { renderGuardedActivity(await activityCall("/api/v1/activity/consent", "POST", {libraries: selectedLibraries()})); }
         catch (error) { enable.disabled = false; status.setAttribute("role", "alert"); status.textContent = `Write permission was not enabled (${friendly(error.code || "unavailable")}). Review remains read-only.`; }
       });
-      actions.append(enable, status); card.append(introduction, summary, example, assurances, actions);
+      actions.append(enable, status); card.append(introduction, summary, example, assurances, libraries, actions);
       guardedActivityRoot.replaceChildren(top, card);
     } else {
       const layout = element("div", null, "application-activity");
@@ -1093,9 +1107,9 @@ if (guardedActivityRoot) {
       revoke.addEventListener("click", async () => { revoke.disabled=true; try { for (const library of data.enabled_libraries) await activityCall(`/api/v1/activity/${encodeURIComponent(library.connection)}/${encodeURIComponent(library.library)}/revoke`, "POST"); renderGuardedActivity(await activityCall("/api/v1/activity")); } catch { revoke.disabled=false; controlStatus.setAttribute("role", "alert"); controlStatus.textContent="Permission was not removed. Try again."; } });
       side.append(counts, controls, revoke, controlStatus);
       const ledger = element("section", null, "policy-paper activity-ledger");
-      if (data.suspensions.length || data.last_failure || count("reconciling") || count("retryable")) {
+      if (data.suspensions.length || data.last_failure || data.cleanup.pending || count("reconciling") || count("retryable")) {
         const recovery = element("section", null, "recovery-summary"); recovery.append(element("span", "", "activity-pulse"));
-        const copy=element("div"); copy.append(element("p", "Grouped recovery", "eyebrow"), element("h2", "A shared cause is being contained"), element("p", "New affected work is held safely while current library state is checked. Accepted decisions are retained."), element("small", `${data.suspensions.length} capability suspension(s) · ${count("reconciling") + count("retryable")} recoverable work item(s)`)); recovery.append(copy); ledger.append(recovery);
+        const copy=element("div"); copy.append(element("p", "Grouped recovery", "eyebrow"), element("h2", data.cleanup.exhausted ? "Owner action is required" : "A shared cause is being contained"), element("p", data.cleanup.exhausted ? "Private cover recovery could not complete after bounded retries. Accepted decisions and captured pre-state remain retained." : "New affected work is held safely while current library state is checked. Accepted decisions are retained."), element("small", `${data.suspensions.length} capability suspension(s) · ${count("reconciling") + count("retryable")} recoverable work item(s) · ${data.cleanup.pending} private cleanup(s)`)); recovery.append(copy); ledger.append(recovery);
       }
       const ledgerHead=element("header", null, "activity-ledger-heading"); const ledgerCopy=element("div"); ledgerCopy.append(element("p", "Recent outcomes", "eyebrow"), element("h2", "What Mechanical Librarian is doing"), element("p", "Execution detail is available when wanted, without exposing queue controls.")); ledgerHead.append(ledgerCopy); ledger.append(ledgerHead);
       for (const event of data.events) { const row=element("div", null, `activity-event${["claimed","applying","reconciling"].includes(event.state) ? " current" : ""}`); const icon=["claimed","applying","reconciling"].includes(event.state) ? element("span", "", "activity-pulse") : element("span", initials(event.work_id), "work-mark"); icon.setAttribute("aria-hidden", "true"); const copy=element("div"); copy.append(element("strong", `${event.work_id} · ${friendly(event.state)}`), element("p", eventCopy(event)), element("small", `${event.library} · ${friendly(event.destination)} · ${event.origin === "automatic" ? "qualified automatic" : "human decision"}`)); row.append(icon,copy); ledger.append(row); }

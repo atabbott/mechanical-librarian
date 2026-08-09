@@ -807,7 +807,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             repository._connection.rollback()
             repository.close()
 
-    def test_human_and_automatic_winners_are_mutually_exclusive_without_suspension(self) -> None:
+    def test_human_authority_supersedes_automatic_without_global_suspension(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             repository = open_repository(Path(temporary) / "reports.sqlite")
             case_id = _case(repository)
@@ -833,11 +833,17 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             repository._record_automatic_outcomes(
                 _synthetic_automatic_tuple(repository, case_id, "title_layout"), 2
             )
-            with self.assertRaisesRegex(HumanDecisionError, "already_decided"):
-                repository.record_human_decision(_human_title_decision(repository, case_id, 3))
-            self.assertEqual((0, 3), tuple(repository._connection.execute(
+            repository.record_human_decision(_human_title_decision(repository, case_id, 3))
+            self.assertEqual((1, 3), tuple(repository._connection.execute(
                 "SELECT (SELECT COUNT(*) FROM human_decisions),(SELECT COUNT(*) FROM automatic_decisions)"
             ).fetchone()))
+            self.assertEqual(
+                ("primary", "ebooks"),
+                repository.field_effect_manual_hold_context(case_id, "title"),
+            )
+            self.assertEqual(
+                AutomaticSafetyState(False, None, ()), repository.automatic_safety_state()
+            )
             repository.close()
 
     def test_automatic_tuple_replay_is_exact_and_date_and_title_bundles_are_atomic(self) -> None:

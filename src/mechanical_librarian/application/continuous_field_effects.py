@@ -141,8 +141,13 @@ class ContinuousGuardedApplication:
             raise GuardedApplicationError("consent")
         if not self._repository.field_effect_backup_ready():
             raise GuardedApplicationError("backup")
-        documents = self._repository.pending_field_effect_decision_documents(100)
-        if not documents:
+        prepared = self._repository.pending_field_effect_decision_counts()
+        prepared_libraries = {
+            str(item["library"])
+            for item in prepared
+            if int(item["count"]) > 0
+        }
+        if any(library not in prepared_libraries for library in libraries):
             raise GuardedApplicationError("not_ready")
         readiness = self._capability_readiness(libraries, force=True)
         if any(item["state"] != "allowed" for item in readiness):
@@ -180,8 +185,8 @@ class ContinuousGuardedApplication:
     def return_to_automatic(
         self, review_case_id: str, destination: str,
     ) -> None:
-        context = self._repository.clear_field_effect_manual_hold(
-            review_case_id, destination, self._clock()
+        context = self._repository.field_effect_manual_hold_context(
+            review_case_id, destination
         )
         if context is None:
             raise GuardedApplicationError("manual_hold")
@@ -276,14 +281,23 @@ class ContinuousGuardedApplication:
     def activity(self) -> dict[str, object]:
         data = self._repository.field_effect_activity_data(50)
         documents = self._repository.pending_field_effect_decision_documents(100)
-        automatic = human = 0
+        prepared_rows = self._repository.pending_field_effect_decision_counts()
+        prepared_by_library: dict[str, dict[str, int]] = {
+            library: {"automatic": 0, "human": 0, "total": 0}
+            for _, library in self._libraries
+        }
+        for item in prepared_rows:
+            library = str(item["library"])
+            origin = str(item["origin"])
+            count = int(item["count"])
+            values = prepared_by_library.setdefault(
+                library, {"automatic": 0, "human": 0, "total": 0}
+            )
+            values[origin] += count
+            values["total"] += count
         example: dict[str, object] | None = None
         for document in documents:
             decision = self._decision(document)
-            if type(decision) is HumanDecision:
-                human += 1
-            else:
-                automatic += 1
             if example is None:
                 try:
                     snapshot = self._authority.resolve(decision)
@@ -306,22 +320,24 @@ class ContinuousGuardedApplication:
         capabilities = self._capability_readiness(
             tuple(library for _, library in self._libraries), force=False
         )
+        prepared = {
+            "automatic": sum(value["automatic"] for value in prepared_by_library.values()),
+            "human": sum(value["human"] for value in prepared_by_library.values()),
+            "total": sum(value["total"] for value in prepared_by_library.values()),
+        }
         return {
             **data,
             "backup_ready": self._repository.field_effect_backup_ready(),
             "configured_libraries": [
-                {"connection": connection, "library": library}
+                {"connection": connection, "library": library,
+                 "prepared": prepared_by_library[library]}
                 for connection, library in self._libraries
             ],
             "capabilities": capabilities,
             "enabled_libraries": enabled,
             "example": example,
             "last_failure": self._last_failure,
-            "prepared": {
-                "automatic": automatic,
-                "human": human,
-                "total": automatic + human,
-            },
+            "prepared": prepared,
             "schema_version": "continuous-field-activity-v1",
         }
 
@@ -381,6 +397,7 @@ class ContinuousGuardedApplication:
                 self._last_failure = getattr(error, "code", "unavailable")
 
     def _run_until_idle(self) -> None:
+        next(iter(self._applications.values())).run_pending_cleanups(limit=100)
         while not self._stop.is_set() and self.run_cycle():
             pass
 
