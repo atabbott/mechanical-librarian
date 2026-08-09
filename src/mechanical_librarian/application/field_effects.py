@@ -426,5 +426,18 @@ class GuardedFieldApplication:
 
     def recover_pending(self, *, limit: int = 100) -> tuple[int, int]:
         """Bounded restart entrypoint for the two closed recovery obligations."""
-        return (self.run_pending_actions(limit=limit),
-                self.run_pending_cleanups(limit=limit))
+        action_count = cleanup_count = 0
+        failures: list[Exception] = []
+        try:
+            action_count = self.run_pending_actions(limit=limit)
+        except Exception as error:
+            failures.append(error)
+        try:
+            cleanup_count = self.run_pending_cleanups(limit=limit)
+        except Exception as error:
+            failures.append(error)
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise ExceptionGroup("pending recovery failures", failures)
+        return action_count, cleanup_count

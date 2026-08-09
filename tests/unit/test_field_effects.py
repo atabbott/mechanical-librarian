@@ -505,6 +505,29 @@ class FieldEffectTests(unittest.TestCase):
         self.assertFalse(self.recovery.exists(cover.plan.plan_id))
         self.assertFalse(self.repository.field_effect_cleanup_pending(cover.plan.plan_id))
 
+    def test_failing_restart_action_cannot_starve_pending_cover_cleanup(self) -> None:
+        third = self.plan(destination="publisher", suffix="3")
+        self.target.ambiguous_next = "third"
+        self.assertEqual(self.service.apply(third.plan.plan_id).state, "stale")
+
+        cover = self.plan("cover", None, "cover_" + "7" * 64, "7")
+        self.recovery.fail_remove_next = True
+        self.assertEqual(self.service.apply(cover.plan.plan_id).state, "verified")
+        self.assertTrue(self.repository.field_effect_cleanup_pending(cover.plan.plan_id))
+
+        self.reevaluation.fail_next = True
+        with self.assertRaisesRegex(RuntimeError, "reevaluation failure"):
+            self.service.recover_pending()
+        self.assertFalse(self.recovery.exists(cover.plan.plan_id))
+        self.assertFalse(self.repository.field_effect_cleanup_pending(cover.plan.plan_id))
+        self.assertEqual(self.repository._connection.execute(
+            "SELECT state FROM field_effect_actions WHERE plan_id=? "
+            "AND kind='forward_reevaluation'", (third.plan.plan_id,),
+        ).fetchone(), ("claimed",))
+
+        self.assertEqual(self.service.recover_pending(), (1, 0))
+        self.assertEqual(self.reevaluation.emitted, [third.plan.plan_id])
+
     def test_supersede_runs_cover_cleanup_and_retains_a_failed_obligation(self) -> None:
         cover = self.plan("cover", None, "cover_" + "5" * 64, "8")
         self.recovery.capture(cover.plan)
