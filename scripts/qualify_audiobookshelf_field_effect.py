@@ -235,7 +235,9 @@ def _epub(path: Path) -> None:
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
         archive.writestr("META-INF/container.xml", "<?xml version='1.0'?><container version='1.0' xmlns='urn:oasis:names:tc:opendocument:xmlns:container'><rootfiles><rootfile full-path='OEBPS/content.opf' media-type='application/oebps-package+xml'/></rootfiles></container>")
-        archive.writestr("OEBPS/content.opf", "<?xml version='1.0'?><package xmlns='http://www.idpf.org/2007/opf' version='3.0' unique-identifier='book'><metadata xmlns:dc='http://purl.org/dc/elements/1.1/'><dc:identifier id='book'>synthetic-f14</dc:identifier><dc:title>Before</dc:title><dc:creator>Synthetic Author</dc:creator><dc:language>en</dc:language></metadata><manifest/><spine/></package>")
+        archive.writestr("OEBPS/content.opf", "<?xml version='1.0'?><package xmlns='http://www.idpf.org/2007/opf' version='3.0' unique-identifier='book'><metadata xmlns:dc='http://purl.org/dc/elements/1.1/'><dc:identifier id='book'>synthetic-f14</dc:identifier><dc:title>Before</dc:title><dc:creator>Synthetic Author</dc:creator><dc:language>en</dc:language><meta property='dcterms:modified'>2026-01-01T00:00:00Z</meta></metadata><manifest><item id='nav' href='nav.xhtml' media-type='application/xhtml+xml' properties='nav'/><item id='chapter' href='chapter.xhtml' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='chapter'/></spine></package>")
+        archive.writestr("OEBPS/nav.xhtml", "<?xml version='1.0'?><html xmlns='http://www.w3.org/1999/xhtml'><head><title>Contents</title></head><body><nav epub:type='toc' xmlns:epub='http://www.idpf.org/2007/ops'><ol><li><a href='chapter.xhtml'>Chapter</a></li></ol></nav></body></html>")
+        archive.writestr("OEBPS/chapter.xhtml", "<?xml version='1.0'?><html xmlns='http://www.w3.org/1999/xhtml'><head><title>Chapter</title></head><body><p>Synthetic qualification content.</p></body></html>")
 
 
 def _plan(repository, *, item: str, destination: str, value: object,
@@ -881,24 +883,10 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
 
         original_alpha_title = current_title(item)
         original_beta_title = current_title(second_item)
-        if not corpus_sources:
-            alpha_seed = _mapping(_request(
-                "PATCH", base, "/api/items/" + item + "/media",
-                token=writer_key,
-                payload={"metadata": {"authors": [{"name": "Synthetic Author"}]}},
-            ), "synthetic_author_seed_invalid")
-            if alpha_seed.get("updated") is not True:
-                raise QualificationError("synthetic_author_seed_failed")
         seeded = _mapping(_request(
             "PATCH", base, "/api/items/" + second_item + "/media",
             token=writer_key,
-            payload={"metadata": {
-                "title": "Beta qualification seed",
-                **(
-                    {"authors": [{"name": "Synthetic Author"}]}
-                    if not corpus_sources else {}
-                ),
-            }},
+            payload={"metadata": {"title": "Beta qualification seed"}},
         ), "second_library_seed_invalid")
         if seeded.get("updated") is not True:
             raise QualificationError("second_library_seed_failed")
