@@ -26,6 +26,18 @@ class GuardedApplicationError(RuntimeError):
         self.code = code
 
 
+class TargetServiceUnavailable(RuntimeError):
+    def __init__(self, scope: Literal["connection", "destination"],
+                 reason: Literal["connection_unavailable", "insufficient_permission",
+                                 "field_unavailable",
+                                 "unexpected_effect_behavior"] | None = None) -> None:
+        resolved = reason or ("connection_unavailable" if scope == "connection"
+                              else "field_unavailable")
+        super().__init__(resolved)
+        self.scope = scope
+        self.reason = resolved
+
+
 @dataclass(frozen=True, slots=True)
 class TargetObservation:
     value: object
@@ -35,6 +47,22 @@ class TargetObservation:
 @dataclass(frozen=True, slots=True)
 class TargetEffectResult:
     outcome: Literal["accepted", "ambiguous", "conflict"]
+    suspension_scope: Literal["connection", "destination"] | None = None
+    suspension_reason: Literal[
+        "connection_unavailable", "insufficient_permission", "unexpected_effect_behavior"
+    ] | None = None
+
+    def __post_init__(self) -> None:
+        if (self.suspension_scope is None) != (self.suspension_reason is None):
+            raise ValueError("target suspension disposition is incomplete")
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityObservation:
+    category: Literal[
+        "allowed", "insufficient_permission", "connection_unavailable", "field_unavailable"
+    ]
+    digest: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +104,12 @@ class FieldEffectRepository(Protocol):
     def complete_forward_reevaluation(self, action_id: str, changed_at: int) -> None: ...
     def pending_field_effect_cleanups(self, limit: int) -> tuple[str, ...]: ...
     def pending_field_effect_plan_ids(self, limit: int) -> tuple[str, ...]: ...
+    def field_effect_event_documents(self, plan_id: str) -> tuple[str, ...]: ...
+    def suspend_field_effect_capability(self, *, scope: str, connection: str,
+                                        destination: str, reason: str,
+                                        changed_at: int) -> None: ...
+    def field_effect_capability_suspension(self, connection: str,
+                                           destination: str) -> str | None: ...
 
 
 class TargetService(Protocol):
@@ -88,7 +122,7 @@ class BackupReadiness(Protocol):
 
 
 class CapabilityObserver(Protocol):
-    def observe(self, plan: FieldEffectPlan) -> str: ...
+    def observe(self, plan: FieldEffectPlan) -> CapabilityObservation: ...
 
 
 class AuthorityCurrentness(Protocol):
@@ -109,6 +143,10 @@ class DependencyCurrentness(Protocol):
 class CoverRecovery(Protocol):
     def capture(self, plan: FieldEffectPlan) -> None: ...
     def remove(self, plan_id: str) -> None: ...
+
+
+class CoverArtifactReader(Protocol):
+    def read_original_digest(self, digest: str) -> bytes: ...
 
 
 class ForwardReevaluation(Protocol):
@@ -255,7 +293,7 @@ class GuardedFieldApplication:
             except Exception:
                 return self._stale(operation, "cover_recovery")
         # Refresh every guard at the last feasible point before the repository's
-        # atomic pause/state claim. The target independently enforces its own CAS.
+        # atomic pause/state claim. Target behavior is adapter-specific.
         self._preclaim_hook(plan)
         guarded = self._preclaim(operation)
         if guarded is not None:
@@ -290,9 +328,19 @@ class GuardedFieldApplication:
         try:
             with self._timing.measure("apply", "target"):
                 result = self._target.apply(plan)
-        except Exception:
+        except Exception as error:
+            self._persist_target_suspension(plan, error)
             return self._repository.transition_field_effect(
                 plan.plan_id, "applying", "retryable", self._clock(), "target_failure"
+            )
+        if result.suspension_scope is not None:
+            assert result.suspension_reason is not None
+            self._repository.suspend_field_effect_capability(
+                scope=result.suspension_scope,
+                connection=plan.connection,
+                destination=plan.destination,
+                reason=result.suspension_reason,
+                changed_at=self._clock(),
             )
         if result.outcome == "ambiguous":
             operation = self._repository.schedule_field_effect_reconciliation(
@@ -316,7 +364,8 @@ class GuardedFieldApplication:
         try:
             with self._timing.measure("reconciliation", "recovery"):
                 observed = self._target.read(operation.plan)
-        except Exception:
+        except Exception as error:
+            self._persist_target_suspension(operation.plan, error)
             return self._repository.complete_field_effect_reconciliation(
                 plan_id, "retryable", "target_failure", self._clock()
             )
@@ -375,7 +424,8 @@ class GuardedFieldApplication:
         try:
             with self._timing.measure("verification", "target"):
                 observed = self._target.read(operation.plan)
-        except Exception:
+        except Exception as error:
+            self._persist_target_suspension(operation.plan, error)
             # The write may already have succeeded. Persist a targeted read;
             # never infer failure and blindly write the desired value again.
             return self._repository.schedule_field_effect_reconciliation(
@@ -411,7 +461,22 @@ class GuardedFieldApplication:
         plan = operation.plan
         if not self._backup.ready(plan):
             return self._stale(operation, "backup")
-        if self._capabilities.observe(plan) != plan.capability_digest:
+        if self._repository.field_effect_capability_suspension(
+                plan.connection, plan.destination) is not None:
+            return self._stale(operation, "capability")
+        capability = self._capabilities.observe(plan)
+        if capability.category != "allowed":
+            scope = ("connection" if capability.category == "connection_unavailable"
+                     else "destination")
+            self._repository.suspend_field_effect_capability(
+                scope=scope,
+                connection=plan.connection,
+                destination=plan.destination,
+                reason=capability.category,
+                changed_at=self._clock(),
+            )
+            return self._stale(operation, "capability")
+        if capability.digest != plan.capability_digest:
             return self._stale(operation, "capability")
         if not self._authority.current(plan.authority):
             return self._stale(operation, "authority")
@@ -419,7 +484,13 @@ class GuardedFieldApplication:
             return self._stale(operation, "consent")
         if not self._dependencies.current(plan.dependency_digests):
             return self._stale(operation, "dependency")
-        observed = self._target.read(plan)
+        try:
+            observed = self._target.read(plan)
+        except Exception as error:
+            self._persist_target_suspension(plan, error)
+            if isinstance(error, TargetServiceUnavailable):
+                return self._stale(operation, "capability")
+            raise
         if observed.value != plan.pre_value or observed.version != plan.target_version:
             return self._stale(operation, "target_changed")
         if operation.attempt >= 3:
@@ -429,6 +500,17 @@ class GuardedFieldApplication:
         if self._draining.is_set():
             raise GuardedApplicationError("draining")
         return None
+
+    def _persist_target_suspension(self, plan: FieldEffectPlan, error: Exception) -> None:
+        if not isinstance(error, TargetServiceUnavailable):
+            return
+        self._repository.suspend_field_effect_capability(
+            scope=error.scope,
+            connection=plan.connection,
+            destination=plan.destination,
+            reason=error.reason,
+            changed_at=self._clock(),
+        )
 
     def _recover_cleanup(self, operation: FieldEffectOperation) -> None:
         if (operation.plan.destination != "cover"

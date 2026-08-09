@@ -608,8 +608,10 @@ qualified Automatic set is empty and all persisted outcomes declare authority
 `none`. Only the deterministic F19 projection includes exact `policy_ignored`
 proposals; the external-review packet remains unchanged.
 
-Guarded field effects add the first persisted mutation boundary, restricted to
-the credential-free fake target. Only exact `HumanDecision(accept)` or sealed
+Guarded field effects add the first persisted mutation boundary. The ordinary
+product remains restricted to the credential-free fake target; one unreachable
+canary composes the API-key Audiobookshelf target only for a disposable synthetic
+library. Only exact `HumanDecision(accept)` or sealed
 qualified `AutomaticDecision(candidate)` instances project authority; raw
 proposals, previews, advice, policy dispositions, and caller-supplied origin
 strings cannot. Planning rejects any decision/current-case mismatch in
@@ -619,11 +621,27 @@ Every claim rechecks backup, capability, authority, consent, dependencies,
 target pre-state/version, circuit, pause, and optimistic state. Persisted
 authority, consent, pause, and claim state are conditioned atomically in one
 repository transaction together with persisted decision/current-lineage and
-automatic safety currentness. The target's value-and-version CAS closes later
-external drift, without claiming a cross-system transaction.
+automatic safety currentness. Capability observations have closed application-
+owned outcomes. Authentication, inactive-account, or basic library/item access
+failure durably suspends the connection; insufficient destination permission,
+an incompatible destination shape, or unexpected effect behavior durably
+suspends only that destination. The claim transaction rechecks both scopes, so
+a suspension racing the final claim cannot be bypassed. The supported Audiobookshelf adapter has no
+target-side CAS: it makes one minimal API-key request only after its final
+authoritative pre-read, then read-backs the destination and reconciles any
+refusal, ambiguity, drift or disagreement. A same-field update may still be
+lost in the interval before Audiobookshelf accepts that request; this boundary
+does not claim cross-system atomicity. Cover upload reads only the immutable
+digest-verified original artifact, never recovery bytes, and neither bytes nor
+credentials enter diagnostics, logs, support bundles or reviewers.
 Unknown and stale facts fail closed. Target and credential authority are absent
-from domain code, reviewers, diagnostics, and the API. There is no
-Audiobookshelf or media-write constructor in this boundary.
+from domain code, reviewers, diagnostics, and the API. Canary-only composition
+contains the Audiobookshelf target and API-key capability observer; it proves
+the selected item/library and destination permission, never a version alone.
+Read-only keys are insufficient for every destination; update-only keys permit
+metadata/tags but are insufficient for cover, which also requires upload.
+Qualification reads the actual canonical, gap-free append-only event documents
+from SQLite and publishes only their aggregate count and digest.
 ## Guarded-operation diagnostics
 
 Operational status and support routes share the authenticated owner boundary;

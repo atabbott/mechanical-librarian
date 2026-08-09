@@ -1,5 +1,22 @@
 # Testing strategy
 
+Audiobookshelf write qualification uses synthetic disposable libraries and API
+keys only. It proves one metadata/tags PATCH and one digest-verified multipart
+cover upload at v2.26.0 and the then-latest stable image, including read-back,
+refusal and ambiguous-response reconciliation. It never contacts a production
+library or uses direct database or browser writes.
+
+Run the canary from a clean exact head. It archives that head before importing
+or running the adapter, creates scoped disposable API-key users, deletes those
+keys during teardown where the service remains available, and removes only its
+labelled container. Its aggregate receipt contains image digests and outcomes,
+never credentials, user tokens, passwords, or image bytes:
+
+```bash
+uv run python scripts/qualify_audiobookshelf_field_effect.py \
+  --source-sha "$(git rev-parse HEAD)"
+```
+
 The public suite has four explicit qualification tiers. They retain every
 existing assertion while keeping independent feedback paths parallel and
 diagnosable.
@@ -425,8 +442,12 @@ generation-one overrides through admission, keeps new-library preview separate
 from fail-closed proposal execution, restarts pre-existing terminal work, and
 checks atomic extraction-publication transition failure. Generated
 OpenAPI and the authenticated browser flow cover activation and transition
-routes; exact installed-artifact qualification remains report-only and verifies
-no target, media, or artifact writes.
+routes. The general exact installed-artifact lifecycle remains report-only and
+verifies no target, media, or artifact writes. The separately invoked F14 canary
+builds and installs the exact-head wheel outside its source snapshot, then uses
+that installed adapter only against its owned disposable synthetic library. Its
+receipt hashes the real validated event-ledger sequence rather than a derived
+operation summary.
 
 Guarded-application tests use only synthetic immutable decisions and fake
 backup, capability, exact authority binding, distinct consent, dependency,
@@ -436,10 +457,12 @@ atomic series, no-ops, ordered gate failures, pause/supersede/claim semantics,
 sibling independence, atomic revoke-versus-claim races, persisted ambiguous
 desired/pre/third readback and forward reevaluation, lineage-replacement races,
 bounded pending-action and cleanup restart runners, retry exhaustion, restart
-boundaries, append-only audit, retryable owner-only cover cleanup, canonical
+boundaries, validated gap-free append-only audit retrieval, durable connection-
+and destination-scoped capability suspension including atomic claim races,
+retryable owner-only cover cleanup, canonical
 row/document/action corruption rejection including boolean/integer aliases and
 closed failure/token types, architecture imports, authenticated API calls, and the
-absence of Audiobookshelf/media-write construction.
+absence of ordinary-runtime Audiobookshelf/media-write construction.
 ## Guarded-operation qualification
 
 F15a qualification covers absent and exact-current startup, ready/claimed/

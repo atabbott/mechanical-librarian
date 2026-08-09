@@ -76,8 +76,23 @@ nonterminal cover work exists. A capture failure blocks that cover alone.
 Capture is temp-file/fsync/atomic-rename/directory-fsync. Incomplete temporary
 or invalid final captures are rejected and cleaned where safely owned. Every
 terminal cover path persists cleanup and restart retries a failed removal.
-This fake-only increment cannot alter
-Audiobookshelf or embedded media.
+The ordinary installed product still cannot alter Audiobookshelf or embedded
+media. The separate qualification canary can alter only the synthetic item in
+the disposable Audiobookshelf container it creates and owns.
+
+## Supported Audiobookshelf canary
+
+The canary uses API keys and supported item/media/cover endpoints only. Before
+one destination-minimal write it rereads the exact planned field and item
+version; it then rereads the destination. Audiobookshelf provides no CAS, so a
+same-field update can be overwritten between those reads and the service
+accepting the request. Never retry an ambiguous write manually from the same
+plan: use the persisted field-local reconciliation/audit outcome instead.
+Expired credentials, inactive accounts, or loss of basic library/item access
+persist a connection suspension. A permission failure, incompatible field
+shape, or unexpected write response persists a destination suspension instead,
+leaving unrelated destinations eligible. Both remain fail-closed across restart;
+the ordinary product exposes no implicit retry or automatic clearing path.
 
 ## Container restart and private recovery
 

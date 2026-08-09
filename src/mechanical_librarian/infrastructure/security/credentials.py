@@ -124,11 +124,23 @@ class _TargetAuth(httpx.Auth):
         self._token = token
 
     def auth_flow(self, request):
-        if request.method == "GET" and request.url.scheme == self._origin.scheme and request.url.host == self._origin.host and request.url.port == self._origin.port and (
-            request.url.path == "/api/libraries"
-            or re.fullmatch(r"/api/libraries/[^/]+/items", request.url.path)
-            or re.fullmatch(r"/api/items/[^/]+", request.url.path)
-        ):
+        same_origin = (
+            request.url.scheme == self._origin.scheme
+            and request.url.host == self._origin.host
+            and request.url.port == self._origin.port
+        )
+        item = r"/api/items/[^/]+"
+        readable = request.url.path in {"/api/libraries", "/api/me"} or re.fullmatch(
+            r"/api/libraries/[^/]+/items", request.url.path
+        ) or re.fullmatch(item, request.url.path) or re.fullmatch(
+            item + r"/cover", request.url.path
+        )
+        writable = (
+            request.method == "PATCH" and re.fullmatch(item + r"/media", request.url.path)
+        ) or (
+            request.method == "POST" and re.fullmatch(item + r"/cover", request.url.path)
+        )
+        if same_origin and ((request.method == "GET" and readable) or writable):
             request.headers["Authorization"] = f"Bearer {self._token}"
         yield request
 

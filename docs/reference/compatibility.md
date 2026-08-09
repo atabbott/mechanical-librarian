@@ -1,5 +1,11 @@
 # Pre-release compatibility policy
 
+Audiobookshelf field-effect canaries support v2.26.0 and later without an
+upper-version promise. Each qualification records the exact latest stable image
+version and digest. Compatibility is field-local and demonstrated for metadata/
+tags and multipart cover endpoints; a service version alone is not capability
+proof.
+
 The current installed contract is intentionally narrow:
 
 - Python 3.13 or 3.14;
