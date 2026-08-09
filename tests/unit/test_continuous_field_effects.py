@@ -177,16 +177,18 @@ class _DeniedCapability:
 
 
 class ContinuousGuardedApplicationTests(unittest.TestCase):
-    def test_return_to_automatic_clears_exact_current_hold_without_rescan(self) -> None:
+    def test_return_to_automatic_retains_hold_and_requests_fresh_scan(self) -> None:
         repository = _HoldRepository()
+        scans = []
         service = ContinuousGuardedApplication(
             repository, {("primary", "alpha"): _Planner()},
             {("primary", "alpha"): _AllowedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1,
-            lambda *_: self.fail("exact-current return must not rescan"),
+            lambda *context: scans.append(context),
         )
         service.return_to_automatic("review_case", "title")
-        self.assertIsNone(repository.hold)
+        self.assertEqual(repository.hold, ("primary", "alpha"))
+        self.assertEqual(scans, [("primary", "alpha")])
 
     def test_enable_refuses_read_only_capability_before_granting_consent(self) -> None:
         decision = self._decisions(1)[0]

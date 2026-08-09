@@ -1001,7 +1001,7 @@ def _installed_continuous_qualification(
                 if (returned.status_code != 204
                         or repository.field_effect_manual_hold_context(
                             case_id, automatic_destination
-                        ) is not None):
+                        ) is None):
                     raise QualificationError("installed_return_automatic_failed")
                 returned_automatic = True
                 break
@@ -1530,7 +1530,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             },
             operator_item_ids,
             operator_metadata,
-            {"authors", "title"},
+            set(),
         )
         repository.close()
         digest = _run("docker", "image", "inspect", image, "--format", "{{index .RepoDigests 0}}").stdout.strip()
