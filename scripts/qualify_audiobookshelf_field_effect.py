@@ -605,15 +605,30 @@ def _installed_continuous_qualification(
             initial = _wait_for_preparation(
                 client, len(libraries), allow_failures=True
             )
-            if any(value.get("state") != "completed"
-                   for value in initial.get("libraries", [])):
-                for name, _, _ in libraries:
-                    retried = client.post(
-                        f"/api/v1/review-preparation/canary/{name}/retry",
-                        headers=mutation_headers,
+            failed_libraries = [
+                value for value in initial.get("libraries", [])
+                if value.get("state") != "completed"
+            ]
+            if failed_libraries:
+                for value in failed_libraries:
+                    name = _string(
+                        value.get("library"), "installed_preparation_invalid"
                     )
+                    retry_deadline = time.monotonic() + 30
+                    while True:
+                        retried = client.post(
+                            f"/api/v1/review-preparation/canary/{name}/retry",
+                            headers=mutation_headers,
+                        )
+                        if (retried.status_code != 503
+                                or time.monotonic() >= retry_deadline):
+                            break
+                        time.sleep(0.25)
                     if retried.status_code not in {202, 409}:
-                        raise QualificationError("installed_preparation_retry_failed")
+                        raise QualificationError(
+                            "installed_preparation_retry_failed:"
+                            f"{name}:{retried.status_code}"
+                        )
                 _wait_for_preparation(client, len(libraries))
             listing = client.get("/api/v1/library?lens=all&limit=50")
             if listing.status_code != 200:
