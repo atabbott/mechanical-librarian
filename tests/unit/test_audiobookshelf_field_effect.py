@@ -152,12 +152,18 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         self.detail["updatedAt"] = 7
         self.write_status = 403
         refused = self.target.apply(self.plan("title", "Before", "After"))
-        self.assertEqual((refused.outcome, refused.suspension_scope), ("ambiguous", "connection"))
+        self.assertEqual(
+            (refused.outcome, refused.suspension_scope, refused.suspension_reason),
+            ("ambiguous", "destination", "insufficient_permission"),
+        )
         self.detail["media"]["metadata"]["title"] = "Before"
         self.detail["updatedAt"] = 7
         self.write_status = 500
         failed = self.target.apply(self.plan("title", "Before", "After"))
-        self.assertEqual((failed.outcome, failed.suspension_scope), ("ambiguous", "destination"))
+        self.assertEqual(
+            (failed.outcome, failed.suspension_scope, failed.suspension_reason),
+            ("ambiguous", "destination", "unexpected_effect_behavior"),
+        )
 
         self.requests.clear()
         changed = self.plan("title", "Elsewhere", "After")
@@ -234,7 +240,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
             oversized.read(plan)
 
     def test_post_dispatch_status_and_transport_loss_reconcile_through_application(self) -> None:
-        for outcome in (403, 500, "transport_loss"):
+        for outcome in (401, 403, 500, "transport_loss"):
             with self.subTest(outcome=outcome):
                 detail = {
                     "id": "item-1", "libraryId": "library-1", "mediaType": "book", "updatedAt": 7,
@@ -272,6 +278,12 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                 self.assertEqual(service.apply(plan.plan_id).state, "verified")
                 self.assertEqual(requests.count("PATCH"), 1)
                 self.assertGreaterEqual(requests.count("GET"), 4)
+                self.assertEqual(
+                    repository.field_effect_capability_suspension(plan.connection, "title"),
+                    ("connection_unavailable" if outcome == 401 else
+                     "insufficient_permission" if outcome == 403 else
+                     "unexpected_effect_behavior"),
+                )
                 repository.close()
 
 

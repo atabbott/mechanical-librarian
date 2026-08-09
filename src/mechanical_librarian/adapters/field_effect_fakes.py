@@ -78,7 +78,11 @@ class FakeTargetService:
                     self._write(plan, plan.desired_value)
                 elif behavior == "third":
                     self._write(plan, "synthetic-third-value")
-                result = TargetEffectResult("ambiguous", self.suspension_scope_next)
+                result = TargetEffectResult(
+                    "ambiguous",
+                    self.suspension_scope_next,
+                    "unexpected_effect_behavior" if self.suspension_scope_next else None,
+                )
                 self.suspension_scope_next = None
                 if behavior != "pre":
                     self._effects[plan.idempotency_key] = result

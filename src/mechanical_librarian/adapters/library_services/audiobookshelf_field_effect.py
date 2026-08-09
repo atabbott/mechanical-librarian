@@ -160,11 +160,22 @@ class AudiobookshelfFieldEffectTarget:
                         json=media_payload,
                     )
         except (httpx.HTTPError, OSError, ValueError):
-            return TargetEffectResult("ambiguous", "destination")
+            return TargetEffectResult(
+                "ambiguous", "destination", "unexpected_effect_behavior"
+            )
         if status in {200, 201, 204}:
             return TargetEffectResult("accepted")
-        scope = "connection" if status in {401, 403} else "destination"
-        return TargetEffectResult("ambiguous", scope)
+        if status == 401:
+            return TargetEffectResult(
+                "ambiguous", "connection", "connection_unavailable"
+            )
+        if status == 403:
+            return TargetEffectResult(
+                "ambiguous", "destination", "insufficient_permission"
+            )
+        return TargetEffectResult(
+            "ambiguous", "destination", "unexpected_effect_behavior"
+        )
 
     def _item(self, client: httpx.Client, work_id: str) -> dict[str, Any]:
         try:
@@ -188,7 +199,10 @@ class AudiobookshelfFieldEffectTarget:
                 return None
             if status != 200:
                 raise TargetServiceUnavailable(
-                    "connection" if status in {401, 403} else "destination"
+                    "connection" if status == 401 else "destination",
+                    ("connection_unavailable" if status == 401 else
+                     "insufficient_permission" if status == 403 else
+                     "field_unavailable"),
                 )
             media_type = headers.get("content-type", "").split(";", 1)[0].lower()
             try:

@@ -28,7 +28,8 @@ class GuardedApplicationError(RuntimeError):
 
 class TargetServiceUnavailable(RuntimeError):
     def __init__(self, scope: Literal["connection", "destination"],
-                 reason: Literal["connection_unavailable", "field_unavailable",
+                 reason: Literal["connection_unavailable", "insufficient_permission",
+                                 "field_unavailable",
                                  "unexpected_effect_behavior"] | None = None) -> None:
         resolved = reason or ("connection_unavailable" if scope == "connection"
                               else "field_unavailable")
@@ -47,6 +48,13 @@ class TargetObservation:
 class TargetEffectResult:
     outcome: Literal["accepted", "ambiguous", "conflict"]
     suspension_scope: Literal["connection", "destination"] | None = None
+    suspension_reason: Literal[
+        "connection_unavailable", "insufficient_permission", "unexpected_effect_behavior"
+    ] | None = None
+
+    def __post_init__(self) -> None:
+        if (self.suspension_scope is None) != (self.suspension_reason is None):
+            raise ValueError("target suspension disposition is incomplete")
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,11 +330,12 @@ class GuardedFieldApplication:
                 plan.plan_id, "applying", "retryable", self._clock(), "target_failure"
             )
         if result.suspension_scope is not None:
+            assert result.suspension_reason is not None
             self._repository.suspend_field_effect_capability(
                 scope=result.suspension_scope,
                 connection=plan.connection,
                 destination=plan.destination,
-                reason="unexpected_effect_behavior",
+                reason=result.suspension_reason,
                 changed_at=self._clock(),
             )
         if result.outcome == "ambiguous":
