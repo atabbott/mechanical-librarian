@@ -291,7 +291,7 @@ def _operator_epub(source: Path, destination: Path, index: int) -> tuple[str, st
             "{http://www.idpf.org/2007/opf}scheme": "ISBN",
         }).text = isbn
         ET.SubElement(metadata, dc + "title").text = title
-        for author in ("Local Qualification Author",):
+        for author in ("Synthetic Author", "Second Qualified Author"):
             ET.SubElement(metadata, dc + "creator", {
                 "{http://www.idpf.org/2007/opf}role": "aut",
             }).text = author
@@ -1428,6 +1428,20 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         }
         if corpus_sources and len(operator_item_ids) != len(corpus_sources):
             raise QualificationError("operator_corpus_identity_failed")
+        alpha_automatic_title = operator_metadata[next(iter(operator_metadata))]
+        alpha_automatic_item = next(
+            value for value in operator_item_ids
+            if current_title(value) == alpha_automatic_title
+        )
+        alpha_seeded = _mapping(_request(
+            "PATCH", base, "/api/items/" + alpha_automatic_item + "/media",
+            token=writer_key, payload={"metadata": {
+                "authors": [{"name": "Seed Author"}],
+                "title": "Alpha qualification seed",
+            }},
+        ), "alpha_automatic_reseed_invalid")
+        if alpha_seeded.get("updated") is not True:
+            raise QualificationError("alpha_automatic_reseed_failed")
         original_alpha_title = current_title(item)
         original_beta_title = current_title(second_item)
         seeded = _mapping(_request(
@@ -1549,6 +1563,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             item,
             {
                 "After": original_alpha_title,
+                "Alpha qualification seed": alpha_automatic_title,
                 "Beta qualification seed": (
                     "Before" if corpus_sources else original_beta_title
                 ),

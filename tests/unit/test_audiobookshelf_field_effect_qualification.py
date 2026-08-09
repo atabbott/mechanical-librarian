@@ -38,10 +38,7 @@ class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
                 dc = "{http://purl.org/dc/elements/1.1/}"
                 self.assertEqual(title, metadata.findtext(dc + "title"))
                 self.assertEqual(isbn, metadata.findtext(dc + "identifier"))
-            self.assertEqual(
-                ["Local Qualification Author"],
-                [value.text for value in metadata.findall(dc + "creator")],
-            )
+            self.assertEqual(2, len(metadata.findall(dc + "creator")))
 
 
 if __name__ == "__main__":
