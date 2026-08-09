@@ -109,7 +109,9 @@ of the exact current application schema. A database without them, with altered
 SQL, extra columns/objects, or an earlier experimental effect schema is
 rejected without migration or conversion. Operation, plan, nested
 authority/consent, action, cleanup, and event documents and their matching
-columns are validated canonically before an existing database opens. Restart compatibility applies only inside
+columns are validated canonically before an existing database opens. Scalar
+members retain exact JSON types: booleans are never accepted as integer
+attempts, sequences, or timestamps. Restart compatibility applies only inside
 that exact schema.
 
 Private qualification attempt, retry-pair, scoring, cohort, analysis, and

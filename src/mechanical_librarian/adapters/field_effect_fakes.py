@@ -98,7 +98,8 @@ class FakeAuthorityCurrentness:
         self.automatic_values: dict[str, object] = {}
         self.bindings: dict[str, AuthoritySnapshot] = {}
     def bind(self, decision: HumanDecision | AutomaticDecision, *, connection: str,
-             library: str, work_id: str, target_version: str) -> None:
+             library: str, work_id: str, target_version: str,
+             source: str = "fake_service") -> None:
         if type(decision) is HumanDecision and decision.outcome == "accept":
             value = decision.selected_value
         elif type(decision) is AutomaticDecision and decision.outcome == "candidate":
@@ -108,7 +109,7 @@ class FakeAuthorityCurrentness:
         self.bindings[decision.decision_id] = AuthoritySnapshot(
             connection, library, work_id, decision.destination,
             decision.review_case_id, decision.target_fingerprint,
-            target_version, value,
+            target_version, value, source,
         )
     def resolve(self, decision: HumanDecision | AutomaticDecision) -> AuthoritySnapshot:
         return self.bindings[decision.decision_id]
@@ -149,6 +150,19 @@ class FakePreclaimHook:
         if self.callback is not None:
             callback, self.callback = self.callback, None
             callback(plan)
+
+
+class FakeForwardReevaluation:
+    def __init__(self) -> None:
+        self.emitted: list[str] = []
+        self.fail_next = False
+
+    def emit(self, plan: FieldEffectPlan) -> None:
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("synthetic reevaluation failure")
+        if plan.plan_id not in self.emitted:
+            self.emitted.append(plan.plan_id)
 
 
 class PrivateCoverRecoveryStore:

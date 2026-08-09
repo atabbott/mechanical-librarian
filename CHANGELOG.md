@@ -7,9 +7,11 @@
   deterministic field plan (with atomic series), last-feasible preclaim guard
   refresh, repository-atomic authority/consent/pause claim, and target-side
   optimistic concurrency; persisted targeted-read/forward-reevaluation actions;
-  bounded retries, independent sibling outcomes, and retryable atomic-file
+  a bounded restart runner for those actions and cleanup; transaction-local
+  current-lineage and automatic-safety checks; bounded retries, independent
+  sibling outcomes, and retryable atomic-file
   private cover cleanup. Existing databases validate every canonical effect
-  envelope and matching row before opening. The only writable
+  envelope, exact scalar type, and matching row before opening. The only writable
   target is a deterministic fake; no Audiobookshelf, media, CLI, bulk, release,
   or production write capability is added. (#149)
 

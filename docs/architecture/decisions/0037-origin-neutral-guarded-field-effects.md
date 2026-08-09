@@ -35,10 +35,17 @@ atomically with its write. These checks do not claim a transaction across the
 repository and external systems; later drift is detected by target conflict or
 readback and reconciled forward. Repository-held authority, consent, pause, and
 claim state share one `BEGIN IMMEDIATE` transaction; this is the supported
-atomic boundary. Claimed work is never revoked mid-effect. Ambiguous responses
+atomic boundary. For persisted decision authority, that transaction also
+rechecks the exact current review-case lineage, decision row, target fingerprint,
+and automatic safety posture. Claimed work is never revoked mid-effect. Ambiguous responses
 atomically schedule one durable targeted-read action: desired completes, the captured pre-state may requeue
 after renewed gates, and a third value stales the plan for forward evaluation.
 Verified siblings remain complete.
+
+One bounded restart runner enumerates only pending or interrupted targeted-read
+and forward-reevaluation actions, claims each action, dispatches through those
+two existing seams, and completes it only after success. The same restart entry
+point separately enumerates pending cover-cleanup obligations.
 
 Cover recovery bytes use a separate owner-only bounded private store. Capture
 uses an owner-mode temporary file, file sync, atomic rename, and directory sync.

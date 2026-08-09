@@ -618,7 +618,8 @@ separate current consent for the exact connection/library/destination/action.
 Every claim rechecks backup, capability, authority, consent, dependencies,
 target pre-state/version, circuit, pause, and optimistic state. Persisted
 authority, consent, pause, and claim state are conditioned atomically in one
-repository transaction; the target's value-and-version CAS closes later
+repository transaction together with persisted decision/current-lineage and
+automatic safety currentness. The target's value-and-version CAS closes later
 external drift, without claiming a cross-system transaction.
 Unknown and stale facts fail closed. Target and credential authority are absent
 from domain code, reviewers, diagnostics, and the API. There is no

@@ -23,6 +23,12 @@ LIST_DESTINATIONS = frozenset({"authors", "genres", "tags"})
 SERIES_DESTINATION = "series"
 SUPPORTED_DESTINATIONS = SCALAR_DESTINATIONS | LIST_DESTINATIONS | {SERIES_DESTINATION}
 TERMINAL_STATES = frozenset({"verified", "stale", "superseded", "abandoned"})
+FIELD_EFFECT_FAILURES = frozenset({
+    None, "ambiguous", "authority", "authority_superseded", "backup", "capability",
+    "circuit_open", "consent", "consent_revoked", "cover_recovery", "dependency",
+    "not_applied", "owner_abandoned", "readback", "restart_readback",
+    "retry_exhausted", "target_changed", "target_failure", "third_value",
+})
 _STATES = frozenset({
     "planned", "claimed", "applying", "reconciling", "retryable",
     "verified", "stale", "superseded", "abandoned",
@@ -99,18 +105,27 @@ class EffectAuthority:
     decision_id: str
     review_case_id: str
     target_fingerprint: str
+    source: Literal["persisted_review_case", "fake_service"]
     origin: Literal["human", "automatic_policy"]
     outcome: Literal["candidate"]
     policy_identity: str | None
     qualification_identity: str | None
 
     def __post_init__(self) -> None:
+        if (self.origin not in {"human", "automatic_policy"}
+                or self.outcome != "candidate"
+                or any(type(value) is not str for value in (
+                    self.decision_id, self.review_case_id,
+                    self.target_fingerprint, self.source,
+                ))):
+            raise FieldEffectError("invalid_authority")
         prefix = "human_decision_" if self.origin == "human" else "automatic_decision_"
         if not self.decision_id.startswith(prefix) or _HEX.fullmatch(self.decision_id[len(prefix):]) is None:
             raise FieldEffectError("invalid_authority")
         if (not self.review_case_id.startswith("review_case_")
                 or _HEX.fullmatch(self.review_case_id.removeprefix("review_case_")) is None
-                or _HEX.fullmatch(self.target_fingerprint) is None):
+                or _HEX.fullmatch(self.target_fingerprint) is None
+                or self.source not in {"persisted_review_case", "fake_service"}):
             raise FieldEffectError("invalid_authority")
         if self.origin == "human" and (self.policy_identity is not None or self.qualification_identity is not None):
             raise FieldEffectError("invalid_authority")
@@ -249,13 +264,14 @@ class FieldEffectPlan:
                 raise FieldEffectError("invalid_plan")
             authority = EffectAuthority(
                 authority_raw["decision_id"], authority_raw["review_case_id"],
-                authority_raw["target_fingerprint"], authority_raw["origin"],
+                authority_raw["target_fingerprint"], authority_raw["source"],
+                authority_raw["origin"],
                 authority_raw["outcome"], authority_raw["policy_identity"],
                 authority_raw["qualification_identity"],
             )
             if set(authority_raw) != {"decision_id", "origin", "outcome", "policy_identity",
                                       "qualification_identity", "review_case_id",
-                                      "target_fingerprint"}:
+                                      "source", "target_fingerprint"}:
                 raise FieldEffectError("invalid_plan")
             consent = EffectConsent.from_data(raw["consent"])
             value = cls.create(
@@ -287,7 +303,12 @@ class FieldEffectOperation:
     claim_token: str | None = None
 
     def __post_init__(self) -> None:
-        if self.state not in _STATES or type(self.attempt) is not int or not 0 <= self.attempt <= 3:
+        if (self.state not in _STATES or type(self.attempt) is not int
+                or not 0 <= self.attempt <= 3 or type(self.updated_at) is not int
+                or self.updated_at < 0 or self.failure not in FIELD_EFFECT_FAILURES
+                or (self.claim_token is not None
+                    and (type(self.claim_token) is not str
+                         or _HEX.fullmatch(self.claim_token) is None))):
             raise FieldEffectError("invalid_state")
         if self.state in {"claimed", "applying", "reconciling"} and self.claim_token is None:
             raise FieldEffectError("invalid_claim")
@@ -325,6 +346,7 @@ class FieldEffectOperation:
 
 def authority_to_data(value: EffectAuthority) -> dict[str, object]:
     return {"decision_id": value.decision_id, "review_case_id": value.review_case_id,
-            "target_fingerprint": value.target_fingerprint, "origin": value.origin,
+            "target_fingerprint": value.target_fingerprint, "source": value.source,
+            "origin": value.origin,
             "outcome": value.outcome, "policy_identity": value.policy_identity,
             "qualification_identity": value.qualification_identity}

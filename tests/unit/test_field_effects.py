@@ -16,6 +16,7 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     FakeCapabilityObserver,
     FakeConsentCurrentness,
     FakeDependencyCurrentness,
+    FakeForwardReevaluation,
     FakePreclaimHook,
     FakeTargetService,
     PrivateCoverRecoveryStore,
@@ -83,12 +84,14 @@ class FieldEffectTests(unittest.TestCase):
         self.preclaim = FakePreclaimHook()
         self.claim_hook = FakePreclaimHook()
         self.recovery_hook = FakePreclaimHook()
+        self.reevaluation = FakeForwardReevaluation()
         self.recovery = PrivateCoverRecoveryStore(root / "recovery", lambda _: b"old-cover")
         self.clock = Clock()
         self.service = GuardedFieldApplication(
             self.repository, self.target, self.backup,
             self.capabilities, self.authority,
-            self.dependencies, self.consent, self.recovery, self.clock,
+            self.dependencies, self.consent, self.recovery, self.reevaluation,
+            self.clock,
             self.preclaim, self.claim_hook, self.recovery_hook,
         )
 
@@ -249,6 +252,25 @@ class FieldEffectTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual(actions, [("forward_reevaluation", "pending"),
                                    ("targeted_read", "completed")])
+        self.reevaluation.fail_next = True
+        with self.assertRaisesRegex(RuntimeError, "reevaluation failure"):
+            self.service.recover_pending()
+        self.assertEqual(self.repository._connection.execute(
+            "SELECT state FROM field_effect_actions WHERE plan_id=? "
+            "AND kind='forward_reevaluation'", (third.plan.plan_id,),
+        ).fetchone(), ("claimed",))
+        self.repository.close()
+        self.repository = open_repository(
+            Path(self.temporary.name) / "effects.sqlite", create=False,
+            cross_thread=True,
+        )
+        self.service._repository = self.repository
+        self.assertEqual(self.service.recover_pending(), (1, 0))
+        self.assertEqual(self.reevaluation.emitted, [third.plan.plan_id])
+        self.assertEqual(self.repository._connection.execute(
+            "SELECT state FROM field_effect_actions WHERE plan_id=? "
+            "AND kind='forward_reevaluation'", (third.plan.plan_id,),
+        ).fetchone(), ("completed",))
 
     def test_target_compare_and_set_rejects_a_race_without_overwrite(self) -> None:
         operation = self.plan(suffix="0")
@@ -306,6 +328,53 @@ class FieldEffectTests(unittest.TestCase):
         self.assertEqual(self.service.status(consent.plan.plan_id).state, "superseded")
         self.assertEqual(self.target.read(consent.plan).value, consent.plan.pre_value)
 
+    def test_current_review_lineage_replacement_wins_the_claim_race(self) -> None:
+        selected = envelope("title", "new")
+        source = decision("title", selected, "4")
+        self.authority.bind(
+            source, connection="primary", library="books", work_id="book-1",
+            target_version="version-1", source="persisted_review_case",
+        )
+        self.consent.allow(connection="primary", library="books", destination="title")
+        operation = self.service.plan(
+            source, connection="primary", library="books", work_id="book-1",
+            destination="title", pre_value="old", desired_value=selected,
+            target_fingerprint="d" * 64, target_version="version-1",
+            dependency_digests=(DEPENDENCY,), capability_digest=CAPABILITY,
+        )
+        assert operation is not None
+        self.target.seed(operation.plan)
+        connection = self.repository._connection
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute(
+            "INSERT INTO review_cases(review_case_id,proposal_set_id,report_id,document) VALUES(?,?,?,?)",
+            (source.review_case_id, "proposal_set_" + "1" * 64,
+             "report_" + "2" * 64,
+             json.dumps({"target_fingerprint": source.target_fingerprint})),
+        )
+        connection.execute(
+            "INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?,?)",
+            ("primary", "books", "book-1", "proposal_set_" + "1" * 64,
+             "report_" + "2" * 64, source.review_case_id,
+             "review_transition_" + "3" * 64, 1, "admitted"),
+        )
+        connection.execute(
+            "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,target_fingerprint,destination,actor,outcome,selected_value_document,idempotency_digest,request_digest,occurred_at,document) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (source.decision_id, source.review_case_id, source.proposal_id,
+             source.target_fingerprint, source.destination, source.actor,
+             source.outcome, json.dumps(source.selected_value), source.idempotency_digest,
+             source.request_digest, source.occurred_at, source.to_json()),
+        )
+        connection.execute("PRAGMA foreign_keys=ON")
+        self.claim_hook.callback = lambda _: connection.execute(
+            "UPDATE current_review_case_lineages SET review_case_id=NULL,outcome='retired' "
+            "WHERE connection_name='primary' AND library_name='books' AND item_id='book-1'"
+        )
+        with self.assertRaisesRegex(Exception, "claim_conflict"):
+            self.service.apply(operation.plan.plan_id)
+        self.assertEqual(self.service.status(operation.plan.plan_id).state, "planned")
+        self.assertEqual(self.target.read(operation.plan).value, "old")
+
     def test_persisted_targeted_read_reopens_after_restart(self) -> None:
         operation = self.plan(suffix="3")
         self.target.ambiguous_next = "desired"
@@ -320,7 +389,8 @@ class FieldEffectTests(unittest.TestCase):
             Path(self.temporary.name) / "effects.sqlite", create=False, cross_thread=True
         )
         self.service._repository = self.repository
-        self.assertEqual(self.service.apply(operation.plan.plan_id).state, "verified")
+        self.assertEqual(self.service.recover_pending(), (1, 0))
+        self.assertEqual(self.service.status(operation.plan.plan_id).state, "verified")
         self.assertEqual(self.repository._connection.execute(
             "SELECT state,attempt FROM field_effect_actions WHERE plan_id=? AND kind='targeted_read'",
             (operation.plan.plan_id,),
@@ -430,9 +500,20 @@ class FieldEffectTests(unittest.TestCase):
             Path(self.temporary.name) / "effects.sqlite", create=False, cross_thread=True
         )
         self.service._repository = self.repository
-        self.assertEqual(self.service.apply(cover.plan.plan_id).state, "verified")
+        self.assertEqual(self.service.recover_pending(), (0, 1))
+        self.assertEqual(self.service.status(cover.plan.plan_id).state, "verified")
         self.assertFalse(self.recovery.exists(cover.plan.plan_id))
         self.assertFalse(self.repository.field_effect_cleanup_pending(cover.plan.plan_id))
+
+    def test_supersede_runs_cover_cleanup_and_retains_a_failed_obligation(self) -> None:
+        cover = self.plan("cover", None, "cover_" + "5" * 64, "8")
+        self.recovery.capture(cover.plan)
+        self.recovery.fail_remove_next = True
+        self.assertEqual(self.service.supersede(cover.plan.authority.decision_id), 1)
+        self.assertTrue(self.repository.field_effect_cleanup_pending(cover.plan.plan_id))
+        self.assertTrue(self.recovery.exists(cover.plan.plan_id))
+        self.assertEqual(self.service.recover_pending(), (0, 1))
+        self.assertFalse(self.recovery.exists(cover.plan.plan_id))
 
     def test_exact_current_schema_rejects_drift(self) -> None:
         self.repository.close()
@@ -475,6 +556,49 @@ class FieldEffectTests(unittest.TestCase):
             "UPDATE field_effect_actions SET document=? WHERE action_id=?",
             (json.dumps(raw), row[0]),
         )
+
+    def test_existing_database_rejects_boolean_action_attempt(self) -> None:
+        operation = self.plan(suffix="9")
+        self.target.ambiguous_next = "desired"
+        self.service.apply(operation.plan.plan_id)
+        row = self.repository._connection.execute(
+            "SELECT action_id,document FROM field_effect_actions WHERE plan_id=?",
+            (operation.plan.plan_id,),
+        ).fetchone()
+        raw = json.loads(row[1])
+        raw["attempt"] = True
+        self._corrupt_and_reject(
+            "UPDATE field_effect_actions SET document=? WHERE action_id=?",
+            (json.dumps(raw), row[0]),
+        )
+
+    def test_existing_database_rejects_boolean_event_sequence(self) -> None:
+        operation = self.plan(suffix="a")
+        path = Path(self.temporary.name) / "effects.sqlite"
+        self.repository.close()
+        connection = sqlite3.connect(path)
+        trigger = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='field_effect_events_no_update'"
+        ).fetchone()[0]
+        connection.execute("DROP TRIGGER field_effect_events_no_update")
+        row = connection.execute(
+            "SELECT event_id,document FROM field_effect_events WHERE plan_id=?",
+            (operation.plan.plan_id,),
+        ).fetchone()
+        raw = json.loads(row[1])
+        raw["sequence"] = True
+        connection.execute(
+            "UPDATE field_effect_events SET document=? WHERE event_id=?",
+            (json.dumps(raw), row[0]),
+        )
+        connection.execute(trigger)
+        connection.commit()
+        connection.close()
+        with self.assertRaises(Exception):
+            open_repository(path, create=False)
+        self.repository = open_repository(Path(self.temporary.name) / "fresh.sqlite")
+        self.service._repository = self.repository
 
     def _corrupt_and_reject(self, statement: str, parameters: tuple[object, ...]) -> None:
         path = Path(self.temporary.name) / "effects.sqlite"
@@ -526,7 +650,7 @@ class FieldEffectDomainTests(unittest.TestCase):
     def test_series_is_one_atomic_destination_and_state_machine_rejects_skips(self) -> None:
         authority = EffectAuthority(
             "human_decision_" + "a" * 64, "review_case_" + "b" * 64,
-            "c" * 64, "human", "candidate", None, None,
+            "c" * 64, "fake_service", "human", "candidate", None, None,
         )
         consent = EffectConsent.create(
             connection="primary", library="books", destination="series", granted_at=1
@@ -542,6 +666,24 @@ class FieldEffectDomainTests(unittest.TestCase):
         operation = FieldEffectOperation(plan, updated_at=1)
         with self.assertRaises(Exception):
             operation.transition("verified", at=2)
+
+        for member, invalid in (
+            ("attempt", True), ("updated_at", True),
+            ("failure", False), ("claim_token", 1),
+        ):
+            with self.subTest(member=member):
+                raw = operation.to_data()
+                raw[member] = invalid
+                with self.assertRaises(Exception):
+                    FieldEffectOperation.from_json(json.dumps(raw))
+        raw = operation.to_data()
+        raw["plan"]["created_at"] = True
+        with self.assertRaises(Exception):
+            FieldEffectOperation.from_json(json.dumps(raw))
+        raw = operation.to_data()
+        raw["plan"]["consent"]["granted_at"] = True
+        with self.assertRaises(Exception):
+            FieldEffectOperation.from_json(json.dumps(raw))
 
 
 if __name__ == "__main__":

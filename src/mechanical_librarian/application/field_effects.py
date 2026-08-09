@@ -45,6 +45,7 @@ class AuthoritySnapshot:
     target_fingerprint: str
     target_version: str
     decision_value: object
+    source: Literal["persisted_review_case", "fake_service"]
 
 
 class FieldEffectRepository(Protocol):
@@ -67,6 +68,10 @@ class FieldEffectRepository(Protocol):
     def field_effect_cleanup_pending(self, plan_id: str) -> bool: ...
     def complete_field_effect_cleanup(self, plan_id: str, changed_at: int) -> None: ...
     def fail_field_effect_cleanup(self, plan_id: str, changed_at: int) -> None: ...
+    def claim_next_field_effect_action(self, changed_at: int,
+                                       plan_id: str | None = None) -> dict[str, object] | None: ...
+    def complete_forward_reevaluation(self, action_id: str, changed_at: int) -> None: ...
+    def pending_field_effect_cleanups(self, limit: int) -> tuple[str, ...]: ...
 
 
 class TargetService(Protocol):
@@ -102,19 +107,24 @@ class CoverRecovery(Protocol):
     def remove(self, plan_id: str) -> None: ...
 
 
+class ForwardReevaluation(Protocol):
+    def emit(self, plan: FieldEffectPlan) -> None: ...
+
+
 def authority_from_decision(decision: HumanDecision | AutomaticDecision) -> EffectAuthority | None:
     """Project only exact existing authoritative decisions; advice cannot enter."""
     if type(decision) is HumanDecision:
         if decision.outcome != "accept":
             return None
         return EffectAuthority(decision.decision_id, decision.review_case_id,
-                               decision.target_fingerprint, "human", "candidate", None, None)
+                               decision.target_fingerprint, "fake_service", "human",
+                               "candidate", None, None)
     if type(decision) is AutomaticDecision:
         if decision.outcome != "candidate":
             return None
         return EffectAuthority(
             decision.decision_id, decision.review_case_id, decision.target_fingerprint,
-            "automatic_policy", "candidate",
+            "fake_service", "automatic_policy", "candidate",
             decision.resolved_policy_id, decision.qualification_manifest_sha256,
         )
     raise GuardedApplicationError("unauthorized_origin")
@@ -127,7 +137,7 @@ class GuardedFieldApplication:
                  backup: BackupReadiness, capabilities: CapabilityObserver,
                  authority: AuthorityCurrentness, dependencies: DependencyCurrentness,
                  consent: ConsentCurrentness, cover_recovery: CoverRecovery,
-                 clock: Callable[[], int],
+                 reevaluation: ForwardReevaluation, clock: Callable[[], int],
                  preclaim_hook: Callable[[FieldEffectPlan], None] | None = None,
                  claim_hook: Callable[[FieldEffectPlan], None] | None = None,
                  recovery_hook: Callable[[FieldEffectPlan], None] | None = None) -> None:
@@ -139,6 +149,7 @@ class GuardedFieldApplication:
         self._dependencies = dependencies
         self._consent = consent
         self._cover_recovery = cover_recovery
+        self._reevaluation = reevaluation
         self._clock = clock
         self._preclaim_hook = preclaim_hook or (lambda _: None)
         self._claim_hook = claim_hook or (lambda _: None)
@@ -165,6 +176,12 @@ class GuardedFieldApplication:
                 or decision.review_case_id != snapshot.review_case_id
                 or decision.target_fingerprint != snapshot.target_fingerprint):
             raise GuardedApplicationError("authority_binding")
+        projected = EffectAuthority(
+            projected.decision_id, projected.review_case_id,
+            projected.target_fingerprint, snapshot.source, projected.origin,
+            projected.outcome, projected.policy_identity,
+            projected.qualification_identity,
+        )
         try:
             consent = self._consent.resolve(
                 connection=connection, library=library, destination=destination
@@ -250,12 +267,17 @@ class GuardedFieldApplication:
                 plan.plan_id, "applying", self._clock()
             )
             self._recovery_hook(plan)
-            return self.reconcile(plan.plan_id)
+            self.run_pending_actions(limit=1, plan_id=plan.plan_id)
+            return self.status(plan.plan_id)
         if result.outcome == "conflict":
             return self._stale(operation, "target_changed")
         return self._verify(operation)
 
     def reconcile(self, plan_id: str) -> FieldEffectOperation:
+        self.run_pending_actions(limit=1, plan_id=plan_id)
+        return self.status(plan_id)
+
+    def _reconcile_action(self, plan_id: str) -> FieldEffectOperation:
         operation = self._repository.get_field_effect(plan_id)
         if operation.state != "reconciling":
             return operation
@@ -285,10 +307,14 @@ class GuardedFieldApplication:
         return result
 
     def supersede(self, decision_id: str) -> int:
-        return self._repository.revoke_field_effect_authority(decision_id, self._clock())
+        count = self._repository.revoke_field_effect_authority(decision_id, self._clock())
+        self.run_pending_cleanups()
+        return count
 
     def revoke_consent(self, consent_id: str) -> int:
-        return self._repository.revoke_field_effect_consent(consent_id, self._clock())
+        count = self._repository.revoke_field_effect_consent(consent_id, self._clock())
+        self.run_pending_cleanups()
+        return count
 
     def status(self, plan_id: str) -> FieldEffectOperation:
         return self._repository.get_field_effect(plan_id)
@@ -367,3 +393,38 @@ class GuardedFieldApplication:
         self._repository.complete_field_effect_cleanup(
             operation.plan.plan_id, self._clock()
         )
+
+    def run_pending_actions(self, *, limit: int = 100,
+                            plan_id: str | None = None) -> int:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise GuardedApplicationError("invalid_limit")
+        completed = 0
+        for _ in range(limit):
+            action = self._repository.claim_next_field_effect_action(
+                self._clock(), plan_id
+            )
+            if action is None:
+                break
+            if action["kind"] == "targeted_read":
+                self._reconcile_action(action["plan_id"])
+            else:
+                operation = self.status(action["plan_id"])
+                self._reevaluation.emit(operation.plan)
+                self._repository.complete_forward_reevaluation(
+                    action["action_id"], self._clock()
+                )
+            completed += 1
+        return completed
+
+    def run_pending_cleanups(self, *, limit: int = 100) -> int:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise GuardedApplicationError("invalid_limit")
+        plan_ids = self._repository.pending_field_effect_cleanups(limit)
+        for plan_id in plan_ids:
+            self._recover_cleanup(self.status(plan_id))
+        return len(plan_ids)
+
+    def recover_pending(self, *, limit: int = 100) -> tuple[int, int]:
+        """Bounded restart entrypoint for the two closed recovery obligations."""
+        return (self.run_pending_actions(limit=limit),
+                self.run_pending_cleanups(limit=limit))

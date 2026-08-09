@@ -434,7 +434,9 @@ clock, target, fault, and cover
 recovery adapters. They cover both origins, every closed destination shape,
 atomic series, no-ops, ordered gate failures, pause/supersede/claim semantics,
 sibling independence, atomic revoke-versus-claim races, persisted ambiguous
-desired/pre/third readback and forward reevaluation, retry exhaustion, restart
+desired/pre/third readback and forward reevaluation, lineage-replacement races,
+bounded pending-action and cleanup restart runners, retry exhaustion, restart
 boundaries, append-only audit, retryable owner-only cover cleanup, canonical
-row/document/action corruption rejection, architecture imports, authenticated API calls, and the
+row/document/action corruption rejection including boolean/integer aliases and
+closed failure/token types, architecture imports, authenticated API calls, and the
 absence of Audiobookshelf/media-write construction.

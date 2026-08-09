@@ -64,6 +64,12 @@ pre-state may requeue only under current authority and freshness, and a third
 value stays stale for forward re-evaluation. Never edit rows or blindly repeat
 an ambiguous request.
 
+After opening the exact-current repository, invoke the bounded field-effect
+recovery entry point. It claims and dispatches at most 100 closed targeted-read
+or forward-reevaluation actions, then retries at most 100 pending cover-cleanup
+obligations. Interrupted claimed actions remain restartable; completion is
+recorded only after their existing application seam succeeds.
+
 Cover recovery files are transient private material, not a general backup or
 Undo system. Preserve their owner-only directory only while corresponding
 nonterminal cover work exists. A capture failure blocks that cover alone.
