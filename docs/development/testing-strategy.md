@@ -6,6 +6,17 @@ cover upload at v2.26.0 and the then-latest stable image, including read-back,
 refusal and ambiguous-response reconciliation. It never contacts a production
 library or uses direct database or browser writes.
 
+Run the canary from a clean exact head. It archives that head before importing
+or running the adapter, creates scoped disposable API-key users, deletes those
+keys during teardown where the service remains available, and removes only its
+labelled container. Its aggregate receipt contains image digests and outcomes,
+never credentials, user tokens, passwords, or image bytes:
+
+```bash
+uv run python scripts/qualify_audiobookshelf_field_effect.py \
+  --source-sha "$(git rev-parse HEAD)"
+```
+
 The public suite has four explicit qualification tiers. They retain every
 existing assertion while keeping independent feedback paths parallel and
 diagnosable.

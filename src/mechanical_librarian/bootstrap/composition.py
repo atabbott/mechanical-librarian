@@ -29,6 +29,9 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue imp
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
     AudiobookshelfItemReader,
 )
+from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import (
+    AudiobookshelfFieldEffectTarget,
+)
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.batch_manifest import create as create_batch_manifest, read as read_batch_manifest
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
@@ -165,6 +168,41 @@ from mechanical_librarian.infrastructure.security.review_protocol import (
 )
 from mechanical_librarian.interfaces.cli import main as cli_main
 from mechanical_librarian.interfaces.web import create_review_app
+
+
+def compose_audiobookshelf_field_effect_target(
+    configuration, artifact_store_path: Path, connection_name: str, library_name: str,
+    *, credentials: dict[str, str] | None = None, artifact_identity=None,
+) -> AudiobookshelfFieldEffectTarget:
+    """Compose the canary-only ABS target from an already validated snapshot.
+
+    This intentionally returns a field-local target rather than registering it
+    with the continuous review runtime.  A caller must still supply the F13
+    guarded application, authority, consent, backup, and capability gates.
+    """
+    connection, library, _mount, _providers = configuration.select(
+        connection_name, library_name
+    )
+    artifacts = CoverArtifactStore(
+        artifact_store_path, create=False, expected_identity=artifact_identity
+    )
+    return AudiobookshelfFieldEffectTarget(
+        client_factory=lambda: (
+            target_client(
+                connection.endpoint, connection.secret_file,
+                configuration.limits.timeout_seconds,
+            )
+            if credentials is None
+            else target_client_token(
+                connection.endpoint, credentials["target:" + connection.name],
+                configuration.limits.timeout_seconds,
+            )
+        ),
+        endpoint=connection.endpoint,
+        library_id=library.library_id,
+        artifacts=artifacts,
+        maximum_response_bytes=configuration.limits.target_response_bytes,
+    )
 
 
 class _IsolatedEpubInspector:

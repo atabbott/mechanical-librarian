@@ -44,6 +44,11 @@ class AudiobookshelfFieldEffectTarget:
         with self._client_factory() as client:
             detail = self._item(client, plan.work_id)
             value = self._value(client, detail, plan)
+            # ABS cover retrieval is separate from the item response.  Bind a
+            # cover observation to the item version after that authoritative
+            # cover read, not the version that preceded it.
+            if plan.destination == "cover":
+                detail = self._item(client, plan.work_id)
         return TargetObservation(value, _version(detail))
 
     def apply(self, plan: FieldEffectPlan) -> TargetEffectResult:
@@ -57,6 +62,8 @@ class AudiobookshelfFieldEffectTarget:
             with self._client_factory() as client:
                 detail = self._item(client, plan.work_id)
                 current = self._value(client, detail, plan)
+                if plan.destination == "cover":
+                    detail = self._item(client, plan.work_id)
                 if current != plan.pre_value or _version(detail) != plan.target_version:
                     return TargetEffectResult("conflict")
                 if plan.destination == "cover":
@@ -72,7 +79,7 @@ class AudiobookshelfFieldEffectTarget:
                         return TargetEffectResult("conflict")
                     response = client.post(
                         f"{self._endpoint}/api/items/{quote(plan.work_id, safe='')}/cover",
-                        files={"cover": ("cover", body, _image_media_type(body))},
+                        files={"cover": ("cover" + _image_suffix(body), body, _image_media_type(body))},
                     )
                 else:
                     response = client.patch(
@@ -123,7 +130,12 @@ class AudiobookshelfFieldEffectTarget:
         metadata = detail["media"].get("metadata")
         if type(metadata) is not dict:
             raise ValueError("Audiobookshelf metadata invalid")
-        value = metadata.get(plan.destination) if plan.destination != "tags" else detail["media"].get("tags")
+        if plan.destination == "tags":
+            value = detail["media"].get("tags")
+            if value is None:
+                value = metadata.get("tags")
+        else:
+            value = metadata.get(plan.destination)
         if plan.destination == "authors":
             if not isinstance(value, list) or any(type(item) is not dict or type(item.get("name")) is not str for item in value):
                 raise ValueError("Audiobookshelf authors invalid")
@@ -157,3 +169,7 @@ def _image_media_type(body: bytes) -> str:
     if len(body) >= 12 and body[:4] == b"RIFF" and body[8:12] == b"WEBP":
         return "image/webp"
     raise ValueError("cover artifact media type is invalid")
+
+
+def _image_suffix(body: bytes) -> str:
+    return {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[_image_media_type(body)]

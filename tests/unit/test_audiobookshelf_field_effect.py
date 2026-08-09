@@ -46,6 +46,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                 return httpx.Response(200, json={"updated": True})
             if request.method == "POST":
                 self.assertIn(b"name=\"cover\"", request.content)
+                self.assertIn(b'filename="cover.png"', request.content)
                 self.assertIn(_PNG, request.content)
                 self.cover_bytes = _PNG
                 self.detail["updatedAt"] = 9
@@ -100,6 +101,11 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         plan = self.plan("cover", None, "cover_" + "0" * 64)
         self.assertEqual(self.target.apply(plan).outcome, "conflict")
         self.assertFalse(any(request.method == "POST" for request in self.requests))
+
+    def test_tags_are_read_from_current_service_metadata_shape(self) -> None:
+        self.detail["media"].pop("tags")
+        self.detail["media"]["metadata"]["tags"] = ["old"]
+        self.assertEqual(self.target.read(self.plan("tags", ["old"], ["new"])).value, ["old"])
 
     def test_immediate_prewrite_destination_or_version_drift_refuses_patch(self) -> None:
         plan = self.plan("title", "Before", "After", target_version="6")

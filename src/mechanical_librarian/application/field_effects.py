@@ -255,7 +255,7 @@ class GuardedFieldApplication:
             except Exception:
                 return self._stale(operation, "cover_recovery")
         # Refresh every guard at the last feasible point before the repository's
-        # atomic pause/state claim. The target independently enforces its own CAS.
+        # atomic pause/state claim. Target behavior is adapter-specific.
         self._preclaim_hook(plan)
         guarded = self._preclaim(operation)
         if guarded is not None:
