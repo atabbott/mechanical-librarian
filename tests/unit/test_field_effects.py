@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ from mechanical_librarian.interfaces.web.app import create_review_app
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
+    FieldEffectError,
     FieldEffectOperation,
     FieldEffectPlan,
     SUPPORTED_DESTINATIONS,
@@ -254,6 +256,114 @@ class FieldEffectTests(unittest.TestCase):
         self.service._repository = self.repository
         self.assertEqual(self.service.status(first.plan.plan_id).state, "verified")
         self.assertEqual(self.service.apply(second.plan.plan_id).state, "verified")
+
+    def test_plan_retry_ignores_nonidentity_creation_time(self) -> None:
+        original = self.plan(suffix="9")
+        plan = original.plan
+        retried_plan = FieldEffectPlan.create(
+            connection=plan.connection, library=plan.library,
+            work_id=plan.work_id, destination=plan.destination,
+            pre_value=plan.pre_value, desired_value=plan.desired_value,
+            target_fingerprint=plan.target_fingerprint,
+            target_version=plan.target_version,
+            dependency_digests=plan.dependency_digests,
+            authority=plan.authority, consent=plan.consent,
+            capability_digest=plan.capability_digest,
+            created_at=plan.created_at + 100,
+        )
+        self.assertEqual(retried_plan.plan_id, plan.plan_id)
+        self.assertNotEqual(retried_plan.created_at, plan.created_at)
+        reopened = self.repository.record_field_effect(
+            FieldEffectOperation(
+                retried_plan, updated_at=retried_plan.created_at
+            )
+        )
+        self.assertEqual(reopened, original)
+        self.assertEqual(self.repository._connection.execute(
+            "SELECT COUNT(*) FROM field_effect_events WHERE plan_id=?",
+            (plan.plan_id,),
+        ).fetchone(), (1,))
+
+    def test_record_rejects_every_noninitial_operation_without_audit_rows(self) -> None:
+        source = self.plan(suffix="8").plan
+        plan = FieldEffectPlan.create(
+            connection=source.connection, library=source.library,
+            work_id="unrecorded-book", destination=source.destination,
+            pre_value=source.pre_value, desired_value=source.desired_value,
+            target_fingerprint=source.target_fingerprint,
+            target_version=source.target_version,
+            dependency_digests=source.dependency_digests,
+            authority=source.authority, consent=source.consent,
+            capability_digest=source.capability_digest,
+            created_at=source.created_at + 1,
+        )
+        initial = FieldEffectOperation(plan, updated_at=plan.created_at)
+        invalid = (
+            replace(initial, state="claimed", attempt=1, claim_token="a" * 64),
+            replace(initial, attempt=1),
+            replace(initial, failure="target_failure"),
+            replace(initial, claim_token="b" * 64),
+            replace(initial, updated_at=plan.created_at + 1),
+        )
+        for operation in invalid:
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(
+                    FieldEffectError, "invalid_initial_operation"
+                ):
+                    self.repository.record_field_effect(operation)
+                self.assertEqual(self.repository._connection.execute(
+                    "SELECT COUNT(*) FROM field_effects WHERE plan_id=?",
+                    (plan.plan_id,),
+                ).fetchone(), (0,))
+                self.assertEqual(self.repository._connection.execute(
+                    "SELECT COUNT(*) FROM field_effect_events WHERE plan_id=?",
+                    (plan.plan_id,),
+                ).fetchone(), (0,))
+
+    def test_fake_target_serializes_compare_and_write_for_direct_callers(self) -> None:
+        first = self.plan(suffix="7").plan
+        second = FieldEffectPlan.create(
+            connection=first.connection, library=first.library,
+            work_id=first.work_id, destination=first.destination,
+            pre_value=first.pre_value, desired_value="competing-value",
+            target_fingerprint=first.target_fingerprint,
+            target_version=first.target_version,
+            dependency_digests=first.dependency_digests,
+            authority=first.authority, consent=first.consent,
+            capability_digest=first.capability_digest,
+            created_at=first.created_at,
+        )
+        entered = threading.Event()
+        release = threading.Event()
+        second_done = threading.Event()
+        outcomes: dict[str, object] = {}
+
+        def hold_first(_: FieldEffectPlan) -> None:
+            entered.set()
+            if not release.wait(2):
+                raise RuntimeError("test release timeout")
+
+        self.target.before_apply = hold_first
+        first_thread = threading.Thread(
+            target=lambda: outcomes.setdefault("first", self.target.apply(first))
+        )
+
+        def apply_second() -> None:
+            outcomes["second"] = self.target.apply(second)
+            second_done.set()
+
+        second_thread = threading.Thread(target=apply_second)
+        first_thread.start()
+        self.assertTrue(entered.wait(1))
+        second_thread.start()
+        self.assertFalse(second_done.wait(0.1))
+        release.set()
+        first_thread.join(2)
+        second_thread.join(2)
+        self.assertFalse(first_thread.is_alive())
+        self.assertFalse(second_thread.is_alive())
+        self.assertEqual(outcomes["first"].outcome, "accepted")
+        self.assertEqual(outcomes["second"].outcome, "conflict")
 
     def test_preclaim_failures_are_field_local_and_pause_is_atomic(self) -> None:
         stale = self.plan(suffix="3")
@@ -756,6 +866,53 @@ class FieldEffectTests(unittest.TestCase):
             self.assertEqual(response.json()["state"], "verified")
             status = client.get(f"/api/v1/field-effects/{operation.plan.plan_id}")
             self.assertEqual(status.json()["state"], "verified")
+
+    def test_web_pause_and_resume_bound_persistence_failures(self) -> None:
+        repository = self.repository
+
+        class FailingControlRepository:
+            def __getattr__(self, name: str):
+                return getattr(repository, name)
+
+            def set_field_effect_paused(self, paused: bool, changed_at: int) -> None:
+                raise FieldEffectError("persistence")
+
+        failing = FailingControlRepository()
+        self.service._repository = failing
+        root = Path(self.temporary.name)
+        password = root / "failing-control-owner.hash"
+        password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+        os.chmod(password, 0o600)
+        app = create_review_app(
+            failing,
+            ReviewWebConfiguration(
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(password),
+                session_lifetime_seconds=600,
+            ),
+            clock=self.clock,
+            field_application=self.service,
+        )
+        with TestClient(app, base_url="https://review.test") as client:
+            login = client.post(
+                "/api/v1/session/login", json={"password": "correct horse"},
+                headers={"Origin": "https://review.test"},
+            )
+            self.assertEqual(login.status_code, 200)
+            headers = {
+                "Origin": "https://review.test",
+                "X-CSRF-Token": login.json()["csrf_token"],
+            }
+            for action in ("pause", "resume"):
+                with self.subTest(action=action):
+                    response = client.post(
+                        f"/api/v1/field-effects/{action}", headers=headers
+                    )
+                    self.assertEqual(response.status_code, 503)
+                    self.assertEqual(response.json(), {
+                        "error": {"code": "persistence"},
+                        "schema_version": "review-error-v1",
+                    })
 
     def test_web_field_effect_and_review_reads_share_one_repository_lock(self) -> None:
         operation = self.plan(suffix="c")

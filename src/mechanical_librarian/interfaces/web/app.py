@@ -998,19 +998,20 @@ def create_review_app(
             )
         )
 
-    def field_effect_call(callable_):
+    def serialized_field_effect_call(callable_):
         if field_application is None:
             raise HTTPException(503, detail={"code": "unavailable"})
         try:
-            return serialized_repository.call_serialized(
-                lambda: callable_().to_data()
-            )
+            return serialized_repository.call_serialized(callable_)
         except (GuardedApplicationError, FieldEffectError) as error:
             code = getattr(error, "code", "persistence")
             status_code = 404 if code == "not_found" else 409 if code in {
                 "claim_conflict", "transition_conflict", "paused"
             } else 503
             raise HTTPException(status_code, detail={"code": code}) from None
+
+    def field_effect_call(callable_):
+        return serialized_field_effect_call(lambda: callable_().to_data())
 
     @app.get("/api/v1/field-effects/{plan_id}", response_model=dict[str, object],
              responses={status: {"model": _ErrorResponse} for status in (401, 404, 422, 503)})
@@ -1054,7 +1055,7 @@ def create_review_app(
         _require_session(sessions, ml_session, x_csrf_token)
         if field_application is None:
             raise HTTPException(503, detail={"code": "unavailable"})
-        serialized_repository.call_serialized(
+        serialized_field_effect_call(
             lambda: field_application.set_paused(True)
         )
         return Response(status_code=204)
@@ -1066,7 +1067,7 @@ def create_review_app(
         _require_session(sessions, ml_session, x_csrf_token)
         if field_application is None:
             raise HTTPException(503, detail={"code": "unavailable"})
-        serialized_repository.call_serialized(
+        serialized_field_effect_call(
             lambda: field_application.set_paused(False)
         )
         return Response(status_code=204)

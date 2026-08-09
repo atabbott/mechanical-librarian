@@ -963,6 +963,11 @@ class SQLiteMetadataReportRepository:
     def record_field_effect(self, operation: FieldEffectOperation) -> FieldEffectOperation:
         """Persist a deterministic plan and its first audit fact atomically."""
         try:
+            if (operation.state != "planned" or operation.attempt != 0
+                    or operation.failure is not None
+                    or operation.claim_token is not None
+                    or operation.updated_at != operation.plan.created_at):
+                raise FieldEffectError("invalid_initial_operation")
             document = canonical_effect_json(operation.to_data())
             self._connection.execute("BEGIN IMMEDIATE")
             existing = self._connection.execute(
@@ -971,7 +976,11 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             if existing is not None:
                 persisted = FieldEffectOperation.from_json(existing[0])
-                if persisted.plan != operation.plan:
+                persisted_identity = persisted.plan.to_data()
+                attempted_identity = operation.plan.to_data()
+                persisted_identity.pop("created_at")
+                attempted_identity.pop("created_at")
+                if persisted_identity != attempted_identity:
                     raise FieldEffectError("idempotency_conflict")
                 self._connection.commit()
                 return persisted

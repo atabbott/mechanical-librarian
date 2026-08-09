@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import threading
 from pathlib import Path
 from typing import Callable
 
@@ -25,58 +26,66 @@ class FakeTargetService:
         self._values: dict[tuple[str, str, str, str], object] = {}
         self._versions: dict[tuple[str, str, str, str], str] = {}
         self._effects: dict[str, TargetEffectResult] = {}
+        self._lock = threading.RLock()
         self.fail_next = False
         self.ambiguous_next: str | None = None
         self.before_apply: Callable[[FieldEffectPlan], None] | None = None
         self.after_apply: Callable[[FieldEffectPlan], None] | None = None
 
     def seed(self, plan: FieldEffectPlan) -> None:
-        key = self._key(plan)
-        self._values[key] = plan.pre_value
-        self._versions[key] = plan.target_version
+        with self._lock:
+            key = self._key(plan)
+            self._values[key] = plan.pre_value
+            self._versions[key] = plan.target_version
 
     def read(self, plan: FieldEffectPlan) -> TargetObservation:
-        key = self._key(plan)
-        return TargetObservation(self._values.get(key), self._versions.get(key, "missing"))
+        with self._lock:
+            key = self._key(plan)
+            return TargetObservation(
+                self._values.get(key), self._versions.get(key, "missing")
+            )
 
     def apply(self, plan: FieldEffectPlan) -> TargetEffectResult:
-        prior = self._effects.get(plan.idempotency_key)
-        if prior is not None:
-            return prior
-        if self.fail_next:
-            self.fail_next = False
-            raise RuntimeError("synthetic target failure")
-        if self.before_apply is not None:
-            callback, self.before_apply = self.before_apply, None
-            callback(plan)
-        observed = self.read(plan)
-        if observed.value != plan.pre_value or observed.version != plan.target_version:
-            return TargetEffectResult("conflict")
-        if self.ambiguous_next is not None:
-            behavior, self.ambiguous_next = self.ambiguous_next, None
-            if behavior == "desired":
-                self._write(plan, plan.desired_value)
-            elif behavior == "third":
-                self._write(plan, "synthetic-third-value")
-            result = TargetEffectResult("ambiguous")
-            if behavior != "pre":
-                self._effects[plan.idempotency_key] = result
+        with self._lock:
+            prior = self._effects.get(plan.idempotency_key)
+            if prior is not None:
+                return prior
+            if self.fail_next:
+                self.fail_next = False
+                raise RuntimeError("synthetic target failure")
+            if self.before_apply is not None:
+                callback, self.before_apply = self.before_apply, None
+                callback(plan)
+            observed = self.read(plan)
+            if observed.value != plan.pre_value or observed.version != plan.target_version:
+                return TargetEffectResult("conflict")
+            if self.ambiguous_next is not None:
+                behavior, self.ambiguous_next = self.ambiguous_next, None
+                if behavior == "desired":
+                    self._write(plan, plan.desired_value)
+                elif behavior == "third":
+                    self._write(plan, "synthetic-third-value")
+                result = TargetEffectResult("ambiguous")
+                if behavior != "pre":
+                    self._effects[plan.idempotency_key] = result
+                return result
+            self._write(plan, plan.desired_value)
+            if self.after_apply is not None:
+                callback, self.after_apply = self.after_apply, None
+                callback(plan)
+            result = TargetEffectResult("accepted")
+            self._effects[plan.idempotency_key] = result
             return result
-        self._write(plan, plan.desired_value)
-        if self.after_apply is not None:
-            callback, self.after_apply = self.after_apply, None
-            callback(plan)
-        result = TargetEffectResult("accepted")
-        self._effects[plan.idempotency_key] = result
-        return result
 
     def drift(self, plan: FieldEffectPlan, value: object) -> None:
-        self._write(plan, value)
+        with self._lock:
+            self._write(plan, value)
 
     def _write(self, plan: FieldEffectPlan, value: object) -> None:
-        key = self._key(plan)
-        self._values[key] = value
-        self._versions[key] = hashlib.sha256(repr(value).encode()).hexdigest()[:32]
+        with self._lock:
+            key = self._key(plan)
+            self._values[key] = value
+            self._versions[key] = hashlib.sha256(repr(value).encode()).hexdigest()[:32]
 
     @staticmethod
     def _key(plan: FieldEffectPlan) -> tuple[str, str, str, str]:
