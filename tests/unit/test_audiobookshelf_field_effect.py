@@ -4,13 +4,13 @@ import tempfile
 import unittest
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import AudiobookshelfFieldEffectTarget
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
+from mechanical_librarian.domain.field_effect import EffectAuthority, EffectConsent, FieldEffectPlan
 
 
 _PNG = b"\x89PNG\r\n\x1a\nsynthetic-cover"
@@ -60,8 +60,27 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.directory.cleanup()
 
+    def plan(self, destination: str, pre_value: object, desired_value: object,
+             target_version: str = "7") -> FieldEffectPlan:
+        authority = EffectAuthority(
+            "human_decision_" + "a" * 64, "review_case_" + "b" * 64,
+            "c" * 64, "fake_service", "human", "candidate", None, None,
+        )
+        consent = EffectConsent.create(
+            connection="primary", library="books", destination=destination,
+            granted_at=1,
+        )
+        return FieldEffectPlan.create(
+            connection="primary", library="books", work_id="item-1",
+            destination=destination, pre_value=pre_value,
+            desired_value=desired_value, target_fingerprint="c" * 64,
+            target_version=target_version, dependency_digests=("d" * 64,),
+            authority=authority, consent=consent, capability_digest="e" * 64,
+            created_at=1,
+        )
+
     def test_metadata_effect_is_destination_minimal_and_readable(self) -> None:
-        plan = SimpleNamespace(work_id="item-1", destination="title", desired_value="After")
+        plan = self.plan("title", "Before", "After")
         before = self.target.read(plan)
         self.assertEqual((before.value, before.version), ("Before", "7"))
         self.assertEqual(self.target.apply(plan).outcome, "accepted")
@@ -71,16 +90,27 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         self.assertEqual(patch.headers["authorization"], "Bearer test-key")
 
     def test_cover_reads_digest_and_uploads_only_verified_original(self) -> None:
-        plan = SimpleNamespace(work_id="item-1", destination="cover", desired_value=self.cover)
+        plan = self.plan("cover", None, self.cover)
         self.assertEqual(self.target.read(plan).value, None)
         self.assertEqual(self.target.apply(plan).outcome, "accepted")
         self.assertEqual(self.target.read(plan).value, self.cover)
         self.assertEqual(len([request for request in self.requests if request.method == "POST"]), 1)
 
     def test_refusal_and_unknown_cover_are_not_retried(self) -> None:
-        plan = SimpleNamespace(work_id="item-1", destination="cover", desired_value="cover_" + "0" * 64)
+        plan = self.plan("cover", None, "cover_" + "0" * 64)
         self.assertEqual(self.target.apply(plan).outcome, "conflict")
         self.assertFalse(any(request.method == "POST" for request in self.requests))
+
+    def test_immediate_prewrite_destination_or_version_drift_refuses_patch(self) -> None:
+        plan = self.plan("title", "Before", "After", target_version="6")
+        self.assertEqual(self.target.apply(plan).outcome, "conflict")
+        self.assertFalse(any(request.method == "PATCH" for request in self.requests))
+        self.assertFalse(any(request.method == "POST" for request in self.requests))
+
+        self.requests.clear()
+        changed = self.plan("title", "Elsewhere", "After")
+        self.assertEqual(self.target.apply(changed).outcome, "conflict")
+        self.assertFalse(any(request.method == "PATCH" for request in self.requests))
 
 
 if __name__ == "__main__":

@@ -47,9 +47,18 @@ class AudiobookshelfFieldEffectTarget:
         return TargetObservation(value, _version(detail))
 
     def apply(self, plan: FieldEffectPlan) -> TargetEffectResult:
-        """Issue one request; an uncertain transport result is deliberately ambiguous."""
+        """Check the captured destination then issue one non-retriable request.
+
+        Audiobookshelf cannot make this comparison atomic with the mutation.
+        This is deliberately the last supported validation point: a target-side
+        actor can still change this one destination after this read.
+        """
         try:
             with self._client_factory() as client:
+                detail = self._item(client, plan.work_id)
+                current = self._value(client, detail, plan)
+                if current != plan.pre_value or _version(detail) != plan.target_version:
+                    return TargetEffectResult("conflict")
                 if plan.destination == "cover":
                     digest = plan.desired_value.removeprefix("cover_")
                     if (not isinstance(plan.desired_value, str)
