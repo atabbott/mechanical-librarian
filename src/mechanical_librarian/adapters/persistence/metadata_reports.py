@@ -1062,13 +1062,22 @@ class SQLiteMetadataReportRepository:
                 raise FieldEffectError("consent")
             authority = persisted.plan.authority
             if authority.source == "persisted_review_case":
-                if self._connection.execute(
-                    "SELECT 1 FROM current_review_case_lineages c "
-                    "JOIN review_cases r ON r.review_case_id=c.review_case_id "
-                    "WHERE c.review_case_id=? "
-                    "AND json_extract(r.document,'$.target_fingerprint')=?",
-                    (authority.review_case_id, authority.target_fingerprint),
-                ).fetchone() != (1,):
+                try:
+                    case_envelope = json.loads(
+                        self.get_review_case(authority.review_case_id)
+                    )
+                    case = case_envelope["case"]
+                    target = case["target"]
+                except (MetadataReportError, KeyError, TypeError,
+                        json.JSONDecodeError) as error:
+                    raise FieldEffectError("authority") from error
+                if (case_envelope.get("current") is not True
+                        or case.get("target_fingerprint")
+                        != authority.target_fingerprint
+                        or (target.get("connection"), target.get("library"),
+                            target.get("item"))
+                        != (persisted.plan.connection, persisted.plan.library,
+                            persisted.plan.work_id)):
                     raise FieldEffectError("authority")
                 table = ("human_decisions" if authority.origin == "human"
                          else "automatic_decisions")
@@ -1108,6 +1117,11 @@ class SQLiteMetadataReportRepository:
     def transition_field_effect(self, plan_id: str, expected_state: str,
                                 state: str, changed_at: int,
                                 failure: str | None = None) -> FieldEffectOperation:
+        if state == "reconciling":
+            return self.schedule_field_effect_reconciliation(
+                plan_id, expected_state, changed_at,
+                "ambiguous" if failure is None else failure,
+            )
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             row = self._connection.execute(
@@ -1204,7 +1218,8 @@ class SQLiteMetadataReportRepository:
 
     def schedule_field_effect_reconciliation(self, plan_id: str,
                                              expected_state: str,
-                                             changed_at: int) -> FieldEffectOperation:
+                                             changed_at: int,
+                                             failure: str = "ambiguous") -> FieldEffectOperation:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             row = self._connection.execute(
@@ -1213,7 +1228,7 @@ class SQLiteMetadataReportRepository:
             if row is None or row[1] != expected_state:
                 raise FieldEffectError("transition_conflict")
             operation = FieldEffectOperation.from_json(row[0]).transition(
-                "reconciling", at=changed_at, failure="ambiguous"
+                "reconciling", at=changed_at, failure=failure
             )
             self._update_field_effect(operation, expected_state)
             self._record_field_effect_event(operation, "reconciling", changed_at)

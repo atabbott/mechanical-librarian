@@ -26,7 +26,9 @@ application service; no apply CLI is introduced.
 
 Planning resolves the exact persisted decision and current review-case binding;
 caller coordinates cannot change its destination, work, target fingerprint, or
-target version. A separate bounded consent fact binds the connection, library,
+target version. Connection and library names use the local configuration-name
+vocabulary; work identifiers and target versions are separately bounded opaque
+service tokens. A separate bounded consent fact binds the connection, library,
 destination, and `apply_field` action. Backup readiness, capability, current authority, dependency freshness, target
 pre-state, circuit state, then atomic pause/concurrency claim are checked in
 that order and refreshed at the last feasible point before claim. The target
@@ -36,9 +38,11 @@ repository and external systems; later drift is detected by target conflict or
 readback and reconciled forward. Repository-held authority, consent, pause, and
 claim state share one `BEGIN IMMEDIATE` transaction; this is the supported
 atomic boundary. For persisted decision authority, that transaction also
-rechecks the exact current review-case lineage, decision row, target fingerprint,
-and automatic safety posture. Claimed work is never revoked mid-effect. Ambiguous responses
-atomically schedule one durable targeted-read action: desired completes, the captured pre-state may requeue
+rechecks the complete current review case, metadata-report lineage, file-specific
+report pointer, decision row, target fingerprint, and automatic safety posture.
+Claimed work is never revoked mid-effect. Every transition into reconciliation,
+including accepted-write readback mismatch and applying-state restart, atomically
+schedules one durable targeted-read action: desired completes, the captured pre-state may requeue
 after renewed gates, and a third value stales the plan for forward evaluation.
 Verified siblings remain complete.
 
@@ -46,6 +50,9 @@ One bounded restart runner enumerates only pending or interrupted targeted-read
 and forward-reevaluation actions, claims each action, dispatches through those
 two existing seams, and completes it only after success. The same restart entry
 point separately enumerates pending cover-cleanup obligations.
+Authenticated field-effect calls hold the same serialized repository lock as all
+other web review services, so one cross-thread SQLite connection is never entered
+concurrently through a raw application-service reference.
 
 Cover recovery bytes use a separate owner-only bounded private store. Capture
 uses an owner-mode temporary file, file sync, atomic rename, and directory sync.

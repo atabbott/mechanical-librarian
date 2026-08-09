@@ -4,8 +4,10 @@ import os
 import json
 import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from typing import Any
 
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
@@ -33,6 +35,17 @@ from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    FileFacts,
+    LocalClaim,
+    MetadataReport,
+    TargetFacts,
+    default_target_fields,
+)
+from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     F19A_QUALIFICATION_MANIFEST_SHA256,
@@ -67,6 +80,29 @@ def envelope(destination: str, value: object) -> dict[str, object]:
         else "text"
     )
     return {"kind": kind, "value": value}
+
+
+def metadata_report(title: str, content: str, file_identity: str,
+                    item_id: str = "1234567890abcdef") -> MetadataReport:
+    claim = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed="Exact evaluator candidate",
+        canonical="Exact evaluator candidate",
+        excerpt="Exact evaluator candidate",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary", "books", item_id, default_target_fields(title)
+        ),
+        file=FileFacts(0, content * 64, file_identity * 64),
+        local_claims=(claim,),
+        local_reasons=("opening_matter_title",),
+        providers=(),
+    )
 
 
 class FieldEffectTests(unittest.TestCase):
@@ -328,52 +364,105 @@ class FieldEffectTests(unittest.TestCase):
         self.assertEqual(self.service.status(consent.plan.plan_id).state, "superseded")
         self.assertEqual(self.target.read(consent.plan).value, consent.plan.pre_value)
 
-    def test_current_review_lineage_replacement_wins_the_claim_race(self) -> None:
-        selected = envelope("title", "new")
-        source = decision("title", selected, "4")
-        self.authority.bind(
-            source, connection="primary", library="books", work_id="book-1",
-            target_version="version-1", source="persisted_review_case",
+    def test_newer_report_wins_claim_before_case_retirement(self) -> None:
+        report = metadata_report("Old title", "1", "2")
+        self.repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        self.repository.publish_proposal(proposal)
+        case_id = json.loads(self.repository.admit_review_case(proposal))["review_case_id"]
+        case = ReviewCase.create_from_data(
+            json.loads(self.repository.get_review_case(case_id))["case"]
         )
-        self.consent.allow(connection="primary", library="books", destination="title")
+        candidate = next(
+            item for item in case.proposals
+            if item["result"]["outcome"] == "unresolved_choice"
+        )
+        selected = candidate["result"]["alternatives"][0]["value"]
+        source = HumanDecision.create(
+            case,
+            proposal_id=candidate["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination=candidate["destination"],
+            actor="owner",
+            outcome="accept",
+            selected_value=selected,
+            idempotency_key="field-effect-newer-report-race",
+            occurred_at=1,
+        )
+        self.repository.record_human_decision(source)
+        self.authority.bind(
+            source, connection="primary", library="books",
+            work_id=report.target.item,
+            target_version=case.target_fingerprint,
+            source="persisted_review_case",
+        )
+        self.consent.allow(
+            connection="primary", library="books", destination=source.destination
+        )
         operation = self.service.plan(
-            source, connection="primary", library="books", work_id="book-1",
-            destination="title", pre_value="old", desired_value=selected,
-            target_fingerprint="d" * 64, target_version="version-1",
+            source, connection="primary", library="books",
+            work_id=report.target.item, destination=source.destination,
+            pre_value="Old title", desired_value=selected,
+            target_fingerprint=case.target_fingerprint,
+            target_version=case.target_fingerprint,
             dependency_digests=(DEPENDENCY,), capability_digest=CAPABILITY,
         )
         assert operation is not None
         self.target.seed(operation.plan)
-        connection = self.repository._connection
-        connection.execute("PRAGMA foreign_keys=OFF")
-        connection.execute(
-            "INSERT INTO review_cases(review_case_id,proposal_set_id,report_id,document) VALUES(?,?,?,?)",
-            (source.review_case_id, "proposal_set_" + "1" * 64,
-             "report_" + "2" * 64,
-             json.dumps({"target_fingerprint": source.target_fingerprint})),
-        )
-        connection.execute(
-            "INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?,?)",
-            ("primary", "books", "book-1", "proposal_set_" + "1" * 64,
-             "report_" + "2" * 64, source.review_case_id,
-             "review_transition_" + "3" * 64, 1, "admitted"),
-        )
-        connection.execute(
-            "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,target_fingerprint,destination,actor,outcome,selected_value_document,idempotency_digest,request_digest,occurred_at,document) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-            (source.decision_id, source.review_case_id, source.proposal_id,
-             source.target_fingerprint, source.destination, source.actor,
-             source.outcome, json.dumps(source.selected_value), source.idempotency_digest,
-             source.request_digest, source.occurred_at, source.to_json()),
-        )
-        connection.execute("PRAGMA foreign_keys=ON")
-        self.claim_hook.callback = lambda _: connection.execute(
-            "UPDATE current_review_case_lineages SET review_case_id=NULL,outcome='retired' "
-            "WHERE connection_name='primary' AND library_name='books' AND item_id='book-1'"
+        newer = metadata_report("New title", "3", "4")
+        self.claim_hook.callback = lambda _: self.repository.publish(
+            newer, lambda: True
         )
         with self.assertRaisesRegex(Exception, "claim_conflict"):
             self.service.apply(operation.plan.plan_id)
         self.assertEqual(self.service.status(operation.plan.plan_id).state, "planned")
-        self.assertEqual(self.target.read(operation.plan).value, "old")
+        self.assertEqual(self.target.read(operation.plan).value, "Old title")
+
+    def test_accepted_readback_mismatch_schedules_durable_targeted_read(self) -> None:
+        operation = self.plan(suffix="4")
+        self.target.after_apply = lambda plan: self.target.drift(
+            plan, "synthetic-third-value"
+        )
+        result = self.service.apply(operation.plan.plan_id)
+        self.assertEqual((result.state, result.failure), ("reconciling", "readback"))
+        self.assertEqual(self.repository._connection.execute(
+            "SELECT state FROM field_effect_actions WHERE plan_id=? "
+            "AND kind='targeted_read'", (operation.plan.plan_id,),
+        ).fetchone(), ("pending",))
+        self.repository.close()
+        self.repository = open_repository(
+            Path(self.temporary.name) / "effects.sqlite", create=False,
+            cross_thread=True,
+        )
+        self.service._repository = self.repository
+        self.assertEqual(self.service.recover_pending(), (2, 0))
+        self.assertEqual(self.service.status(operation.plan.plan_id).state, "stale")
+
+    def test_applying_restart_schedules_targeted_read_before_recovery(self) -> None:
+        operation = self.plan(suffix="5")
+        claimed = self.repository.claim_field_effect(
+            operation.plan.plan_id, "planned", "a" * 64, self.clock()
+        )
+        self.repository.transition_field_effect(
+            operation.plan.plan_id, claimed.state, "applying", self.clock()
+        )
+        self.recovery_hook.callback = lambda _: (_ for _ in ()).throw(
+            RuntimeError("synthetic restart")
+        )
+        with self.assertRaisesRegex(RuntimeError, "synthetic restart"):
+            self.service.apply(operation.plan.plan_id)
+        self.assertEqual(self.repository._connection.execute(
+            "SELECT state FROM field_effect_actions WHERE plan_id=? "
+            "AND kind='targeted_read'", (operation.plan.plan_id,),
+        ).fetchone(), ("pending",))
+        self.repository.close()
+        self.repository = open_repository(
+            Path(self.temporary.name) / "effects.sqlite", create=False,
+            cross_thread=True,
+        )
+        self.service._repository = self.repository
+        self.assertEqual(self.service.recover_pending(), (1, 0))
+        self.assertEqual(self.service.status(operation.plan.plan_id).state, "retryable")
 
     def test_persisted_targeted_read_reopens_after_restart(self) -> None:
         operation = self.plan(suffix="3")
@@ -668,8 +757,112 @@ class FieldEffectTests(unittest.TestCase):
             status = client.get(f"/api/v1/field-effects/{operation.plan.plan_id}")
             self.assertEqual(status.json()["state"], "verified")
 
+    def test_web_field_effect_and_review_reads_share_one_repository_lock(self) -> None:
+        operation = self.plan(suffix="c")
+        entered = threading.Event()
+        release = threading.Event()
+        library_entered = threading.Event()
+        repository = self.repository
+
+        class BlockingRepository:
+            def __getattr__(self, name: str):
+                return getattr(repository, name)
+
+            def get_field_effect(self, plan_id: str):
+                entered.set()
+                if not release.wait(2):
+                    raise RuntimeError("test release timeout")
+                return repository.get_field_effect(plan_id)
+
+            def read_review_library(self, search, limit, offset, attention):
+                library_entered.set()
+                return repository.read_review_library(search, limit, offset, attention)
+
+        blocking = BlockingRepository()
+        self.service._repository = blocking
+        root = Path(self.temporary.name)
+        password = root / "serialized-owner.hash"
+        password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+        os.chmod(password, 0o600)
+        app = create_review_app(
+            blocking,
+            ReviewWebConfiguration(
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(password),
+                session_lifetime_seconds=600,
+            ),
+            clock=self.clock,
+            field_application=self.service,
+        )
+        responses: dict[str, Any] = {}
+        with TestClient(app, base_url="https://review.test") as client:
+            login = client.post(
+                "/api/v1/session/login", json={"password": "correct horse"},
+                headers={"Origin": "https://review.test"},
+            )
+            self.assertEqual(login.status_code, 200)
+
+            status_thread = threading.Thread(
+                target=lambda: responses.setdefault(
+                    "status", client.get(
+                        f"/api/v1/field-effects/{operation.plan.plan_id}"
+                    )
+                )
+            )
+            library_thread = threading.Thread(
+                target=lambda: responses.setdefault(
+                    "library", client.get("/api/v1/library")
+                )
+            )
+            status_thread.start()
+            self.assertTrue(entered.wait(1))
+            library_thread.start()
+            self.assertFalse(library_entered.wait(0.1))
+            release.set()
+            status_thread.join(2)
+            library_thread.join(2)
+            self.assertFalse(status_thread.is_alive())
+            self.assertFalse(library_thread.is_alive())
+            self.assertTrue(library_entered.is_set())
+            self.assertEqual(responses["status"].status_code, 200)
+            self.assertEqual(responses["library"].status_code, 200)
+
 
 class FieldEffectDomainTests(unittest.TestCase):
+    def test_service_tokens_accept_realistic_opaque_ids_but_remain_bounded(self) -> None:
+        authority = EffectAuthority(
+            "human_decision_" + "a" * 64, "review_case_" + "b" * 64,
+            "c" * 64, "fake_service", "human", "candidate", None, None,
+        )
+        consent = EffectConsent.create(
+            connection="primary", library="books", destination="title", granted_at=1
+        )
+
+        def create(work_id: object, target_version: object) -> FieldEffectPlan:
+            return FieldEffectPlan.create(
+                connection="primary", library="books", work_id=work_id,
+                destination="title", pre_value="Old", desired_value="New",
+                target_fingerprint="c" * 64, target_version=target_version,
+                dependency_digests=(DEPENDENCY,), authority=authority,
+                consent=consent, capability_digest=CAPABILITY, created_at=1,
+            )
+
+        plan = create("65f12ab90d42c7e81934beef/+opaque", "d" * 64)
+        self.assertEqual(plan.work_id, "65f12ab90d42c7e81934beef/+opaque")
+        self.assertEqual(plan.target_version, "d" * 64)
+        for work_id, target_version in (
+            ("item\nheader", "v1"),
+            ("item\x00suffix", "v1"),
+            ("x" * 1025, "v1"),
+            ("item-1", "v" * 1025),
+            ("item-1", "   "),
+            ("item-1", "\ud800"),
+            (True, "v1"),
+        ):
+            with self.subTest(work_id=work_id, target_version=target_version):
+                with self.assertRaises(Exception):
+                    create(work_id, target_version)
+
     def test_series_is_one_atomic_destination_and_state_machine_rejects_skips(self) -> None:
         authority = EffectAuthority(
             "human_decision_" + "a" * 64, "review_case_" + "b" * 64,

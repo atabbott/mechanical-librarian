@@ -10,7 +10,7 @@ import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeVar
 from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
@@ -59,6 +59,7 @@ from mechanical_librarian.domain.metadata_policy import MetadataPolicyError, Met
 from mechanical_librarian.interfaces.web import review_frontend
 
 
+_SerializedResult = TypeVar("_SerializedResult")
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _COOKIE_NAME = "ml_session"
 
@@ -1001,7 +1002,9 @@ def create_review_app(
         if field_application is None:
             raise HTTPException(503, detail={"code": "unavailable"})
         try:
-            return callable_().to_data()
+            return serialized_repository.call_serialized(
+                lambda: callable_().to_data()
+            )
         except (GuardedApplicationError, FieldEffectError) as error:
             code = getattr(error, "code", "persistence")
             status_code = 404 if code == "not_found" else 409 if code in {
@@ -1051,7 +1054,9 @@ def create_review_app(
         _require_session(sessions, ml_session, x_csrf_token)
         if field_application is None:
             raise HTTPException(503, detail={"code": "unavailable"})
-        field_application.set_paused(True)
+        serialized_repository.call_serialized(
+            lambda: field_application.set_paused(True)
+        )
         return Response(status_code=204)
 
     @app.post("/api/v1/field-effects/resume", status_code=204,
@@ -1061,7 +1066,9 @@ def create_review_app(
         _require_session(sessions, ml_session, x_csrf_token)
         if field_application is None:
             raise HTTPException(503, detail={"code": "unavailable"})
-        field_application.set_paused(False)
+        serialized_repository.call_serialized(
+            lambda: field_application.set_paused(False)
+        )
         return Response(status_code=204)
 
     @app.get("/api/v1/openapi.json", include_in_schema=False)
@@ -1438,6 +1445,12 @@ class _SerializedReviewRepository:
     def __init__(self, repository: ReviewWebRepository) -> None:
         self._repository = repository
         self._lock = threading.RLock()
+
+    def call_serialized(
+        self, call: Callable[[], _SerializedResult]
+    ) -> _SerializedResult:
+        with self._lock:
+            return call()
 
     def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
         with self._lock:

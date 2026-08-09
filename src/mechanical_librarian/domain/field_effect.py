@@ -52,6 +52,15 @@ def _digest(value: object) -> str:
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
+def _valid_service_token(value: object) -> bool:
+    if type(value) is not str or not value.isprintable() or value.isspace():
+        return False
+    try:
+        return 1 <= len(value.encode("utf-8")) <= 1024
+    except UnicodeEncodeError:
+        return False
+
+
 def validate_effect_value(destination: str, value: object) -> object:
     """Validate and normalize the closed fake-service ebook value vocabulary."""
     if destination not in SUPPORTED_DESTINATIONS:
@@ -203,9 +212,12 @@ class FieldEffectPlan:
                dependency_digests: tuple[str, ...], authority: EffectAuthority,
                consent: EffectConsent, capability_digest: str,
                created_at: int) -> Self:
-        for value in (connection, library, work_id, target_version):
+        for value in (connection, library):
             if type(value) is not str or _IDENTITY.fullmatch(value) is None:
                 raise FieldEffectError("invalid_identity")
+        for value in (work_id, target_version):
+            if not _valid_service_token(value):
+                raise FieldEffectError("invalid_service_token")
         if type(created_at) is not int or created_at < 0:
             raise FieldEffectError("invalid_time")
         desired = validate_effect_value(destination, desired_value)

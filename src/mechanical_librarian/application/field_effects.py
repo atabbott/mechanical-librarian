@@ -61,7 +61,8 @@ class FieldEffectRepository(Protocol):
     def revoke_field_effect_authority(self, decision_id: str, changed_at: int) -> int: ...
     def revoke_field_effect_consent(self, consent_id: str, changed_at: int) -> int: ...
     def schedule_field_effect_reconciliation(self, plan_id: str, expected_state: str,
-                                             changed_at: int) -> FieldEffectOperation: ...
+                                             changed_at: int,
+                                             failure: str = "ambiguous") -> FieldEffectOperation: ...
     def complete_field_effect_reconciliation(self, plan_id: str, state: str,
                                              failure: str | None, changed_at: int,
                                              reevaluate: bool = False) -> FieldEffectOperation: ...
@@ -215,9 +216,10 @@ class GuardedFieldApplication:
         if operation.state == "claimed":
             return self._execute_claimed(operation)
         if operation.state == "applying":
-            operation = self._repository.transition_field_effect(
-                plan_id, operation.state, "reconciling", self._clock(), "restart_readback"
+            operation = self._repository.schedule_field_effect_reconciliation(
+                plan_id, operation.state, self._clock(), "restart_readback"
             )
+            self._recovery_hook(operation.plan)
             return self.reconcile(plan_id)
         plan = operation.plan
         guarded = self._preclaim(operation)
@@ -337,8 +339,8 @@ class GuardedFieldApplication:
         observed = self._target.read(operation.plan)
         if observed.value == operation.plan.desired_value:
             return self._complete(operation, "applying")
-        return self._repository.transition_field_effect(
-            operation.plan.plan_id, "applying", "reconciling", self._clock(), "readback"
+        return self._repository.schedule_field_effect_reconciliation(
+            operation.plan.plan_id, "applying", self._clock(), "readback"
         )
 
     def _complete(self, operation: FieldEffectOperation, expected: str) -> FieldEffectOperation:
