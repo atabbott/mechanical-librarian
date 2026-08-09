@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 
@@ -41,6 +42,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         self.artifacts.stage(artifact, _PNG, b"preview")
         self.cover = artifact.artifact_id
         self.requests: list[httpx.Request] = []
+        self.events: list[str] = []
         self.detail = {
             "id": "item-1", "libraryId": "library-1", "mediaType": "book", "updatedAt": 7,
             "media": {"metadata": {"title": "Before", "genres": ["old"]}, "tags": ["old"]},
@@ -50,6 +52,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
 
         def handle(request: httpx.Request) -> httpx.Response:
             self.requests.append(request)
+            self.events.append(request.method)
             if request.method == "GET" and request.url.path == "/api/items/item-1":
                 return httpx.Response(200, headers={"content-type": "application/json"}, json=self.detail)
             if request.method == "GET" and request.url.path == "/api/items/item-1/cover":
@@ -111,7 +114,15 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
     def test_cover_reads_digest_and_uploads_only_verified_original(self) -> None:
         plan = self.plan("cover", None, self.cover)
         self.assertEqual(self.target.read(plan).value, None)
-        self.assertEqual(self.target.apply(plan).outcome, "accepted")
+        self.events.clear()
+        original = self.artifacts.read_original_digest
+        with patch.object(
+            self.artifacts, "read_original_digest",
+            side_effect=lambda digest: self.events.append("artifact") or original(digest),
+        ):
+            self.assertEqual(self.target.apply(plan).outcome, "accepted")
+        self.assertEqual(self.events[0], "artifact")
+        self.assertEqual(self.events[-1], "POST")
         self.assertEqual(self.target.read(plan).value, self.cover)
         self.assertEqual(len([request for request in self.requests if request.method == "POST"]), 1)
 

@@ -442,8 +442,10 @@ generation-one overrides through admission, keeps new-library preview separate
 from fail-closed proposal execution, restarts pre-existing terminal work, and
 checks atomic extraction-publication transition failure. Generated
 OpenAPI and the authenticated browser flow cover activation and transition
-routes; exact installed-artifact qualification remains report-only and verifies
-no target, media, or artifact writes.
+routes. The general exact installed-artifact lifecycle remains report-only and
+verifies no target, media, or artifact writes. The separately invoked F14 canary
+builds and installs the exact-head wheel outside its source snapshot, then uses
+that installed adapter only against its owned disposable synthetic library.
 
 Guarded-application tests use only synthetic immutable decisions and fake
 backup, capability, exact authority binding, distinct consent, dependency,

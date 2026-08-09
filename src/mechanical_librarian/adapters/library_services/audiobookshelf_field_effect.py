@@ -115,6 +115,22 @@ class AudiobookshelfFieldEffectTarget:
         actor can still change this one destination after this read.
         """
         try:
+            cover_body: bytes | None = None
+            media_payload: dict[str, object] | None = None
+            if plan.destination == "cover":
+                if not isinstance(plan.desired_value, str):
+                    return TargetEffectResult("conflict")
+                digest = plan.desired_value.removeprefix("cover_")
+                if len(digest) != 64:
+                    return TargetEffectResult("conflict")
+                try:
+                    cover_body = self._artifacts.read_original_digest(digest)
+                except MetadataReportError:
+                    return TargetEffectResult("conflict")
+                if hashlib.sha256(cover_body).hexdigest() != digest:
+                    return TargetEffectResult("conflict")
+            else:
+                media_payload = _media_payload(plan.destination, plan.desired_value)
             with self._client_factory() as client:
                 detail = self._item(client, plan.work_id)
                 current = self._value(client, detail, plan)
@@ -123,24 +139,16 @@ class AudiobookshelfFieldEffectTarget:
                 if current != plan.pre_value or _version(detail) != plan.target_version:
                     return TargetEffectResult("conflict")
                 if plan.destination == "cover":
-                    digest = plan.desired_value.removeprefix("cover_")
-                    if (not isinstance(plan.desired_value, str)
-                            or len(digest) != 64):
-                        return TargetEffectResult("conflict")
-                    try:
-                        body = self._artifacts.read_original_digest(digest)
-                    except MetadataReportError:
-                        return TargetEffectResult("conflict")
-                    if hashlib.sha256(body).hexdigest() != digest:
-                        return TargetEffectResult("conflict")
+                    assert cover_body is not None
                     status = _write_status(client, "POST",
                         f"{self._endpoint}/api/items/{quote(plan.work_id, safe='')}/cover",
-                        files={"cover": ("cover" + _image_suffix(body), body, _image_media_type(body))},
+                        files={"cover": ("cover" + _image_suffix(cover_body), cover_body, _image_media_type(cover_body))},
                     )
                 else:
+                    assert media_payload is not None
                     status = _write_status(client, "PATCH",
                         f"{self._endpoint}/api/items/{quote(plan.work_id, safe='')}/media",
-                        json=_media_payload(plan.destination, plan.desired_value),
+                        json=media_payload,
                     )
         except (httpx.HTTPError, OSError, ValueError):
             return TargetEffectResult("ambiguous")

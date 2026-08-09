@@ -76,8 +76,9 @@ nonterminal cover work exists. A capture failure blocks that cover alone.
 Capture is temp-file/fsync/atomic-rename/directory-fsync. Incomplete temporary
 or invalid final captures are rejected and cleaned where safely owned. Every
 terminal cover path persists cleanup and restart retries a failed removal.
-This fake-only increment cannot alter
-Audiobookshelf or embedded media.
+The ordinary installed product still cannot alter Audiobookshelf or embedded
+media. The separate qualification canary can alter only the synthetic item in
+the disposable Audiobookshelf container it creates and owns.
 
 ## Supported Audiobookshelf canary
 

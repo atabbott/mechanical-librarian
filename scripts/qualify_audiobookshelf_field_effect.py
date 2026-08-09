@@ -27,8 +27,10 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT / "src") not in sys.path:
-    sys.path.insert(0, str(ROOT / "src"))
+INSTALLED_ROOT = os.environ.get("MECHANICAL_LIBRARIAN_QUALIFICATION_INSTALL")
+IMPORT_ROOT = Path(INSTALLED_ROOT).resolve() if INSTALLED_ROOT else ROOT / "src"
+if str(IMPORT_ROOT) not in sys.path:
+    sys.path.insert(0, str(IMPORT_ROOT))
 
 import httpx
 from PIL import Image
@@ -37,19 +39,17 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     FakeBackupReadiness, FakeDependencyCurrentness,
     FakeForwardReevaluation,
 )
+from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import (
+    AudiobookshelfFieldEffectCapabilities,
+    AudiobookshelfFieldEffectTarget,
+)
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
-from mechanical_librarian.application.configuration import (
-    ApplicationConfiguration, LibraryConfiguration, TargetConnectionConfiguration,
-)
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
-from mechanical_librarian.bootstrap.composition import (
-    compose_audiobookshelf_field_effect_capabilities,
-    compose_audiobookshelf_field_effect_target,
-)
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
 from mechanical_librarian.domain.field_effect import EffectAuthority, EffectConsent, FieldEffectOperation, FieldEffectPlan
+from mechanical_librarian.infrastructure.security.credentials import target_client_token
 
 
 IMAGES = {
@@ -162,7 +162,7 @@ def _create_user(base: str, root_token: str, *, username: str, password: str,
 
 
 def _snapshot(source_sha: str) -> None:
-    """Replace this launcher with the immutable script and source archive."""
+    """Run the immutable script against a wheel installed outside its snapshot."""
     archive = subprocess.run(
         ("git", "archive", "--format=tar", source_sha), cwd=ROOT,
         check=False, capture_output=True,
@@ -176,10 +176,20 @@ def _snapshot(source_sha: str) -> None:
                 contents.extractall(snapshot, filter="data")
         except (tarfile.TarError, OSError) as error:
             raise QualificationError("source_snapshot_failed") from error
+        wheel_dir = snapshot / ".qualification-wheel"
+        installed = snapshot / ".qualification-installed"
+        _run("uv", "build", "--wheel", "--out-dir", str(wheel_dir), str(snapshot))
+        wheels = tuple(wheel_dir.glob("*.whl"))
+        if len(wheels) != 1:
+            raise QualificationError("installed_artifact_invalid")
+        _run("uv", "pip", "install", "--target", str(installed), "--no-deps", str(wheels[0]))
+        environment = os.environ.copy()
+        environment["MECHANICAL_LIBRARIAN_QUALIFICATION_INSTALL"] = str(installed)
+        environment.pop("PYTHONPATH", None)
         result = subprocess.run(
             (sys.executable, str(snapshot / "scripts/qualify_audiobookshelf_field_effect.py"),
              "--source-sha", source_sha, "--snapshot"),
-            cwd=snapshot, check=False,
+            cwd=snapshot, check=False, env=environment,
         )
     if result.returncode != 0:
         raise QualificationError("archived_qualification_failed")
@@ -216,15 +226,45 @@ def _plan(repository, *, item: str, destination: str, value: object, desired: ob
     return plan
 
 
-def _apply(service, repository, target, capabilities, item: str, destination: str, desired: object, clock: int) -> dict[str, object]:
+def _value_digest(value: object) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _apply(service, repository, target, capabilities, writes: list[str], recovery,
+           item: str, destination: str, desired: object, clock: int) -> dict[str, object]:
     placeholder = type("Plan", (), {"work_id": item, "destination": destination})()
     before = target.read(placeholder)
     if destination == "tags" and (type(before.value) is not list or not before.value or any(type(value) is not str for value in before.value)):
         raise RuntimeError("synthetic tag setup has unsupported response shape: " + type(before.value).__name__)
     plan = _plan(repository, item=item, destination=destination, value=before.value, desired=desired, observation=before, capabilities=capabilities, clock=clock)
+    write_count = len(writes)
     operation = service.apply(plan.plan_id)
     after = target.read(plan)
-    return {"destination": destination, "state": operation.state, "failure": operation.failure or "none", "request_count": 1}
+    persisted = repository.get_field_effect(plan.plan_id)
+    request_count = len(writes) - write_count
+    if (request_count != 1 or after.value != desired or operation.state != "verified"
+            or persisted != operation):
+        raise QualificationError("guarded_write_evidence_invalid")
+    recovery_state = "not_applicable"
+    if destination == "cover":
+        if not recovery.capture_verified or not recovery.cleanup_verified or recovery.exists(plan.plan_id):
+            raise QualificationError("cover_recovery_evidence_invalid")
+        recovery_state = "captured_and_cleaned"
+    audit = {
+        "state": persisted.state,
+        "failure": persisted.failure or "none",
+        "attempt": persisted.attempt,
+    }
+    return {
+        "destination": destination,
+        "state": persisted.state,
+        "failure": persisted.failure or "none",
+        "request_count": request_count,
+        "before_digest": _value_digest(before.value),
+        "after_digest": _value_digest(after.value),
+        "audit_digest": _value_digest(audit),
+        "recovery": recovery_state,
+    }
 
 
 def _stable_cover_observation(target, item: str) -> None:
@@ -247,6 +287,50 @@ def _raw_cover(base: str, token: str, item: str, expected: bytes) -> bytes:
     if response.status_code != 200 or hashlib.sha256(response.content).digest() != hashlib.sha256(expected).digest():
         raise QualificationError("cover_recovery_preimage_invalid")
     return response.content
+
+
+class _ObservedRecovery:
+    def __init__(self, delegate: PrivateCoverRecoveryStore) -> None:
+        self._delegate = delegate
+        self.capture_verified = False
+        self.cleanup_verified = False
+
+    def capture(self, plan: FieldEffectPlan) -> None:
+        self._delegate.capture(plan)
+        self.capture_verified = self._delegate.exists(plan.plan_id)
+
+    def remove(self, plan_id: str) -> None:
+        existed = self._delegate.exists(plan_id)
+        self._delegate.remove(plan_id)
+        self.cleanup_verified = existed and not self._delegate.exists(plan_id)
+
+    def exists(self, plan_id: str) -> bool:
+        return self._delegate.exists(plan_id)
+
+
+def _latest_stable() -> str:
+    request = urllib.request.Request(
+        "https://api.github.com/repos/advplyr/audiobookshelf/releases/latest",
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "mechanical-librarian-qualification"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            raw = response.read(1_048_577)
+    except (OSError, urllib.error.URLError, TimeoutError) as error:
+        raise QualificationError("latest_stable_unavailable") from error
+    if len(raw) > 1_048_576:
+        raise QualificationError("latest_stable_invalid")
+    try:
+        release = json.loads(raw.decode("utf-8", "strict"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise QualificationError("latest_stable_invalid") from error
+    if (type(release) is not dict or release.get("draft") is not False
+            or release.get("prerelease") is not False):
+        raise QualificationError("latest_stable_invalid")
+    tag = release.get("tag_name")
+    if type(tag) is not str or not tag.startswith("v") or tag[1:] not in IMAGES:
+        raise QualificationError("latest_stable_not_pinned")
+    return tag[1:]
 
 
 def qualify(version: str) -> dict[str, object]:
@@ -313,13 +397,24 @@ def qualify(version: str) -> dict[str, object]:
         before_cover = _png(0, 0, 255)
         response = httpx.post(base + "/api/items/" + item + "/cover", headers={"Authorization": "Bearer " + writer_key}, files={"cover": ("before.png", before_cover, "image/png")}, timeout=20)
         if response.status_code not in {200, 201}: raise RuntimeError("synthetic initial cover was refused")
-        secret = root / "token"; secret.write_text(writer_key, encoding="ascii"); secret.chmod(0o600)
-        configuration = ApplicationConfiguration((TargetConnectionConfiguration("canary", base, str(secret)),), (LibraryConfiguration("books", "canary", library_id, "book", None, ()),), (), ())
         artifacts = CoverArtifactStore(root / "artifacts")
         desired_cover = _png(255, 0, 0)
         artifact = CoverArtifact.create(desired_cover, b"preview", "image/png", 2, 2); artifacts.stage(artifact, desired_cover, b"preview")
-        target = compose_audiobookshelf_field_effect_target(configuration, root / "artifacts", "canary", "books")
-        capabilities = compose_audiobookshelf_field_effect_capabilities(configuration, "canary", "books")
+        writes: list[str] = []
+        def client_factory() -> httpx.Client:
+            client = target_client_token(base, writer_key, 20)
+            def observe_request(request: httpx.Request) -> None:
+                if request.method in {"PATCH", "POST"}:
+                    writes.append(request.method)
+            client.event_hooks["request"].append(observe_request)
+            return client
+        target = AudiobookshelfFieldEffectTarget(
+            client_factory=client_factory, endpoint=base, library_id=library_id,
+            artifacts=artifacts,
+        )
+        capabilities = AudiobookshelfFieldEffectCapabilities(
+            client_factory=client_factory, endpoint=base, library_id=library_id,
+        )
         repository = open_repository(root / "effects.sqlite")
         current = type("Current", (), {"current": lambda self, value: True})()
         time_value = [100]
@@ -328,16 +423,17 @@ def qualify(version: str) -> dict[str, object]:
             return time_value[0]
         if capabilities.result(type("Plan", (), {"work_id": item, "destination": "title"})()).category != "allowed":
             raise QualificationError("writer_capability_not_allowed")
-        service = GuardedFieldApplication(repository, target, FakeBackupReadiness(), capabilities, current, FakeDependencyCurrentness(), current, PrivateCoverRecoveryStore(root / "recovery", lambda _: _raw_cover(base, writer_key, item, before_cover)), FakeForwardReevaluation(), clock)
-        outcomes = [_apply(service, repository, target, capabilities, item, "title", "After", clock()), _apply(service, repository, target, capabilities, item, "tags", ["canary"], clock())]
+        recovery = _ObservedRecovery(PrivateCoverRecoveryStore(root / "recovery", lambda _: _raw_cover(base, writer_key, item, before_cover)))
+        service = GuardedFieldApplication(repository, target, FakeBackupReadiness(), capabilities, current, FakeDependencyCurrentness(), current, recovery, FakeForwardReevaluation(), clock)
+        outcomes = [_apply(service, repository, target, capabilities, writes, recovery, item, "title", "After", clock()), _apply(service, repository, target, capabilities, writes, recovery, item, "tags", ["canary"], clock())]
         _stable_cover_observation(target, item)
-        outcomes.append(_apply(service, repository, target, capabilities, item, "cover", artifact.artifact_id, clock()))
+        outcomes.append(_apply(service, repository, target, capabilities, writes, recovery, item, "cover", artifact.artifact_id, clock()))
         repository.close()
         digest = _run("docker", "image", "inspect", image, "--format", "{{index .RepoDigests 0}}").stdout.strip()
         expected_digest = image.rsplit("@", 1)[1]
         if not digest.endswith("@" + expected_digest) or any(row["state"] != "verified" for row in outcomes):
             raise QualificationError("guarded_write_not_verified")
-        return {"version": version, "image_digest": expected_digest, "resolved_image_digest": digest.rsplit("@", 1)[1], "authentication": "api_key_accepted", "least_authority_refusal": True, "metadata_tags": True, "cover": True, "outcomes": outcomes}
+        return {"version": version, "image_digest": expected_digest, "resolved_image_digest": digest.rsplit("@", 1)[1], "authentication": "api_key_accepted", "least_authority_refusal": True, "metadata_tags": all(row["destination"] in {"title", "tags"} and row["state"] == "verified" for row in outcomes[:2]), "cover": outcomes[-1]["destination"] == "cover" and outcomes[-1]["state"] == "verified", "outcomes": outcomes}
     finally:
         if base is not None and root_token is not None:
             for key_id in key_ids:
@@ -362,10 +458,11 @@ def main() -> None:
         _snapshot(arguments.source_sha)
         return
     import mechanical_librarian
-    if not Path(mechanical_librarian.__file__).resolve().is_relative_to(ROOT):
+    if not INSTALLED_ROOT or not Path(mechanical_librarian.__file__).resolve().is_relative_to(IMPORT_ROOT):
         raise QualificationError("snapshot_import_mismatch")
+    latest = _latest_stable()
     values = arguments.version or list(IMAGES)
-    print(json.dumps({"schema": "audiobookshelf-field-effect-v1", "results": [qualify(value) for value in values]}, sort_keys=True))
+    print(json.dumps({"schema": "audiobookshelf-field-effect-v1", "installed_artifact": True, "latest_stable_version": latest, "results": [qualify(value) for value in values]}, sort_keys=True))
 
 
 if __name__ == "__main__": main()

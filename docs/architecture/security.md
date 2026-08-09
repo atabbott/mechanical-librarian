@@ -608,8 +608,10 @@ qualified Automatic set is empty and all persisted outcomes declare authority
 `none`. Only the deterministic F19 projection includes exact `policy_ignored`
 proposals; the external-review packet remains unchanged.
 
-Guarded field effects add the first persisted mutation boundary, restricted to
-the credential-free fake target. Only exact `HumanDecision(accept)` or sealed
+Guarded field effects add the first persisted mutation boundary. The ordinary
+product remains restricted to the credential-free fake target; one unreachable
+canary composes the API-key Audiobookshelf target only for a disposable synthetic
+library. Only exact `HumanDecision(accept)` or sealed
 qualified `AutomaticDecision(candidate)` instances project authority; raw
 proposals, previews, advice, policy dispositions, and caller-supplied origin
 strings cannot. Planning rejects any decision/current-case mismatch in
