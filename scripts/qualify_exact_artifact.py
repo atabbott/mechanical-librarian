@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import base64
 import csv
 import hashlib
@@ -1506,28 +1507,45 @@ def _verify_installed_record(
     }
     installer_record = f"{manifest.dist_info}/INSTALLER"
     origin_record = f"{manifest.dist_info}/direct_url.json"
+    console_records: dict[str, Path] = {}
     console_record = None
     if console is not None:
         console_record = os.path.relpath(console, purelib).replace(os.sep, "/")
-        allowed.add(console_record)
+        entry_points = purelib / manifest.dist_info / "entry_points.txt"
+        parser = configparser.ConfigParser(interpolation=None, strict=True)
+        parser.optionxform = str
+        parser.read_string(
+            _read_bounded_file(entry_points, _MAX_METADATA_BYTES).decode("utf-8", "strict")
+        )
+        declared = (
+            () if not parser.has_section("console_scripts")
+            else tuple(parser["console_scripts"])
+        )
+        if (not declared or console.name not in declared
+                or any(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", name) is None
+                       for name in declared)):
+            raise QualificationFailure("installed_record_console_invalid")
+        for name in declared:
+            target = console.parent / name
+            record = os.path.relpath(target, purelib).replace(os.sep, "/")
+            console_records[record] = target
+            allowed.add(record)
     if installer_record not in generated:
         raise QualificationFailure("installed_record_installer_missing")
     if origin_record not in generated:
         raise QualificationFailure("installed_record_origin_missing")
-    if console_record is not None and console_record not in generated:
+    if console_record is not None and set(console_records) - generated:
         raise QualificationFailure("installed_record_console_missing")
     if not generated.issubset(allowed):
         raise QualificationFailure("installed_record_generated_unexpected")
 
     for name in generated:
-        target = (
-            console
-            if name == console_record
-            else purelib.joinpath(*PurePosixPath(name).parts)
+        target = console_records.get(
+            name, purelib.joinpath(*PurePosixPath(name).parts)
         )
         if target is None or not target.is_file() or target.is_symlink():
             raise QualificationFailure("installed_record_generated_invalid")
-        if name != console_record and not target.resolve().is_relative_to(purelib):
+        if name not in console_records and not target.resolve().is_relative_to(purelib):
             raise QualificationFailure("installed_record_generated_invalid")
         digest, size = _file_record_identity(target)
         if rows[name] != (digest, str(size)):
