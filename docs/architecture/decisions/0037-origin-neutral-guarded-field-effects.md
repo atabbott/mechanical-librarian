@@ -20,8 +20,11 @@ idempotency identity. Series name and sequence are one compound destination.
 
 The application layer owns target, backup, capability, currentness, dependency,
 cover-recovery, and repository ports. The existing exact-current SQLite
-repository implements plan/control/audit persistence. A deterministic fake is
-the only target implementation. The authenticated web edge may call the same
+repository implements plan/control/audit persistence. The supported
+Audiobookshelf target adapter uses only API-key-authenticated item, media and
+cover APIs. It reads a cover original only through the immutable,
+digest-verifying cover-artifact store; old destination cover bytes remain in
+the separate recovery-only store. The authenticated web edge may call the same
 application service; no apply CLI is introduced.
 
 Planning resolves the exact persisted decision and current review-case binding;
@@ -31,11 +34,15 @@ vocabulary; work identifiers and target versions are separately bounded opaque
 service tokens. A separate bounded consent fact binds the connection, library,
 destination, and `apply_field` action. Backup readiness, capability, current authority, dependency freshness, target
 pre-state, circuit state, then atomic pause/concurrency claim are checked in
-that order and refreshed at the last feasible point before claim. The target
-adapter must independently compare both captured pre-value and target version
-atomically with its write. These checks do not claim a transaction across the
-repository and external systems; later drift is detected by target conflict or
-readback and reconciled forward. Repository-held authority, consent, pause, and
+that order and refreshed at the last feasible point before claim. Audiobookshelf
+does not expose a supported value-and-version compare-and-set operation. The
+adapter therefore performs exactly one destination-minimal request after the
+authoritative pre-read and never blindly retries an ambiguous response; it then
+performs authoritative read-back. This is not CAS: a same-field actor can write
+between that final read and Audiobookshelf accepting our request, and our write
+can overwrite that actor's value. Read-back can only detect later disagreement.
+Writes to other fields remain outside that field-local lost-update window.
+Repository-held authority, consent, pause, and
 claim state share one `BEGIN IMMEDIATE` transaction; this is the supported
 atomic boundary. For persisted decision authority, that transaction also
 rechecks the complete current review case, metadata-report lineage, file-specific
@@ -63,6 +70,6 @@ or support material.
 ## Consequences
 
 The database schema remains pre-release exact-current: only absent or this
-exact schema opens, with no migration. This increment can mutate only the fake
-adapter. Audiobookshelf writes, media writes, clearing, rollback/Undo, batching,
-and production use remain unavailable.
+exact schema opens, with no migration. The canary adapter is not composed into
+ordinary continuous activation. Clearing, rollback/Undo, batching, embedded
+media writes, and production-library use remain unavailable.

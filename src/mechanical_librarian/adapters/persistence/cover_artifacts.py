@@ -60,6 +60,15 @@ class CoverArtifactStore:
         """Read a preview only after a repository has authorized its digest."""
         return self._read(digest, 1_048_576)
 
+    def read_original_digest(self, digest: str) -> bytes:
+        """Return one verified original for the guarded Audiobookshelf cover writer.
+
+        Callers must already hold the immutable plan whose ``cover_`` identity
+        binds this digest.  This intentionally exposes no paths or enumeration
+        capability and never persists the returned bytes.
+        """
+        return self._read(digest, _MAX_ORIGINAL_BYTES)
+
     def recover_unreferenced(self, is_referenced: Callable[[str], bool]) -> None:
         """Remove candidate crash orphans after one targeted reference check."""
         if not callable(is_referenced):

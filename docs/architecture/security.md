@@ -619,8 +619,14 @@ Every claim rechecks backup, capability, authority, consent, dependencies,
 target pre-state/version, circuit, pause, and optimistic state. Persisted
 authority, consent, pause, and claim state are conditioned atomically in one
 repository transaction together with persisted decision/current-lineage and
-automatic safety currentness. The target's value-and-version CAS closes later
-external drift, without claiming a cross-system transaction.
+automatic safety currentness. The supported Audiobookshelf adapter has no
+target-side CAS: it makes one minimal API-key request only after its final
+authoritative pre-read, then read-backs the destination and reconciles any
+refusal, ambiguity, drift or disagreement. A same-field update may still be
+lost in the interval before Audiobookshelf accepts that request; this boundary
+does not claim cross-system atomicity. Cover upload reads only the immutable
+digest-verified original artifact, never recovery bytes, and neither bytes nor
+credentials enter diagnostics, logs, support bundles or reviewers.
 Unknown and stale facts fail closed. Target and credential authority are absent
 from domain code, reviewers, diagnostics, and the API. There is no
 Audiobookshelf or media-write constructor in this boundary.

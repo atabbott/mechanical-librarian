@@ -79,6 +79,15 @@ terminal cover path persists cleanup and restart retries a failed removal.
 This fake-only increment cannot alter
 Audiobookshelf or embedded media.
 
+## Supported Audiobookshelf canary
+
+The canary uses API keys and supported item/media/cover endpoints only. Before
+one destination-minimal write it rereads the exact planned field and item
+version; it then rereads the destination. Audiobookshelf provides no CAS, so a
+same-field update can be overwritten between those reads and the service
+accepting the request. Never retry an ambiguous write manually from the same
+plan: use the persisted field-local reconciliation/audit outcome instead.
+
 ## Container restart and private recovery
 
 Stop the container gracefully before copying `/data`. Readiness changes to

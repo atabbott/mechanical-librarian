@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add the supported Audiobookshelf guarded-write canary: one API-key
+  destination-minimal metadata/tags or digest-verified cover request follows a
+  final authoritative pre-read and is followed by read-back/reconciliation. ABS
+  supplies no CAS, so the documented same-field lost-update window remains; no
+  continuous activation, bulk, rollback, embedded-media, or production-library
+  write path is enabled. (#150)
+
 - Add the supported single-container operational substrate: absent or
   exact-current startup, readiness/liveness, graceful claim draining, typed
   scoped incidents, opt-in bounded stage timings, a bounded private cover

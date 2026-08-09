@@ -1,5 +1,11 @@
 # Testing strategy
 
+Audiobookshelf write qualification uses synthetic disposable libraries and API
+keys only. It proves one metadata/tags PATCH and one digest-verified multipart
+cover upload at v2.26.0 and the then-latest stable image, including read-back,
+refusal and ambiguous-response reconciliation. It never contacts a production
+library or uses direct database or browser writes.
+
 The public suite has four explicit qualification tiers. They retain every
 existing assertion while keeping independent feedback paths parallel and
 diagnosable.

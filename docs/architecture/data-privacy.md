@@ -106,6 +106,10 @@ private sentinel distinct from arbitrary or missing recovery data.
 Application documents, APIs, logs, diagnostics, fixtures, exports, support
 bundles, and reviewers must never contain those bytes or their private path.
 
+The supported Audiobookshelf canary may read one immutable original cover by
+its plan-bound digest solely to stream one multipart upload. It does not retain,
+log, export, or expose those bytes; pre-write cover bytes remain recovery-only.
+
 The retained local vocabulary includes bounded title/subtitle, creator/contributor
 roles, series/sequence, ISBN, dates, publisher/imprint, description, language,
 and contextual subject evidence; it retains no paths or source bodies.
