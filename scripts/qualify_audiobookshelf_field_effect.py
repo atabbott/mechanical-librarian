@@ -1122,10 +1122,40 @@ def _installed_continuous_qualification(
                         "prepared", "suspensions",
                     )
                 }
+                field_diagnostics: list[dict[str, object]] = []
+                for case_summary in cases:
+                    if type(case_summary) is not dict:
+                        continue
+                    case_id = case_summary.get("review_case_id")
+                    if type(case_id) is not str:
+                        continue
+                    detail = client.get(f"/api/v1/review-cases/{case_id}")
+                    if detail.status_code != 200:
+                        continue
+                    detail_value = detail.json()
+                    target = detail_value.get("target")
+                    if (type(target) is not dict
+                            or target.get("item") not in operator_item_ids):
+                        continue
+                    for field in detail_value.get("fields", []):
+                        if (type(field) is not dict
+                                or field.get("destination") not in automatic_destinations):
+                            continue
+                        automatic = field.get("automatic_decision")
+                        field_diagnostics.append({
+                            "automatic": (
+                                automatic.get("outcome")
+                                if type(automatic) is dict else None
+                            ),
+                            "destination": field.get("destination"),
+                            "disposition": field.get("deterministic_disposition"),
+                            "proposed": len(field.get("proposed_values", [])),
+                        })
                 raise QualificationError(
                     "installed_scheduler_failed:"
                     + json.dumps(
                         {"activity": activity_summary, "coverage": coverage,
+                         "fields": field_diagnostics,
                          "pending": binding_diagnostics,
                          "thread_alive": (
                              continuous._thread is not None
