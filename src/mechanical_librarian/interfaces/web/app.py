@@ -40,7 +40,8 @@ from mechanical_librarian.application.field_effects import (
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls, MetadataPolicyApplicationError, PolicyNotebook, PolicyTransition
 from mechanical_librarian.application.operations import (
-    OperationalStatus, OperationsError, SupportExporter, TimingRepository,
+    OperationalStatus, OperationsError, StageTimer, SupportExporter,
+    TimingRepository,
 )
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
@@ -620,6 +621,7 @@ def create_review_app(
     field_application: GuardedFieldApplication | None = None,
     operational_timings: TimingRepository | None = None,
     operational_support: SupportExporter | None = None,
+    operational_timer: StageTimer | None = None,
 ) -> FastAPI:
     serialized_repository = _SerializedReviewRepository(repository)
     operational_status = (
@@ -639,7 +641,10 @@ def create_review_app(
         configuration.session_lifetime_seconds,
     )
     cases = InspectCurrentReviewCase(serialized_repository)
-    decisions = RecordHumanDecision(serialized_repository, clock)
+    timing = operational_timer or StageTimer(operational_timings, clock=clock)
+    decisions = RecordHumanDecision(serialized_repository, clock, timing)
+    if field_application is not None:
+        field_application.attach_timing(timing)
     browse = BrowseReviewLibrary(serialized_repository)
     overrides = {name: value for name, value in policy_libraries if value is not None}
     notebook = PolicyNotebook(serialized_repository, tuple(name for name, _ in policy_libraries), overrides)
@@ -650,6 +655,8 @@ def create_review_app(
     async def lifespan(_: FastAPI):
         if operational_status is not None:
             operational_status.start()
+        if field_application is not None:
+            field_application.start()
         if review_preparation is not None:
             review_preparation.start()
         try:
@@ -657,6 +664,8 @@ def create_review_app(
         finally:
             if operational_status is not None:
                 operational_status.begin_drain()
+            if field_application is not None:
+                field_application.begin_drain()
             if review_preparation is not None:
                 review_preparation.stop()
             if close_repository:
@@ -731,7 +740,7 @@ def create_review_app(
             raise HTTPException(503, detail={"code": "operations_unavailable"})
         try:
             return _OperationalResponse.model_validate(operational_status.status())
-        except OperationsError:
+        except (OperationsError, FieldEffectError):
             raise HTTPException(503, detail={"code": "operations_unavailable"}) from None
 
     @app.get("/api/v1/operations/support/preview",
@@ -1091,7 +1100,7 @@ def create_review_app(
         except (GuardedApplicationError, FieldEffectError) as error:
             code = getattr(error, "code", "persistence")
             status_code = 404 if code == "not_found" else 409 if code in {
-                "claim_conflict", "transition_conflict", "paused"
+                "claim_conflict", "transition_conflict", "draining", "paused"
             } else 503
             raise HTTPException(status_code, detail={"code": code}) from None
 

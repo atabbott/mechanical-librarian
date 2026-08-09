@@ -20,6 +20,8 @@ Timing is disabled by default. Set the documented
 stage duration/wait-class records in the owner-private data area. The closed
 stages are extraction, provider search, policy evaluation, human wait, apply,
 verification and reconciliation. Timing is advisory and never audit authority.
+Timing-store failure cannot change a preparation, decision or field-effect
+outcome; unreadable advisory evidence produces a bounded authenticated 503.
 
 `GET /api/v1/operations/support/preview` shows the exact allow-listed bundle
 shape and size. Authenticated, CSRF-bound

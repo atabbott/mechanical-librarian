@@ -46,6 +46,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
@@ -583,6 +584,12 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(exported.status_code, 200)
         self.assertNotIn("never-export", exported.text)
+        self.repository.operational_snapshot = lambda: (_ for _ in ()).throw(
+            FieldEffectError("persistence")
+        )
+        failed = self.client.get("/api/v1/operations/status")
+        self.assertEqual(failed.status_code, 503)
+        self.assertEqual(failed.json()["error"]["code"], "operations_unavailable")
 
     def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(self) -> None:
         anonymous = self.client.post("/api/v1/metadata-policy/validate", headers=self.origin, json={})
@@ -1145,6 +1152,23 @@ class ReviewWebTests(unittest.TestCase):
     def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
         self,
     ) -> None:
+        timings = LocalTimingStore(
+            Path(self.temporary.name) / "private" / "decision-timings.json",
+            enabled=True,
+        )
+        configuration = ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(self.hash_path),
+            session_lifetime_seconds=600,
+        )
+        self.client.close()
+        self.client = TestClient(
+            create_review_app(
+                self.repository, configuration, clock=lambda: self.now,
+                operational_timings=timings,
+            ),
+            base_url="https://review.test",
+        )
         login = self._login()
         detail = self.client.get(
             f"/api/v1/review-cases/{self.case.review_case_id}"
@@ -1174,6 +1198,10 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(accepted.status_code, 200, accepted.text)
         self.assertEqual(accepted.json()["outcome"], "accept")
+        self.assertEqual(
+            [(value.stage, value.wait_class) for value in timings.list()],
+            [("human_wait", "owner")],
+        )
         refreshed = self.client.get(
             f"/api/v1/review-cases/{self.case.review_case_id}"
         ).json()

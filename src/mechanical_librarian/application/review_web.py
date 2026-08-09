@@ -18,6 +18,7 @@ from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.application.metadata_policy import PolicyTransition
+from mechanical_librarian.application.operations import StageTimer
 
 
 class ReviewWebError(RuntimeError):
@@ -403,9 +404,11 @@ class RecordHumanDecision:
         self,
         repository: ReviewWebRepository,
         clock: Callable[[], int],
+        timing: StageTimer | None = None,
     ) -> None:
         self._repository = repository
         self._clock = clock
+        self._timing = timing or StageTimer(None)
 
     def run(
         self,
@@ -479,9 +482,10 @@ class RecordHumanDecision:
                 idempotency_key=idempotency_key,
                 occurred_at=self._clock(),
             )
-            stored = HumanDecision.from_json(
-                self._repository.record_human_decision(decision)
-            )
+            with self._timing.measure("human_wait", "owner"):
+                stored = HumanDecision.from_json(
+                    self._repository.record_human_decision(decision)
+                )
             if stored.request_digest != decision.request_digest:
                 raise ReviewWebError("persistence")
             return {

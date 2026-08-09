@@ -516,6 +516,13 @@
           "title": "Diagnostic Timings Enabled",
           "type": "boolean"
         },
+        "graceful_shutdown_seconds": {
+          "default": 30,
+          "maximum": 300,
+          "minimum": 1,
+          "title": "Graceful Shutdown Seconds",
+          "type": "integer"
+        },
         "library_polling_interval_seconds": {
           "default": 900,
           "maximum": 86400,

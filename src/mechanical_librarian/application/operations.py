@@ -8,8 +8,10 @@ authority for every field effect.
 from __future__ import annotations
 
 import json
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Literal, Protocol
+from typing import Callable, Iterator, Literal, Protocol
 
 
 STAGES = (
@@ -99,6 +101,38 @@ class Incident:
 class TimingRepository(Protocol):
     def append(self, timing: StageTiming) -> None: ...
     def list(self) -> tuple[StageTiming, ...]: ...
+
+
+class StageTimer:
+    """Best-effort diagnostic timing that can never become workflow authority."""
+
+    def __init__(
+        self,
+        repository: TimingRepository | None,
+        *,
+        monotonic_ns: Callable[[], int] = time.monotonic_ns,
+        clock: Callable[[], int] = lambda: int(time.time()),
+    ) -> None:
+        self._repository = repository
+        self._monotonic_ns = monotonic_ns
+        self._clock = clock
+
+    @contextmanager
+    def measure(self, stage: str, wait_class: str) -> Iterator[None]:
+        started = self._monotonic_ns()
+        try:
+            yield
+        finally:
+            if self._repository is not None:
+                try:
+                    elapsed = self._monotonic_ns() - started
+                    duration_ms = min(max(elapsed // 1_000_000, 0), 86_400_000)
+                    self._repository.append(
+                        StageTiming(stage, duration_ms, wait_class, self._clock())
+                    )
+                except Exception:
+                    # Diagnostics are deliberately unable to affect durable work.
+                    pass
 
 
 class SupportExporter(Protocol):

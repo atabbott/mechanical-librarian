@@ -11,7 +11,7 @@ from mechanical_librarian.adapters.operational_evidence import LocalTimingStore,
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
 from mechanical_librarian.application.operations import (
     MAX_SUPPORT_BYTES, MAX_TIMINGS, OperationsError, OperationalStatus,
-    StageTiming, aggregate_incidents,
+    StageTimer, StageTiming, aggregate_incidents,
 )
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority, EffectConsent, FieldEffectPlan,
@@ -126,6 +126,38 @@ class OperationsTests(unittest.TestCase):
             store.append(StageTiming("apply", 1, "target", MAX_TIMINGS + 6))
             self.assertFalse(path.with_suffix(".tmp").exists())
 
+    def test_timing_failure_cannot_change_measured_authority_and_private_roots_reject_links(self) -> None:
+        class FailingTimings:
+            def append(self, timing) -> None:
+                raise OSError("synthetic disk failure")
+            def list(self):
+                return ()
+
+        completed = []
+        with StageTimer(
+            FailingTimings(), monotonic_ns=iter((0, 2_000_000)).__next__,
+            clock=lambda: 1,
+        ).measure("apply", "target"):
+            completed.append("durable")
+        self.assertEqual(completed, ["durable"])
+
+        with self.assertRaisesRegex(RuntimeError, "authority failure"):
+            with StageTimer(
+                None, monotonic_ns=iter((0, 1_000_000)).__next__, clock=lambda: 1
+            ).measure("verification", "target"):
+                raise RuntimeError("authority failure")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            real = root / "real"
+            real.mkdir(mode=0o700)
+            linked = root / "private"
+            linked.symlink_to(real, target_is_directory=True)
+            with self.assertRaises(OperationsError):
+                LocalTimingStore(linked / "timings.json", enabled=True).list()
+            with self.assertRaises(ValueError):
+                PrivateCoverRecoveryStore(linked, lambda _: b"cover")
+
     def test_support_preview_and_export_are_bounded_and_redacted_again(self) -> None:
         state = {"status": "ready", "secret": "do-not-export",
                  "nested": {"private_path": "/owner/books", "code": "ok"}}
@@ -174,6 +206,19 @@ class OperationsTests(unittest.TestCase):
             root = Path(directory) / "recovery"
             store = PrivateCoverRecoveryStore(root, lambda _: b"x", maximum_entries=1)
             store.capture(plan)
+            other = FieldEffectPlan.create(
+                connection=plan.connection, library=plan.library,
+                work_id="other-work", destination=plan.destination,
+                pre_value=plan.pre_value, desired_value=plan.desired_value,
+                target_fingerprint=plan.target_fingerprint,
+                target_version=plan.target_version,
+                dependency_digests=plan.dependency_digests,
+                authority=plan.authority, consent=plan.consent,
+                capability_digest=plan.capability_digest,
+                created_at=plan.created_at,
+            )
+            with self.assertRaisesRegex(ValueError, "full"):
+                store.capture(other)
             os.chmod(next(root.glob("*.recovery")), 0o644)
             with self.assertRaisesRegex(ValueError, "unavailable"):
                 store.capture(plan)
@@ -182,6 +227,18 @@ class OperationsTests(unittest.TestCase):
             store = PrivateCoverRecoveryStore(root, lambda _: b"xx", maximum_bytes=1)
             with self.assertRaisesRegex(ValueError, "unavailable"):
                 store.capture(plan)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "recovery"
+            store = PrivateCoverRecoveryStore(root, lambda _: b"x")
+            with patch("mechanical_librarian.adapters.private_recovery.os.write",
+                       side_effect=OSError("synthetic disk full")):
+                with self.assertRaises(OSError):
+                    store.capture(plan)
+            store.capture(plan)
+            self.assertTrue(store.exists(plan.plan_id))
+            os.chmod(root, 0o755)
+            with self.assertRaisesRegex(ValueError, "unavailable"):
+                store.exists(plan.plan_id)
 
 
 if __name__ == "__main__":

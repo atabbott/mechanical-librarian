@@ -46,6 +46,7 @@ class ReviewWebConfiguration:
     tls_certificate_file: str | None = None
     tls_private_key_file: str | None = None
     library_polling_interval_seconds: int = 900
+    graceful_shutdown_seconds: int = 30
     diagnostic_timings_enabled: bool = False
 
     def __post_init__(self) -> None:
@@ -90,6 +91,8 @@ class ReviewWebConfiguration:
             or self.trusted_proxy_ips != tuple(sorted(set(self.trusted_proxy_ips)))
             or type(self.library_polling_interval_seconds) is not int
             or not 60 <= self.library_polling_interval_seconds <= 86_400
+            or type(self.graceful_shutdown_seconds) is not int
+            or not 1 <= self.graceful_shutdown_seconds <= 300
             or type(self.diagnostic_timings_enabled) is not bool
         ):
             raise ConfigurationError("review web configuration is invalid")

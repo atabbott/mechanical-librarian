@@ -1352,6 +1352,15 @@ class SQLiteMetadataReportRepository:
             "ORDER BY updated_at,plan_id LIMIT ?", (limit,),
         ).fetchall())
 
+    def pending_field_effect_plan_ids(self, limit: int) -> tuple[str, ...]:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise FieldEffectError("invalid_limit")
+        return tuple(row[0] for row in self._connection.execute(
+            "SELECT plan_id FROM field_effects "
+            "WHERE state IN ('claimed','applying','reconciling') "
+            "ORDER BY updated_at,plan_id LIMIT ?", (limit,),
+        ).fetchall())
+
     def complete_field_effect_cleanup(self, plan_id: str, changed_at: int) -> None:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
@@ -1444,6 +1453,18 @@ class SQLiteMetadataReportRepository:
             if self.field_effect_paused():
                 signals.append(_operational_signal(
                     "field_suspended", "owner_pause", "runtime"
+                ))
+            authentication = self._connection.execute(
+                "SELECT DISTINCT connection_name,library_name "
+                "FROM review_preparation_work "
+                "WHERE stage='provider' AND state='failed' "
+                "AND failure_code='configuration' "
+                "ORDER BY connection_name,library_name LIMIT 64"
+            ).fetchall()
+            for connection, library in authentication:
+                signals.append(_operational_signal(
+                    "authentication_failure", "provider_authentication",
+                    "library", connection=connection, library=library,
                 ))
             rows = self._connection.execute(
                 "SELECT connection_name,library_name,work_id,destination,state,document "

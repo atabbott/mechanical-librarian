@@ -24,6 +24,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationSupervisor,
     _provider_failure_disposition,
 )
+from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.metadata_report import ProviderStatus
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from tests.unit.test_review_case_persistence import _report
@@ -103,6 +104,34 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             _provider_failure_disposition((ProviderStatus.MALFORMED,)),
             ("provider", False),
         )
+
+    def test_persisted_provider_authentication_failure_projects_to_status(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery, 1, "a" * 64, (_entry("item", "1" * 64),), 12
+        )
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='provider',state='failed',"
+            "failure_code='configuration',updated_at=16"
+        )
+        repository._connection.commit()
+        signals = repository.operational_snapshot()["signals"]
+        repository.close()
+        self.assertIn({
+            "kind": "authentication_failure",
+            "cause": "provider_authentication",
+            "scope": "library",
+            "connection": "primary",
+            "library": "fiction",
+            "category": None,
+            "work_id": None,
+            "field": None,
+        }, signals)
 
     def test_thousand_work_three_library_backlog_is_bounded_and_fair(self) -> None:
         repository = open_repository(self.path)
@@ -1379,6 +1408,101 @@ class ReviewPipelineSchedulingTests(unittest.TestCase):
 
 
 class ReviewPipelineConcurrencyTests(unittest.TestCase):
+    def test_preparation_stages_emit_exact_advisory_timing_classes(self) -> None:
+        class Timings:
+            def __init__(self):
+                self.values = []
+            def append(self, timing):
+                self.values.append(timing)
+            def list(self):
+                return tuple(self.values)
+
+        def action(stage: str, **values) -> PipelineAction:
+            return PipelineAction(
+                "review_work_" + stage[0] * 64,
+                "review_scan_" + "a" * 64,
+                stage,
+                1,
+                "primary",
+                "fiction",
+                "lib-1",
+                _PRODUCER,
+                1,
+                "b" * 64,
+                "item",
+                "1" * 64,
+                1,
+                source_fingerprint="c" * 64,
+                **values,
+            )
+
+        timings = Timings()
+        ticks = iter(range(0, 100_000_000, 1_000_000))
+        repository = _ConcurrentRepository([])
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: repository,
+            libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+            discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            extract=lambda *_: ("report_" + "1" * 64, False),
+            providers=lambda *_: (ProviderStatus.DISABLED,),
+            propose=lambda *_: "proposal_set_" + "2" * 64,
+            admit=lambda *_: ("admitted", "review_case_" + "3" * 64),
+            project=lambda *_: True,
+            clock=lambda: 20,
+            timing=StageTimer(
+                timings, monotonic_ns=lambda: next(ticks), clock=lambda: 21
+            ),
+        )
+        pipeline._run_claimed_action(repository, action("extraction"), claim_next=False)
+        pipeline._run_claimed_action(
+            repository, action("provider", report_id="report_" + "1" * 64),
+            claim_next=False,
+        )
+        pipeline._run_claimed_action(
+            repository, action("proposal", report_id="report_" + "1" * 64),
+            claim_next=False,
+        )
+        pipeline._run_claimed_action(
+            repository,
+            action("admission", proposal_set_id="proposal_set_" + "2" * 64),
+            claim_next=False,
+        )
+        pipeline._run_claimed_action(
+            repository,
+            action("projection", review_case_id="review_case_" + "3" * 64),
+            claim_next=False,
+        )
+        self.assertEqual(
+            [(value.stage, value.wait_class) for value in timings.values],
+            [
+                ("extraction", "none"),
+                ("provider_search", "provider"),
+                ("policy_evaluation", "none"),
+                ("policy_evaluation", "none"),
+                ("policy_evaluation", "none"),
+            ],
+        )
+
+    def test_drain_rejects_initial_claim_and_persisted_claim_boundary_is_serialized(self) -> None:
+        action = PipelineAction(
+            "review_work_" + "1" * 64, "review_scan_" + "a" * 64,
+            "extraction", 1, "primary", "fiction", "lib-1", _PRODUCER,
+            1, "b" * 64, "item", "1" * 64, 1,
+            source_fingerprint="c" * 64,
+        )
+        repository = _ConcurrentRepository([action])
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: repository,
+            libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+            discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            extract=lambda *_: ("report_" + "1" * 64, False),
+            providers=lambda *_: (), propose=lambda *_: "proposal_set_" + "2" * 64,
+            admit=lambda *_: ("admitted", None), project=lambda *_: True,
+        )
+        pipeline.begin_drain()
+        self.assertFalse(pipeline.run_next())
+        self.assertEqual(repository.actions, [action])
+
     def test_slow_work_does_not_hold_a_library_wide_stage_barrier(self) -> None:
         slow_started = threading.Event()
         release_slow = threading.Event()
@@ -1446,6 +1570,44 @@ class ReviewPipelineConcurrencyTests(unittest.TestCase):
         finally:
             release_slow.set()
             supervisor.stop()
+
+    def test_shutdown_deadline_retains_active_worker_and_durable_claim(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+        action = PipelineAction(
+            "review_work_" + "8" * 64, "review_scan_" + "a" * 64,
+            "extraction", 1, "primary", "fiction", "lib-1", _PRODUCER,
+            1, "b" * 64, "slow", "8" * 64, 1,
+            source_fingerprint="c" * 64,
+        )
+        repository = _ConcurrentRepository([action])
+
+        def extract(*_):
+            started.set()
+            self.assertTrue(release.wait(3))
+            return "report_" + "3" * 64, False
+
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: repository,
+            libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+            discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            extract=extract, providers=lambda *_: (),
+            propose=lambda *_: "proposal_set_" + "4" * 64,
+            admit=lambda *_: ("admitted", None), project=lambda *_: True,
+        )
+        supervisor = ReviewPreparationSupervisor(
+            pipeline, graceful_shutdown_seconds=1
+        )
+        supervisor.start()
+        self.assertTrue(started.wait(1))
+        with self.assertRaisesRegex(ReviewPipelineError, "shutdown_timeout"):
+            supervisor.stop()
+        self.assertTrue(supervisor._threads)
+        self.assertEqual(repository.completed, [])
+        release.set()
+        supervisor.stop()
+        self.assertEqual(repository.completed, ["slow"])
+        self.assertEqual(supervisor._threads, ())
 
 
 if __name__ == "__main__":

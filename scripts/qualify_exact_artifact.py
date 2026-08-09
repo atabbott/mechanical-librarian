@@ -845,6 +845,9 @@ def _qualify_review_case_console(
         ):
             raise QualificationFailure("installed_review_case_failed")
 
+    _qualify_guarded_effect_lifecycle(
+        console.parent / "python", run_directory, environment
+    )
     summary = {
         "concurrent_case_id": case_id,
         "replay": replay["status"],
@@ -854,6 +857,139 @@ def _qualify_review_case_console(
         "successor_case_id": successor_case_id,
     }
     return json.dumps(summary, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _qualify_guarded_effect_lifecycle(
+    python: Path,
+    run_directory: Path,
+    environment: dict[str, str],
+) -> None:
+    """Exercise the installed injectable F13 lifecycle without product activation."""
+    probe = run_directory / "guarded-effect-probe.py"
+    probe.write_text(
+        '''
+from pathlib import Path
+
+from mechanical_librarian.adapters.field_effect_fakes import (
+    FakeBackupReadiness, FakeCapabilityObserver, FakeDependencyCurrentness,
+    FakeForwardReevaluation, FakeTargetService,
+)
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
+from mechanical_librarian.application.field_effects import (
+    GuardedApplicationError, GuardedFieldApplication,
+)
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority, EffectConsent, FieldEffectOperation, FieldEffectPlan,
+)
+
+root = Path.cwd() / "guarded-effect-state"
+root.mkdir(mode=0o700)
+database = root / "application.sqlite3"
+recovery_root = root / "cover-recovery"
+repository = open_repository(database, cross_thread=True)
+target = FakeTargetService()
+authority_current = type("AuthorityCurrent", (), {"current": lambda self, value: True})()
+consent_current = type("ConsentCurrent", (), {"current": lambda self, value: True})()
+clock_value = [100]
+def clock():
+    clock_value[0] += 1
+    return clock_value[0]
+def plan(destination, suffix, pre="old", desired="new"):
+    authority = EffectAuthority(
+        "human_decision_" + suffix * 64, "review_case_" + "b" * 64,
+        "c" * 64, "fake_service", "human", "candidate", None, None,
+    )
+    consent = EffectConsent.create(
+        connection="primary", library="books", destination=destination,
+        granted_at=1,
+    )
+    value = FieldEffectPlan.create(
+        connection="primary", library="books", work_id="work-" + suffix,
+        destination=destination, pre_value=pre, desired_value=desired,
+        target_fingerprint="c" * 64, target_version="version-1",
+        dependency_digests=("d" * 64,), authority=authority, consent=consent,
+        capability_digest="e" * 64, created_at=clock(),
+    )
+    repository.record_field_effect(FieldEffectOperation(value, updated_at=value.created_at))
+    target.seed(value)
+    return value
+def service(store):
+    return GuardedFieldApplication(
+        repository, target, FakeBackupReadiness(), FakeCapabilityObserver("e" * 64),
+        authority_current, FakeDependencyCurrentness(), consent_current, store,
+        FakeForwardReevaluation(), clock,
+    )
+
+store = PrivateCoverRecoveryStore(recovery_root, lambda value: b"synthetic-cover")
+claimed = plan("title", "1")
+repository.claim_field_effect(claimed.plan_id, "planned", "1" * 64, clock())
+applying = plan("subtitle", "2")
+repository.claim_field_effect(applying.plan_id, "planned", "2" * 64, clock())
+repository.transition_field_effect(applying.plan_id, "claimed", "applying", clock())
+reconciling = plan("publisher", "3")
+repository.claim_field_effect(reconciling.plan_id, "planned", "3" * 64, clock())
+repository.transition_field_effect(reconciling.plan_id, "claimed", "applying", clock())
+repository.schedule_field_effect_reconciliation(
+    reconciling.plan_id, "applying", clock()
+)
+cover = plan("cover", "4", None, "cover_" + "4" * 64)
+store.capture(cover)
+repository.claim_field_effect(cover.plan_id, "planned", "4" * 64, clock())
+repository.transition_field_effect(cover.plan_id, "claimed", "applying", clock())
+repository.transition_field_effect(cover.plan_id, "applying", "verified", clock())
+repository.close()
+
+repository = open_repository(database, create=False, cross_thread=True)
+reopened_store = PrivateCoverRecoveryStore(
+    recovery_root, lambda value: (_ for _ in ()).throw(RuntimeError("reread"))
+)
+restarted = service(reopened_store)
+if restarted.start() != (3, 0, 1):
+    raise RuntimeError("startup recovery count")
+if restarted.status(claimed.plan_id).state != "verified":
+    raise RuntimeError("claimed recovery")
+if restarted.status(applying.plan_id).state != "retryable":
+    raise RuntimeError("applying recovery")
+if restarted.status(reconciling.plan_id).state != "retryable":
+    raise RuntimeError("reconciling recovery")
+if reopened_store.exists(cover.plan_id):
+    raise RuntimeError("cover cleanup")
+drained = plan("description", "5")
+restarted.begin_drain()
+try:
+    restarted.apply(drained.plan_id)
+except GuardedApplicationError as error:
+    if error.code != "draining":
+        raise
+else:
+    raise RuntimeError("drain admission")
+repository.set_field_effect_paused(True, clock())
+restarted.start()
+paused = plan("language", "6", None, "en")
+try:
+    restarted.apply(paused.plan_id)
+except GuardedApplicationError as error:
+    if error.code != "paused":
+        raise
+else:
+    raise RuntimeError("pause admission")
+repository.set_field_effect_paused(False, clock())
+revoked = plan("genres", "7", (), ("fiction",))
+if restarted.supersede(revoked.authority.decision_id) != 1:
+    raise RuntimeError("revocation")
+if restarted.status(revoked.plan_id).state != "superseded":
+    raise RuntimeError("revocation state")
+repository.close()
+'''.lstrip(),
+        encoding="utf-8",
+    )
+    _run(
+        (str(python), "-I", str(probe)),
+        cwd=run_directory,
+        env=environment,
+        reason="installed_guarded_lifecycle_failed",
+    )
 
 
 def _run_console_json(

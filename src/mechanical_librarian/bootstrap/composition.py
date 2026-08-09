@@ -838,6 +838,7 @@ def create_review_pipeline(
     catalogue_path: Path,
     artifact_store_path: Path,
     database_authority: object | None = None,
+    timing=None,
 ) -> ReviewPreparationSupervisor:
     artifact_recovery_lock = threading.Lock()
     artifacts_recovered = False
@@ -1030,10 +1031,12 @@ def create_review_pipeline(
         propose=propose,
         admit=admit,
         project=project,
+        timing=timing,
     )
     return ReviewPreparationSupervisor(
         pipeline,
         polling_interval_seconds=configuration.review.library_polling_interval_seconds,
+        graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
     )
 
 
@@ -1385,16 +1388,20 @@ def run_review_server(
                 LocalTimingStore, SupportBundle,
             )
 
+            timing_store = LocalTimingStore(
+                database_path.parent / "private" / "stage-timings.json",
+                enabled=review.diagnostic_timings_enabled,
+            )
+            from mechanical_librarian.application.operations import StageTimer
+
+            timing = StageTimer(timing_store)
             preparation = create_review_pipeline(
                 configuration,
                 database_path,
                 catalogue_path,
                 artifact_store_path,
                 repository.authority,
-            )
-            timing_store = LocalTimingStore(
-                database_path.parent / "private" / "stage-timings.json",
-                enabled=review.diagnostic_timings_enabled,
+                timing,
             )
             support_bundle = SupportBundle(((
                 "runtime",
@@ -1415,6 +1422,7 @@ def run_review_server(
                 ),
                 operational_timings=timing_store,
                 operational_support=support_bundle,
+                operational_timer=timing,
             )
             uvicorn.run(
                 app,

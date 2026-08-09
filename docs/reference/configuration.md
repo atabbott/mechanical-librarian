@@ -71,6 +71,7 @@ uv run --frozen python scripts/generate_configuration_schema.py
     "tls_private_key_file": "/run/secrets/review-tls.key",
     "session_lifetime_seconds": 3600,
     "library_polling_interval_seconds": 900,
+    "graceful_shutdown_seconds": 30,
     "diagnostic_timings_enabled": false,
     "trusted_proxy_ips": []
   }
@@ -164,6 +165,10 @@ direct peer is one of at most 16 explicitly listed `trusted_proxy_ips`;
 forwarded Host or scheme headers from any other peer fail closed. No password,
 private-key contents, raw session token, or CSRF token is stored in
 configuration or the application database.
+
+`graceful_shutdown_seconds` is 1–300 seconds. Shutdown closes claim admission
+before waiting up to this deadline for active workers. An over-deadline worker
+remains tracked and its last durable checkpoint is recovered on restart.
 
 `diagnostic_timings_enabled` is false by default. When explicitly enabled, the
 container retains at most 256 local stage-duration and wait-class records in

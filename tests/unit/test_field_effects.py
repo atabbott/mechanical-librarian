@@ -27,6 +27,7 @@ from mechanical_librarian.adapters.field_effect_fakes import (
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.interfaces.web.app import create_review_app
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
@@ -64,6 +65,17 @@ class Clock:
     def __call__(self) -> int:
         self.value += 1
         return self.value
+
+
+class TimingCollector:
+    def __init__(self) -> None:
+        self.values = []
+
+    def append(self, timing) -> None:
+        self.values.append(timing)
+
+    def list(self):
+        return tuple(self.values)
 
 
 def decision(destination: str, selected: object, suffix: str = "a") -> HumanDecision:
@@ -656,6 +668,61 @@ class FieldEffectTests(unittest.TestCase):
             self.assertEqual((result.state, result.attempt), ("retryable", attempt + 1))
         result = self.service.apply(operation.plan.plan_id)
         self.assertEqual((result.state, result.failure), ("stale", "circuit_open"))
+
+    def test_effect_stages_emit_advisory_timing_and_drain_rejects_only_new_claims(self) -> None:
+        timings = TimingCollector()
+        ticks = iter(range(0, 100_000_000, 1_000_000))
+        self.service.attach_timing(StageTimer(
+            timings, monotonic_ns=lambda: next(ticks), clock=lambda: 99
+        ))
+        verified = self.plan(suffix="1")
+        self.assertEqual(self.service.apply(verified.plan.plan_id).state, "verified")
+        ambiguous = self.plan(destination="publisher", suffix="2")
+        self.target.ambiguous_next = "desired"
+        self.assertEqual(self.service.apply(ambiguous.plan.plan_id).state, "verified")
+        self.assertEqual(
+            [(value.stage, value.wait_class) for value in timings.values],
+            [
+                ("apply", "target"),
+                ("verification", "target"),
+                ("apply", "target"),
+                ("reconciliation", "recovery"),
+            ],
+        )
+
+        planned = self.plan(destination="subtitle", suffix="3")
+        self.service.begin_drain()
+        with self.assertRaisesRegex(Exception, "draining"):
+            self.service.apply(planned.plan.plan_id)
+        self.assertEqual(self.service.status(planned.plan.plan_id).state, "planned")
+
+    def test_startup_recovers_claimed_applying_and_reconciling_checkpoints(self) -> None:
+        claimed = self.plan(suffix="1")
+        self.repository.claim_field_effect(
+            claimed.plan.plan_id, "planned", "1" * 64, self.clock()
+        )
+        applying = self.plan(destination="subtitle", suffix="2")
+        self.repository.claim_field_effect(
+            applying.plan.plan_id, "planned", "2" * 64, self.clock()
+        )
+        self.repository.transition_field_effect(
+            applying.plan.plan_id, "claimed", "applying", self.clock()
+        )
+        reconciling = self.plan(destination="publisher", suffix="3")
+        self.repository.claim_field_effect(
+            reconciling.plan.plan_id, "planned", "3" * 64, self.clock()
+        )
+        self.repository.transition_field_effect(
+            reconciling.plan.plan_id, "claimed", "applying", self.clock()
+        )
+        self.repository.schedule_field_effect_reconciliation(
+            reconciling.plan.plan_id, "applying", self.clock()
+        )
+
+        self.assertEqual(self.service.start(), (3, 0, 0))
+        self.assertEqual(self.service.status(claimed.plan.plan_id).state, "verified")
+        self.assertEqual(self.service.status(applying.plan.plan_id).state, "retryable")
+        self.assertEqual(self.service.status(reconciling.plan.plan_id).state, "retryable")
 
     def test_cover_recovery_survives_restart_and_rejects_permission_drift(self) -> None:
         cover = self.plan(

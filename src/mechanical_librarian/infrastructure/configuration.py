@@ -192,6 +192,9 @@ class ReviewInput(_Closed):
     library_polling_interval_seconds: Annotated[
         StrictInt, Field(ge=60, le=86_400)
     ] = 900
+    graceful_shutdown_seconds: Annotated[
+        StrictInt, Field(ge=1, le=300)
+    ] = 30
     diagnostic_timings_enabled: StrictBool = False
 
 
@@ -231,6 +234,7 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
                 session_lifetime_seconds=value.review.session_lifetime_seconds,
                 trusted_proxy_ips=tuple(sorted(value.review.trusted_proxy_ips)),
                 library_polling_interval_seconds=value.review.library_polling_interval_seconds,
+                graceful_shutdown_seconds=value.review.graceful_shutdown_seconds,
                 diagnostic_timings_enabled=value.review.diagnostic_timings_enabled,
             ),
         )

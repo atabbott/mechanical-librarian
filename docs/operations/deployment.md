@@ -17,9 +17,19 @@ unowned volume, invalid configuration, backup/recovery error or permission
 failure stops startup rather than importing, migrating or repairing data.
 
 Use `docker compose up --build` for a local installed-product qualification.
+`scripts/qualify_container_lifecycle.py --source-sha <exact-head>` repeats the
+head-bound build, synthetic owner-secret/TLS seeding, non-root read-only-root
+run, health probes, bounded graceful termination and exact-current restart.
 Stop with `docker compose down`; do not add `-v` unless intentionally deleting
 the complete local application state. Image publication remains a separate
 release authority and is not part of this support contract.
+
+Shutdown first closes preparation and guarded-effect claim admission. Active
+preparation workers receive the configured bounded graceful-shutdown window;
+their durable checkpoint remains restart authority. Guarded-effect restart is
+an injectable lifecycle seam and remains unavailable in the normal container
+until a real target adapter is supplied—no fake or product write activation is
+composed by this milestone.
 
 The command-line development runtime remains unreleased.
 It supports current catalogue, report, ProposalSet, ReviewCase, and
