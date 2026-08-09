@@ -291,7 +291,7 @@ def _operator_epub(source: Path, destination: Path, index: int) -> tuple[str, st
             "{http://www.idpf.org/2007/opf}scheme": "ISBN",
         }).text = isbn
         ET.SubElement(metadata, dc + "title").text = title
-        for author in ("Synthetic Author", "Second Qualified Author"):
+        for author in ("Local Qualification Author",):
             ET.SubElement(metadata, dc + "creator", {
                 "{http://www.idpf.org/2007/opf}role": "aut",
             }).text = author
@@ -1056,9 +1056,9 @@ def _installed_continuous_qualification(
                         decision_origin = operation.plan.authority.origin
                         if (not operator_item_ids
                                 or operation.plan.work_id in operator_item_ids):
-                            coverage.setdefault(
-                                operation.plan.destination, decision_origin
-                            )
+                            if (coverage.get(operation.plan.destination)
+                                    != expected_origins.get(operation.plan.destination)):
+                                coverage[operation.plan.destination] = decision_origin
                         installed_outcomes.append({
                             "decision_id": operation.plan.authority.decision_id,
                             "destination": operation.plan.destination,
@@ -1078,7 +1078,9 @@ def _installed_continuous_qualification(
             }
             for row in installed_outcomes:
                 if not operator_item_ids or row["work_id"] in operator_item_ids:
-                    coverage.setdefault(str(row["destination"]), str(row["origin"]))
+                    destination = str(row["destination"])
+                    if coverage.get(destination) != expected_origins.get(destination):
+                        coverage[destination] = str(row["origin"])
             if (final_activity is None or any(
                     coverage.get(destination) != origin
                     for destination, origin in expected_origins.items())):
@@ -1522,7 +1524,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
                 ),
                 "Guarded qualification title": original_alpha_title,
                 **{
-                    title: ("Before" if index == 6 else title)
+                    title: ("After" if index == 6 else title)
                     for index, title in enumerate(
                         operator_metadata.values(), start=1
                     )
