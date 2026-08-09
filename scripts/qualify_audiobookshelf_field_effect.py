@@ -251,6 +251,7 @@ def _apply(service, repository, target, capabilities, writes: list[str], recover
             raise QualificationError("cover_recovery_evidence_invalid")
         recovery_state = "captured_and_cleaned"
     audit = {
+        "destination": destination,
         "state": persisted.state,
         "failure": persisted.failure or "none",
         "attempt": persisted.attempt,
