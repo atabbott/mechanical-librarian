@@ -405,7 +405,11 @@ def _wait_for_preparation(client: TestClient, library_count: int) -> dict[str, o
                     "completed", "completed_with_failures"
                 } for value in libraries)):
             if any(value.get("state") != "completed" for value in libraries):
-                raise QualificationError("installed_preparation_failed")
+                summary = ",".join(
+                    f"{value.get('library')}:{value.get('ready')}:{value.get('blocked')}"
+                    for value in libraries
+                )
+                raise QualificationError("installed_preparation_failed:" + summary)
             return state
         time.sleep(0.25)
     raise QualificationError("installed_preparation_timeout")
