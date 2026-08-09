@@ -161,6 +161,7 @@ class GuardedFieldApplication:
         self._recovery_hook = recovery_hook or (lambda _: None)
         self._timing = timing or StageTimer(None)
         self._draining = threading.Event()
+        self._admission_lock = threading.Lock()
 
     def attach_timing(self, timing: StageTimer) -> None:
         """Attach advisory diagnostics without changing the effect authority."""
@@ -168,12 +169,14 @@ class GuardedFieldApplication:
 
     def start(self) -> tuple[int, int, int]:
         """Resume admission and complete bounded exact-current restart work."""
-        self._draining.clear()
+        with self._admission_lock:
+            self._draining.clear()
         return self.recover_startup()
 
     def begin_drain(self) -> None:
         """Reject new claims while allowing an already-claimed effect to finish."""
-        self._draining.set()
+        with self._admission_lock:
+            self._draining.set()
 
     def plan(self, decision: HumanDecision | AutomaticDecision, *, connection: str,
              library: str, work_id: str, destination: str, pre_value: object,
@@ -260,9 +263,14 @@ class GuardedFieldApplication:
         token = hashlib.sha256(f"{plan.plan_id}:{operation.attempt + 1}".encode()).hexdigest()
         try:
             self._claim_hook(plan)
-            operation = self._repository.claim_field_effect(
-                plan.plan_id, operation.state, token, self._clock()
-            )
+            with self._admission_lock:
+                if self._draining.is_set():
+                    raise GuardedApplicationError("draining")
+                operation = self._repository.claim_field_effect(
+                    plan.plan_id, operation.state, token, self._clock()
+                )
+        except GuardedApplicationError:
+            raise
         except Exception as error:
             if plan.destination == "cover":
                 try:

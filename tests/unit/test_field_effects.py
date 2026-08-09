@@ -696,6 +696,39 @@ class FieldEffectTests(unittest.TestCase):
             self.service.apply(planned.plan.plan_id)
         self.assertEqual(self.service.status(planned.plan.plan_id).state, "planned")
 
+    def test_drain_closes_the_final_check_to_atomic_claim_race(self) -> None:
+        operation = self.plan(suffix="4")
+        hook_entered = threading.Event()
+        release_hook = threading.Event()
+        failures = []
+
+        def block_before_final_admission(_):
+            hook_entered.set()
+            self.assertTrue(release_hook.wait(2))
+
+        self.claim_hook.callback = block_before_final_admission
+
+        def apply() -> None:
+            try:
+                self.service.apply(operation.plan.plan_id)
+            except Exception as error:
+                failures.append(error)
+
+        worker = threading.Thread(target=apply)
+        worker.start()
+        self.assertTrue(hook_entered.wait(1))
+        self.service.begin_drain()
+        release_hook.set()
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(
+            [getattr(error, "code", None) for error in failures], ["draining"]
+        )
+        self.assertEqual(
+            self.service.status(operation.plan.plan_id).state, "planned"
+        )
+        self.assertEqual(self.target.read(operation.plan).value, operation.plan.pre_value)
+
     def test_startup_recovers_claimed_applying_and_reconciling_checkpoints(self) -> None:
         claimed = self.plan(suffix="1")
         self.repository.claim_field_effect(
