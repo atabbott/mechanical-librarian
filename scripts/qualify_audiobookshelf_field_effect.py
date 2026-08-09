@@ -497,7 +497,7 @@ def _installed_continuous_qualification(
                     f"/api/v1/review-preparation/canary/{name}/scan",
                     headers=mutation_headers,
                 )
-                if requested.status_code != 202:
+                if requested.status_code not in {202, 409}:
                     raise QualificationError("installed_scan_request_failed")
             _wait_for_preparation(client, len(libraries))
             listing = client.get("/api/v1/library?lens=all&limit=50")
