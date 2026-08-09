@@ -440,3 +440,12 @@ boundaries, append-only audit, retryable owner-only cover cleanup, canonical
 row/document/action corruption rejection including boolean/integer aliases and
 closed failure/token types, architecture imports, authenticated API calls, and the
 absence of Audiobookshelf/media-write construction.
+## Guarded-operation qualification
+
+F15a qualification covers absent and exact-current startup, ready/claimed/
+applying/verifying/reconciling restart, graceful claim drain and pause/revoked
+admission, bounded timing retention, incident aggregation and narrow conflict
+projection, private cover recovery survival/cleanup and permission/capacity
+failures, support preview/export redaction and size/depth bounds, static
+architecture and clean-schema checks, an exact installed container, and the
+unchanged authenticated report/review browser suite.

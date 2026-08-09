@@ -49,6 +49,7 @@ context and consequences rather than reproducing code.
 | [0034](0034-atomic-policy-generation-cutover.md) | accepted | Cut over metadata policy with one atomic generation |
 | [0035](0035-persist-non-authoritative-policy-preview-outcomes.md) | accepted | Persist non-authoritative policy Preview outcomes |
 | [0037](0037-origin-neutral-guarded-field-effects.md) | accepted | Use one origin-neutral guarded field-effect boundary |
+| [0038](0038-bounded-single-container-operations.md) | accepted | Bound operational evidence inside the single container |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

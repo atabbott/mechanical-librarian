@@ -239,6 +239,7 @@ class ReviewPreparationPipeline:
         self._admit = admit
         self._project = project
         self._clock = clock
+        self._draining = threading.Event()
 
     @property
     def libraries(self) -> tuple[tuple[str, str, str], ...]:
@@ -347,6 +348,13 @@ class ReviewPreparationPipeline:
         finally:
             repository.close()
 
+    def begin_drain(self) -> None:
+        """Finish the current claim without admitting another one."""
+        self._draining.set()
+
+    def resume_claiming(self) -> None:
+        self._draining.clear()
+
     def run_next(self, maximum_actions: int = 64) -> bool:
         if type(maximum_actions) is not int or not 1 <= maximum_actions <= 64:
             raise ReviewPipelineError("configuration")
@@ -364,7 +372,8 @@ class ReviewPreparationPipeline:
                 next_action = self._run_claimed_action(
                     repository,
                     action,
-                    claim_next=index + 1 < maximum_actions,
+                    claim_next=(index + 1 < maximum_actions
+                                and not self._draining.is_set()),
                 )
                 if next_action is None:
                     return True
@@ -529,6 +538,10 @@ class ReviewPreparationSupervisor:
     def start(self) -> None:
         if self._threads:
             return
+        self._stop.clear()
+        resume = getattr(self._pipeline, "resume_claiming", None)
+        if resume is not None:
+            resume()
         self._pipeline.recover()
         self._schedule_due()
         self._threads = tuple(
@@ -545,6 +558,9 @@ class ReviewPreparationSupervisor:
         self._wake.set()
 
     def stop(self) -> None:
+        drain = getattr(self._pipeline, "begin_drain", None)
+        if drain is not None:
+            drain()
         self._stop.set()
         self._wake.set()
         for thread in self._threads:

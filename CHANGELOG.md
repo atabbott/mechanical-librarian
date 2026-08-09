@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add the supported single-container operational substrate: absent or
+  exact-current startup, readiness/liveness, graceful claim draining, typed
+  scoped incidents, opt-in bounded stage timings, a bounded private cover
+  recovery adapter, and previewable re-redacted support bundles. The container
+  remains non-root with one volume, one HTTPS port and read-only media; no
+  migration, notification, metrics platform, queue console, release or
+  production-service access is added. (#151)
+
 - Add the origin-neutral guarded field-effect kernel for immutable owner and
   sealed qualified automatic decisions. All 14 ebook destinations use one
   deterministic field plan (with atomic series), last-feasible preclaim guard

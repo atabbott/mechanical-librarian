@@ -511,6 +511,11 @@
           "title": "Canonical Origin",
           "type": "string"
         },
+        "diagnostic_timings_enabled": {
+          "default": false,
+          "title": "Diagnostic Timings Enabled",
+          "type": "boolean"
+        },
         "library_polling_interval_seconds": {
           "default": 900,
           "maximum": 86400,

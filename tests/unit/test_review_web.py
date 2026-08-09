@@ -52,6 +52,7 @@ from mechanical_librarian.domain.human_decision import (
 )
 from mechanical_librarian.interfaces.web import create_review_app
 from mechanical_librarian.application.metadata_policy import PolicyTransition
+from mechanical_librarian.adapters.operational_evidence import LocalTimingStore, SupportBundle
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
 from tests.unit.test_review_case_persistence import _report
 from tests.unit.test_proposal_set import (
@@ -544,6 +545,44 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(denied.status_code, 401)
         self.assertEqual(denied.json()["error"]["code"], "unauthorized")
         self.assertEqual(denied.headers["cache-control"], "no-store, private")
+
+    def test_operational_status_and_support_are_authenticated_bounded_surfaces(self) -> None:
+        self.repository.operational_snapshot = lambda: {"signals": [{
+            "kind": "backup_failure", "cause": "backup", "scope": "field",
+            "connection": "primary", "library": "fiction", "category": None,
+            "work_id": "book-1", "field": "title",
+        }]}
+        configuration = ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(self.hash_path),
+            session_lifetime_seconds=600,
+        )
+        timings = LocalTimingStore(Path(self.temporary.name) / "timings.json")
+        support = SupportBundle((("runtime", lambda: {
+            "status": "degraded", "secret": "never-export",
+        }),))
+        self.client.close()
+        self.client = TestClient(create_review_app(
+            self.repository, configuration, clock=lambda: self.now,
+            operational_timings=timings, operational_support=support,
+        ), base_url="https://review.test")
+        self.client.__enter__()
+        self.addCleanup(self.client.__exit__, None, None, None)
+        self.assertEqual(self.client.get("/health/ready").status_code, 200)
+        self.assertEqual(self.client.get("/api/v1/operations/status").status_code, 401)
+        session = self._login()
+        status = self.client.get("/api/v1/operations/status")
+        self.assertEqual(status.status_code, 200)
+        self.assertFalse(status.json()["summary"]["healthy"])
+        preview = self.client.get("/api/v1/operations/support/preview")
+        self.assertEqual(preview.status_code, 200)
+        self.assertNotIn("never-export", preview.text)
+        exported = self.client.post(
+            "/api/v1/operations/support/export",
+            headers={**self.origin, "x-csrf-token": session["csrf_token"]},
+        )
+        self.assertEqual(exported.status_code, 200)
+        self.assertNotIn("never-export", exported.text)
 
     def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(self) -> None:
         anonymous = self.client.post("/api/v1/metadata-policy/validate", headers=self.origin, json={})
@@ -1409,6 +1448,9 @@ class ReviewWebTests(unittest.TestCase):
             {
                 ("get", "/api/v1/attention"),
                 ("get", "/api/v1/library"),
+                ("get", "/api/v1/operations/status"),
+                ("get", "/api/v1/operations/support/preview"),
+                ("post", "/api/v1/operations/support/export"),
                 ("get", "/api/v1/field-effects/{plan_id}"),
                 ("post", "/api/v1/field-effects/{plan_id}/apply"),
                 ("post", "/api/v1/field-effects/{plan_id}/reconcile"),

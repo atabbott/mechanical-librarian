@@ -1411,6 +1411,70 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
+    def operational_snapshot(self) -> dict[str, object]:
+        """Return only bounded codes and scopes; never persisted effect values."""
+        try:
+            signals: list[dict[str, object]] = []
+            safety = self._connection.execute(
+                "SELECT paused,global_suspension,category_suspensions_document "
+                "FROM automatic_safety_state WHERE singleton=1"
+            ).fetchone()
+            if safety is None:
+                raise FieldEffectError("persistence")
+            if safety[0]:
+                signals.append(_operational_signal(
+                    "field_suspended", "owner_pause", "runtime"
+                ))
+            if safety[1] is not None:
+                signals.append(_operational_signal(
+                    "field_suspended", "automatic_suspension", "runtime"
+                ))
+            categories = json.loads(safety[2])
+            if type(categories) is not list:
+                raise FieldEffectError("persistence")
+            for entry in categories[:64]:
+                if (type(entry) is not list or len(entry) != 2
+                        or type(entry[0]) is not str):
+                    raise FieldEffectError("persistence")
+                category = entry[0]
+                signals.append(_operational_signal(
+                    "category_suspended", "automatic_suspension", "category",
+                    category=category,
+                ))
+            if self.field_effect_paused():
+                signals.append(_operational_signal(
+                    "field_suspended", "owner_pause", "runtime"
+                ))
+            rows = self._connection.execute(
+                "SELECT connection_name,library_name,work_id,destination,state,document "
+                "FROM field_effects WHERE state NOT IN ('verified','superseded','abandoned') "
+                "ORDER BY updated_at DESC,plan_id LIMIT 256"
+            ).fetchall()
+            for connection, library, work_id, destination, state, document in rows:
+                operation = FieldEffectOperation.from_json(document)
+                failure = operation.failure
+                if failure in {"target_currentness", "third_value", "readback"}:
+                    kind, cause = "owner_action_required", "currentness_conflict"
+                elif failure == "backup":
+                    kind, cause = "backup_failure", "backup"
+                elif failure in {"capability", "target"}:
+                    kind, cause = "service_incompatibility", "service_incompatibility"
+                elif failure in {"authority", "consent", "consent_revoked"}:
+                    kind, cause = "field_suspended", "authority_unavailable"
+                elif state in {"claimed", "applying", "reconciling", "retryable"}:
+                    kind, cause = "automatic_recovery", (
+                        "reconciliation" if state == "reconciling" else "in_progress"
+                    )
+                else:
+                    kind, cause = "healthy_activity", "planned"
+                signals.append(_operational_signal(
+                    kind, cause, "field", connection=connection, library=library,
+                    work_id=work_id, field=destination,
+                ))
+            return {"signals": signals}
+        except (json.JSONDecodeError, sqlite3.Error, FieldEffectError) as error:
+            raise FieldEffectError("persistence") from error
+
     def _upsert_field_effect_action(self, operation: FieldEffectOperation,
                                     kind: str, state: str, attempt: int,
                                     changed_at: int) -> None:
@@ -6567,6 +6631,17 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
 
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _operational_signal(kind: str, cause: str, scope: str, *,
+                        connection: str | None = None,
+                        library: str | None = None,
+                        category: str | None = None,
+                        work_id: str | None = None,
+                        field: str | None = None) -> dict[str, object]:
+    return {"category": category, "cause": cause, "connection": connection,
+            "field": field, "kind": kind, "library": library,
+            "scope": scope, "work_id": work_id}
 
 
 def _admission_json(status: str, review_case_id: str | None) -> str:

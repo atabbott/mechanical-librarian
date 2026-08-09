@@ -1,0 +1,195 @@
+"""Bounded operational evidence for the single-process product runtime.
+
+Operational evidence is deliberately advisory.  It contains only codes,
+scopes, counts and durations; durable workflow and audit records remain the
+authority for every field effect.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Callable, Literal, Protocol
+
+
+STAGES = (
+    "extraction", "provider_search", "policy_evaluation", "human_wait",
+    "apply", "verification", "reconciliation",
+)
+WAIT_CLASSES = ("none", "owner", "provider", "target", "recovery")
+KINDS = (
+    "healthy_activity", "owner_action_required", "automatic_recovery",
+    "field_suspended", "category_suspended", "authentication_failure",
+    "backup_failure", "service_incompatibility",
+)
+SCOPES = ("runtime", "connection", "library", "category", "work", "field")
+MAX_TIMINGS = 256
+MAX_INCIDENTS = 64
+MAX_SUPPORT_BYTES = 65_536
+
+
+class OperationsError(RuntimeError):
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+@dataclass(frozen=True, slots=True)
+class StageTiming:
+    stage: str
+    duration_ms: int
+    wait_class: str
+    recorded_at: int
+
+    def __post_init__(self) -> None:
+        if (self.stage not in STAGES or self.wait_class not in WAIT_CLASSES
+                or type(self.duration_ms) is not int
+                or not 0 <= self.duration_ms <= 86_400_000
+                or type(self.recorded_at) is not int or self.recorded_at < 0):
+            raise OperationsError("invalid_timing")
+
+    def to_data(self) -> dict[str, object]:
+        return {"duration_ms": self.duration_ms, "recorded_at": self.recorded_at,
+                "stage": self.stage, "wait_class": self.wait_class}
+
+    @classmethod
+    def from_data(cls, value: object) -> "StageTiming":
+        if type(value) is not dict or set(value) != {
+            "duration_ms", "recorded_at", "stage", "wait_class"
+        }:
+            raise OperationsError("invalid_timing")
+        return cls(value["stage"], value["duration_ms"], value["wait_class"],
+                   value["recorded_at"])
+
+
+@dataclass(frozen=True, slots=True)
+class Incident:
+    incident_id: str
+    kind: str
+    cause: str
+    scope: str
+    connection: str | None = None
+    library: str | None = None
+    category: str | None = None
+    work_id: str | None = None
+    field: str | None = None
+    count: int = 1
+
+    def __post_init__(self) -> None:
+        identifiers = (self.connection, self.library, self.category,
+                       self.work_id, self.field)
+        if (self.kind not in KINDS or self.scope not in SCOPES
+                or not 1 <= len(self.incident_id) <= 96
+                or not 1 <= len(self.cause) <= 64
+                or type(self.count) is not int or not 1 <= self.count <= 10_000
+                or any(value is not None and (not value or len(value) > 512)
+                       for value in identifiers)):
+            raise OperationsError("invalid_incident")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "category": self.category, "cause": self.cause,
+            "connection": self.connection, "count": self.count,
+            "field": self.field, "incident_id": self.incident_id,
+            "kind": self.kind, "library": self.library, "scope": self.scope,
+            "work_id": self.work_id,
+        }
+
+
+class TimingRepository(Protocol):
+    def append(self, timing: StageTiming) -> None: ...
+    def list(self) -> tuple[StageTiming, ...]: ...
+
+
+class SupportExporter(Protocol):
+    def preview(self) -> dict[str, object]: ...
+    def export(self) -> bytes: ...
+
+
+class OperationalStatus:
+    """Compose one typed, value-free runtime snapshot."""
+
+    def __init__(self, *, snapshot: Callable[[], dict[str, object]],
+                 timings: TimingRepository,
+                 support: SupportExporter | None = None) -> None:
+        self._snapshot = snapshot
+        self._timings = timings
+        self._support = support
+        self._started = False
+        self._draining = False
+
+    def start(self) -> None:
+        # Snapshot access proves exact-current repository reopen before ready.
+        self._snapshot()
+        self._started = True
+
+    def begin_drain(self) -> None:
+        self._draining = True
+
+    def ready(self) -> bool:
+        return self._started and not self._draining
+
+    def status(self) -> dict[str, object]:
+        raw = self._snapshot()
+        incidents = aggregate_incidents(raw.get("signals", ()))
+        return {
+            "incidents": [value.to_data() for value in incidents],
+            "readiness": "ready" if self.ready() else "draining",
+            "schema_version": "operational-status-v1",
+            "summary": {
+                "automatic_recovery": sum(value.kind == "automatic_recovery" for value in incidents),
+                "healthy": not any(value.kind not in {"healthy_activity", "automatic_recovery"} for value in incidents),
+                "owner_action_required": sum(value.kind == "owner_action_required" for value in incidents),
+            },
+            "timings": [value.to_data() for value in self._timings.list()],
+        }
+
+    def support_preview(self) -> dict[str, object]:
+        if self._support is None:
+            raise OperationsError("support_unavailable")
+        return self._support.preview()
+
+    def support_export(self) -> bytes:
+        if self._support is None:
+            raise OperationsError("support_unavailable")
+        return self._support.export()
+
+
+def aggregate_incidents(signals: object) -> tuple[Incident, ...]:
+    if type(signals) not in (list, tuple) or len(signals) > 1_000:
+        raise OperationsError("invalid_status")
+    aggregated: dict[tuple[object, ...], Incident] = {}
+    for signal in signals:
+        if type(signal) is not dict:
+            raise OperationsError("invalid_status")
+        kind = signal.get("kind")
+        cause = signal.get("cause")
+        scope = signal.get("scope")
+        connection = signal.get("connection")
+        library = signal.get("library")
+        category = signal.get("category")
+        work_id = signal.get("work_id")
+        field = signal.get("field")
+        # Currentness conflicts are intentionally work/field-local. Shared
+        # service causes aggregate at their narrow service scope.
+        key = ((kind, cause, scope, connection, library, category, work_id, field)
+               if cause == "currentness_conflict"
+               else (kind, cause, scope, connection, library, category, None, field))
+        previous = aggregated.get(key)
+        incident_id = "incident:" + ":".join(
+            "-" if value is None else str(value) for value in key
+        )
+        candidate = Incident(incident_id[:96], kind, cause, scope, connection,
+                             library, category,
+                             work_id if cause == "currentness_conflict" else None,
+                             field, 1 if previous is None else previous.count + 1)
+        aggregated[key] = candidate
+    return tuple(sorted(aggregated.values(), key=lambda item: item.incident_id))[:MAX_INCIDENTS]
+
+
+def canonical_support(value: dict[str, object]) -> bytes:
+    encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"),
+                         sort_keys=True).encode("utf-8") + b"\n"
+    if len(encoded) > MAX_SUPPORT_BYTES:
+        raise OperationsError("support_too_large")
+    return encoded

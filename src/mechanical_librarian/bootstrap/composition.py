@@ -1381,6 +1381,10 @@ def run_review_server(
     ) as tls:
         repository = open_repository(database_path, create=False, cross_thread=True)
         try:
+            from mechanical_librarian.adapters.operational_evidence import (
+                LocalTimingStore, SupportBundle,
+            )
+
             preparation = create_review_pipeline(
                 configuration,
                 database_path,
@@ -1388,6 +1392,18 @@ def run_review_server(
                 artifact_store_path,
                 repository.authority,
             )
+            timing_store = LocalTimingStore(
+                database_path.parent / "private" / "stage-timings.json",
+                enabled=review.diagnostic_timings_enabled,
+            )
+            support_bundle = SupportBundle(((
+                "runtime",
+                lambda: {
+                    "deployment": "single_container",
+                    "schema_state": "exact_current",
+                    "timing_records": len(timing_store.list()),
+                },
+            ),))
             app = create_review_app(
                 repository,
                 review,
@@ -1397,6 +1413,8 @@ def run_review_server(
                     (library.name, library.policy_override)
                     for library in getattr(configuration, "libraries", ())
                 ),
+                operational_timings=timing_store,
+                operational_support=support_bundle,
             )
             uvicorn.run(
                 app,
