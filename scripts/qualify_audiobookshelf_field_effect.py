@@ -717,10 +717,16 @@ def _installed_continuous_qualification(
                 )
             def rescan_all() -> None:
                 for name, _, _ in libraries:
-                    response = client.post(
-                        f"/api/v1/review-preparation/canary/{name}/scan",
-                        headers=mutation_headers,
-                    )
+                    rescan_deadline = time.monotonic() + 30
+                    while True:
+                        response = client.post(
+                            f"/api/v1/review-preparation/canary/{name}/scan",
+                            headers=mutation_headers,
+                        )
+                        if (response.status_code != 503
+                                or time.monotonic() >= rescan_deadline):
+                            break
+                        time.sleep(0.25)
                     if response.status_code not in {202, 409}:
                         raise QualificationError(
                             f"installed_rescan_failed:{response.status_code}"
