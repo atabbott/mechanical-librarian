@@ -795,6 +795,16 @@ class FieldEffectTests(unittest.TestCase):
             (failed.state, failed.failure), ("retryable", "target_failure")
         )
         self.assertEqual((continued.state, continued.failure), ("verified", None))
+        recovery_signal = next(
+            value
+            for value in self.repository.operational_snapshot()["signals"]
+            if value["work_id"] == first.plan.work_id
+            and value["field"] == first.plan.destination
+        )
+        self.assertEqual(
+            (recovery_signal["kind"], recovery_signal["cause"]),
+            ("automatic_recovery", "in_progress"),
+        )
         self.target.fail_reads_for.remove(first.plan.plan_id)
         self.assertEqual(
             self.target.read(first.plan).value, first.plan.desired_value

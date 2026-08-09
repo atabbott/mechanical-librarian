@@ -1485,7 +1485,7 @@ class SQLiteMetadataReportRepository:
                     kind, cause = "backup_failure", "backup"
                     scope = "library"
                     signal_library, signal_work, signal_field = library, None, None
-                elif failure in {"capability", "target", "target_failure"}:
+                elif failure in {"capability", "target"}:
                     kind, cause = "service_incompatibility", "service_incompatibility"
                     scope = "connection"
                     signal_library, signal_work, signal_field = None, None, None
