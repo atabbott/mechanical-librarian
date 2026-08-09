@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import json
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -311,6 +312,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                 plan = self.plan("cover", None, self.cover)
                 root = Path(self.directory.name) / ("cover-" + phase)
                 root.mkdir()
+                os.chmod(root, 0o700)
                 repository = open_repository(root / "effects.sqlite")
                 repository.record_field_effect(FieldEffectOperation(plan, updated_at=1))
                 current = type("Current", (), {"current": lambda self, value: True})()
@@ -360,6 +362,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                 plan = self.plan("title", "Before", "After")
                 root = Path(self.directory.name) / ("case-" + str(outcome))
                 root.mkdir()
+                os.chmod(root, 0o700)
                 repository = open_repository(root / "effects.sqlite")
                 repository.record_field_effect(FieldEffectOperation(plan, updated_at=1))
                 current = type("Current", (), {"current": lambda self, value: True})()
