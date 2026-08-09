@@ -621,7 +621,12 @@ Every claim rechecks backup, capability, authority, consent, dependencies,
 target pre-state/version, circuit, pause, and optimistic state. Persisted
 authority, consent, pause, and claim state are conditioned atomically in one
 repository transaction together with persisted decision/current-lineage and
-automatic safety currentness. The supported Audiobookshelf adapter has no
+automatic safety currentness. Capability observations have closed application-
+owned outcomes. Authentication, inactive-account, or basic library/item access
+failure durably suspends the connection; insufficient destination permission,
+an incompatible destination shape, or unexpected effect behavior durably
+suspends only that destination. The claim transaction rechecks both scopes, so
+a suspension racing the final claim cannot be bypassed. The supported Audiobookshelf adapter has no
 target-side CAS: it makes one minimal API-key request only after its final
 authoritative pre-read, then read-backs the destination and reconciles any
 refusal, ambiguity, drift or disagreement. A same-field update may still be
@@ -635,6 +640,8 @@ contains the Audiobookshelf target and API-key capability observer; it proves
 the selected item/library and destination permission, never a version alone.
 Read-only keys are insufficient for every destination; update-only keys permit
 metadata/tags but are insufficient for cover, which also requires upload.
+Qualification reads the actual canonical, gap-free append-only event documents
+from SQLite and publishes only their aggregate count and digest.
 ## Guarded-operation diagnostics
 
 Operational status and support routes share the authenticated owner boundary;

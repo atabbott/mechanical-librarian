@@ -9,24 +9,24 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 import httpx
 
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
-from mechanical_librarian.application.field_effects import TargetEffectResult, TargetObservation
+from mechanical_librarian.application.field_effects import (
+    CapabilityObservation,
+    TargetEffectResult,
+    TargetObservation,
+    TargetServiceUnavailable,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.field_effect import FieldEffectPlan
 
 
-@dataclass(frozen=True)
-class AudiobookshelfCapabilityResult:
-    """Bounded, destination-specific API-key capability observation."""
-    category: str
-    digest: str
+AudiobookshelfCapabilityResult = CapabilityObservation
 
 
 class AudiobookshelfFieldEffectCapabilities:
@@ -42,18 +42,19 @@ class AudiobookshelfFieldEffectCapabilities:
         self._library_id = library_id
         self._maximum_response_bytes = maximum_response_bytes
 
-    def observe(self, plan: FieldEffectPlan) -> str:
-        return self.result(plan).digest
+    def observe(self, plan: FieldEffectPlan) -> CapabilityObservation:
+        return self.result(plan)
 
     def result(self, plan: FieldEffectPlan) -> AudiobookshelfCapabilityResult:
-        try:
-            with self._client_factory() as client:
+        with self._client_factory() as client:
+            try:
                 me = _json_response(client, "GET", self._endpoint + "/api/me", None, self._maximum_response_bytes)
-                # An item read proves the selected library remains accessible;
-                # /api/me alone is not a destination capability proof.
+            except (httpx.HTTPError, OSError, ValueError):
+                return self._result(plan.destination, "connection_unavailable", False, False)
+            try:
                 detail = _json_response(client, "GET", self._endpoint + "/api/items/" + quote(plan.work_id, safe=""), {"expanded": "1"}, self._maximum_response_bytes)
-        except (httpx.HTTPError, OSError, ValueError):
-            return self._result(plan.destination, "unavailable", False, False)
+            except (httpx.HTTPError, OSError, ValueError):
+                return self._result(plan.destination, "connection_unavailable", False, False)
         user = me.get("user", me) if type(me) is dict else None
         permissions = user.get("permissions") if type(user) is dict else None
         accessible = user.get("librariesAccessible") if type(user) is dict else None
@@ -62,9 +63,17 @@ class AudiobookshelfFieldEffectCapabilities:
         update = type(permissions) is dict and permissions.get("update") is True
         upload = type(permissions) is dict and permissions.get("upload") is True
         active = type(user) is dict and user.get("isActive") is True
-        return self._result(plan.destination, "allowed" if active and selected and item_matches and update and (plan.destination != "cover" or upload) else "insufficient_permission", update, upload, selected and item_matches)
+        if not active or not selected or not item_matches:
+            return self._result(plan.destination, "connection_unavailable", update, upload)
+        if not update or (plan.destination == "cover" and not upload):
+            return self._result(plan.destination, "insufficient_permission", update, upload, True)
+        try:
+            _capability_value_shape(detail, plan.destination)
+        except (httpx.HTTPError, OSError, ValueError):
+            return self._result(plan.destination, "field_unavailable", update, upload, True)
+        return self._result(plan.destination, "allowed", update, upload, True)
 
-    def _result(self, destination: str, category: str, update: bool, upload: bool, selected: bool = False) -> AudiobookshelfCapabilityResult:
+    def _result(self, destination: str, category: Literal["allowed", "insufficient_permission", "connection_unavailable", "field_unavailable"], update: bool, upload: bool, selected: bool = False) -> CapabilityObservation:
         capability = {
             "destination": destination,
             "category": category,
@@ -74,7 +83,7 @@ class AudiobookshelfFieldEffectCapabilities:
         if destination == "cover":
             capability["upload"] = upload
         payload = json.dumps(capability, sort_keys=True, separators=(",", ":")).encode()
-        return AudiobookshelfCapabilityResult(category, hashlib.sha256(payload).hexdigest())
+        return CapabilityObservation(category, hashlib.sha256(payload).hexdigest())
 
 
 class AudiobookshelfFieldEffectTarget:
@@ -151,21 +160,25 @@ class AudiobookshelfFieldEffectTarget:
                         json=media_payload,
                     )
         except (httpx.HTTPError, OSError, ValueError):
-            return TargetEffectResult("ambiguous")
+            return TargetEffectResult("ambiguous", "destination")
         if status in {200, 201, 204}:
             return TargetEffectResult("accepted")
-        return TargetEffectResult("ambiguous")
+        scope = "connection" if status in {401, 403} else "destination"
+        return TargetEffectResult("ambiguous", scope)
 
     def _item(self, client: httpx.Client, work_id: str) -> dict[str, Any]:
         try:
             detail = _json_response(client, "GET", f"{self._endpoint}/api/items/{quote(work_id, safe='')}", {"expanded": "1"}, self._maximum_response_bytes)
         except (httpx.HTTPError, UnicodeError, ValueError, json.JSONDecodeError) as error:
-            raise ValueError("Audiobookshelf item invalid") from error
+            raise TargetServiceUnavailable("connection") from error
         if (type(detail) is not dict or detail.get("id") != work_id
                 or detail.get("libraryId") != self._library_id
                 or detail.get("mediaType") != "book" or type(detail.get("media")) is not dict):
-            raise ValueError("Audiobookshelf item invalid")
-        _version(detail)
+            raise TargetServiceUnavailable("connection")
+        try:
+            _version(detail)
+        except ValueError as error:
+            raise TargetServiceUnavailable("connection") from error
         return detail
 
     def _value(self, client: httpx.Client, detail: dict[str, Any], plan: FieldEffectPlan) -> object:
@@ -174,14 +187,20 @@ class AudiobookshelfFieldEffectTarget:
             if status == 404:
                 return None
             if status != 200:
-                raise ValueError("Audiobookshelf cover invalid")
+                raise TargetServiceUnavailable(
+                    "connection" if status in {401, 403} else "destination"
+                )
             media_type = headers.get("content-type", "").split(";", 1)[0].lower()
-            if media_type not in {"image/jpeg", "image/png", "image/webp"} or _image_media_type(body) != media_type:
-                raise ValueError("Audiobookshelf cover invalid")
+            try:
+                observed_media_type = _image_media_type(body)
+            except ValueError as error:
+                raise TargetServiceUnavailable("destination") from error
+            if media_type not in {"image/jpeg", "image/png", "image/webp"} or observed_media_type != media_type:
+                raise TargetServiceUnavailable("destination")
             return "cover_" + hashlib.sha256(body).hexdigest()
         metadata = detail["media"].get("metadata")
         if type(metadata) is not dict:
-            raise ValueError("Audiobookshelf metadata invalid")
+            raise TargetServiceUnavailable("destination")
         if plan.destination == "tags":
             value = detail["media"].get("tags")
             if value is None:
@@ -190,11 +209,11 @@ class AudiobookshelfFieldEffectTarget:
             value = metadata.get(plan.destination)
         if plan.destination == "authors":
             if not isinstance(value, list) or any(type(item) is not dict or type(item.get("name")) is not str for item in value):
-                raise ValueError("Audiobookshelf authors invalid")
+                raise TargetServiceUnavailable("destination")
             return [item["name"] for item in value]
         if plan.destination in {"genres", "tags"}:
             if type(value) is not list or any(type(item) is not str for item in value):
-                raise ValueError("Audiobookshelf list invalid")
+                raise TargetServiceUnavailable("destination")
         return value
 
 
@@ -243,6 +262,16 @@ def _media_payload(destination: str, value: object) -> dict[str, object]:
     if destination == "authors":
         return {"metadata": {"authors": [{"name": item} for item in value]}}
     return {"metadata": {destination: value}}
+
+
+def _capability_value_shape(detail: dict[str, Any], destination: str) -> None:
+    media = detail.get("media")
+    if type(media) is not dict or type(media.get("metadata")) is not dict:
+        raise ValueError("Audiobookshelf metadata capability invalid")
+    if destination == "tags":
+        value = media.get("tags", media["metadata"].get("tags"))
+        if type(value) is not list or any(type(item) is not str for item in value):
+            raise ValueError("Audiobookshelf tag capability invalid")
 
 
 def _image_media_type(body: bytes) -> str:

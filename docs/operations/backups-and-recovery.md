@@ -88,6 +88,11 @@ version; it then rereads the destination. Audiobookshelf provides no CAS, so a
 same-field update can be overwritten between those reads and the service
 accepting the request. Never retry an ambiguous write manually from the same
 plan: use the persisted field-local reconciliation/audit outcome instead.
+Expired credentials, inactive accounts, or loss of basic library/item access
+persist a connection suspension. A permission failure, incompatible field
+shape, or unexpected write response persists a destination suspension instead,
+leaving unrelated destinations eligible. Both remain fail-closed across restart;
+the ordinary product exposes no implicit retry or automatic clearing path.
 
 ## Container restart and private recovery
 

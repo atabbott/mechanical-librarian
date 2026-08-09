@@ -5,7 +5,11 @@
 - Add the supported Audiobookshelf guarded-write canary: one API-key
   destination-minimal metadata/tags or digest-verified cover request follows a
   final authoritative pre-read and is followed by read-back/reconciliation. ABS
-  supplies no CAS, so the documented same-field lost-update window remains; no
+  supplies no CAS, so the documented same-field lost-update window remains.
+  Authentication/basic-access failures durably suspend the connection, while
+  permission, field incompatibility, and unexpected effect behavior suspend only
+  the affected destination; claims enforce those scopes transactionally and the
+  canary receipt binds the validated append-only event sequence. No
   continuous activation, bulk, rollback, embedded-media, or production-library
   write path is enabled. (#150)
 

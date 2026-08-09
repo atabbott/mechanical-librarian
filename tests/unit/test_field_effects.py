@@ -390,6 +390,64 @@ class FieldEffectTests(unittest.TestCase):
         self.service.set_paused(False)
         self.assertEqual(self.service.apply(ready.plan.plan_id).state, "verified")
 
+    def test_capability_failures_persist_the_smallest_scope_and_close_claim_races(self) -> None:
+        title = self.plan(suffix="1")
+        subtitle = self.plan(destination="subtitle", suffix="2")
+        self.capabilities.category = "field_unavailable"
+        self.assertEqual(self.service.apply(title.plan.plan_id).failure, "capability")
+        self.assertEqual(
+            self.repository.field_effect_capability_suspension("primary", "title"),
+            "field_unavailable",
+        )
+        self.capabilities.category = "allowed"
+        self.assertEqual(self.service.apply(subtitle.plan.plan_id).state, "verified")
+
+        authors = self.plan(destination="authors", pre=["old"], desired=["new"], suffix="3")
+        self.capabilities.category = "connection_unavailable"
+        self.assertEqual(self.service.apply(authors.plan.plan_id).failure, "capability")
+        self.capabilities.category = "allowed"
+        genres = self.plan(destination="genres", pre=["old"], desired=["new"], suffix="4")
+        self.assertEqual(self.service.apply(genres.plan.plan_id).failure, "capability")
+
+    def test_atomic_claim_and_unexpected_effect_behavior_honor_durable_suspension(self) -> None:
+        operation = self.plan(suffix="5")
+        self.claim_hook.callback = lambda _: self.repository.suspend_field_effect_capability(
+            scope="destination", connection="primary", destination="title",
+            reason="field_unavailable", changed_at=self.clock(),
+        )
+        with self.assertRaises(Exception):
+            self.service.apply(operation.plan.plan_id)
+        self.assertEqual(self.service.status(operation.plan.plan_id).state, "planned")
+
+        other = self.plan(destination="subtitle", suffix="6")
+        self.target.ambiguous_next = "pre"
+        self.target.suspension_scope_next = "destination"
+        self.service.apply(other.plan.plan_id)
+        self.assertEqual(
+            self.repository.field_effect_capability_suspension("primary", "subtitle"),
+            "unexpected_effect_behavior",
+        )
+
+    def test_final_target_read_persists_typed_connection_unavailability(self) -> None:
+        operation = self.plan(suffix="8")
+        self.target.unavailable_scope_next = "connection"
+        result = self.service.apply(operation.plan.plan_id)
+        self.assertEqual((result.state, result.failure), ("stale", "capability"))
+        self.assertEqual(
+            self.repository.field_effect_capability_suspension("primary", "title"),
+            "connection_unavailable",
+        )
+
+    def test_audit_documents_are_the_persisted_gap_free_event_sequence(self) -> None:
+        operation = self.plan(suffix="7")
+        verified = self.service.apply(operation.plan.plan_id)
+        documents = self.repository.field_effect_event_documents(operation.plan.plan_id)
+        events = [json.loads(document) for document in documents]
+        self.assertEqual([event["sequence"] for event in events], [1, 2, 3, 4])
+        self.assertEqual([event["kind"] for event in events],
+                         ["planned", "claimed", "applying", "verified"])
+        self.assertEqual(events[-1]["state"], verified.state)
+
     def test_ambiguous_desired_pre_and_third_reconcile_without_blind_retry(self) -> None:
         desired = self.plan(suffix="5")
         self.target.ambiguous_next = "desired"

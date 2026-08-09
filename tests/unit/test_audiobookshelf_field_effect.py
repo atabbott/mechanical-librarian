@@ -21,7 +21,10 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect 
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
-from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.field_effects import (
+    GuardedFieldApplication,
+    TargetServiceUnavailable,
+)
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
@@ -148,11 +151,13 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         self.detail["media"]["metadata"]["title"] = "Before"
         self.detail["updatedAt"] = 7
         self.write_status = 403
-        self.assertEqual(self.target.apply(self.plan("title", "Before", "After")).outcome, "ambiguous")
+        refused = self.target.apply(self.plan("title", "Before", "After"))
+        self.assertEqual((refused.outcome, refused.suspension_scope), ("ambiguous", "connection"))
         self.detail["media"]["metadata"]["title"] = "Before"
         self.detail["updatedAt"] = 7
         self.write_status = 500
-        self.assertEqual(self.target.apply(self.plan("title", "Before", "After")).outcome, "ambiguous")
+        failed = self.target.apply(self.plan("title", "Before", "After"))
+        self.assertEqual((failed.outcome, failed.suspension_scope), ("ambiguous", "destination"))
 
         self.requests.clear()
         changed = self.plan("title", "Elsewhere", "After")
@@ -190,11 +195,14 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         self.assertEqual(cover_after.category, "allowed")
         self.assertNotEqual(cover_after.digest, cover_before.digest)
         user["librariesAccessible"] = "library-1"
-        self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "insufficient_permission")
+        self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "connection_unavailable")
         user["permissions"]["accessAllLibraries"] = True
         self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "allowed")
+        self.detail["media"]["metadata"] = "invalid"
+        self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "field_unavailable")
+        self.detail["media"]["metadata"] = {"title": "Before"}
         user["isActive"] = False
-        self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "insufficient_permission")
+        self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "connection_unavailable")
 
         unavailable = AudiobookshelfFieldEffectCapabilities(
             client_factory=lambda: httpx.Client(
@@ -202,7 +210,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
             ),
             endpoint="https://abs.example.invalid", library_id="library-1",
         )
-        self.assertEqual(unavailable.result(self.plan("title", "Before", "After")).category, "unavailable")
+        self.assertEqual(unavailable.result(self.plan("title", "Before", "After")).category, "connection_unavailable")
 
     def test_streamed_reads_reject_encoded_or_oversized_responses(self) -> None:
         plan = self.plan("title", "Before", "After")
@@ -212,7 +220,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
             )),
             endpoint="https://abs.example.invalid", library_id="library-1", artifacts=self.artifacts,
         )
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(TargetServiceUnavailable, "connection"):
             encoded.read(plan)
 
         oversized = AudiobookshelfFieldEffectTarget(
@@ -222,7 +230,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
             endpoint="https://abs.example.invalid", library_id="library-1", artifacts=self.artifacts,
             maximum_response_bytes=1024,
         )
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(TargetServiceUnavailable, "connection"):
             oversized.read(plan)
 
     def test_post_dispatch_status_and_transport_loss_reconcile_through_application(self) -> None:

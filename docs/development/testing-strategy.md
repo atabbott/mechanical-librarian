@@ -445,7 +445,9 @@ OpenAPI and the authenticated browser flow cover activation and transition
 routes. The general exact installed-artifact lifecycle remains report-only and
 verifies no target, media, or artifact writes. The separately invoked F14 canary
 builds and installs the exact-head wheel outside its source snapshot, then uses
-that installed adapter only against its owned disposable synthetic library.
+that installed adapter only against its owned disposable synthetic library. Its
+receipt hashes the real validated event-ledger sequence rather than a derived
+operation summary.
 
 Guarded-application tests use only synthetic immutable decisions and fake
 backup, capability, exact authority binding, distinct consent, dependency,
@@ -455,7 +457,9 @@ atomic series, no-ops, ordered gate failures, pause/supersede/claim semantics,
 sibling independence, atomic revoke-versus-claim races, persisted ambiguous
 desired/pre/third readback and forward reevaluation, lineage-replacement races,
 bounded pending-action and cleanup restart runners, retry exhaustion, restart
-boundaries, append-only audit, retryable owner-only cover cleanup, canonical
+boundaries, validated gap-free append-only audit retrieval, durable connection-
+and destination-scoped capability suspension including atomic claim races,
+retryable owner-only cover cleanup, canonical
 row/document/action corruption rejection including boolean/integer aliases and
 closed failure/token types, architecture imports, authenticated API calls, and the
 absence of ordinary-runtime Audiobookshelf/media-write construction.

@@ -342,6 +342,19 @@ _FIELD_EFFECT_CONTROL_SQL = (
     "CREATE TABLE field_effect_control (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
     "paused INTEGER NOT NULL CHECK(paused IN (0,1)), updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
 )
+_FIELD_EFFECT_SUSPENSIONS_SQL = (
+    "CREATE TABLE field_effect_suspensions ("
+    "scope TEXT NOT NULL CHECK(scope IN ('connection','destination')), "
+    "connection_name TEXT NOT NULL CHECK(length(connection_name) BETWEEN 1 AND 128), "
+    "destination TEXT NOT NULL CHECK(length(destination)<=64 AND "
+    "((scope='connection' AND destination='') OR (scope='destination' AND length(destination)>=1))), "
+    "reason TEXT NOT NULL CHECK(reason IN ('connection_unavailable','insufficient_permission',"
+    "'field_unavailable','unexpected_effect_behavior')), "
+    "updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND "
+    "length(CAST(document AS BLOB)) BETWEEN 2 AND 4096), "
+    "PRIMARY KEY(scope,connection_name,destination))"
+)
 _FIELD_EFFECT_AUTHORITIES_SQL = (
     "CREATE TABLE field_effect_authorities ("
     "decision_id TEXT PRIMARY KEY NOT NULL, current INTEGER NOT NULL CHECK(current IN (0,1)), "
@@ -1047,6 +1060,112 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
+    def field_effect_event_documents(self, plan_id: str) -> tuple[str, ...]:
+        """Return one bounded, canonical, gap-free persisted audit sequence."""
+        try:
+            operation = self.get_field_effect(plan_id)
+            rows = self._connection.execute(
+                "SELECT event_id,sequence,kind,occurred_at,document "
+                "FROM field_effect_events WHERE plan_id=? ORDER BY sequence",
+                (plan_id,),
+            ).fetchall()
+            if not rows or len(rows) > 100:
+                raise FieldEffectError("invalid_event")
+            documents: list[str] = []
+            event_keys = {"attempt", "decision_id", "desired_value", "destination",
+                          "event_id", "failure", "kind", "occurred_at", "origin",
+                          "plan_id", "pre_value", "schema_version", "sequence", "state"}
+            for expected_sequence, (event_id, sequence, kind, occurred_at, document) in enumerate(rows, 1):
+                raw = json.loads(document)
+                if (type(raw) is not dict or set(raw) != event_keys
+                        or raw["schema_version"] != "field-effect-event-v1"
+                        or type(raw["sequence"]) is not int or raw["sequence"] < 1
+                        or type(raw["attempt"]) is not int or not 0 <= raw["attempt"] <= 3
+                        or type(raw["occurred_at"]) is not int or raw["occurred_at"] < 0
+                        or raw["failure"] not in FIELD_EFFECT_FAILURES
+                        or raw.get("plan_id") != plan_id
+                        or raw.get("event_id") != event_id
+                        or raw.get("sequence") != sequence
+                        or raw.get("kind") != kind
+                        or raw.get("occurred_at") != occurred_at
+                        or sequence != expected_sequence
+                        or raw.get("state") != kind
+                        or raw["decision_id"] != operation.plan.authority.decision_id
+                        or raw["origin"] != operation.plan.authority.origin
+                        or raw["destination"] != operation.plan.destination
+                        or raw["pre_value"] != operation.plan.pre_value
+                        or raw["desired_value"] != operation.plan.desired_value
+                        or canonical_effect_json(raw) != document
+                        or event_id != "effect_event_" + hashlib.sha256(
+                            canonical_effect_json({key: value for key, value in raw.items()
+                                                   if key != "event_id"}).encode()
+                        ).hexdigest()):
+                    raise FieldEffectError("invalid_event")
+                documents.append(document)
+            last = json.loads(documents[-1])
+            if ((last["state"], last["attempt"], last["failure"])
+                    != (operation.state, operation.attempt, operation.failure)):
+                raise FieldEffectError("invalid_event")
+            return tuple(documents)
+        except (sqlite3.Error, json.JSONDecodeError) as error:
+            raise FieldEffectError("persistence") from error
+
+    def suspend_field_effect_capability(self, *, scope: str, connection: str,
+                                        destination: str, reason: str,
+                                        changed_at: int) -> None:
+        reasons = {"connection_unavailable", "insufficient_permission",
+                   "field_unavailable", "unexpected_effect_behavior"}
+        if (scope not in {"connection", "destination"}
+                or type(connection) is not str or not 1 <= len(connection) <= 128
+                or type(destination) is not str or not 1 <= len(destination) <= 64
+                or reason not in reasons or type(changed_at) is not int
+                or changed_at < 0):
+            raise FieldEffectError("invalid_suspension")
+        stored_destination = "" if scope == "connection" else destination
+        document = canonical_effect_json({
+            "connection": connection,
+            "destination": stored_destination,
+            "reason": reason,
+            "schema_version": "field-effect-suspension-v1",
+            "scope": scope,
+            "updated_at": changed_at,
+        })
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            existing = self._connection.execute(
+                "SELECT updated_at FROM field_effect_suspensions "
+                "WHERE scope=? AND connection_name=? AND destination=?",
+                (scope, connection, stored_destination),
+            ).fetchone()
+            if existing is not None and existing[0] > changed_at:
+                raise FieldEffectError("invalid_suspension")
+            self._connection.execute(
+                "INSERT INTO field_effect_suspensions(scope,connection_name,destination,reason,updated_at,document) "
+                "VALUES(?,?,?,?,?,?) ON CONFLICT(scope,connection_name,destination) DO UPDATE SET "
+                "reason=excluded.reason,updated_at=excluded.updated_at,document=excluded.document",
+                (scope, connection, stored_destination, reason, changed_at, document),
+            )
+            self._connection.commit()
+        except (sqlite3.Error, FieldEffectError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError):
+                raise
+            raise FieldEffectError("persistence") from error
+
+    def field_effect_capability_suspension(self, connection: str,
+                                           destination: str) -> str | None:
+        try:
+            row = self._connection.execute(
+                "SELECT reason FROM field_effect_suspensions WHERE "
+                "connection_name=? AND ((scope='connection' AND destination='') "
+                "OR (scope='destination' AND destination=?)) "
+                "ORDER BY CASE scope WHEN 'connection' THEN 0 ELSE 1 END LIMIT 1",
+                (connection, destination),
+            ).fetchone()
+            return None if row is None else str(row[0])
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
     def claim_field_effect(self, plan_id: str, expected_state: str,
                            claim_token: str, claimed_at: int) -> FieldEffectOperation:
         try:
@@ -1061,6 +1180,9 @@ class SQLiteMetadataReportRepository:
             if row is None or row[1] != expected_state:
                 raise FieldEffectError("claim_conflict")
             persisted = FieldEffectOperation.from_json(row[0])
+            if self.field_effect_capability_suspension(
+                    persisted.plan.connection, persisted.plan.destination) is not None:
+                raise FieldEffectError("capability")
             if self._connection.execute(
                 "SELECT current FROM field_effect_authorities WHERE decision_id=?",
                 (persisted.plan.authority.decision_id,),
@@ -6142,6 +6264,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute("INSERT INTO automatic_safety_state(singleton,paused,global_suspension,category_suspensions_document,updated_at) VALUES(1,0,NULL,'[]',0)")
             connection.execute(_FIELD_EFFECT_CONTROL_SQL)
             connection.execute("INSERT INTO field_effect_control(singleton,paused,updated_at) VALUES(1,0,0)")
+            connection.execute(_FIELD_EFFECT_SUSPENSIONS_SQL)
             connection.execute(_FIELD_EFFECT_AUTHORITIES_SQL)
             connection.execute(_FIELD_EFFECT_CONSENTS_SQL)
             connection.execute(_FIELD_EFFECTS_SQL)
@@ -6468,6 +6591,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_automatic_decisions_3", None),
         ("index", "sqlite_autoindex_field_effect_events_1", None),
         ("index", "sqlite_autoindex_field_effect_events_2", None),
+        ("index", "sqlite_autoindex_field_effect_suspensions_1", None),
         ("index", "sqlite_autoindex_field_effect_actions_1", None),
         ("index", "sqlite_autoindex_field_effect_actions_2", None),
         ("index", "sqlite_autoindex_field_effect_authorities_1", None),
@@ -6516,6 +6640,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "automatic_decisions", _AUTOMATIC_DECISIONS_SQL),
         ("table", "automatic_safety_state", _AUTOMATIC_SAFETY_SQL),
         ("table", "field_effect_control", _FIELD_EFFECT_CONTROL_SQL),
+        ("table", "field_effect_suspensions", _FIELD_EFFECT_SUSPENSIONS_SQL),
         ("table", "field_effect_actions", _FIELD_EFFECT_ACTIONS_SQL),
         ("table", "field_effect_authorities", _FIELD_EFFECT_AUTHORITIES_SQL),
         ("table", "field_effect_cleanups", _FIELD_EFFECT_CLEANUPS_SQL),
@@ -6589,6 +6714,21 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 or control[0][1] not in (0, 1)
                 or type(control[0][2]) is not int or control[0][2] < 0):
             raise FieldEffectError("invalid_control")
+
+        suspension_keys = {"connection", "destination", "reason", "schema_version",
+                           "scope", "updated_at"}
+        for scope, connection_name, destination, reason, updated_at, document in connection.execute(
+            "SELECT scope,connection_name,destination,reason,updated_at,document "
+            "FROM field_effect_suspensions"
+        ):
+            raw = json.loads(document)
+            if (type(raw) is not dict or set(raw) != suspension_keys
+                    or raw["schema_version"] != "field-effect-suspension-v1"
+                    or (raw["scope"], raw["connection"], raw["destination"],
+                        raw["reason"], raw["updated_at"])
+                    != (scope, connection_name, destination, reason, updated_at)
+                    or canonical_effect_json(raw) != document):
+                raise FieldEffectError("invalid_suspension")
 
         authorities: dict[str, tuple[EffectAuthority, bool, int]] = {}
         authority_keys = {"authority", "current", "schema_version", "updated_at"}

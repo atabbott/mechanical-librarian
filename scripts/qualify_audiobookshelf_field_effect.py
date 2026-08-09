@@ -250,12 +250,11 @@ def _apply(service, repository, target, capabilities, writes: list[str], recover
         if not recovery.capture_verified or not recovery.cleanup_verified or recovery.exists(plan.plan_id):
             raise QualificationError("cover_recovery_evidence_invalid")
         recovery_state = "captured_and_cleaned"
-    audit = {
-        "destination": destination,
-        "state": persisted.state,
-        "failure": persisted.failure or "none",
-        "attempt": persisted.attempt,
-    }
+    audit_documents = repository.field_effect_event_documents(plan.plan_id)
+    audit = [json.loads(document) for document in audit_documents]
+    if ([event["kind"] for event in audit] != ["planned", "claimed", "applying", "verified"]
+            or audit[-1]["state"] != persisted.state):
+        raise QualificationError("audit_sequence_evidence_invalid")
     return {
         "destination": destination,
         "state": persisted.state,
@@ -264,6 +263,7 @@ def _apply(service, repository, target, capabilities, writes: list[str], recover
         "before_digest": _value_digest(before.value),
         "after_digest": _value_digest(after.value),
         "audit_digest": _value_digest(audit),
+        "audit_event_count": len(audit_documents),
         "recovery": recovery_state,
     }
 

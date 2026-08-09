@@ -53,6 +53,17 @@ schedules one durable targeted-read action: desired completes, the captured pre-
 after renewed gates, and a third value stales the plan for forward evaluation.
 Verified siblings remain complete.
 
+Capability results use closed application-owned categories. Authentication,
+inactive-account, or basic library/item access failure records a durable
+connection suspension. Insufficient permission, an incompatible destination
+shape, or unexpected effect behavior records a durable destination suspension.
+The claim transaction checks both scopes after acquiring its write lock. This
+keeps a broken field from disabling unrelated writes while ensuring a raced
+suspension wins admission. The append-only event ledger is exposed through a
+bounded repository seam that validates canonical documents and gap-free
+sequence before qualification hashes it; reconstructed operation summaries are
+not audit proof.
+
 One bounded restart runner enumerates only pending or interrupted targeted-read
 and forward-reevaluation actions, claims each action, dispatches through those
 two existing seams, and completes it only after success. The same restart entry

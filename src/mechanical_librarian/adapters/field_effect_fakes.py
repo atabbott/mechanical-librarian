@@ -7,9 +7,11 @@ import threading
 from typing import Callable
 
 from mechanical_librarian.application.field_effects import (
+    CapabilityObservation,
     AuthoritySnapshot,
     TargetEffectResult,
     TargetObservation,
+    TargetServiceUnavailable,
 )
 from mechanical_librarian.domain.field_effect import EffectAuthority, EffectConsent, FieldEffectPlan
 from mechanical_librarian.domain.human_decision import HumanDecision
@@ -29,9 +31,11 @@ class FakeTargetService:
         self._lock = threading.RLock()
         self.fail_next = False
         self.fail_read_next = False
+        self.unavailable_scope_next: str | None = None
         self.fail_reads_for: set[str] = set()
         self.fail_read_after_apply_for: set[str] = set()
         self.ambiguous_next: str | None = None
+        self.suspension_scope_next: str | None = None
         self.before_apply: Callable[[FieldEffectPlan], None] | None = None
         self.after_apply: Callable[[FieldEffectPlan], None] | None = None
 
@@ -43,6 +47,9 @@ class FakeTargetService:
 
     def read(self, plan: FieldEffectPlan) -> TargetObservation:
         with self._lock:
+            if self.unavailable_scope_next is not None:
+                scope, self.unavailable_scope_next = self.unavailable_scope_next, None
+                raise TargetServiceUnavailable(scope)
             if self.fail_read_next or plan.plan_id in self.fail_reads_for:
                 self.fail_read_next = False
                 raise RuntimeError("synthetic target read failure")
@@ -71,7 +78,8 @@ class FakeTargetService:
                     self._write(plan, plan.desired_value)
                 elif behavior == "third":
                     self._write(plan, "synthetic-third-value")
-                result = TargetEffectResult("ambiguous")
+                result = TargetEffectResult("ambiguous", self.suspension_scope_next)
+                self.suspension_scope_next = None
                 if behavior != "pre":
                     self._effects[plan.idempotency_key] = result
                 return result
@@ -109,8 +117,9 @@ class FakeBackupReadiness:
 class FakeCapabilityObserver:
     def __init__(self, digest: str) -> None:
         self.digest = digest
-    def observe(self, plan: FieldEffectPlan) -> str:
-        return self.digest
+        self.category = "allowed"
+    def observe(self, plan: FieldEffectPlan) -> CapabilityObservation:
+        return CapabilityObservation(self.category, self.digest)
 
 
 class FakeAuthorityCurrentness:
