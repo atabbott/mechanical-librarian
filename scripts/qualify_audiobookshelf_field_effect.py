@@ -721,8 +721,10 @@ def _installed_continuous_qualification(
                         f"/api/v1/review-preparation/canary/{name}/scan",
                         headers=mutation_headers,
                     )
-                    if response.status_code != 202:
-                        raise QualificationError("installed_rescan_failed")
+                    if response.status_code not in {202, 409}:
+                        raise QualificationError(
+                            f"installed_rescan_failed:{response.status_code}"
+                        )
                 _wait_for_preparation(client, len(libraries))
 
             rescan_all()
