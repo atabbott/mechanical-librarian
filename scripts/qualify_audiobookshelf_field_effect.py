@@ -82,6 +82,26 @@ class QualificationError(RuntimeError):
     """A fixed, secret-free qualification failure."""
 
 
+def _require_installed_full_chain_coverage(
+    coverage: dict[str, str], expected: dict[str, str], *,
+    activity_present: bool, diagnostics: dict[str, object],
+) -> None:
+    """Fail closed unless observed installed operations cover the exact map."""
+    missing = {
+        destination: origin for destination, origin in expected.items()
+        if coverage.get(destination) != origin
+    }
+    if activity_present and not missing:
+        return
+    raise QualificationError(
+        "installed_scheduler_failed:"
+        + json.dumps(
+            {**diagnostics, "coverage": coverage, "missing": missing},
+            sort_keys=True,
+        )
+    )
+
+
 def _png(red: int, green: int, blue: int) -> bytes:
     output = io.BytesIO()
     Image.new("RGB", (2, 2), (red, green, blue)).save(output, "PNG")
@@ -1145,13 +1165,6 @@ def _installed_continuous_qualification(
                     None if thread is None or thread.ident is None
                     else sys._current_frames().get(thread.ident)
                 )
-            if not any(
-                row["destination"] == returned_destination
-                and row["work_id"] == returned_work_id
-                and row["origin"] == "automatic_policy"
-                for row in installed_outcomes
-            ):
-                raise QualificationError("installed_return_automatic_unverified")
                 while frame is not None:
                     thread_stack.append(frame.f_code.co_name)
                     frame = frame.f_back
@@ -1193,19 +1206,28 @@ def _installed_continuous_qualification(
                             "proposed": len(field.get("proposed_values", [])),
                             "values": field.get("proposed_values"),
                         })
-                raise QualificationError(
-                    "installed_scheduler_failed:"
-                    + json.dumps(
-                        {"activity": activity_summary, "coverage": coverage,
-                         "fields": field_diagnostics,
-                         "pending": binding_diagnostics,
-                         "thread_alive": (
-                             continuous._thread is not None
-                             and continuous._thread.is_alive()
-                         ), "thread_stack": thread_stack},
-                        sort_keys=True,
-                    )
+                _require_installed_full_chain_coverage(
+                    coverage,
+                    expected_origins,
+                    activity_present=final_activity is not None,
+                    diagnostics={
+                        "activity": activity_summary,
+                        "fields": field_diagnostics,
+                        "pending": binding_diagnostics,
+                        "thread_alive": (
+                            continuous._thread is not None
+                            and continuous._thread.is_alive()
+                        ),
+                        "thread_stack": thread_stack,
+                    },
                 )
+            if not any(
+                row["destination"] == returned_destination
+                and row["work_id"] == returned_work_id
+                and row["origin"] == "automatic_policy"
+                for row in installed_outcomes
+            ):
+                raise QualificationError("installed_return_automatic_unverified")
             revoked = client.post(
                 "/api/v1/activity/canary/beta/revoke",
                 headers=mutation_headers,
@@ -1330,8 +1352,8 @@ def _installed_continuous_qualification(
         "external_drift_regeneration": True,
         "human_decision_api": True, "idempotent_rescan": True,
         "installed_composition": True, "libraries": len(libraries),
-        "destinations": len(expected_origins),
-        "full_chain_origins": expected_origins,
+        "destinations": len(coverage),
+        "full_chain_origins": coverage,
         "supplemental_installed_adapter_origins": {
             destination: "automatic_policy"
             for destination in sorted(supplemental_automatic)
