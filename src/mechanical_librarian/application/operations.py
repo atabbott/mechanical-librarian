@@ -7,6 +7,7 @@ authority for every field effect.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from contextlib import contextmanager
@@ -233,10 +234,19 @@ def aggregate_incidents(signals: object) -> tuple[Incident, ...]:
                if cause == "currentness_conflict"
                else (kind, cause, scope, connection, library, category, None, field))
         previous = aggregated.get(key)
-        incident_id = "incident:" + ":".join(
+        readable_key = ":".join(
             "-" if value is None else str(value) for value in key
         )
-        candidate = Incident(incident_id[:96], kind, cause, scope, connection,
+        canonical_key = json.dumps(
+            key, ensure_ascii=True, separators=(",", ":")
+        ).encode("ascii")
+        incident_id = (
+            "incident:"
+            + readable_key[:22]
+            + ":"
+            + hashlib.sha256(canonical_key).hexdigest()
+        )
+        candidate = Incident(incident_id, kind, cause, scope, connection,
                              library, category,
                              work_id if cause == "currentness_conflict" else None,
                              field, 1 if previous is None else previous.count + 1)

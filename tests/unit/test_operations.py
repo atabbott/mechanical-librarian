@@ -107,6 +107,34 @@ class OperationsTests(unittest.TestCase):
         self.assertEqual([value.count for value in incidents], [2, 1, 1])
         self.assertEqual({value.work_id for value in incidents}, {None, "one", "two"})
 
+    def test_long_shared_provider_prefixes_have_distinct_stable_incident_ids(self) -> None:
+        shared = "provider-" + "a" * 54
+        signals = [
+            {
+                "kind": "authentication_failure",
+                "cause": "provider_authentication",
+                "scope": "connection",
+                "connection": shared + suffix,
+                "library": None,
+                "category": None,
+                "work_id": None,
+                "field": None,
+            }
+            for suffix in ("b", "c")
+        ]
+        first = aggregate_incidents(signals)
+        replay = aggregate_incidents(signals)
+        self.assertEqual(
+            tuple(value.incident_id for value in first),
+            tuple(value.incident_id for value in replay),
+        )
+        self.assertEqual(len({value.incident_id for value in first}), 2)
+        self.assertTrue(all(
+            value.incident_id.startswith("incident:authentication_failure:")
+            and len(value.incident_id) == 96
+            for value in first
+        ))
+
     def test_opt_in_timings_are_bounded_private_and_survive_reopen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "private" / "timings.json"
