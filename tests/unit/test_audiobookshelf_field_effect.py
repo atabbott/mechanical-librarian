@@ -29,6 +29,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
             "media": {"metadata": {"title": "Before", "genres": ["old"]}, "tags": ["old"]},
         }
         self.cover_bytes: bytes | None = None
+        self.write_status = 200
 
         def handle(request: httpx.Request) -> httpx.Response:
             self.requests.append(request)
@@ -43,14 +44,14 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                 self.assertEqual(payload, {"metadata": {"title": "After"}})
                 self.detail["media"]["metadata"]["title"] = "After"
                 self.detail["updatedAt"] = 8
-                return httpx.Response(200, json={"updated": True})
+                return httpx.Response(self.write_status, json={"updated": True})
             if request.method == "POST":
                 self.assertIn(b"name=\"cover\"", request.content)
                 self.assertIn(b'filename="cover.png"', request.content)
                 self.assertIn(_PNG, request.content)
                 self.cover_bytes = _PNG
                 self.detail["updatedAt"] = 9
-                return httpx.Response(200, json={"success": True})
+                return httpx.Response(self.write_status, json={"success": True})
             return httpx.Response(500)
 
         self.target = AudiobookshelfFieldEffectTarget(
@@ -112,6 +113,18 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         self.assertEqual(self.target.apply(plan).outcome, "conflict")
         self.assertFalse(any(request.method == "PATCH" for request in self.requests))
         self.assertFalse(any(request.method == "POST" for request in self.requests))
+
+    def test_success_without_body_is_accepted_and_write_refusals_are_ambiguous(self) -> None:
+        self.write_status = 204
+        self.assertEqual(self.target.apply(self.plan("title", "Before", "After")).outcome, "accepted")
+        self.detail["media"]["metadata"]["title"] = "Before"
+        self.detail["updatedAt"] = 7
+        self.write_status = 403
+        self.assertEqual(self.target.apply(self.plan("title", "Before", "After")).outcome, "ambiguous")
+        self.detail["media"]["metadata"]["title"] = "Before"
+        self.detail["updatedAt"] = 7
+        self.write_status = 500
+        self.assertEqual(self.target.apply(self.plan("title", "Before", "After")).outcome, "ambiguous")
 
         self.requests.clear()
         changed = self.plan("title", "Elsewhere", "After")

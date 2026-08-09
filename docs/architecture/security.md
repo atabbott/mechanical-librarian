@@ -628,8 +628,11 @@ does not claim cross-system atomicity. Cover upload reads only the immutable
 digest-verified original artifact, never recovery bytes, and neither bytes nor
 credentials enter diagnostics, logs, support bundles or reviewers.
 Unknown and stale facts fail closed. Target and credential authority are absent
-from domain code, reviewers, diagnostics, and the API. There is no
-Audiobookshelf or media-write constructor in this boundary.
+from domain code, reviewers, diagnostics, and the API. Canary-only composition
+contains the Audiobookshelf target and API-key capability observer; it proves
+the selected item/library and destination permission, never a version alone.
+Read-only keys are insufficient for every destination; update-only keys permit
+metadata/tags but are insufficient for cover, which also requires upload.
 ## Guarded-operation diagnostics
 
 Operational status and support routes share the authenticated owner boundary;

@@ -456,7 +456,7 @@ bounded pending-action and cleanup restart runners, retry exhaustion, restart
 boundaries, append-only audit, retryable owner-only cover cleanup, canonical
 row/document/action corruption rejection including boolean/integer aliases and
 closed failure/token types, architecture imports, authenticated API calls, and the
-absence of Audiobookshelf/media-write construction.
+absence of ordinary-runtime Audiobookshelf/media-write construction.
 ## Guarded-operation qualification
 
 F15a qualification covers absent and exact-current startup, ready/claimed/

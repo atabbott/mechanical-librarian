@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote
@@ -19,6 +20,48 @@ from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtif
 from mechanical_librarian.application.field_effects import TargetEffectResult, TargetObservation
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.field_effect import FieldEffectPlan
+
+
+@dataclass(frozen=True)
+class AudiobookshelfCapabilityResult:
+    """Bounded, destination-specific API-key capability observation."""
+    category: str
+    digest: str
+
+
+class AudiobookshelfFieldEffectCapabilities:
+    """Read the API-key's real field-local write capability, never a version."""
+    def __init__(self, *, client_factory: Callable[[], httpx.Client], endpoint: str,
+                 library_id: str, maximum_response_bytes: int = 1_048_576) -> None:
+        self._client_factory = client_factory
+        self._endpoint = endpoint.rstrip("/")
+        self._library_id = library_id
+        self._maximum_response_bytes = maximum_response_bytes
+
+    def observe(self, plan: FieldEffectPlan) -> str:
+        return self.result(plan).digest
+
+    def result(self, plan: FieldEffectPlan) -> AudiobookshelfCapabilityResult:
+        try:
+            with self._client_factory() as client:
+                me = _json_response(client, "GET", self._endpoint + "/api/me", None, self._maximum_response_bytes)
+                # An item read proves the selected library remains accessible;
+                # /api/me alone is not a destination capability proof.
+                detail = _json_response(client, "GET", self._endpoint + "/api/items/" + quote(plan.work_id, safe=""), {"expanded": "1"}, self._maximum_response_bytes)
+        except ValueError:
+            return self._result(plan.destination, "unavailable", False, False)
+        user = me.get("user", me) if type(me) is dict else None
+        permissions = user.get("permissions") if type(user) is dict else None
+        accessible = user.get("librariesAccessible") if type(user) is dict else None
+        selected = type(permissions) is dict and permissions.get("accessAllLibraries") is True or accessible is None or self._library_id in accessible
+        item_matches = type(detail) is dict and detail.get("libraryId") == self._library_id
+        update = type(permissions) is dict and permissions.get("update") is True
+        upload = type(permissions) is dict and permissions.get("upload") is True
+        return self._result(plan.destination, "allowed" if selected and item_matches and update and (plan.destination != "cover" or upload) else "insufficient_permission", update, upload, selected and item_matches)
+
+    def _result(self, destination: str, category: str, update: bool, upload: bool, selected: bool = False) -> AudiobookshelfCapabilityResult:
+        payload = json.dumps({"destination": destination, "category": category, "update": update, "upload": upload, "selected": selected}, sort_keys=True, separators=(",", ":")).encode()
+        return AudiobookshelfCapabilityResult(category, hashlib.sha256(payload).hexdigest())
 
 
 class AudiobookshelfFieldEffectTarget:
@@ -77,36 +120,24 @@ class AudiobookshelfFieldEffectTarget:
                         return TargetEffectResult("conflict")
                     if hashlib.sha256(body).hexdigest() != digest:
                         return TargetEffectResult("conflict")
-                    response = client.post(
+                    status = _write_status(client, "POST",
                         f"{self._endpoint}/api/items/{quote(plan.work_id, safe='')}/cover",
                         files={"cover": ("cover" + _image_suffix(body), body, _image_media_type(body))},
                     )
                 else:
-                    response = client.patch(
+                    status = _write_status(client, "PATCH",
                         f"{self._endpoint}/api/items/{quote(plan.work_id, safe='')}/media",
                         json=_media_payload(plan.destination, plan.desired_value),
                     )
         except (httpx.HTTPError, OSError, ValueError):
             return TargetEffectResult("ambiguous")
-        if response.status_code in {200, 201}:
+        if status in {200, 201, 204}:
             return TargetEffectResult("accepted")
-        # A refusal is terminal for this bounded attempt.  The application will
-        # record field-local stale/reconciliation evidence rather than retrying.
-        return TargetEffectResult("conflict")
+        return TargetEffectResult("ambiguous")
 
     def _item(self, client: httpx.Client, work_id: str) -> dict[str, Any]:
         try:
-            response = client.get(
-                f"{self._endpoint}/api/items/{quote(work_id, safe='')}",
-                params={"expanded": "1"}, headers={"Accept": "application/json"},
-            )
-            if response.status_code != 200:
-                raise ValueError("Audiobookshelf item unavailable")
-            if response.headers.get("content-type", "").split(";", 1)[0].lower() != "application/json":
-                raise ValueError("Audiobookshelf item invalid")
-            if len(response.content) > self._maximum_response_bytes:
-                raise ValueError("Audiobookshelf item invalid")
-            detail = json.loads(response.content.decode("utf-8", "strict"))
+            detail = _json_response(client, "GET", f"{self._endpoint}/api/items/{quote(work_id, safe='')}", {"expanded": "1"}, self._maximum_response_bytes)
         except (httpx.HTTPError, UnicodeError, ValueError, json.JSONDecodeError) as error:
             raise ValueError("Audiobookshelf item invalid") from error
         if (type(detail) is not dict or detail.get("id") != work_id
@@ -118,15 +149,15 @@ class AudiobookshelfFieldEffectTarget:
 
     def _value(self, client: httpx.Client, detail: dict[str, Any], plan: FieldEffectPlan) -> object:
         if plan.destination == "cover":
-            response = client.get(f"{self._endpoint}/api/items/{quote(plan.work_id, safe='')}/cover", params={"raw": "1"})
-            if response.status_code == 404:
+            status, headers, body = _bytes_response(client, f"{self._endpoint}/api/items/{quote(plan.work_id, safe='')}/cover", {"raw": "1"}, 8 * 1024 * 1024)
+            if status == 404:
                 return None
-            if response.status_code != 200 or len(response.content) > 8 * 1024 * 1024:
+            if status != 200:
                 raise ValueError("Audiobookshelf cover invalid")
-            media_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
-            if media_type not in {"image/jpeg", "image/png", "image/webp"} or _image_media_type(response.content) != media_type:
+            media_type = headers.get("content-type", "").split(";", 1)[0].lower()
+            if media_type not in {"image/jpeg", "image/png", "image/webp"} or _image_media_type(body) != media_type:
                 raise ValueError("Audiobookshelf cover invalid")
-            return "cover_" + hashlib.sha256(response.content).hexdigest()
+            return "cover_" + hashlib.sha256(body).hexdigest()
         metadata = detail["media"].get("metadata")
         if type(metadata) is not dict:
             raise ValueError("Audiobookshelf metadata invalid")
@@ -144,6 +175,38 @@ class AudiobookshelfFieldEffectTarget:
             if type(value) is not list or any(type(item) is not str for item in value):
                 raise ValueError("Audiobookshelf list invalid")
         return value
+
+
+def _bytes_response(client: httpx.Client, url: str, params: dict[str, str], maximum: int) -> tuple[int, dict[str, str], bytes]:
+    """Read one identity-coded response without allocating beyond its bound."""
+    with client.stream("GET", url, params=params, headers={"Accept-Encoding": "identity"}) as response:
+        encoding = response.headers.get("content-encoding", "").lower()
+        if encoding not in {"", "identity"}:
+            raise ValueError("Audiobookshelf response encoding invalid")
+        body = bytearray()
+        for chunk in response.iter_bytes():
+            if len(body) + len(chunk) > maximum:
+                raise ValueError("Audiobookshelf response too large")
+            body.extend(chunk)
+        return response.status_code, dict(response.headers), bytes(body)
+
+
+def _json_response(client: httpx.Client, method: str, url: str, params: dict[str, str] | None, maximum: int) -> dict[str, Any]:
+    if method != "GET":
+        raise ValueError("Audiobookshelf response invalid")
+    status, headers, body = _bytes_response(client, url, params or {}, maximum)
+    if status != 200 or headers.get("content-type", "").split(";", 1)[0].lower() != "application/json":
+        raise ValueError("Audiobookshelf response invalid")
+    value = json.loads(body.decode("utf-8", "strict"))
+    if type(value) is not dict:
+        raise ValueError("Audiobookshelf response invalid")
+    return value
+
+
+def _write_status(client: httpx.Client, method: str, url: str, **kwargs: Any) -> int:
+    """Issue exactly one write and deliberately discard its response body."""
+    with client.stream(method, url, headers={"Accept-Encoding": "identity"}, **kwargs) as response:
+        return response.status_code
 
 
 def _version(detail: dict[str, Any]) -> str:

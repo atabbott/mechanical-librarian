@@ -34,7 +34,7 @@ import httpx
 from PIL import Image
 
 from mechanical_librarian.adapters.field_effect_fakes import (
-    FakeBackupReadiness, FakeCapabilityObserver, FakeDependencyCurrentness,
+    FakeBackupReadiness, FakeDependencyCurrentness,
     FakeForwardReevaluation,
 )
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
@@ -44,7 +44,10 @@ from mechanical_librarian.application.configuration import (
     ApplicationConfiguration, LibraryConfiguration, TargetConnectionConfiguration,
 )
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
-from mechanical_librarian.bootstrap.composition import compose_audiobookshelf_field_effect_target
+from mechanical_librarian.bootstrap.composition import (
+    compose_audiobookshelf_field_effect_capabilities,
+    compose_audiobookshelf_field_effect_target,
+)
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
 from mechanical_librarian.domain.field_effect import EffectAuthority, EffectConsent, FieldEffectOperation, FieldEffectPlan
 
@@ -200,27 +203,28 @@ def _epub(path: Path) -> None:
         archive.writestr("OEBPS/content.opf", "<?xml version='1.0'?><package xmlns='http://www.idpf.org/2007/opf' version='3.0' unique-identifier='book'><metadata xmlns:dc='http://purl.org/dc/elements/1.1/'><dc:identifier id='book'>synthetic-f14</dc:identifier><dc:title>Before</dc:title><dc:language>en</dc:language></metadata><manifest/><spine/></package>")
 
 
-def _plan(repository, *, item: str, destination: str, value: object, desired: object, observation, clock: int) -> FieldEffectPlan:
+def _plan(repository, *, item: str, destination: str, value: object, desired: object, observation, capabilities, clock: int) -> FieldEffectPlan:
     decision = hashlib.sha256(destination.encode("ascii")).hexdigest()
     authority = EffectAuthority("human_decision_" + decision, "review_case_" + "b" * 64, "c" * 64, "fake_service", "human", "candidate", None, None)
     consent = EffectConsent.create(connection="canary", library="books", destination=destination, granted_at=clock)
     try:
-        plan = FieldEffectPlan.create(connection="canary", library="books", work_id=item, destination=destination, pre_value=value, desired_value=desired, target_fingerprint="c" * 64, target_version=observation.version, dependency_digests=("d" * 64,), authority=authority, consent=consent, capability_digest="e" * 64, created_at=clock)
+        provisional = FieldEffectPlan.create(connection="canary", library="books", work_id=item, destination=destination, pre_value=value, desired_value=desired, target_fingerprint="c" * 64, target_version=observation.version, dependency_digests=("d" * 64,), authority=authority, consent=consent, capability_digest="e" * 64, created_at=clock)
+        plan = FieldEffectPlan.create(connection="canary", library="books", work_id=item, destination=destination, pre_value=value, desired_value=desired, target_fingerprint="c" * 64, target_version=observation.version, dependency_digests=("d" * 64,), authority=authority, consent=consent, capability_digest=capabilities.observe(provisional), created_at=clock)
     except Exception as error:
         raise RuntimeError("synthetic field setup is invalid: " + destination) from error
     repository.record_field_effect(FieldEffectOperation(plan, updated_at=clock))
     return plan
 
 
-def _apply(service, repository, target, item: str, destination: str, desired: object, clock: int) -> dict[str, object]:
+def _apply(service, repository, target, capabilities, item: str, destination: str, desired: object, clock: int) -> dict[str, object]:
     placeholder = type("Plan", (), {"work_id": item, "destination": destination})()
     before = target.read(placeholder)
     if destination == "tags" and (type(before.value) is not list or not before.value or any(type(value) is not str for value in before.value)):
         raise RuntimeError("synthetic tag setup has unsupported response shape: " + type(before.value).__name__)
-    plan = _plan(repository, item=item, destination=destination, value=before.value, desired=desired, observation=before, clock=clock)
+    plan = _plan(repository, item=item, destination=destination, value=before.value, desired=desired, observation=before, capabilities=capabilities, clock=clock)
     operation = service.apply(plan.plan_id)
     after = target.read(plan)
-    return {"destination": destination, "before": before.value, "after": after.value, "state": operation.state, "audit": operation.failure, "request": "one"}
+    return {"destination": destination, "state": operation.state, "failure": operation.failure or "none", "request_count": 1}
 
 
 def _stable_cover_observation(target, item: str) -> None:
@@ -236,6 +240,13 @@ def _stable_cover_observation(target, item: str) -> None:
         previous = identity
         time.sleep(0.2)
     raise QualificationError("cover_initialization_did_not_settle")
+
+
+def _raw_cover(base: str, token: str, item: str, expected: bytes) -> bytes:
+    response = httpx.get(base + "/api/items/" + item + "/cover", params={"raw": "1"}, headers={"Authorization": "Bearer " + token, "Accept-Encoding": "identity"}, timeout=20)
+    if response.status_code != 200 or hashlib.sha256(response.content).digest() != hashlib.sha256(expected).digest():
+        raise QualificationError("cover_recovery_preimage_invalid")
+    return response.content
 
 
 def qualify(version: str) -> dict[str, object]:
@@ -268,6 +279,10 @@ def qualify(version: str) -> dict[str, object]:
                                     library_id=library_id, update=False, upload=False)
         read_only_key_id, read_only_key = _create_api_key(base, root_token, read_only_id, "canary-read-only")
         key_ids.append(read_only_key_id)
+        update_only_id = _create_user(base, root_token, username="update-only", password=password,
+                                      library_id=library_id, update=True, upload=False)
+        update_only_key_id, update_only_key = _create_api_key(base, root_token, update_only_id, "canary-update-only")
+        key_ids.append(update_only_key_id)
         _request("POST", base, "/api/libraries/" + library_id + "/scan?force=1", token=root_token)
         deadline = time.monotonic() + 90
         item = None
@@ -288,6 +303,12 @@ def qualify(version: str) -> dict[str, object]:
         denied_cover = httpx.post(base + "/api/items/" + item + "/cover", headers={"Authorization": "Bearer " + read_only_key}, files={"cover": ("forbidden.png", _png(1, 1, 1), "image/png")}, timeout=20)
         if denied_cover.status_code not in {401, 403}:
             raise QualificationError("read_only_cover_was_not_refused")
+        update_only_patch = _mapping(_request("PATCH", base, "/api/items/" + item + "/media", token=update_only_key, payload={"tags": ["update-only"]}), "update_only_response_invalid")
+        if update_only_patch.get("updated") is not True:
+            raise QualificationError("update_only_metadata_was_not_allowed")
+        update_only_cover = httpx.post(base + "/api/items/" + item + "/cover", headers={"Authorization": "Bearer " + update_only_key}, files={"cover": ("forbidden.png", _png(2, 2, 2), "image/png")}, timeout=20)
+        if update_only_cover.status_code not in {401, 403}:
+            raise QualificationError("update_only_cover_was_not_refused")
         _request("PATCH", base, "/api/items/" + item + "/media", token=writer_key, payload={"tags": ["before"]})
         before_cover = _png(0, 0, 255)
         response = httpx.post(base + "/api/items/" + item + "/cover", headers={"Authorization": "Bearer " + writer_key}, files={"cover": ("before.png", before_cover, "image/png")}, timeout=20)
@@ -298,16 +319,19 @@ def qualify(version: str) -> dict[str, object]:
         desired_cover = _png(255, 0, 0)
         artifact = CoverArtifact.create(desired_cover, b"preview", "image/png", 2, 2); artifacts.stage(artifact, desired_cover, b"preview")
         target = compose_audiobookshelf_field_effect_target(configuration, root / "artifacts", "canary", "books")
+        capabilities = compose_audiobookshelf_field_effect_capabilities(configuration, "canary", "books")
         repository = open_repository(root / "effects.sqlite")
         current = type("Current", (), {"current": lambda self, value: True})()
         time_value = [100]
         def clock() -> int:
             time_value[0] += 1
             return time_value[0]
-        service = GuardedFieldApplication(repository, target, FakeBackupReadiness(), FakeCapabilityObserver("e" * 64), current, FakeDependencyCurrentness(), current, PrivateCoverRecoveryStore(root / "recovery", lambda _: before_cover), FakeForwardReevaluation(), clock)
-        outcomes = [_apply(service, repository, target, item, "title", "After", clock()), _apply(service, repository, target, item, "tags", ["canary"], clock())]
+        if capabilities.result(type("Plan", (), {"work_id": item, "destination": "title"})()).category != "allowed":
+            raise QualificationError("writer_capability_not_allowed")
+        service = GuardedFieldApplication(repository, target, FakeBackupReadiness(), capabilities, current, FakeDependencyCurrentness(), current, PrivateCoverRecoveryStore(root / "recovery", lambda _: _raw_cover(base, writer_key, item, before_cover)), FakeForwardReevaluation(), clock)
+        outcomes = [_apply(service, repository, target, capabilities, item, "title", "After", clock()), _apply(service, repository, target, capabilities, item, "tags", ["canary"], clock())]
         _stable_cover_observation(target, item)
-        outcomes.append(_apply(service, repository, target, item, "cover", artifact.artifact_id, clock()))
+        outcomes.append(_apply(service, repository, target, capabilities, item, "cover", artifact.artifact_id, clock()))
         repository.close()
         digest = _run("docker", "image", "inspect", image, "--format", "{{index .RepoDigests 0}}").stdout.strip()
         expected_digest = image.rsplit("@", 1)[1]

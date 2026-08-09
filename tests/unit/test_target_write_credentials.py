@@ -11,6 +11,7 @@ class TargetWriteCredentialTests(unittest.TestCase):
     def test_authorizes_only_supported_field_effect_paths(self) -> None:
         auth = _TargetAuth("http://127.0.0.1:8080", "synthetic-token")
         permitted = (
+            ("GET", "/api/me"),
             ("GET", "/api/items/item/cover"),
             ("PATCH", "/api/items/item/media"),
             ("POST", "/api/items/item/cover"),

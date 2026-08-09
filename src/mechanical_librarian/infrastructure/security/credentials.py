@@ -130,7 +130,7 @@ class _TargetAuth(httpx.Auth):
             and request.url.port == self._origin.port
         )
         item = r"/api/items/[^/]+"
-        readable = request.url.path == "/api/libraries" or re.fullmatch(
+        readable = request.url.path in {"/api/libraries", "/api/me"} or re.fullmatch(
             r"/api/libraries/[^/]+/items", request.url.path
         ) or re.fullmatch(item, request.url.path) or re.fullmatch(
             item + r"/cover", request.url.path

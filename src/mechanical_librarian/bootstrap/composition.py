@@ -30,6 +30,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
     AudiobookshelfItemReader,
 )
 from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import (
+    AudiobookshelfFieldEffectCapabilities,
     AudiobookshelfFieldEffectTarget,
 )
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
@@ -201,6 +202,18 @@ def compose_audiobookshelf_field_effect_target(
         endpoint=connection.endpoint,
         library_id=library.library_id,
         artifacts=artifacts,
+        maximum_response_bytes=configuration.limits.target_response_bytes,
+    )
+
+
+def compose_audiobookshelf_field_effect_capabilities(
+    configuration, connection_name: str, library_name: str,
+    *, credentials: dict[str, str] | None = None,
+) -> AudiobookshelfFieldEffectCapabilities:
+    connection, library, _mount, _providers = configuration.select(connection_name, library_name)
+    return AudiobookshelfFieldEffectCapabilities(
+        client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds) if credentials is None else target_client_token(connection.endpoint, credentials["target:" + connection.name], configuration.limits.timeout_seconds),
+        endpoint=connection.endpoint, library_id=library.library_id,
         maximum_response_bytes=configuration.limits.target_response_bytes,
     )
 
