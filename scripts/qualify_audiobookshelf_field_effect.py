@@ -881,9 +881,21 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
 
         original_alpha_title = current_title(item)
         original_beta_title = current_title(second_item)
+        if not corpus_sources:
+            alpha_seed = _mapping(_request(
+                "PATCH", base, "/api/items/" + item + "/media",
+                token=writer_key,
+                payload={"metadata": {"authors": ["Synthetic Author"]}},
+            ), "synthetic_author_seed_invalid")
+            if alpha_seed.get("updated") is not True:
+                raise QualificationError("synthetic_author_seed_failed")
         seeded = _mapping(_request(
             "PATCH", base, "/api/items/" + second_item + "/media",
-            token=writer_key, payload={"metadata": {"title": "Beta qualification seed"}},
+            token=writer_key,
+            payload={"metadata": {
+                "title": "Beta qualification seed",
+                **({"authors": ["Synthetic Author"]} if not corpus_sources else {}),
+            }},
         ), "second_library_seed_invalid")
         if seeded.get("updated") is not True:
             raise QualificationError("second_library_seed_failed")
