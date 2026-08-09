@@ -27,6 +27,7 @@ from mechanical_librarian.adapters.field_effect_fakes import (
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
 from mechanical_librarian.interfaces.web.app import create_review_app
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
@@ -64,6 +65,17 @@ class Clock:
     def __call__(self) -> int:
         self.value += 1
         return self.value
+
+
+class TimingCollector:
+    def __init__(self) -> None:
+        self.values = []
+
+    def append(self, timing) -> None:
+        self.values.append(timing)
+
+    def list(self):
+        return tuple(self.values)
 
 
 def decision(destination: str, selected: object, suffix: str = "a") -> HumanDecision:
@@ -656,6 +668,208 @@ class FieldEffectTests(unittest.TestCase):
             self.assertEqual((result.state, result.attempt), ("retryable", attempt + 1))
         result = self.service.apply(operation.plan.plan_id)
         self.assertEqual((result.state, result.failure), ("stale", "circuit_open"))
+
+    def test_effect_stages_emit_advisory_timing_and_drain_rejects_only_new_claims(self) -> None:
+        timings = TimingCollector()
+        ticks = iter(range(0, 100_000_000, 1_000_000))
+        self.service.attach_timing(StageTimer(
+            timings, monotonic_ns=lambda: next(ticks), clock=lambda: 99
+        ))
+        verified = self.plan(suffix="1")
+        self.assertEqual(self.service.apply(verified.plan.plan_id).state, "verified")
+        ambiguous = self.plan(destination="publisher", suffix="2")
+        self.target.ambiguous_next = "desired"
+        self.assertEqual(self.service.apply(ambiguous.plan.plan_id).state, "verified")
+        self.assertEqual(
+            [(value.stage, value.wait_class) for value in timings.values],
+            [
+                ("apply", "target"),
+                ("verification", "target"),
+                ("apply", "target"),
+                ("reconciliation", "recovery"),
+            ],
+        )
+
+        planned = self.plan(destination="subtitle", suffix="3")
+        self.service.begin_drain()
+        with self.assertRaisesRegex(Exception, "draining"):
+            self.service.apply(planned.plan.plan_id)
+        self.assertEqual(self.service.status(planned.plan.plan_id).state, "planned")
+
+    def test_drain_closes_the_final_check_to_atomic_claim_race(self) -> None:
+        operation = self.plan(suffix="4")
+        hook_entered = threading.Event()
+        release_hook = threading.Event()
+        failures = []
+
+        def block_before_final_admission(_):
+            hook_entered.set()
+            self.assertTrue(release_hook.wait(2))
+
+        self.claim_hook.callback = block_before_final_admission
+
+        def apply() -> None:
+            try:
+                self.service.apply(operation.plan.plan_id)
+            except Exception as error:
+                failures.append(error)
+
+        worker = threading.Thread(target=apply)
+        worker.start()
+        self.assertTrue(hook_entered.wait(1))
+        self.service.begin_drain()
+        release_hook.set()
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(
+            [getattr(error, "code", None) for error in failures], ["draining"]
+        )
+        self.assertEqual(
+            self.service.status(operation.plan.plan_id).state, "planned"
+        )
+        self.assertEqual(self.target.read(operation.plan).value, operation.plan.pre_value)
+
+    def test_startup_recovers_claimed_applying_and_reconciling_checkpoints(self) -> None:
+        claimed = self.plan(suffix="1")
+        self.repository.claim_field_effect(
+            claimed.plan.plan_id, "planned", "1" * 64, self.clock()
+        )
+        applying = self.plan(destination="subtitle", suffix="2")
+        self.repository.claim_field_effect(
+            applying.plan.plan_id, "planned", "2" * 64, self.clock()
+        )
+        self.repository.transition_field_effect(
+            applying.plan.plan_id, "claimed", "applying", self.clock()
+        )
+        reconciling = self.plan(destination="publisher", suffix="3")
+        self.repository.claim_field_effect(
+            reconciling.plan.plan_id, "planned", "3" * 64, self.clock()
+        )
+        self.repository.transition_field_effect(
+            reconciling.plan.plan_id, "claimed", "applying", self.clock()
+        )
+        self.repository.schedule_field_effect_reconciliation(
+            reconciling.plan.plan_id, "applying", self.clock()
+        )
+
+        self.assertEqual(self.service.start(), (3, 0, 0))
+        self.assertEqual(self.service.status(claimed.plan.plan_id).state, "verified")
+        self.assertEqual(self.service.status(applying.plan.plan_id).state, "retryable")
+        self.assertEqual(self.service.status(reconciling.plan.plan_id).state, "retryable")
+
+    def test_startup_contains_reconciliation_read_failure_and_continues_siblings(self) -> None:
+        first = self.plan(destination="subtitle", suffix="5")
+        second = self.plan(destination="publisher", suffix="6")
+        for operation, token in ((first, "5"), (second, "6")):
+            self.repository.claim_field_effect(
+                operation.plan.plan_id, "planned", token * 64, self.clock()
+            )
+            self.repository.transition_field_effect(
+                operation.plan.plan_id, "claimed", "applying", self.clock()
+            )
+            self.repository.schedule_field_effect_reconciliation(
+                operation.plan.plan_id, "applying", self.clock()
+            )
+        self.target.fail_read_next = True
+
+        self.assertEqual(self.service.start(), (2, 0, 0))
+        failed = self.service.status(first.plan.plan_id)
+        sibling = self.service.status(second.plan.plan_id)
+        self.assertEqual((failed.state, failed.failure), ("retryable", "target_failure"))
+        self.assertEqual((sibling.state, sibling.failure), ("retryable", "not_applied"))
+
+    def test_startup_contains_verification_read_failure_after_successful_apply(self) -> None:
+        first = self.plan(destination="subtitle", suffix="7")
+        sibling = self.plan(destination="publisher", suffix="8")
+        for operation, token in ((first, "7"), (sibling, "8")):
+            self.repository.claim_field_effect(
+                operation.plan.plan_id, "planned", token * 64, self.clock()
+            )
+
+        self.target.fail_read_after_apply_for.add(first.plan.plan_id)
+
+        self.assertEqual(self.service.start(), (2, 1, 0))
+        failed = self.service.status(first.plan.plan_id)
+        continued = self.service.status(sibling.plan.plan_id)
+        self.assertEqual(
+            (failed.state, failed.failure), ("retryable", "target_failure")
+        )
+        self.assertEqual((continued.state, continued.failure), ("verified", None))
+        recovery_signal = next(
+            value
+            for value in self.repository.operational_snapshot()["signals"]
+            if value["work_id"] == first.plan.work_id
+            and value["field"] == first.plan.destination
+        )
+        self.assertEqual(
+            (recovery_signal["kind"], recovery_signal["cause"]),
+            ("automatic_recovery", "in_progress"),
+        )
+        self.target.fail_reads_for.remove(first.plan.plan_id)
+        self.assertEqual(
+            self.target.read(first.plan).value, first.plan.desired_value
+        )
+
+    def test_shared_backup_and_service_failures_project_above_field_scope(self) -> None:
+        failures = (
+            (self.plan(destination="title", suffix="a"), "backup"),
+            (self.plan(destination="subtitle", suffix="b"), "backup"),
+            (self.plan(destination="publisher", suffix="c"), "capability"),
+            (self.plan(destination="description", suffix="d"), "capability"),
+            (self.plan(destination="isbn", suffix="e"), "third_value"),
+            (self.plan(destination="asin", suffix="f"), "third_value"),
+        )
+        for operation, failure in failures:
+            self.repository.transition_field_effect(
+                operation.plan.plan_id,
+                "planned",
+                "stale",
+                self.clock(),
+                failure,
+            )
+
+        signals = self.repository.operational_snapshot()["signals"]
+        backup = [value for value in signals if value["kind"] == "backup_failure"]
+        service = [
+            value for value in signals
+            if value["kind"] == "service_incompatibility"
+        ]
+        currentness = [
+            value for value in signals
+            if value["cause"] == "currentness_conflict"
+        ]
+        self.assertEqual(
+            {(value["scope"], value["library"], value["work_id"], value["field"])
+             for value in backup},
+            {("library", "books", None, None)},
+        )
+        self.assertEqual(
+            {(value["scope"], value["library"], value["work_id"], value["field"])
+             for value in service},
+            {("connection", None, None, None)},
+        )
+        self.assertEqual(
+            {(value["scope"], value["work_id"], value["field"])
+             for value in currentness},
+            {("field", "book-1", "isbn"), ("field", "book-1", "asin")},
+        )
+        incidents = aggregate_incidents(signals)
+        self.assertEqual(
+            sorted(
+                (value.kind, value.count)
+                for value in incidents
+                if value.kind in {
+                    "backup_failure", "service_incompatibility",
+                    "owner_action_required",
+                }
+            ),
+            [
+                ("backup_failure", 2),
+                ("owner_action_required", 1),
+                ("owner_action_required", 1),
+                ("service_incompatibility", 2),
+            ],
+        )
 
     def test_cover_recovery_survives_restart_and_rejects_permission_drift(self) -> None:
         cover = self.plan(

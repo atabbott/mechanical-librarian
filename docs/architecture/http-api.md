@@ -267,3 +267,10 @@ library data require authentication.
 - Removing, renaming, or changing field semantics requires a new API version or
   a documented compatibility window.
 - Generated clients and schema snapshots run in CI to detect accidental drift.
+## Operational API
+
+`GET /health/live` and `GET /health/ready` return fixed anonymous text.
+Authenticated `GET /api/v1/operations/status` returns typed value-free
+`operational-status-v1`. Authenticated support preview and CSRF-bound export use
+`/api/v1/operations/support/preview` and `/api/v1/operations/support/export`;
+both are private, bounded and no-store under the existing response boundary.

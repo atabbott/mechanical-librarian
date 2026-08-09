@@ -78,3 +78,19 @@ or invalid final captures are rejected and cleaned where safely owned. Every
 terminal cover path persists cleanup and restart retries a failed removal.
 This fake-only increment cannot alter
 Audiobookshelf or embedded media.
+
+## Container restart and private recovery
+
+Stop the container gracefully before copying `/data`. Readiness changes to
+draining before background claim admission stops. A current claim may finish
+only to its existing durable checkpoint; shutdown does not acknowledge an
+unfinished claim. Restart reopens the exact-current database and preserves
+ready, claimed, applying, verifying and reconciling facts through their existing
+state and action records. Pause and revoked authority still prevent new claims.
+
+Copy the complete stopped `/data` state under owner-only encrypted backup
+controls. Cover recovery files are temporary operational material needed only
+for non-terminal cover reconciliation; they are not ordinary backup artifacts
+or Undo. Restore only an absent or exact-current state. Permission, capacity,
+read-only-filesystem or cleanup failure remains a typed degraded condition and
+must not be bypassed by editing SQLite or recovery files.

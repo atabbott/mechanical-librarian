@@ -39,6 +39,10 @@ from mechanical_librarian.application.field_effects import (
 )
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls, MetadataPolicyApplicationError, PolicyNotebook, PolicyTransition
+from mechanical_librarian.application.operations import (
+    OperationalStatus, OperationsError, StageTimer, SupportExporter,
+    TimingRepository,
+)
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     CurrentReviewCaseSnapshot,
@@ -408,6 +412,21 @@ class _AutomaticSafetyResponse(_ClosedModel):
     category_suspensions: dict[str, str]
 
 
+class _OperationalResponse(_ClosedModel):
+    incidents: list[dict[str, object]]
+    readiness: str
+    schema_version: str
+    summary: dict[str, object]
+    timings: list[dict[str, object]]
+
+
+class _SupportPreviewResponse(_ClosedModel):
+    bytes: int
+    excluded: list[str]
+    payload: dict[str, object]
+    schema_version: str
+
+
 class _ShadowLeaveImpact(_ClosedModel):
     affected_categories: list[str]
     current_unapplied_count: int
@@ -600,8 +619,20 @@ def create_review_app(
     review_preparation: ReviewPreparationSupervisor | None = None,
     policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
     field_application: GuardedFieldApplication | None = None,
+    operational_timings: TimingRepository | None = None,
+    operational_support: SupportExporter | None = None,
+    operational_timer: StageTimer | None = None,
 ) -> FastAPI:
     serialized_repository = _SerializedReviewRepository(repository)
+    operational_status = (
+        None if operational_timings is None else OperationalStatus(
+            snapshot=lambda: serialized_repository.call_serialized(
+                repository.operational_snapshot  # type: ignore[attr-defined]
+            ),
+            timings=operational_timings,
+            support=operational_support,
+        )
+    )
     verifier = _owner_password_verifier(Path(configuration.owner_password_hash_file))
     sessions = OwnerSessionService(
         serialized_repository,
@@ -610,7 +641,10 @@ def create_review_app(
         configuration.session_lifetime_seconds,
     )
     cases = InspectCurrentReviewCase(serialized_repository)
-    decisions = RecordHumanDecision(serialized_repository, clock)
+    timing = operational_timer or StageTimer(operational_timings, clock=clock)
+    decisions = RecordHumanDecision(serialized_repository, clock, timing)
+    if field_application is not None:
+        field_application.attach_timing(timing)
     browse = BrowseReviewLibrary(serialized_repository)
     overrides = {name: value for name, value in policy_libraries if value is not None}
     notebook = PolicyNotebook(serialized_repository, tuple(name for name, _ in policy_libraries), overrides)
@@ -619,11 +653,19 @@ def create_review_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        if operational_status is not None:
+            operational_status.start()
+        if field_application is not None:
+            field_application.start()
         if review_preparation is not None:
             review_preparation.start()
         try:
             yield
         finally:
+            if operational_status is not None:
+                operational_status.begin_drain()
+            if field_application is not None:
+                field_application.begin_drain()
             if review_preparation is not None:
                 review_preparation.stop()
             if close_repository:
@@ -669,7 +711,7 @@ def create_review_app(
 
     @app.middleware("http")
     async def trust_boundary(request: Request, call_next):
-        if request.url.path != "/health/live":
+        if request.url.path not in {"/health/live", "/health/ready"}:
             if not _request_matches_origin(request, configuration):
                 return _secured_error(400, "invalid_origin")
             if request.method not in {"GET", "HEAD", "OPTIONS"} and request.headers.get("origin") != configuration.canonical_origin:
@@ -681,6 +723,58 @@ def create_review_app(
     @app.get("/health/live", include_in_schema=False)
     def liveness() -> PlainTextResponse:
         return PlainTextResponse("ok\n")
+
+    @app.get("/health/ready", include_in_schema=False)
+    def readiness() -> PlainTextResponse:
+        ready = operational_status is None or operational_status.ready()
+        return PlainTextResponse("ready\n" if ready else "draining\n",
+                                 status_code=200 if ready else 503)
+
+    @app.get("/api/v1/operations/status", response_model=_OperationalResponse,
+             responses={status: {"model": _ErrorResponse} for status in (401, 503)})
+    def operations_status(
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> _OperationalResponse:
+        _require_session(sessions, ml_session)
+        if operational_status is None:
+            raise HTTPException(503, detail={"code": "operations_unavailable"})
+        try:
+            return _OperationalResponse.model_validate(operational_status.status())
+        except (OperationsError, FieldEffectError):
+            raise HTTPException(503, detail={"code": "operations_unavailable"}) from None
+
+    @app.get("/api/v1/operations/support/preview",
+             response_model=_SupportPreviewResponse,
+             responses={status: {"model": _ErrorResponse} for status in (401, 503)})
+    def support_preview(
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> _SupportPreviewResponse:
+        _require_session(sessions, ml_session)
+        try:
+            if operational_status is None:
+                raise OperationsError("support_unavailable")
+            return _SupportPreviewResponse.model_validate(
+                operational_status.support_preview()
+            )
+        except OperationsError:
+            raise HTTPException(503, detail={"code": "support_unavailable"}) from None
+
+    @app.post("/api/v1/operations/support/export",
+              responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)})
+    def support_export(
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> Response:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            if operational_status is None:
+                raise OperationsError("support_unavailable")
+            return Response(operational_status.support_export(),
+                            media_type="application/json",
+                            headers={"Content-Disposition":
+                                     "attachment; filename=mechanical-librarian-support.json"})
+        except OperationsError:
+            raise HTTPException(503, detail={"code": "support_unavailable"}) from None
 
     @app.get("/login", include_in_schema=False)
     def login_page() -> HTMLResponse:
@@ -1006,7 +1100,7 @@ def create_review_app(
         except (GuardedApplicationError, FieldEffectError) as error:
             code = getattr(error, "code", "persistence")
             status_code = 404 if code == "not_found" else 409 if code in {
-                "claim_conflict", "transition_conflict", "paused"
+                "claim_conflict", "transition_conflict", "draining", "paused"
             } else 503
             raise HTTPException(status_code, detail={"code": code}) from None
 
@@ -1486,6 +1580,10 @@ class _SerializedReviewRepository:
     def get_review_case(self, review_case_id: str) -> str:
         with self._lock:
             return self._repository.get_review_case(review_case_id)
+
+    def review_case_ready_at(self, review_case_id: str) -> int | None:
+        with self._lock:
+            return self._repository.review_case_ready_at(review_case_id)
 
     def read_current_review_case(
         self, review_case_id: str, history_limit: int | None

@@ -624,3 +624,13 @@ external drift, without claiming a cross-system transaction.
 Unknown and stale facts fail closed. Target and credential authority are absent
 from domain code, reviewers, diagnostics, and the API. There is no
 Audiobookshelf or media-write constructor in this boundary.
+## Guarded-operation diagnostics
+
+Operational status and support routes share the authenticated owner boundary;
+support export additionally requires CSRF. Anonymous health exposes only the
+fixed liveness/readiness words. Diagnostic producers are allow-listed and
+export is re-redacted and size bounded. Secrets, target values, private paths,
+databases, environment, media, cover bytes and recovery storage are outside the
+diagnostic trust boundary. The private recovery directory and files require the
+runtime UID with `0700`/`0600` modes and bounded count/size; failures stop only
+the affected cover effect and remain recoverable from durable state.

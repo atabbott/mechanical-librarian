@@ -1,0 +1,22 @@
+services:
+  mechanical-librarian:
+    build:
+      context: .
+    image: mechanical-librarian:local
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "8443:8443"
+    volumes:
+      - mechanical-librarian-data:/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=65532,gid=65532
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+volumes:
+  mechanical-librarian-data:

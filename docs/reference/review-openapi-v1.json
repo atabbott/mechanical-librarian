@@ -1085,6 +1085,49 @@
         "title": "_ModelRecommendation",
         "type": "object"
       },
+      "_OperationalResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "incidents": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Incidents",
+            "type": "array"
+          },
+          "readiness": {
+            "title": "Readiness",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "summary": {
+            "additionalProperties": true,
+            "title": "Summary",
+            "type": "object"
+          },
+          "timings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Timings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "incidents",
+          "readiness",
+          "schema_version",
+          "summary",
+          "timings"
+        ],
+        "title": "_OperationalResponse",
+        "type": "object"
+      },
       "_PolicyActivationRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2069,6 +2112,39 @@
           "schema_version"
         ],
         "title": "_ShadowSampleResponse",
+        "type": "object"
+      },
+      "_SupportPreviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "excluded": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded",
+            "type": "array"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bytes",
+          "excluded",
+          "payload",
+          "schema_version"
+        ],
+        "title": "_SupportPreviewResponse",
         "type": "object"
       },
       "_TargetField": {
@@ -4153,6 +4229,164 @@
           }
         ],
         "summary": "Validate Metadata Policy"
+      }
+    },
+    "/api/v1/operations/status": {
+      "get": {
+        "operationId": "operations_status_api_v1_operations_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_OperationalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Operations Status"
+      }
+    },
+    "/api/v1/operations/support/export": {
+      "post": {
+        "operationId": "support_export_api_v1_operations_support_export_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Support Export"
+      }
+    },
+    "/api/v1/operations/support/preview": {
+      "get": {
+        "operationId": "support_preview_api_v1_operations_support_preview_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_SupportPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Support Preview"
       }
     },
     "/api/v1/review-cases/{review_case_id}": {

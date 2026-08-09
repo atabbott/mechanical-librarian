@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from dataclasses import dataclass
 from typing import Callable, Literal, Protocol
 
@@ -16,6 +17,7 @@ from mechanical_librarian.domain.field_effect import (
     project_decision_value,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.application.operations import StageTimer
 
 
 class GuardedApplicationError(RuntimeError):
@@ -73,6 +75,7 @@ class FieldEffectRepository(Protocol):
                                        plan_id: str | None = None) -> dict[str, object] | None: ...
     def complete_forward_reevaluation(self, action_id: str, changed_at: int) -> None: ...
     def pending_field_effect_cleanups(self, limit: int) -> tuple[str, ...]: ...
+    def pending_field_effect_plan_ids(self, limit: int) -> tuple[str, ...]: ...
 
 
 class TargetService(Protocol):
@@ -141,7 +144,8 @@ class GuardedFieldApplication:
                  reevaluation: ForwardReevaluation, clock: Callable[[], int],
                  preclaim_hook: Callable[[FieldEffectPlan], None] | None = None,
                  claim_hook: Callable[[FieldEffectPlan], None] | None = None,
-                 recovery_hook: Callable[[FieldEffectPlan], None] | None = None) -> None:
+                 recovery_hook: Callable[[FieldEffectPlan], None] | None = None,
+                 timing: StageTimer | None = None) -> None:
         self._repository = repository
         self._target = target
         self._backup = backup
@@ -155,6 +159,24 @@ class GuardedFieldApplication:
         self._preclaim_hook = preclaim_hook or (lambda _: None)
         self._claim_hook = claim_hook or (lambda _: None)
         self._recovery_hook = recovery_hook or (lambda _: None)
+        self._timing = timing or StageTimer(None)
+        self._draining = threading.Event()
+        self._admission_lock = threading.Lock()
+
+    def attach_timing(self, timing: StageTimer) -> None:
+        """Attach advisory diagnostics without changing the effect authority."""
+        self._timing = timing
+
+    def start(self) -> tuple[int, int, int]:
+        """Resume admission and complete bounded exact-current restart work."""
+        with self._admission_lock:
+            self._draining.clear()
+        return self.recover_startup()
+
+    def begin_drain(self) -> None:
+        """Reject new claims while allowing an already-claimed effect to finish."""
+        with self._admission_lock:
+            self._draining.set()
 
     def plan(self, decision: HumanDecision | AutomaticDecision, *, connection: str,
              library: str, work_id: str, destination: str, pre_value: object,
@@ -221,6 +243,8 @@ class GuardedFieldApplication:
             )
             self._recovery_hook(operation.plan)
             return self.reconcile(plan_id)
+        if self._draining.is_set():
+            raise GuardedApplicationError("draining")
         plan = operation.plan
         guarded = self._preclaim(operation)
         if guarded is not None:
@@ -239,9 +263,14 @@ class GuardedFieldApplication:
         token = hashlib.sha256(f"{plan.plan_id}:{operation.attempt + 1}".encode()).hexdigest()
         try:
             self._claim_hook(plan)
-            operation = self._repository.claim_field_effect(
-                plan.plan_id, operation.state, token, self._clock()
-            )
+            with self._admission_lock:
+                if self._draining.is_set():
+                    raise GuardedApplicationError("draining")
+                operation = self._repository.claim_field_effect(
+                    plan.plan_id, operation.state, token, self._clock()
+                )
+        except GuardedApplicationError:
+            raise
         except Exception as error:
             if plan.destination == "cover":
                 try:
@@ -259,7 +288,8 @@ class GuardedFieldApplication:
             plan.plan_id, "claimed", "applying", self._clock()
         )
         try:
-            result = self._target.apply(plan)
+            with self._timing.measure("apply", "target"):
+                result = self._target.apply(plan)
         except Exception:
             return self._repository.transition_field_effect(
                 plan.plan_id, "applying", "retryable", self._clock(), "target_failure"
@@ -283,7 +313,13 @@ class GuardedFieldApplication:
         operation = self._repository.get_field_effect(plan_id)
         if operation.state != "reconciling":
             return operation
-        observed = self._target.read(operation.plan)
+        try:
+            with self._timing.measure("reconciliation", "recovery"):
+                observed = self._target.read(operation.plan)
+        except Exception:
+            return self._repository.complete_field_effect_reconciliation(
+                plan_id, "retryable", "target_failure", self._clock()
+            )
         if observed.value == operation.plan.desired_value:
             result = self._repository.complete_field_effect_reconciliation(
                 plan_id, "verified", None, self._clock()
@@ -336,7 +372,18 @@ class GuardedFieldApplication:
         return result
 
     def _verify(self, operation: FieldEffectOperation) -> FieldEffectOperation:
-        observed = self._target.read(operation.plan)
+        try:
+            with self._timing.measure("verification", "target"):
+                observed = self._target.read(operation.plan)
+        except Exception:
+            # The write may already have succeeded. Persist a targeted read;
+            # never infer failure and blindly write the desired value again.
+            return self._repository.schedule_field_effect_reconciliation(
+                operation.plan.plan_id,
+                "applying",
+                self._clock(),
+                "target_failure",
+            )
         if observed.value == operation.plan.desired_value:
             return self._complete(operation, "applying")
         return self._repository.schedule_field_effect_reconciliation(
@@ -379,6 +426,8 @@ class GuardedFieldApplication:
             return self._stale(operation, "circuit_open")
         if self._repository.field_effect_paused():
             raise GuardedApplicationError("paused")
+        if self._draining.is_set():
+            raise GuardedApplicationError("draining")
         return None
 
     def _recover_cleanup(self, operation: FieldEffectOperation) -> None:
@@ -443,3 +492,14 @@ class GuardedFieldApplication:
         if failures:
             raise ExceptionGroup("pending recovery failures", failures)
         return action_count, cleanup_count
+
+    def recover_startup(self, *, limit: int = 100) -> tuple[int, int, int]:
+        """Recover claimed/applying/reconciling effects, actions and cleanup."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise GuardedApplicationError("invalid_limit")
+        recovered = 0
+        for plan_id in self._repository.pending_field_effect_plan_ids(limit):
+            self.apply(plan_id)
+            recovered += 1
+        actions, cleanups = self.recover_pending(limit=limit)
+        return recovered, actions, cleanups

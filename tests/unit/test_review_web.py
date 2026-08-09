@@ -46,12 +46,14 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
 )
 from mechanical_librarian.interfaces.web import create_review_app
 from mechanical_librarian.application.metadata_policy import PolicyTransition
+from mechanical_librarian.adapters.operational_evidence import LocalTimingStore, SupportBundle
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
 from tests.unit.test_review_case_persistence import _report
 from tests.unit.test_proposal_set import (
@@ -90,6 +92,12 @@ class _Repository:
         self.policy_transition = None
         self.shadow_mode = "review"
         self.shadow_outcomes: tuple[tuple[str, int], ...] = ()
+        self.case_ready_at = 990
+
+    def review_case_ready_at(self, review_case_id: str) -> int | None:
+        if review_case_id != self.case.review_case_id:
+            return None
+        return self.case_ready_at
 
     def current_unapplied_count(self, library: str) -> int:
         self.policy_count_calls.append(library)
@@ -544,6 +552,50 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(denied.status_code, 401)
         self.assertEqual(denied.json()["error"]["code"], "unauthorized")
         self.assertEqual(denied.headers["cache-control"], "no-store, private")
+
+    def test_operational_status_and_support_are_authenticated_bounded_surfaces(self) -> None:
+        self.repository.operational_snapshot = lambda: {"signals": [{
+            "kind": "backup_failure", "cause": "backup", "scope": "field",
+            "connection": "primary", "library": "fiction", "category": None,
+            "work_id": "book-1", "field": "title",
+        }]}
+        configuration = ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(self.hash_path),
+            session_lifetime_seconds=600,
+        )
+        timings = LocalTimingStore(Path(self.temporary.name) / "timings.json")
+        support = SupportBundle((("runtime", lambda: {
+            "status": "degraded", "secret": "never-export",
+        }),))
+        self.client.close()
+        self.client = TestClient(create_review_app(
+            self.repository, configuration, clock=lambda: self.now,
+            operational_timings=timings, operational_support=support,
+        ), base_url="https://review.test")
+        self.client.__enter__()
+        self.addCleanup(self.client.__exit__, None, None, None)
+        self.assertEqual(self.client.get("/health/ready").status_code, 200)
+        self.assertEqual(self.client.get("/api/v1/operations/status").status_code, 401)
+        session = self._login()
+        status = self.client.get("/api/v1/operations/status")
+        self.assertEqual(status.status_code, 200)
+        self.assertFalse(status.json()["summary"]["healthy"])
+        preview = self.client.get("/api/v1/operations/support/preview")
+        self.assertEqual(preview.status_code, 200)
+        self.assertNotIn("never-export", preview.text)
+        exported = self.client.post(
+            "/api/v1/operations/support/export",
+            headers={**self.origin, "x-csrf-token": session["csrf_token"]},
+        )
+        self.assertEqual(exported.status_code, 200)
+        self.assertNotIn("never-export", exported.text)
+        self.repository.operational_snapshot = lambda: (_ for _ in ()).throw(
+            FieldEffectError("persistence")
+        )
+        failed = self.client.get("/api/v1/operations/status")
+        self.assertEqual(failed.status_code, 503)
+        self.assertEqual(failed.json()["error"]["code"], "operations_unavailable")
 
     def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(self) -> None:
         anonymous = self.client.post("/api/v1/metadata-policy/validate", headers=self.origin, json={})
@@ -1106,6 +1158,23 @@ class ReviewWebTests(unittest.TestCase):
     def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
         self,
     ) -> None:
+        timings = LocalTimingStore(
+            Path(self.temporary.name) / "private" / "decision-timings.json",
+            enabled=True,
+        )
+        configuration = ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(self.hash_path),
+            session_lifetime_seconds=600,
+        )
+        self.client.close()
+        self.client = TestClient(
+            create_review_app(
+                self.repository, configuration, clock=lambda: self.now,
+                operational_timings=timings,
+            ),
+            base_url="https://review.test",
+        )
         login = self._login()
         detail = self.client.get(
             f"/api/v1/review-cases/{self.case.review_case_id}"
@@ -1135,6 +1204,13 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(accepted.status_code, 200, accepted.text)
         self.assertEqual(accepted.json()["outcome"], "accept")
+        self.assertEqual(
+            [
+                (value.stage, value.wait_class, value.duration_ms)
+                for value in timings.list()
+            ],
+            [("human_wait", "owner", 10_000)],
+        )
         refreshed = self.client.get(
             f"/api/v1/review-cases/{self.case.review_case_id}"
         ).json()
@@ -1158,6 +1234,7 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(
             replay.json()["decision_id"], accepted.json()["decision_id"]
         )
+        self.assertEqual(len(timings.list()), 1)
         conflict_payload = {**payload, "outcome": "reject", "selected_value": None}
         conflict = self.client.post(
             f"/api/v1/review-cases/{self.case.review_case_id}/decisions",
@@ -1409,6 +1486,9 @@ class ReviewWebTests(unittest.TestCase):
             {
                 ("get", "/api/v1/attention"),
                 ("get", "/api/v1/library"),
+                ("get", "/api/v1/operations/status"),
+                ("get", "/api/v1/operations/support/preview"),
+                ("post", "/api/v1/operations/support/export"),
                 ("get", "/api/v1/field-effects/{plan_id}"),
                 ("post", "/api/v1/field-effects/{plan_id}/apply"),
                 ("post", "/api/v1/field-effects/{plan_id}/reconcile"),

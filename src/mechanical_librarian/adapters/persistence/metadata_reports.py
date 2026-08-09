@@ -65,6 +65,7 @@ from mechanical_librarian.domain.automatic_decision import (
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
+    ProviderStatus,
     REPORT_SCHEMA,
     ReportValueError,
 )
@@ -261,7 +262,8 @@ _REVIEW_WORK_SQL = (
     "stage TEXT NOT NULL CHECK(stage IN ('extraction','provider','proposal','admission','projection','complete')), "
     "state TEXT NOT NULL CHECK(state IN ('queued','running','complete','failed','stale')), attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt BETWEEN 0 AND 3), recovery_attempt INTEGER NOT NULL DEFAULT 0 CHECK(recovery_attempt BETWEEN 0 AND 3), "
     "report_id TEXT REFERENCES metadata_reports(report_id), proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
-    "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('provider','configuration','stale','transient','projection','failed','currentness')), "
+    "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('provider','configuration','authentication','stale','transient','projection','failed','currentness')), "
+    "failure_root TEXT CHECK(failure_root IS NULL OR (failure_code='authentication' AND typeof(failure_root)='text' AND length(CAST(failure_root AS BLOB)) BETWEEN 1 AND 64 AND failure_root NOT GLOB '*[^a-z0-9_-]*' AND substr(failure_root,1,1) GLOB '[a-z]')), "
     "updated_at INTEGER NOT NULL CHECK(updated_at>=0), UNIQUE(scan_id,item_id))"
 )
 _REVIEW_ABSENCES_SQL = (
@@ -1352,6 +1354,15 @@ class SQLiteMetadataReportRepository:
             "ORDER BY updated_at,plan_id LIMIT ?", (limit,),
         ).fetchall())
 
+    def pending_field_effect_plan_ids(self, limit: int) -> tuple[str, ...]:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise FieldEffectError("invalid_limit")
+        return tuple(row[0] for row in self._connection.execute(
+            "SELECT plan_id FROM field_effects "
+            "WHERE state IN ('claimed','applying','reconciling') "
+            "ORDER BY updated_at,plan_id LIMIT ?", (limit,),
+        ).fetchall())
+
     def complete_field_effect_cleanup(self, plan_id: str, changed_at: int) -> None:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
@@ -1409,6 +1420,137 @@ class SQLiteMetadataReportRepository:
                 "SELECT paused FROM field_effect_control WHERE singleton=1"
             ).fetchone() == (1,)
         except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    def operational_snapshot(self) -> dict[str, object]:
+        """Return only bounded codes and scopes; never persisted effect values."""
+        try:
+            signals: list[dict[str, object]] = []
+            safety = self._connection.execute(
+                "SELECT paused,global_suspension,category_suspensions_document "
+                "FROM automatic_safety_state WHERE singleton=1"
+            ).fetchone()
+            if safety is None:
+                raise FieldEffectError("persistence")
+            if safety[0]:
+                signals.append(_operational_signal(
+                    "field_suspended", "owner_pause", "runtime"
+                ))
+            if safety[1] is not None:
+                signals.append(_operational_signal(
+                    "field_suspended", "automatic_suspension", "runtime"
+                ))
+            categories = json.loads(safety[2])
+            if type(categories) is not list:
+                raise FieldEffectError("persistence")
+            for entry in categories[:64]:
+                if (type(entry) is not list or len(entry) != 2
+                        or type(entry[0]) is not str):
+                    raise FieldEffectError("persistence")
+                category = entry[0]
+                signals.append(_operational_signal(
+                    "category_suspended", "automatic_suspension", "category",
+                    category=category,
+                ))
+            if self.field_effect_paused():
+                signals.append(_operational_signal(
+                    "field_suspended", "owner_pause", "runtime"
+                ))
+            authentication = self._connection.execute(
+                "SELECT work.failure_root,work.report_id,report.report_id,"
+                "report.document FROM review_preparation_work AS work "
+                "LEFT JOIN metadata_reports AS report "
+                "ON report.report_id=work.report_id "
+                "WHERE work.state='failed' "
+                "AND work.failure_code='authentication' "
+                "ORDER BY work.updated_at DESC,work.work_id LIMIT 256"
+            ).fetchall()
+            authentication_roots: set[str] = set()
+            for failure_root, work_report_id, report_id, document in authentication:
+                if work_report_id is None:
+                    if failure_root is None:
+                        raise FieldEffectError("persistence")
+                    authentication_roots.add(failure_root)
+                    continue
+                if report_id != work_report_id or type(document) is not str:
+                    raise FieldEffectError("persistence")
+                try:
+                    report = MetadataReport.from_json(document)
+                except (ReportValueError, TypeError, ValueError) as error:
+                    raise FieldEffectError("persistence") from error
+                if report.report_id != report_id:
+                    raise FieldEffectError("persistence")
+                report_roots = {
+                    provider.provider
+                    for provider in report.providers
+                    if any(
+                        status in {
+                            ProviderStatus.AUTHENTICATION,
+                            ProviderStatus.AUTHORIZATION,
+                        }
+                        for status in (
+                            provider.status,
+                            *(lane.status for lane in provider.lanes),
+                        )
+                    )
+                }
+                if not report_roots:
+                    raise FieldEffectError("persistence")
+                authentication_roots.update(report_roots)
+            for provider_root in sorted(authentication_roots)[:64]:
+                signals.append(_operational_signal(
+                    "authentication_failure", "provider_authentication",
+                    "connection", connection=provider_root,
+                ))
+            rows = self._connection.execute(
+                "SELECT connection_name,library_name,work_id,destination,state,document "
+                "FROM field_effects WHERE state NOT IN ('verified','superseded','abandoned') "
+                "ORDER BY updated_at DESC,plan_id LIMIT 256"
+            ).fetchall()
+            for connection, library, work_id, destination, state, document in rows:
+                operation = FieldEffectOperation.from_json(document)
+                failure = operation.failure
+                if failure in {"target_currentness", "third_value", "readback"}:
+                    kind, cause = "owner_action_required", "currentness_conflict"
+                    scope = "field"
+                    signal_library, signal_work, signal_field = (
+                        library, work_id, destination
+                    )
+                elif failure == "backup":
+                    kind, cause = "backup_failure", "backup"
+                    scope = "library"
+                    signal_library, signal_work, signal_field = library, None, None
+                elif failure in {"capability", "target"}:
+                    kind, cause = "service_incompatibility", "service_incompatibility"
+                    scope = "connection"
+                    signal_library, signal_work, signal_field = None, None, None
+                elif failure in {"authority", "consent", "consent_revoked"}:
+                    kind, cause = "field_suspended", "authority_unavailable"
+                    scope = "field"
+                    signal_library, signal_work, signal_field = (
+                        library, work_id, destination
+                    )
+                elif state in {"claimed", "applying", "reconciling", "retryable"}:
+                    kind, cause = "automatic_recovery", (
+                        "reconciliation" if state == "reconciling" else "in_progress"
+                    )
+                    scope = "field"
+                    signal_library, signal_work, signal_field = (
+                        library, work_id, destination
+                    )
+                else:
+                    kind, cause = "healthy_activity", "planned"
+                    scope = "field"
+                    signal_library, signal_work, signal_field = (
+                        library, work_id, destination
+                    )
+                signals.append(_operational_signal(
+                    kind, cause, scope, connection=connection,
+                    library=signal_library, work_id=signal_work,
+                    field=signal_field,
+                ))
+            return {"signals": signals}
+        except (json.JSONDecodeError, sqlite3.Error, FieldEffectError) as error:
             raise FieldEffectError("persistence") from error
 
     def _upsert_field_effect_action(self, operation: FieldEffectOperation,
@@ -1705,7 +1847,8 @@ class SQLiteMetadataReportRepository:
                 "UPDATE review_preparation_scans SET state='queued' WHERE state='discovering'"
             )
             self._connection.execute(
-                "UPDATE review_preparation_work SET state='failed',failure_code='failed' "
+                "UPDATE review_preparation_work SET state='failed',failure_code='failed',"
+                "failure_root=NULL "
                 "WHERE state='running' AND attempt>=3"
             )
             self._connection.execute(
@@ -1736,7 +1879,8 @@ class SQLiteMetadataReportRepository:
                         "UPDATE review_preparation_work SET stage='extraction',"
                         "state='queued',attempt=0,recovery_attempt=0,library_id=?,producer_fingerprint=?,"
                         "report_id=NULL,"
-                        "proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL "
+                        "proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL,"
+                        "failure_root=NULL "
                         "WHERE scan_id=?",
                         (library_id, producer_fingerprint, row[0]),
                     )
@@ -2074,8 +2218,8 @@ class SQLiteMetadataReportRepository:
                     "work_id,scan_id,ordinal,connection_name,library_name,library_id,"
                     "item_id,file_identity,source_revision,source_fingerprint,producer_fingerprint,"
                     "catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,"
-                    "report_id,proposal_set_id,review_case_id,failure_code,updated_at"
-                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    "report_id,proposal_set_id,review_case_id,failure_code,failure_root,updated_at"
+                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT(work_id) DO UPDATE SET ordinal=excluded.ordinal,"
                     "library_id=excluded.library_id,file_identity=excluded.file_identity,"
                     "source_revision=excluded.source_revision,"
@@ -2085,7 +2229,7 @@ class SQLiteMetadataReportRepository:
                     "catalogue_fingerprint=excluded.catalogue_fingerprint,"
                     "stage=excluded.stage,state=excluded.state,attempt=0,recovery_attempt=0,"
                     "report_id=excluded.report_id,proposal_set_id=excluded.proposal_set_id,"
-                    "review_case_id=excluded.review_case_id,failure_code=NULL,"
+                    "review_case_id=excluded.review_case_id,failure_code=NULL,failure_root=NULL,"
                     "updated_at=excluded.updated_at",
                     (
                         work_id,
@@ -2108,6 +2252,7 @@ class SQLiteMetadataReportRepository:
                         report_id,
                         proposal_set_id,
                         review_case_id,
+                        None,
                         None,
                         completed_at,
                     ),
@@ -2344,6 +2489,7 @@ class SQLiteMetadataReportRepository:
         recovery_delay_seconds: int = 0,
         provider_failure_code: str | None = None,
         claim_next: bool = False,
+        provider_failure_root: str | None = None,
     ) -> None:
         """Bind report publication and provider disposition atomically."""
         if (
@@ -2352,8 +2498,22 @@ class SQLiteMetadataReportRepository:
             or type(recovery_delay_seconds) is not int
             or not 0 <= recovery_delay_seconds <= 86_400
             or provider_failure_code
-            not in {None, "provider", "configuration", "transient"}
+            not in {None, "provider", "configuration", "authentication", "transient"}
             or type(claim_next) is not bool
+            or (
+                provider_failure_root is not None
+                and (
+                    provider_failure_code != "authentication"
+                    or type(provider_failure_root) is not str
+                    or re.fullmatch(
+                        r"[a-z][a-z0-9_-]{0,63}", provider_failure_root
+                    ) is None
+                )
+            )
+            or (
+                provider_failure_code == "authentication"
+                and provider_failure_root is None
+            )
         ):
             raise MetadataReportError("review preparation state is invalid")
         if provider_failure_code == "transient":
@@ -2362,6 +2522,7 @@ class SQLiteMetadataReportRepository:
                 "state=CASE WHEN recovery_attempt<2 THEN 'queued' ELSE 'failed' END,"
                 "attempt=0,recovery_attempt=recovery_attempt+1,report_id=NULL,"
                 "proposal_set_id=NULL,review_case_id=NULL,failure_code='transient',"
+                "failure_root=NULL,"
                 "updated_at=? WHERE work_id=? AND stage='extraction' "
                 "AND state='running' AND attempt=?",
                 (completed_at, action.action_id, action.attempt),
@@ -2370,13 +2531,14 @@ class SQLiteMetadataReportRepository:
             state = "queued" if provider_failure_code is None else "failed"
             updated = self._connection.execute(
                 "UPDATE review_preparation_work SET stage=?,state=?,attempt=0,"
-                "report_id=?,failure_code=?,updated_at=? WHERE work_id=? "
+                "report_id=?,failure_code=?,failure_root=?,updated_at=? WHERE work_id=? "
                 "AND stage='extraction' AND state='running' AND attempt=?",
                 (
                     "proposal" if provider_failure_code is None else "provider",
                     state,
                     report_id,
                     provider_failure_code,
+                    provider_failure_root,
                     completed_at,
                     action.action_id,
                     action.attempt,
@@ -2444,6 +2606,7 @@ class SQLiteMetadataReportRepository:
         code: str,
         retryable: bool,
         completed_at: int,
+        failure_root: str | None = None,
     ) -> None:
         if action.stage == "discovery":
             try:
@@ -2466,6 +2629,7 @@ class SQLiteMetadataReportRepository:
         if code not in {
             "provider",
             "configuration",
+            "authentication",
             "stale",
             "transient",
             "projection",
@@ -2473,6 +2637,15 @@ class SQLiteMetadataReportRepository:
             "currentness",
         }:
             code = "failed"
+        if (failure_root is not None and (
+                code != "authentication"
+                or type(failure_root) is not str
+                or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", failure_root) is None
+        )):
+            code = "failed"
+            failure_root = None
+        if code != "authentication":
+            failure_root = None
         state = "queued" if retryable and action.attempt < 3 else (
             "stale" if code in {"stale", "currentness"} else "failed"
         )
@@ -2484,7 +2657,7 @@ class SQLiteMetadataReportRepository:
                     "state=CASE WHEN recovery_attempt<2 THEN 'queued' ELSE 'failed' END,"
                     "attempt=0,recovery_attempt=recovery_attempt+1,"
                     "report_id=NULL,proposal_set_id=NULL,review_case_id=NULL,"
-                    "failure_code='transient',updated_at=? WHERE work_id=? AND stage=? "
+                    "failure_code='transient',failure_root=NULL,updated_at=? WHERE work_id=? AND stage=? "
                     "AND state='running' AND attempt=?",
                     (completed_at, action.action_id, action.stage, action.attempt),
                 ).rowcount
@@ -2495,11 +2668,12 @@ class SQLiteMetadataReportRepository:
                     ).fetchone()[0]
             else:
                 updated = self._connection.execute(
-                    "UPDATE review_preparation_work SET state=?,failure_code=?,updated_at=? "
+                    "UPDATE review_preparation_work SET state=?,failure_code=?,failure_root=?,updated_at=? "
                     "WHERE work_id=? AND stage=? AND state='running' AND attempt=?",
                     (
                         state,
                         code,
+                        failure_root,
                         completed_at,
                         action.action_id,
                         action.stage,
@@ -2976,6 +3150,25 @@ class SQLiteMetadataReportRepository:
         except (sqlite3.Error, ReviewCaseValueError, ReportValueError) as error:
             raise MetadataReportError("review case evidence is unavailable") from error
 
+    def review_case_ready_at(self, review_case_id: str) -> int | None:
+        """Return the exact preparation-complete checkpoint for advisory timing."""
+        try:
+            row = self._connection.execute(
+                "SELECT updated_at FROM review_preparation_work "
+                "WHERE review_case_id=? AND stage='complete' AND state='complete' "
+                "ORDER BY updated_at DESC,work_id LIMIT 1",
+                (review_case_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            if len(row) != 1 or type(row[0]) is not int or row[0] < 0:
+                raise MetadataReportError("review case readiness is unavailable")
+            return row[0]
+        except sqlite3.Error as error:
+            raise MetadataReportError(
+                "review case readiness is unavailable"
+            ) from error
+
     def get_review_model_advice(self, review_case_id: str) -> dict[str, object]:
         try:
             row = self._connection.execute(
@@ -3445,7 +3638,7 @@ class SQLiteMetadataReportRepository:
         ):
             self._connection.execute(
                 "UPDATE review_preparation_work SET stage='projection',state='queued',"
-                "attempt=0,recovery_attempt=0,failure_code=NULL,updated_at=? WHERE work_id=?",
+                "attempt=0,recovery_attempt=0,failure_code=NULL,failure_root=NULL,updated_at=? WHERE work_id=?",
                 (updated_at, row[0]),
             )
         else:
@@ -4030,7 +4223,7 @@ class SQLiteMetadataReportRepository:
         self._connection.execute(
             "UPDATE review_preparation_work SET stage=?,state='queued',attempt=0,"
             "recovery_attempt=0,report_id=?,proposal_set_id=NULL,review_case_id=NULL,"
-            "failure_code=NULL,updated_at=? WHERE work_id=?",
+            "failure_code=NULL,failure_root=NULL,updated_at=? WHERE work_id=?",
             (
                 restart_stage,
                 None if restart_stage == "extraction" else report_id,
@@ -6567,6 +6760,17 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
 
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _operational_signal(kind: str, cause: str, scope: str, *,
+                        connection: str | None = None,
+                        library: str | None = None,
+                        category: str | None = None,
+                        work_id: str | None = None,
+                        field: str | None = None) -> dict[str, object]:
+    return {"category": category, "cause": cause, "connection": connection,
+            "field": field, "kind": kind, "library": library,
+            "scope": scope, "work_id": work_id}
 
 
 def _admission_json(status: str, review_case_id: str | None) -> str:

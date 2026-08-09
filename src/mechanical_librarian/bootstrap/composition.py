@@ -72,6 +72,7 @@ from mechanical_librarian.application.metadata_report import (
     CoverReadError,
     CoverSourceChangedError,
     CoverTimeoutError,
+    CredentialError,
     CurrentnessError,
     ItemInspectionError,
     ArtifactAuthorityError,
@@ -564,6 +565,18 @@ def _provider_statuses(report: MetadataReport) -> tuple[ProviderStatus, ...]:
     )
 
 
+def _provider_authentication_root(report: MetadataReport) -> str | None:
+    roots = sorted(
+        provider.provider
+        for provider in report.providers
+        if any(
+            status in {ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION}
+            for status in (provider.status, *(lane.status for lane in provider.lanes))
+        )
+    )
+    return None if not roots else roots[0]
+
+
 class _NonClosingRepository:
     """Let one composed service borrow a pipeline-owned repository connection."""
 
@@ -577,7 +590,7 @@ class _NonClosingRepository:
         return None
 
 
-def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True, repository_authority: object | None = None, pipeline_repository=None, review_claim_next: bool = False) -> str:
+def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True, repository_authority: object | None = None, pipeline_repository=None, review_claim_next: bool = False, timing=None) -> str:
     """Compose one report solely from an already validated configuration snapshot."""
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if mount is None:
@@ -694,9 +707,11 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
                     else disposition[0]
                 ),
                 review_claim_next,
+                _provider_authentication_root(report),
             )
         ),
         require_singular_target=review_action is not None,
+        timing=timing,
     )
     return service.run(item, file_index, expected_file_identity)
 
@@ -838,6 +853,7 @@ def create_review_pipeline(
     catalogue_path: Path,
     artifact_store_path: Path,
     database_authority: object | None = None,
+    timing=None,
 ) -> ReviewPreparationSupervisor:
     artifact_recovery_lock = threading.Lock()
     artifacts_recovered = False
@@ -953,7 +969,14 @@ def create_review_pipeline(
                 repository_authority=database_authority,
                 pipeline_repository=pipeline_repository,
                 review_claim_next=claim_next,
+                timing=timing,
             )
+        except CredentialError as error:
+            if error.provider is None:
+                raise ReviewPipelineError("authentication") from error
+            raise ReviewPipelineError(
+                "authentication", root=error.provider
+            ) from error
         except (CurrentnessError, TargetNotFoundError) as error:
             raise ReviewPipelineError("stale") from error
         value = MetadataReport.from_json(serialized)
@@ -1030,10 +1053,12 @@ def create_review_pipeline(
         propose=propose,
         admit=admit,
         project=project,
+        timing=timing,
     )
     return ReviewPreparationSupervisor(
         pipeline,
         polling_interval_seconds=configuration.review.library_polling_interval_seconds,
+        graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
     )
 
 
@@ -1381,13 +1406,33 @@ def run_review_server(
     ) as tls:
         repository = open_repository(database_path, create=False, cross_thread=True)
         try:
+            from mechanical_librarian.adapters.operational_evidence import (
+                LocalTimingStore, SupportBundle,
+            )
+
+            timing_store = LocalTimingStore(
+                database_path.parent / "private" / "stage-timings.json",
+                enabled=review.diagnostic_timings_enabled,
+            )
+            from mechanical_librarian.application.operations import StageTimer
+
+            timing = StageTimer(timing_store)
             preparation = create_review_pipeline(
                 configuration,
                 database_path,
                 catalogue_path,
                 artifact_store_path,
                 repository.authority,
+                timing,
             )
+            support_bundle = SupportBundle(((
+                "runtime",
+                lambda: {
+                    "deployment": "single_container",
+                    "schema_state": "exact_current",
+                    "timing_records": len(timing_store.list()),
+                },
+            ),))
             app = create_review_app(
                 repository,
                 review,
@@ -1397,6 +1442,9 @@ def run_review_server(
                     (library.name, library.policy_override)
                     for library in getattr(configuration, "libraries", ())
                 ),
+                operational_timings=timing_store,
+                operational_support=support_bundle,
+                operational_timer=timing,
             )
             uvicorn.run(
                 app,

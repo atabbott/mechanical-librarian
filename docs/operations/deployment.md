@@ -1,6 +1,37 @@
 # Deployment model
 
-The 0.10 development runtime is an unreleased, explicitly invoked CLI package.
+## Supported single container
+
+`Dockerfile` and `compose.yaml` define the pre-release installed runtime. It is
+one non-root container, one named `/data` volume, one HTTPS port, a read-only
+root filesystem, and no runtime package installation or extra application
+process. Put the exact `config-v5` document at `/data/config.json` and keep its
+referenced owner-only TLS, password and service-secret files within explicitly
+mounted private locations. Add ebook media mounts as read-only Compose
+overrides; never grant a writable media mount or Docker socket.
+
+On an absent data volume the entrypoint creates the exact-current application
+and catalogue stores and private artifact area, then starts the existing review
+server. On restart it accepts only those exact-current stores. A schema mismatch,
+unowned volume, invalid configuration, backup/recovery error or permission
+failure stops startup rather than importing, migrating or repairing data.
+
+Use `docker compose up --build` for a local installed-product qualification.
+`scripts/qualify_container_lifecycle.py --source-sha <exact-head>` repeats the
+head-bound build, synthetic owner-secret/TLS seeding, non-root read-only-root
+run, health probes, bounded graceful termination and exact-current restart.
+Stop with `docker compose down`; do not add `-v` unless intentionally deleting
+the complete local application state. Image publication remains a separate
+release authority and is not part of this support contract.
+
+Shutdown first closes preparation and guarded-effect claim admission. Active
+preparation workers receive the configured bounded graceful-shutdown window;
+their durable checkpoint remains restart authority. Guarded-effect restart is
+an injectable lifecycle seam and remains unavailable in the normal container
+until a real target adapter is supplied—no fake or product write activation is
+composed by this milestone.
+
+The command-line development runtime remains unreleased.
 It supports current catalogue, report, ProposalSet, ReviewCase, and
 qualification-only shadow-review operations; it is not a daemon or published
 container release.

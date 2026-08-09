@@ -44,6 +44,7 @@ from mechanical_librarian.domain.metadata_report import (
     provider_lane_candidate_reference,
     validate_provider_access_time,
 )
+from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.application.failure_diagnostics import (
     FailureDiagnostic,
     merge_provider_diagnostics,
@@ -83,7 +84,9 @@ class TargetNotFoundError(MetadataReportError):
 
 
 class CredentialError(MetadataReportError):
-    pass
+    def __init__(self, message: str, *, provider: str | None = None) -> None:
+        super().__init__(message)
+        self.provider = provider
 
 
 class CoverTimeoutError(MetadataReportError):
@@ -915,6 +918,7 @@ class GenerateMetadataReport:
         publication_receipt: Callable[[ReportRepository, MetadataReport], None]
         | None = None,
         require_singular_target: bool = False,
+        timing: StageTimer | None = None,
     ) -> None:
         self._target = target
         self._inspector = inspector
@@ -928,6 +932,7 @@ class GenerateMetadataReport:
         self._publication_authority_guard = publication_authority_guard
         self._publication_receipt = publication_receipt
         self._require_singular_target = require_singular_target
+        self._timing = timing or StageTimer(None)
 
     def run(self, item: str, file_index: int, expected_file_identity: str | None = None) -> str:
         if self._mount is None:
@@ -958,9 +963,11 @@ class GenerateMetadataReport:
             )
 
             try:
-                local = self._inspector.inspect(
-                    self._mount, selected.relative_path, self._limits.source_archive_bytes
-                )
+                with self._timing.measure("extraction", "none"):
+                    local = self._inspector.inspect(
+                        self._mount, selected.relative_path,
+                        self._limits.source_archive_bytes,
+                    )
             except MetadataReportError:
                 raise
             except Exception as error:
@@ -1044,16 +1051,21 @@ class GenerateMetadataReport:
                 continue
             try:
                 provider = binding.factory()
-            except CredentialError:
+            except CredentialError as error:
                 repository.close()
-                raise
+                raise CredentialError(
+                    "provider credential unavailable", provider=binding.name
+                ) from error
             except Exception as error:
                 repository.close()
-                raise CredentialError("provider credential unavailable") from error
+                raise CredentialError(
+                    "provider credential unavailable", provider=binding.name
+                ) from error
             try:
-                observation = provider.observe(
-                    plan, deadline=cover_aggregate_deadline
-                )
+                with self._timing.measure("provider_search", "provider"):
+                    observation = provider.observe(
+                        plan, deadline=cover_aggregate_deadline
+                    )
             except Exception:
                 observation = provider_observation(
                     binding.name,

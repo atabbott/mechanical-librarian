@@ -112,3 +112,10 @@ and contextual subject evidence; it retains no paths or source bodies.
 Edition and rights remain outside that public report vocabulary. Their private
 qualification labels and exploratory aggregates are not retained in reports or
 committed to the repository.
+
+Operational timings retain only closed stage and wait-class codes, millisecond
+duration and timestamp, capped at 256 records and disabled by default. Typed
+status contains closed causes and narrow opaque scope identifiers, never field
+values. Support preview/export is capped, allow-listed and re-redacted at export;
+raw databases, environment, auth state, secrets, paths, metadata, excerpts,
+media, covers and recovery bytes are categorically excluded.
