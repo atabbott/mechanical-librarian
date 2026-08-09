@@ -27,6 +27,7 @@ import urllib.request
 import uuid
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLED_ROOT = os.environ.get("MECHANICAL_LIBRARIAN_QUALIFICATION_INSTALL")
@@ -35,6 +36,7 @@ if str(IMPORT_ROOT) not in sys.path:
     sys.path.insert(0, str(IMPORT_ROOT))
 
 import httpx
+import mechanical_librarian.bootstrap.composition as composition
 from argon2 import PasswordHasher
 from PIL import Image
 from fastapi.testclient import TestClient
@@ -233,7 +235,7 @@ def _epub(path: Path) -> None:
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
         archive.writestr("META-INF/container.xml", "<?xml version='1.0'?><container version='1.0' xmlns='urn:oasis:names:tc:opendocument:xmlns:container'><rootfiles><rootfile full-path='OEBPS/content.opf' media-type='application/oebps-package+xml'/></rootfiles></container>")
-        archive.writestr("OEBPS/content.opf", "<?xml version='1.0'?><package xmlns='http://www.idpf.org/2007/opf' version='3.0' unique-identifier='book'><metadata xmlns:dc='http://purl.org/dc/elements/1.1/'><dc:identifier id='book'>synthetic-f14</dc:identifier><dc:title>Before</dc:title><dc:language>en</dc:language></metadata><manifest/><spine/></package>")
+        archive.writestr("OEBPS/content.opf", "<?xml version='1.0'?><package xmlns='http://www.idpf.org/2007/opf' version='3.0' unique-identifier='book'><metadata xmlns:dc='http://purl.org/dc/elements/1.1/'><dc:identifier id='book'>synthetic-f14</dc:identifier><dc:title>Before</dc:title><dc:creator>Synthetic Author</dc:creator><dc:language>en</dc:language></metadata><manifest/><spine/></package>")
 
 
 def _plan(repository, *, item: str, destination: str, value: object,
@@ -397,6 +399,9 @@ def _wait_for_preparation(
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
         response = client.get("/api/v1/review-preparation")
+        if response.status_code == 503:
+            time.sleep(0.25)
+            continue
         if response.status_code != 200:
             raise QualificationError("installed_preparation_unavailable")
         state = _mapping(response.json(), "installed_preparation_invalid")
@@ -419,10 +424,81 @@ def _wait_for_preparation(
     raise QualificationError("installed_preparation_timeout")
 
 
+def _qualification_hardcover_client(
+    title_corrections: dict[str, str], *_: object, **__: object
+) -> httpx.Client:
+    """Return an isolated provider boundary backed by request-local evidence."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        try:
+            body = json.loads(request.content.decode("utf-8", "strict"))
+            variables = _mapping(body, "installed_provider_request_invalid").get(
+                "variables"
+            )
+            values = _mapping(variables, "installed_provider_request_invalid")
+            requested_title = _string(
+                values.get("title"), "installed_provider_title_invalid"
+            )
+            raw_authors = values.get("authors")
+            if type(raw_authors) is not list or not raw_authors:
+                raise QualificationError("installed_provider_authors_invalid")
+            authors = [
+                _string(value, "installed_provider_authors_invalid")
+                for value in raw_authors
+            ]
+        except (UnicodeError, json.JSONDecodeError):
+            raise QualificationError("installed_provider_request_invalid") from None
+        title = title_corrections.get(requested_title, requested_title)
+        contributions = [
+            {
+                "id": index,
+                "contribution": "Author",
+                "author": {"id": index, "name": author},
+            }
+            for index, author in enumerate(authors, start=1)
+        ]
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "editions": [{
+                        "id": 1,
+                        "book_id": 1,
+                        "isbn_10": None,
+                        "isbn_13": None,
+                        "asin": None,
+                        "title": title,
+                        "subtitle": None,
+                        "release_date": None,
+                        "image": None,
+                        "publisher": None,
+                        "language": None,
+                        "contributions": contributions,
+                    }],
+                    "books": [{
+                        "id": 1,
+                        "title": title,
+                        "description": None,
+                        "release_date": None,
+                        "image": None,
+                        "contributions": contributions,
+                        "book_series": [],
+                        "taggings": [],
+                    }],
+                    "tags": [],
+                }
+            },
+            request=request,
+        )
+
+    return httpx.Client(transport=httpx.MockTransport(respond))
+
+
 def _installed_continuous_qualification(
     root: Path, base: str, writer_key: str,
     libraries: tuple[tuple[str, str, Path], ...],
     drift_item: str,
+    title_corrections: dict[str, str],
 ) -> dict[str, object]:
     """Exercise the installed preparation, decision, Activity and scheduler path."""
     password = "installed-owner-qualification"
@@ -430,8 +506,11 @@ def _installed_continuous_qualification(
     owner_hash.write_text(PasswordHasher().hash(password), encoding="utf-8")
     os.chmod(owner_hash, 0o600)
     secret = root / "writer.secret"
-    secret.write_text(writer_key + "\n", encoding="ascii")
+    secret.write_text(writer_key, encoding="ascii")
     os.chmod(secret, 0o600)
+    provider_secret = root / "provider.secret"
+    provider_secret.write_text("synthetic-provider-token", encoding="ascii")
+    os.chmod(provider_secret, 0o600)
     config_path = root / "installed-config.json"
     configuration_document = {
         "schema_version": "config-v5",
@@ -441,15 +520,16 @@ def _installed_continuous_qualification(
         }],
         "libraries": [{
             "name": name, "connection": "canary", "library_id": library_id,
-            "mount": name, "provider_connections": ["disabled-catalogue"],
+            "mount": name, "provider_connections": ["qualification-catalogue"],
         } for name, library_id, _ in libraries],
         "mounts": [{
             "name": name, "container_path": str(path),
             "service_path": "/library/" + name, "read_only": True,
         } for name, _, path in libraries],
         "providers": [{
-            "name": "disabled-catalogue", "adapter": "hardcover",
-            "enabled": False, "cover_enabled": False, "secret_file": None,
+            "name": "qualification-catalogue", "adapter": "hardcover",
+            "enabled": True, "cover_enabled": False,
+            "secret_file": str(provider_secret),
         }],
         "review": {
             "canonical_origin": "https://review.test",
@@ -486,7 +566,18 @@ def _installed_continuous_qualification(
         return TestClient(app, base_url="https://review.test"), continuous
 
     origin = {"Origin": "https://review.test"}
-    client, continuous = composed_client()
+    def provider_client(*args: object, **kwargs: object) -> httpx.Client:
+        return _qualification_hardcover_client(
+            title_corrections, *args, **kwargs
+        )
+
+    provider_patch = patch.object(composition, "hardcover_client", provider_client)
+    provider_patch.start()
+    try:
+        client, continuous = composed_client()
+    except Exception:
+        provider_patch.stop()
+        raise
     try:
         with client:
             login = client.post(
@@ -497,12 +588,20 @@ def _installed_continuous_qualification(
             csrf = _string(login.json().get("csrf_token"), "installed_login_invalid")
             mutation_headers = {**origin, "X-CSRF-Token": csrf}
             for name, _, _ in libraries:
-                requested = client.post(
-                    f"/api/v1/review-preparation/canary/{name}/scan",
-                    headers=mutation_headers,
-                )
+                request_deadline = time.monotonic() + 30
+                while True:
+                    requested = client.post(
+                        f"/api/v1/review-preparation/canary/{name}/scan",
+                        headers=mutation_headers,
+                    )
+                    if (requested.status_code != 503
+                            or time.monotonic() >= request_deadline):
+                        break
+                    time.sleep(0.25)
                 if requested.status_code not in {202, 409}:
-                    raise QualificationError("installed_scan_request_failed")
+                    raise QualificationError(
+                        f"installed_scan_request_failed:{requested.status_code}"
+                    )
             initial = _wait_for_preparation(
                 client, len(libraries), allow_failures=True
             )
@@ -588,7 +687,17 @@ def _installed_continuous_qualification(
                 time.sleep(0.25)
             if (final_activity is None
                     or final_activity.get("counts", {}).get("verified", 0) < accepted):
-                raise QualificationError("installed_scheduler_failed")
+                activity_summary = {
+                    key: final_activity.get(key) if final_activity else None
+                    for key in (
+                        "counts", "enabled_libraries", "last_failure",
+                        "prepared", "suspensions",
+                    )
+                }
+                raise QualificationError(
+                    "installed_scheduler_failed:"
+                    + json.dumps(activity_summary, sort_keys=True)
+                )
             before_rescan = repository.count_current_review_cases(None)
             for name, _, _ in libraries:
                 response = client.post(
@@ -622,8 +731,18 @@ def _installed_continuous_qualification(
                 raise QualificationError("installed_drift_not_regenerated")
     finally:
         client.close()
+        provider_patch.stop()
 
-    restarted, _ = composed_client()
+    restart_provider_patch = patch.object(
+        composition, "hardcover_client", provider_client
+    )
+    restart_provider_patch.start()
+    try:
+        restarted, _ = composed_client()
+    except Exception:
+        restart_provider_patch.stop()
+        repository.close()
+        raise
     try:
         with restarted:
             login = restarted.post(
@@ -638,6 +757,7 @@ def _installed_continuous_qualification(
                 raise QualificationError("installed_restart_recovery_failed")
     finally:
         restarted.close()
+        restart_provider_patch.stop()
         repository.close()
     return {
         "activity_api": True, "continuous_scheduler": True,
@@ -734,6 +854,18 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         else:
             raise QualificationError("second_library_did_not_scan")
         assert isinstance(second_item, str)
+
+        def current_title(item_id: str) -> str:
+            detail = _mapping(
+                _request("GET", base, "/api/items/" + item_id, token=writer_key),
+                "item_detail_invalid",
+            )
+            media = _mapping(detail.get("media"), "item_detail_invalid")
+            metadata = _mapping(media.get("metadata"), "item_detail_invalid")
+            return _string(metadata.get("title"), "item_detail_invalid")
+
+        original_alpha_title = current_title(item)
+        original_beta_title = current_title(second_item)
         seeded = _mapping(_request(
             "PATCH", base, "/api/items/" + second_item + "/media",
             token=writer_key, payload={"metadata": {"title": "Beta qualification seed"}},
@@ -824,6 +956,11 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             (("alpha", library_id, alpha_dir),
              ("beta", second_library_id, beta_dir)),
             item,
+            {
+                "After": original_alpha_title,
+                "Beta qualification seed": original_beta_title,
+                "Guarded qualification title": original_alpha_title,
+            },
         )
         repository.close()
         digest = _run("docker", "image", "inspect", image, "--format", "{{index .RepoDigests 0}}").stdout.strip()
@@ -860,7 +997,7 @@ def main() -> None:
         raise QualificationError("snapshot_import_mismatch")
     latest = _latest_stable()
     values = arguments.version or list(IMAGES)
-    print(json.dumps({"schema": "audiobookshelf-field-effect-v1", "installed_artifact": True, "latest_stable_version": latest, "operator_corpus": arguments.corpus is not None, "results": [qualify(value, arguments.corpus) for value in values]}, sort_keys=True))
+    print(json.dumps({"schema": "audiobookshelf-field-effect-v2", "installed_artifact": True, "latest_stable_version": latest, "operator_corpus": arguments.corpus is not None, "results": [qualify(value, arguments.corpus) for value in values]}, sort_keys=True))
 
 
 if __name__ == "__main__": main()

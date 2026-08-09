@@ -125,7 +125,8 @@ class FieldEffectTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name)
         os.chmod(root, 0o700)
-        self.repository = open_repository(root / "effects.sqlite", cross_thread=True)
+        self.database_path = root / "effects.sqlite"
+        self.repository = open_repository(self.database_path, cross_thread=True)
         self.target = FakeTargetService()
         self.authority = FakeAuthorityCurrentness()
         self.dependencies = FakeDependencyCurrentness()
@@ -168,6 +169,21 @@ class FieldEffectTests(unittest.TestCase):
                 "primary", ("books",), ("title",), 2
             )[0]
             self.assertNotEqual(first.consent_id, second.consent_id)
+
+    def test_unused_continuous_consent_survives_exact_schema_validation(self) -> None:
+        consent = self.repository.grant_field_effect_consents(
+            "primary", ("books",), ("title",), 1
+        )[0]
+        self.repository.close()
+
+        self.repository = open_repository(self.database_path, cross_thread=True)
+
+        self.assertEqual(
+            consent,
+            self.repository.current_field_effect_consent(
+                "primary", "books", "title"
+            ),
+        )
 
     def test_manual_hold_is_durable_and_return_to_automatic_clears_it(self) -> None:
         report = metadata_report("Old title", "1", "2")

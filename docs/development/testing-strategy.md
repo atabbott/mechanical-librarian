@@ -3,14 +3,22 @@
 Audiobookshelf write qualification uses synthetic disposable libraries and API
 keys only. It proves one metadata/tags PATCH and one digest-verified multipart
 cover upload at v2.26.0 and the then-latest stable image, including read-back,
-refusal and ambiguous-response reconciliation. It never contacts a production
-library or uses direct database or browser writes.
+refusal and ambiguous-response reconciliation. With the frozen private operator
+corpus it also exercises the installed application against two real disposable
+libraries: supported preparation, owner decisions, exact-policy consent,
+continuous scheduling, pause/resume, idempotent rescan, external-drift
+regeneration and restart recovery. Provider evidence is supplied by a bounded
+in-process HTTP fake derived from each request's local title and author evidence;
+the qualifier never contacts a production provider or library and never uses
+direct database or browser writes.
 
 Run the canary from a clean exact head. It archives that head before importing
 or running the adapter, creates scoped disposable API-key users, deletes those
 keys during teardown where the service remains available, and removes only its
-labelled container. Its aggregate receipt contains image digests and outcomes,
-never credentials, user tokens, passwords, or image bytes:
+labelled container. Its `audiobookshelf-field-effect-v2` aggregate receipt adds
+an `installed_continuous` lifecycle summary to the image digests and field
+outcomes, never credentials, user tokens, passwords, source metadata or image
+bytes:
 
 ```bash
 uv run python scripts/qualify_audiobookshelf_field_effect.py \

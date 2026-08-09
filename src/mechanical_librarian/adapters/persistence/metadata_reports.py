@@ -981,7 +981,7 @@ class SQLiteMetadataReportRepository:
             None,
         )
         if (type(target_fields) is not list or type(target_field) is not dict
-                or target_field.get("state") not in {"value", "absent"}):
+                or target_field.get("state") not in {"value", "absent", "empty"}):
             raise FieldEffectError("authority_binding")
         pre_value = (
             target_field.get("value")
@@ -4721,11 +4721,17 @@ class SQLiteMetadataReportRepository:
 
     def bind_initial_metadata_policy_resolution(self, document: str) -> str:
         """Bind one exact configured resolution while generation one is active."""
+        nested_transaction = self._connection.in_transaction
+        savepoint = "bind_initial_metadata_policy_resolution"
+        scope_started = False
         try:
             resolved = ResolvedMetadataPolicy.from_data(json.loads(document))
             if resolved.canonical_json != document:
                 raise MetadataPolicyError("policy resolution is not canonical")
-            self._connection.execute("BEGIN IMMEDIATE")
+            self._connection.execute(
+                f"SAVEPOINT {savepoint}" if nested_transaction else "BEGIN IMMEDIATE"
+            )
+            scope_started = True
             state = self._connection.execute(
                 "SELECT s.generation,s.active_policy_id,d.document "
                 "FROM metadata_policy_state s JOIN metadata_policy_drafts d "
@@ -4761,10 +4767,17 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError(
                     "active metadata policy resolution is unavailable"
                 )
-            self._connection.commit()
+            if nested_transaction:
+                self._connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+            else:
+                self._connection.commit()
+            scope_started = False
             return resolved.resolved_id
         except (MetadataReportError, MetadataPolicyError, sqlite3.Error, TypeError, ValueError) as error:
-            if self._connection.in_transaction:
+            if scope_started and nested_transaction:
+                self._connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                self._connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+            elif scope_started and self._connection.in_transaction:
                 self._connection.rollback()
             if isinstance(error, MetadataReportError):
                 raise
@@ -7287,8 +7300,12 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             next_sequence[plan_id] = expected_sequence + 1
             last_events[plan_id] = raw
         if (set(next_sequence) != set(operations)
-                or set(authorities) != {value.plan.authority.decision_id for value in operations.values()}
-                or set(consents) != {value.plan.consent.consent_id for value in operations.values()}):
+                or set(authorities) != {
+                    value.plan.authority.decision_id for value in operations.values()
+                }
+                or not {
+                    value.plan.consent.consent_id for value in operations.values()
+                }.issubset(consents)):
             raise FieldEffectError("invalid_event")
         for plan_id, operation in operations.items():
             last = last_events[plan_id]

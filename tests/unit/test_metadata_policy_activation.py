@@ -197,6 +197,36 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         ).fetchone())
         repository.close()
 
+    def test_initial_resolution_binding_joins_an_existing_transaction(self) -> None:
+        repository = open_repository(self.path)
+        resolved = resolve_policy(MetadataPolicyProfile.builtin(), "ebooks")
+        repository._connection.execute("BEGIN IMMEDIATE")
+
+        self.assertEqual(
+            resolved.resolved_id,
+            repository.bind_initial_metadata_policy_resolution(
+                resolved.canonical_json
+            ),
+        )
+        self.assertTrue(repository._connection.in_transaction)
+        self.assertEqual(
+            (resolved.resolved_id,),
+            repository._connection.execute(
+                "SELECT resolved_policy_id FROM metadata_policy_resolutions "
+                "WHERE generation=1 AND library_name='ebooks'"
+            ).fetchone(),
+        )
+
+        repository._connection.rollback()
+        self.assertEqual(
+            (0,),
+            repository._connection.execute(
+                "SELECT COUNT(*) FROM metadata_policy_resolutions "
+                "WHERE generation=1 AND library_name='ebooks'"
+            ).fetchone(),
+        )
+        repository.close()
+
     def _current_case_with_completed_work(self, path: Path | None = None):
         repository = open_repository(self.path if path is None else path)
         report = _report()
