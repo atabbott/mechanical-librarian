@@ -19,6 +19,37 @@ class AutomaticDecisionTests(unittest.TestCase):
         )
         self.assertEqual("automatic_policy", value.to_data()["origin"])
         self.assertEqual("candidate", value.outcome)
+        self.assertEqual(value, AutomaticDecision.from_json(value.to_json()))
+
+    def test_persisted_decision_requires_exact_canonical_document(self) -> None:
+        value = AutomaticDecision.create(
+            review_case_id="review_case_" + "a" * 64,
+            report_id="report_" + "b" * 64,
+            proposal_set_id="proposal_set_" + "c" * 64,
+            proposal_id="review_proposal_" + "d" * 64,
+            target_fingerprint="e" * 64,
+            destination="language",
+            outcome="keep_current",
+            candidate_id=None,
+            resolved_policy_id="resolved_policy_" + "0" * 64,
+            policy_generation=1,
+            rule_id="shadow_rule_" + "1" * 64,
+            policy_category="language_rendering",
+            policy_option="preserve",
+            qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
+            source_outcome_id="shadow_outcome_" + "3" * 64,
+            occurred_at=1,
+            bundle_id=None,
+        )
+        with self.assertRaises(AutomaticDecisionError):
+            AutomaticDecision.from_json(value.to_json() + "\n")
+        with self.assertRaises(AutomaticDecisionError):
+            AutomaticDecision.from_json(
+                value.to_json().replace(
+                    '"schema_version":"automatic-decision-v1"',
+                    '"schema_version":"automatic-decision-v2"',
+                )
+            )
 
     def test_ignore_has_no_candidate(self) -> None:
         with self.assertRaises(AutomaticDecisionError):

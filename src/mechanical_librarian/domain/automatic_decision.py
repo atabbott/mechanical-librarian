@@ -101,6 +101,39 @@ class AutomaticDecision:
         return cls("automatic_decision_" + _digest({**core, "occurred_at": occurred_at}),
             **core, idempotency_digest=_digest(core), occurred_at=occurred_at)
 
+    @classmethod
+    def from_json(cls, document: str) -> "AutomaticDecision":
+        """Rehydrate one exact canonical persisted automatic decision."""
+        try:
+            if type(document) is not str:
+                raise AutomaticDecisionError("invalid")
+            data = json.loads(document)
+            expected = {
+                "bundle_id", "candidate_id", "decision_id", "destination",
+                "idempotency_digest", "occurred_at", "origin",
+                "outcome", "policy_category", "policy_generation", "policy_option",
+                "proposal_id", "proposal_set_id",
+                "qualification_manifest_sha256", "report_id",
+                "resolved_policy_id", "review_case_id", "rule_id",
+                "schema_version", "source_outcome_id", "target_fingerprint",
+            }
+            if (
+                type(data) is not dict
+                or set(data) != expected
+                or data.get("origin") != "automatic_policy"
+                or data.get("schema_version") != "automatic-decision-v1"
+                or _canonical(data) != document
+            ):
+                raise AutomaticDecisionError("invalid")
+            values = dict(data)
+            values.pop("origin")
+            values.pop("schema_version")
+            return cls(**values)
+        except AutomaticDecisionError:
+            raise
+        except (json.JSONDecodeError, RecursionError, TypeError, ValueError):
+            raise AutomaticDecisionError("invalid") from None
+
     def __post_init__(self) -> None:
         valid_id = lambda prefix, value: type(value) is str and re.fullmatch(prefix + r"_[0-9a-f]{64}", value) is not None
         if (

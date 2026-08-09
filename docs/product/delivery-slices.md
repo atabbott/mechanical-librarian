@@ -576,8 +576,8 @@ recreated.
 | F16a Authenticated browser review and decision | #152 | An authenticated owner finds one current case, inspects bounded evidence, makes one individual field decision, and observes immutable server-authoritative current-case history after refresh or restart. The individual round trip passes the first-release responsive, keyboard/focus, accessibility, private caching/storage, content-security, hostile-rendering, performance, synthetic-artifact, and primary-supported-browser baseline. | Delivered through #447 → #448 → #449 → #450 and milestone-13 corrections through #455; cross-case history remains #195. |
 | F17a Continuous review orchestration | #473 | Configured Audiobookshelf book libraries continuously reconcile through the bounded persisted decision-only review pipeline, with compact shared activity and authenticated pause/resume/retry controls. | Delivered through #474 → #475; no automatic decision or write authority. |
 | F13 Guarded fake-service apply | #149 | Current immutable human and qualified automatic field effects share one persisted, backed-up, idempotent fake-service plan, claim, readback, verification, reconciliation, and audit path across all 14 ebook destinations. | Delivered by #149; no Audiobookshelf or media-write adapter is enabled. |
-| F14 Audiobookshelf canary apply | #150 | After F13, the same gates perform one bounded mutation against a disposable qualified Audiobookshelf instance and prove before/request/after evidence. | Retained planned designation; depends on completed F13 qualification. |
-| F17 Continuous pre-release operation | #153 | The useful Audiobookshelf path runs repeatedly under persisted scheduling and reconciliation, survives representative failures and restarts, and remains observable and recoverable without widening authority. | F17a review preparation delivered through #473–#475; later guarded-apply composition remains outside this milestone. |
+| F14 Audiobookshelf canary apply | #150 | After F13, the same gates perform one bounded mutation against a disposable qualified Audiobookshelf instance and prove before/request/after evidence. | Delivered by #150. |
+| F17 Continuous pre-release operation | #153 | The useful Audiobookshelf path runs repeatedly under persisted scheduling and reconciliation, survives representative failures and restarts, and remains observable and recoverable without widening authority. | Delivered by #153 through explicit library consent and one guarded instance slot. |
 
 The retained `F` IDs are planned designations on the assigned outcome issues,
 not proof of `Ready` status or authority to begin. Each tracker still must meet
@@ -591,8 +591,9 @@ applicable current human decisions and qualifies the first-release browser
 baseline; F13 has delivered the common human/qualified-automatic guarded
 fake-service path; and F14 follows completed F13 qualification for its disposable
 Audiobookshelf canary. F11 remains independently shadowable; F15a supplies the
-supported operating surface; and F17 composes the useful path under repeated
-operation. F08 remains an independent evidence outcome.
+supported operating surface; and F17 composes the useful guarded path under
+repeated operation without depending on future target CAS. F08 remains an
+independent evidence outcome.
 
 ### 1.0.0 checkpoint exit
 

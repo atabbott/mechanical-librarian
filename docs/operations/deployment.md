@@ -75,6 +75,9 @@ artifact store using the recovery procedure in
 qualification profiles, executable paths, and auth stores in the host's
 encrypted secret-backup policy.
 
-The runtime has no target or media write authority. Future container release,
-dashboard, worker, normal reviewer activation, and write-capable deployment
-remain outside the installed 0.10 authority.
+The review runtime can gain bounded target-field authority only through the
+authenticated Activity consent flow. Consent is library scoped, pause and
+revocation stop new claims, and all target calls use the existing API-key
+adapter and guarded application service. Media mounts remain read-only; release,
+deployment publication, dashboard, bulk, rollback, and destructive authority
+remain outside this contract.

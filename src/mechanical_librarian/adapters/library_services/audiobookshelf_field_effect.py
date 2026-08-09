@@ -23,7 +23,7 @@ from mechanical_librarian.application.field_effects import (
     TargetServiceUnavailable,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.domain.field_effect import FieldEffectPlan
+from mechanical_librarian.domain.field_effect import FieldEffectPlan, field_value_version
 
 
 AudiobookshelfCapabilityResult = CapabilityObservation
@@ -119,12 +119,32 @@ class AudiobookshelfFieldEffectTarget:
         with self._client() as client:
             detail = self._item(client, plan.work_id)
             value = self._value(client, detail, plan)
-            # ABS cover retrieval is separate from the item response.  Bind a
-            # cover observation to the item version after that authoritative
-            # cover read, not the version that preceded it.
-            if plan.destination == "cover":
-                detail = self._item(client, plan.work_id)
-        return TargetObservation(value, _version(detail))
+        return TargetObservation(value, field_value_version(plan.destination, value))
+
+    def read_cover_bytes(self, plan: FieldEffectPlan) -> bytes | None:
+        """Read the exact pre-write cover for private recovery composition."""
+        if plan.destination != "cover":
+            raise ValueError("cover recovery destination invalid")
+        with self._client() as client:
+            status, headers, body = _bytes_response(
+                client,
+                f"{self._endpoint}/api/items/{quote(plan.work_id, safe='')}/cover",
+                {"raw": "1"},
+                8 * 1024 * 1024,
+            )
+        if status == 404:
+            return None
+        if status != 200:
+            raise TargetServiceUnavailable(
+                "connection" if status == 401 else "destination",
+                ("connection_unavailable" if status == 401 else
+                 "insufficient_permission" if status == 403 else
+                 "unexpected_effect_behavior"),
+            )
+        media_type = headers.get("content-type", "").split(";", 1)[0].lower()
+        if media_type != _image_media_type(body):
+            raise TargetServiceUnavailable("destination", "field_unavailable")
+        return body
 
     def apply(self, plan: FieldEffectPlan) -> TargetEffectResult:
         """Check the captured destination then issue one non-retriable request.
@@ -153,9 +173,9 @@ class AudiobookshelfFieldEffectTarget:
             with self._client() as client:
                 detail = self._item(client, plan.work_id)
                 current = self._value(client, detail, plan)
-                if plan.destination == "cover":
-                    detail = self._item(client, plan.work_id)
-                if current != plan.pre_value or _version(detail) != plan.target_version:
+                if (current != plan.pre_value
+                        or field_value_version(plan.destination, current)
+                        != plan.target_version):
                     return TargetEffectResult("conflict")
                 if plan.destination == "cover":
                     assert cover_body is not None
@@ -218,10 +238,6 @@ class AudiobookshelfFieldEffectTarget:
                 or detail.get("libraryId") != self._library_id
                 or detail.get("mediaType") != "book" or type(detail.get("media")) is not dict):
             raise TargetServiceUnavailable("connection")
-        try:
-            _version(detail)
-        except ValueError as error:
-            raise TargetServiceUnavailable("destination", "field_unavailable") from error
         return detail
 
     def _value(self, client: httpx.Client, detail: dict[str, Any], plan: FieldEffectPlan) -> object:
@@ -265,10 +281,26 @@ class AudiobookshelfFieldEffectTarget:
         if plan.destination == "authors":
             if not isinstance(value, list) or any(type(item) is not dict or type(item.get("name")) is not str for item in value):
                 raise TargetServiceUnavailable("destination")
-            return [item["name"] for item in value]
+            return [item["name"] for item in value] or None
+        if plan.destination == "series":
+            if type(value) is not list:
+                raise TargetServiceUnavailable("destination")
+            normalized = []
+            for item in value:
+                if type(item) is not dict or type(item.get("name")) is not str:
+                    raise TargetServiceUnavailable("destination")
+                sequence = item.get("sequence")
+                if sequence is not None and type(sequence) not in {str, int, float}:
+                    raise TargetServiceUnavailable("destination")
+                normalized.append({
+                    "name": item["name"],
+                    "sequence": None if sequence is None else str(sequence),
+                })
+            return normalized or None
         if plan.destination in {"genres", "tags"}:
             if type(value) is not list or any(type(item) is not str for item in value):
                 raise TargetServiceUnavailable("destination")
+            return value or None
         return value
 
 
@@ -351,13 +383,6 @@ def _write_status(client: httpx.Client, method: str, url: str, **kwargs: Any) ->
     """Issue exactly one write and deliberately discard its response body."""
     with client.stream(method, url, headers={"Accept-Encoding": "identity"}, **kwargs) as response:
         return response.status_code
-
-
-def _version(detail: dict[str, Any]) -> str:
-    value = detail.get("updatedAt")
-    if type(value) not in {int, float, str} or isinstance(value, bool) or not str(value):
-        raise ValueError("Audiobookshelf version invalid")
-    return str(value)
 
 
 def _media_payload(destination: str, value: object) -> dict[str, object]:

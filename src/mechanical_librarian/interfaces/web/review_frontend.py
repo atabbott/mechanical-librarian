@@ -47,6 +47,7 @@ def _shell(*, title: str, active: str, main: str, csrf_token: str | None) -> str
   {'' if csrf_token is None else '<section id="activity-popover" class="activity-popover" aria-label="Background activity" hidden></section>'}
   <p class="visually-hidden" id="theme-status" role="status" aria-live="polite"></p>
   <script src="/assets/review.js" defer></script>
+  {'' if active != "activity" else '<script src="/assets/activity.js" defer></script>'}
   {'' if active != "policy" else '<script src="/assets/policy.js" defer></script><script src="/assets/shadow-policy.js" defer></script>'}
 </body>
 </html>"""
@@ -57,11 +58,13 @@ def _navigation(active: str) -> str:
     attention = ' aria-current="page"' if active == "attention" else ""
     detail = ' aria-current="page"' if active == "detail" else ""
     policy = ' aria-current="page"' if active == "policy" else ""
+    activity = ' aria-current="page"' if active == "activity" else ""
     return f"""<nav class="workspace-navigation" aria-label="Review workspace">
   <div class="workspace-navigation-inner">
     <a class="workspace-tab" href="/library"{library}>Library</a>
     <a class="workspace-tab attention-tab" href="/attention"{attention}>Attention</a>
     <a class="workspace-tab" href="/policy"{policy}>Policy</a>
+    <a class="workspace-tab" href="/activity"{activity}>Activity</a>
     <span class="workspace-tab detail-tab"{detail}>Detail</span>
     <span class="workspace-context">Human exception review · exact-current records</span>
   </div>
@@ -139,6 +142,19 @@ def policy_html(csrf_token: str) -> str:
       <section id="availability" class="policy-card"><h2>Qualification availability</h2><p>Qualified defaults make decision-only outcomes automatically. Ask me and Ignore retain their human-review behavior; imprint and every unqualified option remain human-only. Explicit is unsupported.</p><p>Automatic handling creates no apply plan, target write, or media write.</p><div class="shadow-preview" aria-labelledby="shadow-preview-title"><p class="eyebrow">Advanced · safety controls</p><h3 id="shadow-preview-title">Automatic handling and Preview</h3><p id="shadow-posture" role="status">Loading automatic posture…</p><div class="policy-actions"><button id="shadow-enter" class="secondary-button" type="button">Enter Preview</button><button id="shadow-confirm-automatic" class="primary-button" type="button">Activate qualified automatic handling</button><button id="automatic-pause" class="secondary-button" type="button">Pause automatic handling</button><button id="automatic-recover" class="secondary-button" type="button">Recover global safety suspension</button></div><p id="automatic-safety" role="status"></p><div id="automatic-category-recovery" class="policy-actions" aria-live="polite"></div><div id="shadow-leave-impact" aria-live="polite"></div><div id="shadow-sample" class="shadow-sample" aria-live="polite"></div></div></section>
       </div>
     </div>
+  </section>
+</main>""",
+    )
+
+
+def activity_html(csrf_token: str) -> str:
+    return _shell(
+        title="Guarded application activity",
+        active="activity",
+        csrf_token=csrf_token,
+        main="""<main id="workspace" class="prototype-shell">
+  <section id="guarded-activity" class="activity-page" tabindex="-1">
+    <p class="loading" role="status"><span aria-hidden="true"></span> Loading guarded application…</p>
   </section>
 </main>""",
     )
@@ -244,7 +260,7 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .workspace-context { margin-left: auto; color: var(--ink-soft); font-size: .61rem; }
 
 .prototype-shell { width: 100%; max-width: 1540px; margin: auto; padding: 22px clamp(12px, 2.4vw, 30px) 70px; }
-.library-page:focus-visible, .attention-page:focus-visible, .detail-page:focus-visible { outline: none; }
+.library-page:focus-visible, .attention-page:focus-visible, .detail-page:focus-visible, .activity-page:focus-visible { outline: none; }
 .page-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 18px; margin-bottom: 16px; }
 .page-heading h1 { margin-bottom: 6px; }
 .page-heading p { max-width: 66ch; margin-bottom: 0; color: var(--ink-soft); }
@@ -386,6 +402,42 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .shadow-sample article p { margin: 3px 0 0; color: var(--ink-soft); font-size: .66rem; }
 .policy-chapter-select { display: none; }
 
+/* Selected 0.13 additive Activity surface. */
+.policy-paper, .policy-summary { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow); }
+.activity-consent { display: grid; gap: 18px; padding: clamp(22px, 4vw, 42px); }
+.activity-consent h2 { margin: 4px 0; font-size: clamp(1.5rem, 3vw, 2.1rem); }
+.activity-consent > div:first-child > p:last-child { max-width: 760px; color: var(--ink-soft); }
+.consent-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.consent-summary span { padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-strong); }
+.consent-summary strong, .consent-summary small, .activity-example strong, .activity-example small { display: block; }
+.consent-summary strong { font-family: Georgia, serif; font-size: 1.4rem; }
+.consent-summary small, .activity-example small { margin-top: 3px; color: var(--ink-soft); font-size: .7rem; }
+.activity-example { display: flex; align-items: center; gap: 11px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-strong); }
+.assurance-list { display: flex; flex-wrap: wrap; gap: 7px 22px; margin: 0; padding: 0; color: var(--ink-soft); font-size: .76rem; list-style-position: inside; }
+.activity-libraries { display: grid; gap: 7px; margin: 0; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-strong); }
+.activity-libraries legend { padding: 0 6px; color: var(--ink-soft); font-size: .66rem; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
+.activity-libraries label { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 8px; border-radius: var(--radius); font-size: .76rem; }
+.activity-libraries label:has(input:checked) { background: var(--accent-soft); }
+.activity-libraries input { width: 20px; min-height: 20px; flex: 0 0 20px; accent-color: var(--accent); }
+.activity-libraries label:has(input:disabled) { color: var(--ink-soft); }
+.activity-actions { justify-content: flex-start; }
+.application-activity { display: grid; grid-template-columns: minmax(250px, .34fr) minmax(0, .66fr); gap: 16px; align-items: start; }
+.application-summary { display: grid; gap: 10px; }
+.application-summary .application-counts { margin-top: 4px; }
+.activity-permission { border: 0; background: transparent; color: var(--notice); cursor: pointer; font-size: .76rem; font-weight: 800; text-align: left; }
+.activity-ledger { overflow: hidden; padding: 0 clamp(18px, 3vw, 30px); }
+.activity-ledger-heading { padding: 24px 0 13px; }
+.activity-ledger-heading h2, .activity-ledger-heading p { margin: 3px 0; }
+.activity-ledger-heading > div > p:last-child { color: var(--ink-soft); font-size: .78rem; }
+.activity-event { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 12px; align-items: start; padding: 16px 0; border-top: 1px solid var(--line); }
+.activity-event > .activity-pulse { margin: 7px 0 0 15px; }
+.activity-event strong, .activity-event p, .activity-event small { display: block; margin: 0; }
+.activity-event p, .activity-event small { margin-top: 4px; color: var(--ink-soft); font-size: .76rem; }
+.recovery-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 13px; align-items: center; margin: 20px 0 0; padding: 15px; border: 1px solid var(--notice); border-radius: var(--radius-md); background: var(--notice-soft); }
+.recovery-summary > .activity-pulse { color: var(--notice); }
+.recovery-summary h2, .recovery-summary p { margin: 3px 0; }
+.recovery-summary p, .recovery-summary small { color: var(--ink-soft); font-size: .76rem; }
+
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 
@@ -397,6 +449,7 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
   .field-navigation { display: flex; overflow-x: auto; padding-bottom: 5px; }
   .field-navigation a { flex: 0 0 auto; min-width: 170px; }
   .policy-notebook { grid-template-columns: 1fr; }
+  .application-activity { grid-template-columns: 1fr; }
   .policy-chapters { position: sticky; top: 118px; grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; }
 }
 
@@ -434,6 +487,7 @@ pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
   .command-arrow { justify-self: center; transform: rotate(90deg); }
   .choices { grid-template-columns: 1fr; }
   .field-meta { grid-template-columns: 1fr; }
+  .consent-summary { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 360px) {
@@ -789,6 +843,7 @@ if (attentionRoot) {
   }).catch(() => failPage(attentionRoot));
 }
 
+
 const root = document.querySelector("#review");
 if (root) {
   const id = encodeURIComponent(root.dataset.reviewCaseId);
@@ -809,6 +864,9 @@ if (root) {
     const button = element("button", label);
     button.type = "button";
     if (outcome === "reject") button.className = "reject";
+    if (!["allowed", "unavailable"].includes(field.effect_capability)) {
+      button.disabled = true;
+    }
     let idempotencyKey;
     let refreshBeforeRetry = false;
     let loginRequired = false;
@@ -895,7 +953,7 @@ if (root) {
     for (const field of detail.fields) {
       if (!field.needs_attention) { resolved.push(field); continue; }
       const section = element("section", null, "field"); section.id = `field-${field.destination}`; section.tabIndex = -1;
-      const fieldHeading = element("header", null, "field-heading"); const fieldTitle = element("div"); fieldTitle.append(element("p", "Current to outcome", "eyebrow"), element("h2", field.destination), element("p", `Deterministic disposition: ${friendly(field.deterministic_disposition)}`)); fieldHeading.append(fieldTitle, element("span", "Needs a choice", "badge")); section.append(fieldHeading);
+      const fieldHeading = element("header", null, "field-heading"); const fieldTitle = element("div"); fieldTitle.append(element("p", "Current to effect", "eyebrow"), element("h2", field.destination), element("p", `Deterministic disposition: ${friendly(field.deterministic_disposition)} · effect ${field.effect_capability === "allowed" ? "ready" : friendly(field.effect_capability)}`)); fieldHeading.append(fieldTitle, element("span", "Needs a choice", "badge")); section.append(fieldHeading);
       const comparison = element("div", null, "comparison"); const current = element("div", null, "value-card"); current.append(element("small", `Current · ${friendly(field.current.state)}`), element("strong", format(field.current.value))); comparison.append(current, element("span", "→", "command-arrow"));
       const proposed = element("div", null, "value-card proposed"); proposed.append(element("small", "Proposed outcome"), element("strong", field.proposed_values.length ? field.proposed_values.map(value => format(value.value)).join(" · or · ") : "No proposed value")); comparison.append(proposed); section.append(comparison);
       const meta = element("div", null, "field-meta"); for (const [label, values] of [["Evidence", field.provenance], ["Notices", field.notices], ["Uncertainty", field.uncertainty]]) { const box = element("span"); box.append(element("strong", label), document.createTextNode(values.length ? values.map(friendly).join(" · ") : "None")); meta.append(box); } section.append(meta);
@@ -908,13 +966,29 @@ if (root) {
     if (resolved.length) {
       const context = element("details", null, "automatic-context"); context.append(element("summary", `Resolved and automatic context (${resolved.length})`)); const inner = element("div", null, "details-inner");
       for (const field of resolved) {
-        const row = element("section", null, "resolved-field");
+        const row = element("section", null, "resolved-field field");
         const usesProposed = field.deterministic_disposition === "use_proposed_value" && field.proposed_values.length;
         const automaticCandidate = field.automatic_decision?.outcome === "candidate" ? field.automatic_decision.selected_value : null;
         const outcomeValue = field.human_decision?.outcome === "accept" ? field.human_decision.selected_value : automaticCandidate ?? (usesProposed ? field.proposed_values.map(value => value.value) : field.current.value);
         row.append(element("h3", field.destination), element("p", `${friendly(field.deterministic_disposition)} · Current: ${format(field.current.value)} · Outcome value: ${format(outcomeValue)}`));
         if (field.human_decision) row.append(element("p", `Human decision: ${friendly(field.human_decision.outcome)} by ${field.human_decision.actor}.`, "decision-recorded"));
         if (field.automatic_decision) row.append(element("p", `Handled automatically: ${friendly(field.automatic_decision.outcome)} · policy origin.`, "decision-recorded"));
+        if (field.automatic_decision || field.human_decision) {
+          const edit = element("button", field.human_decision ? "Change human decision" : "Choose human override", "inline-action"); edit.type = "button";
+          const choices = element("fieldset", null, "choices"); choices.hidden = true; choices.append(element("legend", `Override ${field.destination}`));
+          field.proposed_values.forEach((value, index) => choices.append(choiceButton(field, field.proposed_values.length === 1 ? "Accept proposed value" : `Accept proposed value ${index + 1}`, "accept", value)));
+          choices.append(choiceButton(field, "Keep current value", "keep_current", null), choiceButton(field, "Reject proposed change", "reject", null));
+          const status = element("p", "", "decision-status");
+          edit.addEventListener("click", () => { choices.hidden = false; edit.hidden = true; choices.querySelector("button")?.focus(); });
+          row.append(edit, choices, status);
+        }
+        if (field.manual_hold) {
+          const hold = element("p", "Manual hold · automatic is off for this field.", "decision-recorded");
+          const release = element("button", "Return to automatic policy", "inline-action"); release.type = "button";
+          const status = element("p", "", "decision-status");
+          release.addEventListener("click",async()=>{release.disabled=true;status.textContent="Requesting fresh evaluation…";const send=()=>fetch(`/api/v1/review-cases/${id}/fields/${encodeURIComponent(field.destination)}/return-to-automatic`,{method:"POST",headers:{"x-csrf-token":csrf}});try{let r=await send();if(r.status===403){csrf=await refreshCsrf();r=await send();}if(!r.ok)throw 0;status.textContent="Automatic policy resumes after fresh checks.";}catch{release.disabled=false;status.textContent="Hold unchanged. Try again.";}});
+          row.append(hold, release, status);
+        }
         inner.append(row);
       }
       context.append(inner); content.append(context);
@@ -948,6 +1022,109 @@ if (root) {
   });
 }
 
+""".splitlines())
+
+
+ACTIVITY_JS = "\n".join(line.strip() for line in r"""
+const guardedActivityRoot = document.querySelector("#guarded-activity");
+if (guardedActivityRoot) {
+  const activityCall = async (path, method = "GET", body = null) => {
+    const send = () => fetch(path, {
+      method,
+      cache: "no-store",
+      headers: method === "GET" ? {} : {"content-type": "application/json", "x-csrf-token": pageCsrf},
+      body: body === null ? null : JSON.stringify(body),
+    });
+    let response = await send();
+    if (method !== "GET" && response.status === 403) {
+      pageCsrf = await refreshPageCsrf();
+      response = await send();
+    }
+    const value = response.status === 204 ? null : await response.json().catch(() => null);
+    if (!response.ok) { const error = new Error(); error.code = value?.detail?.code || value?.error?.code; throw error; }
+    return value;
+  };
+  const metric = (value, label) => { const item=element("span"); item.append(element("strong", String(value)), element("small", label)); return item; };
+  const eventCopy = event => {
+    const state = friendly(event.state);
+    if (event.failure) return `${friendly(event.failure)} · held safely for recovery`;
+    if (event.state === "verified") return "Accepted decision matches the current library value.";
+    if (event.state === "planned") return "Accepted decision is ready for its fair mutation turn.";
+    return `${state} under the guarded application contract.`;
+  };
+  let timer = null;
+  const renderGuardedActivity = data => {
+    clearTimeout(timer);
+    const top = heading("Guarded application", data.enabled_libraries.length ? "Activity" : "Ready when you are", data.enabled_libraries.length ? "A readable account of outcomes and exceptions. Normal application requires no monitoring or queue operation." : "Review remains useful in read-only mode. This one-time step enables supported Audiobookshelf writes for accepted decisions.");
+    if (!data.enabled_libraries.length) {
+      const card = element("section", null, "policy-paper activity-consent");
+      const introduction = element("div");
+      introduction.append(element("p", `This Audiobookshelf instance · ${data.configured_libraries.length} ${data.configured_libraries.length === 1 ? "library" : "libraries"}`, "eyebrow"), element("h2", "Enable guarded writes"), element("p", `Mechanical Librarian has finished preparing ${data.prepared.automatic} qualified automatic changes and ${data.prepared.human} human decisions. Every write is checked immediately before it starts, verified afterward, and recorded durably.`));
+      const summary = element("div", null, "consent-summary");
+      summary.append(metric(data.prepared.total, "Decisions prepared"), metric(14, "Reviewable and applyable fields"), metric(1, "Instance-wide mutation slot"));
+      const example = element("div", null, "activity-example");
+      const work = data.example;
+      const mark = element("span", work ? initials(work.work_id) : "ML", "work-mark"); mark.setAttribute("aria-hidden", "true");
+      const exampleText = element("span");
+      exampleText.append(element("strong", work ? work.work_id : "Accepted metadata decision"), element("small", work ? `${format(work.before)} → ${format(work.after)} · ${friendly(work.destination)}` : "A prepared before-and-after example will appear here."));
+      example.append(mark, exampleText);
+      const assurances = element("ul", null, "assurance-list");
+      for (const copy of ["Automatic work never waits for unrelated manual review.", "Pausing stops new claims; claimed work may finish safely.", "Queued decisions remain reusable and editable."]) assurances.append(element("li", copy));
+      const libraries = element("fieldset", null, "activity-libraries"); libraries.append(element("legend", "Libraries to enable"));
+      const capabilityByLibrary = new Map(data.capabilities.map(item => [item.library, item.state]));
+      for (const library of data.configured_libraries) {
+        const label = element("label"); const choice = element("input"); choice.type = "checkbox"; choice.value = library.library;
+        const state = capabilityByLibrary.get(library.library) || "not_ready"; choice.disabled = state !== "allowed" || !library.prepared.total; choice.checked = !choice.disabled;
+        label.append(choice, document.createTextNode(` ${library.library} · ${library.prepared.total} prepared (${library.prepared.automatic} automatic, ${library.prepared.human} human)${choice.disabled ? ` · ${friendly(state)}` : ""}`)); libraries.append(label);
+      }
+      const actions = element("div", null, "policy-actions activity-actions");
+      const enable = element("button", "Enable guarded writes", "primary-button"); enable.type = "button";
+      const status = element("p", "", "decision-status"); status.setAttribute("role", "status");
+      const selectedLibraries = () => [...libraries.querySelectorAll("input:checked")].map(item => item.value);
+      const refreshEnable = () => { enable.disabled = !data.backup_ready || !selectedLibraries().length; };
+      libraries.addEventListener("change", refreshEnable); refreshEnable();
+      if (!selectedLibraries().length) status.textContent = "Prepare at least one accepted decision in a write-capable library before enabling writes.";
+      enable.addEventListener("click", async () => {
+        enable.disabled = true; status.textContent = "Enabling guarded writes…";
+        try { renderGuardedActivity(await activityCall("/api/v1/activity/consent", "POST", {libraries: selectedLibraries()})); }
+        catch (error) { enable.disabled = false; status.setAttribute("role", "alert"); status.textContent = `Write permission was not enabled (${friendly(error.code || "unavailable")}). Review remains read-only.`; }
+      });
+      actions.append(enable, status); card.append(introduction, summary, example, assurances, libraries, actions);
+      guardedActivityRoot.replaceChildren(top, card);
+    } else {
+      const layout = element("div", null, "application-activity");
+      const side = element("aside", null, "policy-summary application-summary");
+      side.append(element("p", `${data.enabled_libraries.length} enabled ${data.enabled_libraries.length === 1 ? "library" : "libraries"}`, "eyebrow"), element("h2", data.paused ? "New work paused" : "Applying safely"), element("p", "One mutation at a time across the instance. Mechanical Librarian chooses the next fair, safe work.", "prototype-note"));
+      const counts = element("ul", null, "impact-list application-counts");
+      const count = state => data.counts[state] || 0;
+      for (const [label, value] of [["Ready", count("planned") + count("retryable")], ["Active write and verify", count("claimed") + count("applying")], ["Reconciling", count("reconciling")]]) { const row=element("li"); row.append(element("span", label), element("strong", String(value))); counts.append(row); }
+      const controls = element("div", null, "policy-actions activity-actions");
+      const pause = element("button", data.paused ? "Resume new work" : "Pause new work"); pause.type="button";
+      const controlStatus = element("p", "", "decision-status"); controlStatus.setAttribute("role", "status");
+      pause.addEventListener("click", async () => { pause.disabled=true; try { await activityCall(`/api/v1/field-effects/${data.paused ? "resume" : "pause"}`, "POST"); renderGuardedActivity(await activityCall("/api/v1/activity")); } catch { pause.disabled=false; controlStatus.setAttribute("role", "alert"); controlStatus.textContent="Application control failed safely. Try again."; } });
+      controls.append(pause);
+      const permissions = element("div", null, "activity-permissions");
+      for (const library of data.enabled_libraries) {
+        const revoke = element("button", `Remove write permission for ${library.library}`, "activity-permission"); revoke.type="button";
+        revoke.addEventListener("click", async () => { revoke.disabled=true; try { await activityCall(`/api/v1/activity/${encodeURIComponent(library.connection)}/${encodeURIComponent(library.library)}/revoke`, "POST"); renderGuardedActivity(await activityCall("/api/v1/activity")); } catch { revoke.disabled=false; controlStatus.setAttribute("role", "alert"); controlStatus.textContent=`Permission for ${library.library} was not removed. Try again.`; } });
+        permissions.append(revoke);
+      }
+      side.append(counts, controls, permissions, controlStatus);
+      const ledger = element("section", null, "policy-paper activity-ledger");
+      if (data.suspensions.length || data.last_failure || data.cleanup.pending || count("reconciling") || count("retryable")) {
+        const recovery = element("section", null, "recovery-summary"); recovery.append(element("span", "", "activity-pulse"));
+        const copy=element("div"); copy.append(element("p", "Grouped recovery", "eyebrow"), element("h2", data.cleanup.exhausted ? "Owner action is required" : "A shared cause is being contained"), element("p", data.cleanup.exhausted ? "Private cover recovery could not complete after bounded retries. Accepted decisions and captured pre-state remain retained." : "New affected work is held safely while current library state is checked. Accepted decisions are retained."), element("small", `${data.suspensions.length} capability suspension(s) · ${count("reconciling") + count("retryable")} recoverable work item(s) · ${data.cleanup.pending} private cleanup(s)`)); recovery.append(copy); ledger.append(recovery);
+      }
+      const ledgerHead=element("header", null, "activity-ledger-heading"); const ledgerCopy=element("div"); ledgerCopy.append(element("p", "Recent outcomes", "eyebrow"), element("h2", "What Mechanical Librarian is doing"), element("p", "Execution detail is available when wanted, without exposing queue controls.")); ledgerHead.append(ledgerCopy); ledger.append(ledgerHead);
+      for (const event of data.events) { const row=element("div", null, `activity-event${["claimed","applying","reconciling"].includes(event.state) ? " current" : ""}`); const icon=["claimed","applying","reconciling"].includes(event.state) ? element("span", "", "activity-pulse") : element("span", initials(event.work_id), "work-mark"); icon.setAttribute("aria-hidden", "true"); const copy=element("div"); copy.append(element("strong", `${event.work_id} · ${friendly(event.state)}`), element("p", eventCopy(event)), element("small", `${event.library} · ${friendly(event.destination)} · ${event.origin === "automatic" ? "qualified automatic" : "human decision"}`)); row.append(icon,copy); ledger.append(row); }
+      if (!data.events.length) ledger.append(element("p", "No application outcomes have been recorded yet.", "empty-state"));
+      layout.append(side,ledger); guardedActivityRoot.replaceChildren(top,layout);
+    }
+    guardedActivityRoot.focus({preventScroll:true});
+    timer = setTimeout(() => activityCall("/api/v1/activity").then(renderGuardedActivity).catch(() => {}), 5000);
+  };
+  activityCall("/api/v1/activity").then(renderGuardedActivity).catch(() => failPage(guardedActivityRoot));
+}
 """.splitlines())
 
 

@@ -33,6 +33,18 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect 
     AudiobookshelfFieldEffectCapabilities,
     AudiobookshelfFieldEffectTarget,
 )
+from mechanical_librarian.adapters.field_effect_authority import (
+    PersistedFieldEffectAuthority,
+)
+from mechanical_librarian.adapters.field_effect_runtime import (
+    DurableBackupReadiness,
+    PersistedEffectConsent,
+    PersistedEffectDependencies,
+    PersistedForwardReevaluation,
+)
+from mechanical_librarian.adapters.private_recovery import (
+    PrivateCoverRecoveryStore,
+)
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.batch_manifest import create as create_batch_manifest, read as read_batch_manifest
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
@@ -91,6 +103,10 @@ from mechanical_librarian.application.metadata_report import (
     UnsupportedMediaError,
     require_report_current,
 )
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
+from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.proposal_sets import (
     CreateProposalSet,
     GetProposalSet,
@@ -215,6 +231,74 @@ def compose_audiobookshelf_field_effect_capabilities(
         client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds) if credentials is None else target_client_token(connection.endpoint, credentials["target:" + connection.name], configuration.limits.timeout_seconds),
         endpoint=connection.endpoint, library_id=library.library_id,
         maximum_response_bytes=configuration.limits.target_response_bytes,
+    )
+
+
+def compose_continuous_guarded_application(
+    configuration, repository, database_path: Path, artifact_store_path: Path,
+    preparation: ReviewPreparationSupervisor,
+) -> ContinuousGuardedApplication:
+    """Activate one configured Audiobookshelf instance across its libraries."""
+    configured = tuple(
+        (library.connection, library.name)
+        for library in configuration.libraries
+    )
+    if not configured:
+        raise ConfigurationError("guarded application has no configured library")
+    artifact_identity = CoverArtifactStore(
+        artifact_store_path, create=True
+    ).identity
+    targets = {
+        key: compose_audiobookshelf_field_effect_target(
+            configuration, artifact_store_path, *key,
+            artifact_identity=artifact_identity,
+        )
+        for key in configured
+    }
+    capabilities = {
+        key: compose_audiobookshelf_field_effect_capabilities(
+            configuration, *key
+        )
+        for key in configured
+    }
+    private_root = database_path.parent / "private"
+    private_root.mkdir(mode=0o700, exist_ok=True)
+    recovery_root = private_root / "cover-recovery"
+    recovery_root.mkdir(mode=0o700, exist_ok=True)
+    recovery = PrivateCoverRecoveryStore(
+        recovery_root,
+        lambda plan: targets[(plan.connection, plan.library)].read_cover_bytes(plan),
+    )
+    authority = PersistedFieldEffectAuthority(repository)
+    consent = PersistedEffectConsent(repository)
+    dependencies = PersistedEffectDependencies(repository)
+    backup = DurableBackupReadiness(repository)
+    reevaluation = PersistedForwardReevaluation(
+        lambda connection, library: preparation.request(connection, library)
+    )
+    applications = {
+        key: GuardedFieldApplication(
+            repository,
+            targets[key],
+            backup,
+            capabilities[key],
+            authority,
+            dependencies,
+            consent,
+            recovery,
+            reevaluation,
+            lambda: int(time.time()),
+        )
+        for key in configured
+    }
+    return ContinuousGuardedApplication(
+        repository,
+        applications,
+        capabilities,
+        authority,
+        configured,
+        lambda: int(time.time()),
+        preparation.request,
     )
 
 
@@ -1476,6 +1560,17 @@ def run_review_server(
                 repository.authority,
                 timing,
             )
+            field_application = (
+                compose_continuous_guarded_application(
+                    configuration,
+                    repository,
+                    database_path,
+                    artifact_store_path,
+                    preparation,
+                )
+                if getattr(configuration, "libraries", ())
+                else None
+            )
             support_bundle = SupportBundle(((
                 "runtime",
                 lambda: {
@@ -1496,6 +1591,7 @@ def run_review_server(
                 operational_timings=timing_store,
                 operational_support=support_bundle,
                 operational_timer=timing,
+                field_application=field_application,
             )
             uvicorn.run(
                 app,

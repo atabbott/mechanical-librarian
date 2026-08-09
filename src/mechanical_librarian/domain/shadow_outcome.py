@@ -172,7 +172,9 @@ class ShadowFieldOutcome:
             or len(self.combination_ids) > MAX_BIBLIOGRAPHIC_COMBINATIONS
             or any(
                 type(value) is not str
-                or re.fullmatch(r"(?:local|provider)_[0-9a-f]{64}", value) is None
+                or re.fullmatch(
+                    r"[a-z][a-z0-9_-]{0,63}_[0-9a-f]{64}", value
+                ) is None
                 for value in self.citation_ids
             )
             or any(

@@ -12,8 +12,9 @@ prototype's static-file delivery and browser-local workflow authority.
 Locked variant M at `026e338` is the authoritative visual contract for the
 in-scope Library, Attention, and Detail surfaces. Its prototype code remains
 directional evidence rather than production code. Its separate library
-activity view is not an F16a surface: F17a adds only the selected compact shared
-activity indicator and bounded per-library operational popover. Library-wide
+activity view is not an F16a surface: F17 adds Activity as one permanent,
+badge-free destination for guarded readiness, consent, a quiet ledger and
+grouped recovery. Library-wide
 bibliographic or cross-case history remains deferred to #195. Variant I is
 retained only as design lineage.
 
@@ -315,11 +316,13 @@ widths in both themes without document-level horizontal overflow. The selected
 theme is non-authoritative presentation state and cannot affect review data or
 decision authority.
 
-While continuous preparation is active or actionable, the shared shell may show
-one compact activity control. Its popover uses checked/remaining/ready/blocked
-language and secondary pause, resume, scan, or eligible retry actions. It does
-not replace the Library or Attention hierarchy, expose internal jobs or rates,
-or turn operational failure into a metadata decision.
+Activity preserves the Library, Attention and Policy hierarchy. Before consent
+it shows prepared human/automatic counts, the 14-field envelope, one mutation
+slot, a representative before/after example, backup/capability readiness and one
+enable action. Afterwards it shows a compact running summary and chronological
+ledger, with pause/resume/revoke as the only prominent controls and grouped
+recovery for scoped failures. It does not expose internal jobs or rates, add a
+badge, or turn operational failure into a metadata decision.
 
 The delivered F16a detail page uses a bounded horizontally scrollable field
 attention-only strip inside a non-overflowing document. Each genuinely

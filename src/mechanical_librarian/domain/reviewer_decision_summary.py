@@ -523,6 +523,10 @@ def proposal_decision_summary(
 ) -> dict[str, object]:
     """Project closed proposal-level sufficiency without making a decision."""
     outcome = result["outcome"]
+    has_evidence_backed_preservation = any(
+        alternative["assessment"] == "preserves_target"
+        for alternative in result["alternatives"]
+    )
     if manual_required:
         sufficiency = "manual"
     elif outcome == ProposalOutcome.KEEP.value:
@@ -532,12 +536,17 @@ def proposal_decision_summary(
         ProposalOutcome.PROPOSE_CHANGE.value,
     }:
         sufficiency = "candidate"
+    elif (
+        outcome == ProposalOutcome.UNRESOLVED_CHOICE.value
+        and result["destination"] == TargetDestination.TITLE.value
+        and has_evidence_backed_preservation
+    ):
+        # The closed shadow rules may resolve a title conflict only when the
+        # current value itself has evidence.  The target-only gate remains in
+        # force, and zero or multiple fully supported bundle actions abstain.
+        sufficiency = "candidate"
     else:
         sufficiency = "manual"
-    has_evidence_backed_preservation = any(
-        alternative["assessment"] == "preserves_target"
-        for alternative in result["alternatives"]
-    )
     target_only = int(
         current.get("state") == "value"
         and not has_evidence_backed_preservation

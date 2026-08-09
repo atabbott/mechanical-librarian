@@ -902,6 +902,7 @@ def plan(destination, suffix, pre="old", desired="new"):
     )
     consent = EffectConsent.create(
         connection="primary", library="books", destination=destination,
+        envelope_identity=repository.field_effect_consent_envelope_identity("books"),
         granted_at=1,
     )
     value = FieldEffectPlan.create(

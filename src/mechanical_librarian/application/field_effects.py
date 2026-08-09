@@ -76,6 +76,8 @@ class AuthoritySnapshot:
     target_version: str
     decision_value: object
     source: Literal["persisted_review_case", "fake_service"]
+    pre_value: object = None
+    dependency_digests: tuple[str, ...] = ()
 
 
 class FieldEffectRepository(Protocol):
@@ -207,9 +209,13 @@ class GuardedFieldApplication:
 
     def start(self) -> tuple[int, int, int]:
         """Resume admission and complete bounded exact-current restart work."""
+        self.resume_admission()
+        return self.recover_startup()
+
+    def resume_admission(self) -> None:
+        """Resume this target without consuming repository-global recovery work."""
         with self._admission_lock:
             self._draining.clear()
-        return self.recover_startup()
 
     def begin_drain(self) -> None:
         """Reject new claims while allowing an already-claimed effect to finish."""
@@ -512,20 +518,21 @@ class GuardedFieldApplication:
             changed_at=self._clock(),
         )
 
-    def _recover_cleanup(self, operation: FieldEffectOperation) -> None:
+    def _recover_cleanup(self, operation: FieldEffectOperation) -> bool:
         if (operation.plan.destination != "cover"
                 or not self._repository.field_effect_cleanup_pending(operation.plan.plan_id)):
-            return
+            return False
         try:
             self._cover_recovery.remove(operation.plan.plan_id)
         except Exception:
             self._repository.fail_field_effect_cleanup(
                 operation.plan.plan_id, self._clock()
             )
-            return
+            return False
         self._repository.complete_field_effect_cleanup(
             operation.plan.plan_id, self._clock()
         )
+        return True
 
     def run_pending_actions(self, *, limit: int = 100,
                             plan_id: str | None = None) -> int:
@@ -553,9 +560,10 @@ class GuardedFieldApplication:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise GuardedApplicationError("invalid_limit")
         plan_ids = self._repository.pending_field_effect_cleanups(limit)
-        for plan_id in plan_ids:
+        return sum(
             self._recover_cleanup(self.status(plan_id))
-        return len(plan_ids)
+            for plan_id in plan_ids
+        )
 
     def recover_pending(self, *, limit: int = 100) -> tuple[int, int]:
         """Bounded restart entrypoint for the two closed recovery obligations."""

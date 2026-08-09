@@ -154,13 +154,14 @@ class FakeAuthorityCurrentness:
 
 
 class FakeConsentCurrentness:
-    def __init__(self) -> None:
+    def __init__(self, envelope_identity=None) -> None:
         self.revoked: set[str] = set()
         self.allowed: dict[tuple[str, str, str, str], EffectConsent] = {}
+        self._envelope_identity = envelope_identity or (lambda _: "a" * 64)
     def allow(self, *, connection: str, library: str, destination: str) -> None:
         consent = EffectConsent.create(
             connection=connection, library=library, destination=destination,
-            granted_at=1,
+            envelope_identity=self._envelope_identity(library), granted_at=1,
         )
         self.allowed[(connection, library, destination, "apply_field")] = consent
     def resolve(self, *, connection: str, library: str,

@@ -59,6 +59,7 @@ def _plan(repository, clock, destination, suffix, pre="old", desired="new"):
         connection="primary",
         library="books",
         destination=destination,
+        envelope_identity="a" * 64,
         granted_at=1,
     )
     value = FieldEffectPlan.create(

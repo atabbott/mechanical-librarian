@@ -189,11 +189,14 @@ def _synthetic_automatic_tuple(repository, case_id: str, category: str):
     """
     case = ReviewCase.create_from_data(json.loads(repository.get_review_case(case_id))["case"])
     members, option = (
-        (("title", "subtitle", "series"), "title_and_subtitle")
+        (("title",), "title_and_subtitle")
         if category == "title_layout"
         else (("publishedDate", "publishedYear"), "full_date")
     )
-    shared = ("bibliographic_combination_" + "a" * 64,)
+    shared = (
+        ("bibliographic_combination_" + "a" * 64,)
+        if category == "title_layout" else ()
+    )
     fields = tuple(
         SimpleNamespace(
             disposition="candidate",
@@ -201,6 +204,7 @@ def _synthetic_automatic_tuple(repository, case_id: str, category: str):
             policy_option=option,
             policy_destination="automatic",
             destination=destination,
+            citation_ids=("local_" + "a" * 64,),
             combination_ids=shared,
             proposal_id="review_proposal_" + f"{index:064x}",
             candidate_id="alternative_" + f"{index + 16:064x}",
@@ -248,6 +252,38 @@ def _human_title_decision(repository, case_id: str, occurred_at: int) -> HumanDe
 
 
 class ShadowOutcomePersistenceTests(unittest.TestCase):
+    def test_outcome_accepts_packet_valid_configured_provider_citations(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            repository.enter_shadow_preview(1)
+            base = ShadowOutcomeSet.from_json(
+                repository.persist_shadow_outcome(case_id, 2)
+            )
+            repository.close()
+        field = base.outcomes[0]
+        citations = ("hardcover_" + "a" * 64,)
+        qualification_candidate_id = "qualification_candidate_" + _digest(
+            {
+                "action_id": field.action_id,
+                "candidate_id": field.candidate_id,
+                "catalogue_sha256": base.catalogue_sha256,
+                "citation_ids": list(citations),
+                "combination_ids": list(field.combination_ids),
+                "rule_id": field.rule_id,
+            }
+        )
+        identity = field._identity_data()
+        identity["citation_ids"] = list(citations)
+        identity["qualification_candidate_id"] = qualification_candidate_id
+        projected = replace(
+            field,
+            outcome_id="shadow_outcome_" + _digest(identity),
+            citation_ids=citations,
+            qualification_candidate_id=qualification_candidate_id,
+        )
+        self.assertEqual(citations, projected.citation_ids)
+
     def test_preview_automatic_matrix_preserves_human_policy_and_records_outcomes(self) -> None:
         publisher = LocalClaim.create(
             kind=ClaimKind.PUBLISHER,
@@ -539,7 +575,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 with self.assertRaisesRegex(MetadataReportError, "reconciliation failed"):
                     repository.enter_shadow_preview(3)
             self.assertEqual("automatic", repository.shadow_posture())
-            self.assertEqual((3,), repository._connection.execute(
+            self.assertEqual((1,), repository._connection.execute(
                 "SELECT COUNT(*) FROM automatic_decisions"
             ).fetchone())
             repository.close()
@@ -601,8 +637,9 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 repository,
                 "_record_automatic_outcomes",
                 side_effect=AutomaticDecisionError("category:title_layout"),
-            ):
+            ) as admission:
                 repository.persist_shadow_outcome(case_id, 10)
+            self.assertEqual(2, admission.call_count)
             safety = repository.automatic_safety_state()
             self.assertIsNone(safety.global_suspension)
             self.assertEqual(
@@ -807,7 +844,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             repository._connection.rollback()
             repository.close()
 
-    def test_human_and_automatic_winners_are_mutually_exclusive_without_suspension(self) -> None:
+    def test_human_authority_supersedes_automatic_without_global_suspension(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             repository = open_repository(Path(temporary) / "reports.sqlite")
             case_id = _case(repository)
@@ -833,11 +870,17 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             repository._record_automatic_outcomes(
                 _synthetic_automatic_tuple(repository, case_id, "title_layout"), 2
             )
-            with self.assertRaisesRegex(HumanDecisionError, "already_decided"):
-                repository.record_human_decision(_human_title_decision(repository, case_id, 3))
-            self.assertEqual((0, 3), tuple(repository._connection.execute(
+            repository.record_human_decision(_human_title_decision(repository, case_id, 3))
+            self.assertEqual((1, 1), tuple(repository._connection.execute(
                 "SELECT (SELECT COUNT(*) FROM human_decisions),(SELECT COUNT(*) FROM automatic_decisions)"
             ).fetchone()))
+            self.assertEqual(
+                ("primary", "ebooks"),
+                repository.field_effect_manual_hold_context(case_id, "title"),
+            )
+            self.assertEqual(
+                AutomaticSafetyState(False, None, ()), repository.automatic_safety_state()
+            )
             repository.close()
 
     def test_automatic_tuple_replay_is_exact_and_date_and_title_bundles_are_atomic(self) -> None:
@@ -852,9 +895,9 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             repository._record_automatic_outcomes(title, 99)
             repository._record_automatic_outcomes(dates, 8)
             documents = tuple(json.loads(value) for value in repository.get_review_case_decisions(case_id))
-            self.assertEqual(first, repository.get_review_case_decisions(case_id)[:3])
-            self.assertEqual(5, len(documents))
-            for destinations in (("title", "subtitle", "series"), ("publishedDate", "publishedYear")):
+            self.assertEqual(first, repository.get_review_case_decisions(case_id)[:1])
+            self.assertEqual(3, len(documents))
+            for destinations in (("title",), ("publishedDate", "publishedYear")):
                 bundle = [value for value in documents if value["destination"] in destinations]
                 self.assertEqual(set(destinations), {value["destination"] for value in bundle})
                 self.assertEqual(1, len({value["bundle_id"] for value in bundle}))
@@ -870,7 +913,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             repository = open_repository(Path(temporary) / "reports.sqlite")
             case_id = _case(repository)
             incoherent = _synthetic_automatic_tuple(repository, case_id, "title_layout")
-            incoherent.outcomes[1].combination_ids = ("bibliographic_combination_" + "b" * 64,)
+            incoherent.outcomes[0].combination_ids = ()
             with self.assertRaisesRegex(AutomaticDecisionError, "category:title_layout"):
                 repository._record_automatic_outcomes(incoherent, 3)
             repository.set_automatic_safety_state(
@@ -886,9 +929,48 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             repository._record_automatic_outcomes(
                 _synthetic_automatic_tuple(repository, case_id, "title_layout"), 7
             )
-            self.assertEqual((3,), repository._connection.execute(
+            self.assertEqual((1,), repository._connection.execute(
                 "SELECT COUNT(*) FROM automatic_decisions"
             ).fetchone())
+            repository.close()
+
+    def test_suspended_bundle_does_not_block_an_unrelated_automatic_category(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            outcome = _synthetic_automatic_tuple(
+                repository, case_id, "date_precision"
+            )
+            outcome.outcomes += (SimpleNamespace(
+                disposition="candidate",
+                policy_category="language_rendering",
+                policy_option="display_name",
+                policy_destination="automatic",
+                destination="language",
+                citation_ids=("local_" + "9" * 64,),
+                combination_ids=(),
+                proposal_id="review_proposal_" + "9" * 64,
+                candidate_id="alternative_" + "8" * 64,
+                rule_id="shadow_rule_" + "7" * 64,
+                outcome_id="shadow_outcome_" + "6" * 64,
+            ),)
+            repository.set_automatic_safety_state(
+                AutomaticSafetyState(
+                    False, None,
+                    (("date_precision", "automatic_admission_failed"),),
+                ),
+                3,
+            )
+            repository._record_automatic_outcomes(outcome, 4)
+            self.assertEqual(
+                ("language",),
+                tuple(
+                    value[0]
+                    for value in repository._connection.execute(
+                        "SELECT destination FROM automatic_decisions"
+                    ).fetchall()
+                ),
+            )
             repository.close()
 
     def test_nonautomatic_policy_destination_never_constructs_an_automatic_decision(self) -> None:

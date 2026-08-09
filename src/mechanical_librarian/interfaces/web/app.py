@@ -37,7 +37,13 @@ from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
     GuardedFieldApplication,
 )
-from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
+from mechanical_librarian.domain.field_effect import (
+    FieldEffectError,
+    SUPPORTED_DESTINATIONS,
+)
 from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls, MetadataPolicyApplicationError, PolicyNotebook, PolicyTransition
 from mechanical_librarian.application.operations import (
     OperationalStatus, OperationsError, StageTimer, SupportExporter,
@@ -130,12 +136,18 @@ class _AutomaticSuspendRequest(_ClosedModel):
     reason: StrictStr = Field(min_length=1, max_length=256)
 
 
+class _ActivityConsentRequest(_ClosedModel):
+    libraries: list[StrictStr] = Field(min_length=1, max_length=64)
+
+
 class _ReviewField(_ClosedModel):
     current: _TargetField
     deterministic_disposition: str
     destination: str
+    effect_capability: str
     human_decision: _DecisionProjection | None
     automatic_decision: _AutomaticDecisionProjection | None
+    manual_hold: bool
     manual_required: bool
     needs_attention: bool
     notices: list[str]
@@ -618,12 +630,14 @@ def create_review_app(
     close_repository: bool = False,
     review_preparation: ReviewPreparationSupervisor | None = None,
     policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
-    field_application: GuardedFieldApplication | None = None,
+    field_application: GuardedFieldApplication | ContinuousGuardedApplication | None = None,
     operational_timings: TimingRepository | None = None,
     operational_support: SupportExporter | None = None,
     operational_timer: StageTimer | None = None,
 ) -> FastAPI:
     serialized_repository = _SerializedReviewRepository(repository)
+    if isinstance(field_application, ContinuousGuardedApplication):
+        field_application.attach_serialization(serialized_repository.call_serialized)
     operational_status = (
         None if operational_timings is None else OperationalStatus(
             snapshot=lambda: serialized_repository.call_serialized(
@@ -1050,9 +1064,22 @@ def create_review_app(
     ) -> _CaseDetailResponse:
         _require_session(sessions, ml_session)
         _require_case_id(review_case_id)
-        return _CaseDetailResponse.model_validate(
-            _case_call(lambda: cases.run(review_case_id))
-        )
+        detail = _case_call(lambda: cases.run(review_case_id))
+        target = detail["target"]
+        if isinstance(field_application, ContinuousGuardedApplication):
+            for field in detail["fields"]:
+                suspension = serialized_repository.call_serialized(
+                    lambda field=field: repository.field_effect_capability_suspension(
+                        target["connection"], field["destination"]
+                    )
+                )
+                field["effect_capability"] = (
+                    "allowed" if suspension is None else suspension
+                )
+        else:
+            for field in detail["fields"]:
+                field["effect_capability"] = "unavailable"
+        return _CaseDetailResponse.model_validate(detail)
 
     @app.post(
         "/api/v1/review-cases/{review_case_id}/decisions",
@@ -1073,7 +1100,7 @@ def create_review_app(
     ) -> _DecisionAcknowledgement:
         actor = _require_session(sessions, ml_session, x_csrf_token)
         _require_case_id(review_case_id)
-        return _DecisionAcknowledgement.model_validate(
+        acknowledgement = _DecisionAcknowledgement.model_validate(
             _decision_call(
                 lambda: decisions.run(
                     review_case_id,
@@ -1091,6 +1118,9 @@ def create_review_app(
                 )
             )
         )
+        if isinstance(field_application, ContinuousGuardedApplication):
+            field_application.wake()
+        return acknowledgement
 
     def serialized_field_effect_call(callable_):
         if field_application is None:
@@ -1106,6 +1136,70 @@ def create_review_app(
 
     def field_effect_call(callable_):
         return serialized_field_effect_call(lambda: callable_().to_data())
+
+    @app.get("/api/v1/activity", response_model=dict[str, object],
+             responses={status: {"model": _ErrorResponse} for status in (401, 503)})
+    def activity_status(
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> dict[str, object]:
+        _require_session(sessions, ml_session)
+        if not isinstance(field_application, ContinuousGuardedApplication):
+            raise HTTPException(503, detail={"code": "unavailable"})
+        return serialized_field_effect_call(field_application.activity)
+
+    @app.post("/api/v1/activity/consent", response_model=dict[str, object],
+              responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)})
+    def enable_guarded_activity(
+        payload: _ActivityConsentRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> dict[str, object]:
+        _require_session(sessions, ml_session, x_csrf_token)
+        if not isinstance(field_application, ContinuousGuardedApplication):
+            raise HTTPException(503, detail={"code": "unavailable"})
+        return serialized_field_effect_call(
+            lambda: field_application.enable(tuple(payload.libraries))
+        )
+
+    @app.post("/api/v1/activity/{connection}/{library}/revoke",
+              response_model=dict[str, object],
+              responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)})
+    def revoke_guarded_activity(
+        connection: str,
+        library: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> dict[str, object]:
+        _require_session(sessions, ml_session, x_csrf_token)
+        if not isinstance(field_application, ContinuousGuardedApplication):
+            raise HTTPException(503, detail={"code": "unavailable"})
+        return serialized_field_effect_call(
+            lambda: field_application.revoke(connection, library)
+        )
+
+    @app.post(
+        "/api/v1/review-cases/{review_case_id}/fields/{destination}/return-to-automatic",
+        status_code=204,
+        responses={status: {"model": _ErrorResponse}
+                   for status in (401, 403, 404, 409, 422, 503)},
+    )
+    def return_field_to_automatic(
+        review_case_id: str,
+        destination: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> Response:
+        _require_session(sessions, ml_session, x_csrf_token)
+        _require_case_id(review_case_id)
+        if (not isinstance(field_application, ContinuousGuardedApplication)
+                or destination not in SUPPORTED_DESTINATIONS):
+            raise HTTPException(404, detail={"code": "not_found"})
+        serialized_field_effect_call(
+            lambda: field_application.return_to_automatic(
+                review_case_id, destination
+            )
+        )
+        return Response(status_code=204)
 
     @app.get("/api/v1/field-effects/{plan_id}", response_model=dict[str, object],
              responses={status: {"model": _ErrorResponse} for status in (401, 404, 422, 503)})
@@ -1466,6 +1560,14 @@ def create_review_app(
         assert ml_session is not None
         return HTMLResponse(review_frontend.policy_html(browser_csrf(ml_session)))
 
+    @app.get("/activity", include_in_schema=False)
+    def activity_page(
+        ml_session: str | None = Cookie(default=None),
+    ) -> HTMLResponse:
+        _require_session(sessions, ml_session)
+        assert ml_session is not None
+        return HTMLResponse(review_frontend.activity_html(browser_csrf(ml_session)))
+
     @app.get("/assets/review.css", include_in_schema=False)
     def review_css() -> Response:
         return Response(review_frontend.REVIEW_CSS, media_type="text/css")
@@ -1473,6 +1575,10 @@ def create_review_app(
     @app.get("/assets/review.js", include_in_schema=False)
     def review_js() -> Response:
         return Response(review_frontend.REVIEW_JS, media_type="text/javascript")
+
+    @app.get("/assets/activity.js", include_in_schema=False)
+    def activity_js() -> Response:
+        return Response(review_frontend.ACTIVITY_JS, media_type="text/javascript")
 
     @app.get("/assets/policy.js", include_in_schema=False)
     def policy_js() -> Response:
