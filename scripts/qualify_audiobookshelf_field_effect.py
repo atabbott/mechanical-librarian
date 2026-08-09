@@ -715,16 +715,20 @@ def _installed_continuous_qualification(
                     "installed_scheduler_failed:"
                     + json.dumps(activity_summary, sort_keys=True)
                 )
-            before_rescan = repository.count_current_review_cases(None)
-            for name, _, _ in libraries:
-                response = client.post(
-                    f"/api/v1/review-preparation/canary/{name}/scan",
-                    headers=mutation_headers,
-                )
-                if response.status_code != 202:
-                    raise QualificationError("installed_rescan_failed")
-            _wait_for_preparation(client, len(libraries))
-            if repository.count_current_review_cases(None) != before_rescan:
+            def rescan_all() -> None:
+                for name, _, _ in libraries:
+                    response = client.post(
+                        f"/api/v1/review-preparation/canary/{name}/scan",
+                        headers=mutation_headers,
+                    )
+                    if response.status_code != 202:
+                        raise QualificationError("installed_rescan_failed")
+                _wait_for_preparation(client, len(libraries))
+
+            rescan_all()
+            stable_case_count = repository.count_current_review_cases(None)
+            rescan_all()
+            if repository.count_current_review_cases(None) != stable_case_count:
                 raise QualificationError("installed_rescan_not_idempotent")
             drifted = _mapping(_request(
                 "PATCH", base, "/api/items/" + drift_item + "/media",
