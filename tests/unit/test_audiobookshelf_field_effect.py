@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 
-from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import AudiobookshelfFieldEffectTarget
+from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import AudiobookshelfFieldEffectCapabilities, AudiobookshelfFieldEffectTarget
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
 from mechanical_librarian.domain.field_effect import EffectAuthority, EffectConsent, FieldEffectPlan
@@ -130,6 +130,10 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         changed = self.plan("title", "Elsewhere", "After")
         self.assertEqual(self.target.apply(changed).outcome, "conflict")
         self.assertFalse(any(request.method == "PATCH" for request in self.requests))
+
+    def test_capability_constructor_rejects_unbounded_or_invalid_inputs(self) -> None:
+        with self.assertRaises(ValueError):
+            AudiobookshelfFieldEffectCapabilities(client_factory=lambda: httpx.Client(), endpoint="invalid", library_id="", maximum_response_bytes=1)
 
 
 if __name__ == "__main__":

@@ -33,6 +33,10 @@ class AudiobookshelfFieldEffectCapabilities:
     """Read the API-key's real field-local write capability, never a version."""
     def __init__(self, *, client_factory: Callable[[], httpx.Client], endpoint: str,
                  library_id: str, maximum_response_bytes: int = 1_048_576) -> None:
+        if (not callable(client_factory) or type(endpoint) is not str or not endpoint.startswith(("http://", "https://"))
+                or type(library_id) is not str or not library_id or type(maximum_response_bytes) is not int
+                or not 1024 <= maximum_response_bytes <= 4_194_304):
+            raise ValueError("Audiobookshelf field-effect capability is invalid")
         self._client_factory = client_factory
         self._endpoint = endpoint.rstrip("/")
         self._library_id = library_id
@@ -48,16 +52,17 @@ class AudiobookshelfFieldEffectCapabilities:
                 # An item read proves the selected library remains accessible;
                 # /api/me alone is not a destination capability proof.
                 detail = _json_response(client, "GET", self._endpoint + "/api/items/" + quote(plan.work_id, safe=""), {"expanded": "1"}, self._maximum_response_bytes)
-        except ValueError:
+        except (httpx.HTTPError, OSError, ValueError):
             return self._result(plan.destination, "unavailable", False, False)
         user = me.get("user", me) if type(me) is dict else None
         permissions = user.get("permissions") if type(user) is dict else None
         accessible = user.get("librariesAccessible") if type(user) is dict else None
-        selected = type(permissions) is dict and permissions.get("accessAllLibraries") is True or accessible is None or self._library_id in accessible
-        item_matches = type(detail) is dict and detail.get("libraryId") == self._library_id
+        selected = (type(permissions) is dict and permissions.get("accessAllLibraries") is True) or (type(accessible) is list and all(type(value) is str for value in accessible) and self._library_id in accessible)
+        item_matches = type(detail) is dict and detail.get("id") == plan.work_id and detail.get("libraryId") == self._library_id and detail.get("mediaType") == "book"
         update = type(permissions) is dict and permissions.get("update") is True
         upload = type(permissions) is dict and permissions.get("upload") is True
-        return self._result(plan.destination, "allowed" if selected and item_matches and update and (plan.destination != "cover" or upload) else "insufficient_permission", update, upload, selected and item_matches)
+        active = type(user) is dict and user.get("isActive") is True
+        return self._result(plan.destination, "allowed" if active and selected and item_matches and update and (plan.destination != "cover" or upload) else "insufficient_permission", update, upload, selected and item_matches)
 
     def _result(self, destination: str, category: str, update: bool, upload: bool, selected: bool = False) -> AudiobookshelfCapabilityResult:
         payload = json.dumps({"destination": destination, "category": category, "update": update, "upload": upload, "selected": selected}, sort_keys=True, separators=(",", ":")).encode()
