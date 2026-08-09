@@ -35,7 +35,9 @@ if str(IMPORT_ROOT) not in sys.path:
     sys.path.insert(0, str(IMPORT_ROOT))
 
 import httpx
+from argon2 import PasswordHasher
 from PIL import Image
+from fastapi.testclient import TestClient
 
 from mechanical_librarian.adapters.field_effect_fakes import (
     FakeBackupReadiness, FakeDependencyCurrentness,
@@ -47,6 +49,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect 
 )
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
@@ -55,6 +58,12 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectPlan,
 )
 from mechanical_librarian.infrastructure.security.credentials import target_client_token
+from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from mechanical_librarian.bootstrap.composition import (
+    compose_continuous_guarded_application,
+    create_review_pipeline,
+)
+from mechanical_librarian.interfaces.web.app import create_review_app
 
 
 IMAGES = {
@@ -144,7 +153,7 @@ def _create_api_key(base: str, root_token: str, user_id: str, name: str) -> tupl
 
 
 def _create_user(base: str, root_token: str, *, username: str, password: str,
-                 library_id: str, update: bool, upload: bool) -> str:
+                 library_ids: tuple[str, ...], update: bool, upload: bool) -> str:
     response = _mapping(_request("POST", base, "/api/users", token=root_token, payload={
         "username": username,
         "password": password,
@@ -161,7 +170,7 @@ def _create_user(base: str, root_token: str, *, username: str, password: str,
             "accessExplicitContent": True,
             "selectedTagsNotAccessible": False,
         },
-        "librariesAccessible": [library_id],
+        "librariesAccessible": list(library_ids),
     }), "user_response_invalid")
     return _string(_mapping(response.get("user"), "user_response_invalid").get("id"), "user_response_invalid")
 
@@ -382,6 +391,244 @@ def _corpus_sources(corpus: Path | None) -> tuple[Path, ...]:
     return sources
 
 
+def _wait_for_preparation(client: TestClient, library_count: int) -> dict[str, object]:
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        response = client.get("/api/v1/review-preparation")
+        if response.status_code != 200:
+            raise QualificationError("installed_preparation_unavailable")
+        state = _mapping(response.json(), "installed_preparation_invalid")
+        libraries = state.get("libraries")
+        if (type(libraries) is list and len(libraries) == library_count
+                and not state.get("active")
+                and all(type(value) is dict and value.get("state") in {
+                    "completed", "completed_with_failures"
+                } for value in libraries)):
+            if any(value.get("state") != "completed" for value in libraries):
+                raise QualificationError("installed_preparation_failed")
+            return state
+        time.sleep(0.25)
+    raise QualificationError("installed_preparation_timeout")
+
+
+def _installed_continuous_qualification(
+    root: Path, base: str, writer_key: str,
+    libraries: tuple[tuple[str, str, Path], ...],
+    drift_item: str,
+) -> dict[str, object]:
+    """Exercise the installed preparation, decision, Activity and scheduler path."""
+    password = "installed-owner-qualification"
+    owner_hash = root / "owner.hash"
+    owner_hash.write_text(PasswordHasher().hash(password), encoding="utf-8")
+    os.chmod(owner_hash, 0o600)
+    secret = root / "writer.secret"
+    secret.write_text(writer_key + "\n", encoding="ascii")
+    os.chmod(secret, 0o600)
+    config_path = root / "installed-config.json"
+    configuration_document = {
+        "schema_version": "config-v5",
+        "connections": [{
+            "name": "canary", "adapter": "audiobookshelf",
+            "endpoint": base, "secret_file": str(secret),
+        }],
+        "libraries": [{
+            "name": name, "connection": "canary", "library_id": library_id,
+            "mount": name, "provider_connections": ["disabled-catalogue"],
+        } for name, library_id, _ in libraries],
+        "mounts": [{
+            "name": name, "container_path": str(path),
+            "service_path": "/library/" + name, "read_only": True,
+        } for name, _, path in libraries],
+        "providers": [{
+            "name": "disabled-catalogue", "adapter": "hardcover",
+            "enabled": False, "cover_enabled": False, "secret_file": None,
+        }],
+        "review": {
+            "canonical_origin": "https://review.test",
+            "owner_password_hash_file": str(owner_hash),
+            "library_polling_interval_seconds": 60,
+            "graceful_shutdown_seconds": 5,
+        },
+    }
+    config_path.write_text(
+        json.dumps(configuration_document, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    os.chmod(config_path, 0o600)
+    configuration = load_configuration_file(config_path)
+    database = root / "installed-application.sqlite3"
+    catalogue = root / "installed-catalogue.sqlite3"
+    artifacts = root / "installed-artifacts"
+    repository = open_repository(database, cross_thread=True)
+    open_catalogue(catalogue, create=True).close()
+
+    def composed_client() -> tuple[TestClient, object]:
+        preparation = create_review_pipeline(
+            configuration, database, catalogue, artifacts, repository.authority
+        )
+        continuous = compose_continuous_guarded_application(
+            configuration, repository, database, artifacts, preparation
+        )
+        app = create_review_app(
+            repository, configuration.review, review_preparation=preparation,
+            policy_libraries=tuple((item.name, item.policy_override)
+                                   for item in configuration.libraries),
+            field_application=continuous,
+        )
+        return TestClient(app, base_url="https://review.test"), continuous
+
+    origin = {"Origin": "https://review.test"}
+    client, continuous = composed_client()
+    try:
+        with client:
+            login = client.post(
+                "/api/v1/session/login", headers=origin, json={"password": password}
+            )
+            if login.status_code != 200:
+                raise QualificationError("installed_login_failed")
+            csrf = _string(login.json().get("csrf_token"), "installed_login_invalid")
+            mutation_headers = {**origin, "X-CSRF-Token": csrf}
+            for name, _, _ in libraries:
+                requested = client.post(
+                    f"/api/v1/review-preparation/canary/{name}/scan",
+                    headers=mutation_headers,
+                )
+                if requested.status_code != 202:
+                    raise QualificationError("installed_scan_request_failed")
+            _wait_for_preparation(client, len(libraries))
+            listing = client.get("/api/v1/library?lens=all&limit=50")
+            if listing.status_code != 200:
+                raise QualificationError("installed_library_unavailable")
+            cases = _mapping(listing.json(), "installed_library_invalid").get("items")
+            if type(cases) is not list:
+                raise QualificationError("installed_library_invalid")
+            original_case_ids = {
+                value.get("review_case_id") for value in cases
+                if type(value) is dict and type(value.get("review_case_id")) is str
+            }
+            accepted_libraries: set[str] = set()
+            accepted = 0
+            for case_summary in cases:
+                if type(case_summary) is not dict:
+                    continue
+                case_id = case_summary.get("review_case_id")
+                library_name = case_summary.get("library")
+                if (type(case_id) is not str or type(library_name) is not str
+                        or library_name in accepted_libraries):
+                    continue
+                detail = client.get(f"/api/v1/review-cases/{case_id}")
+                if detail.status_code != 200:
+                    continue
+                fields = detail.json().get("fields")
+                if type(fields) is not list:
+                    continue
+                field = next((value for value in fields if type(value) is dict
+                              and value.get("needs_attention") is True
+                              and type(value.get("proposed_values")) is list
+                              and value["proposed_values"]), None)
+                if field is None:
+                    continue
+                payload = {
+                    "destination": field["destination"], "outcome": "accept",
+                    "proposal_id": field["proposal_id"],
+                    "selected_value": field["proposed_values"][0],
+                    "target_fingerprint": field["target_fingerprint"],
+                }
+                decided = client.post(
+                    f"/api/v1/review-cases/{case_id}/decisions",
+                    headers={**mutation_headers,
+                             "Idempotency-Key": f"installed-{accepted:04d}-decision"},
+                    json=payload,
+                )
+                if decided.status_code != 200:
+                    raise QualificationError("installed_decision_failed")
+                accepted_libraries.add(library_name)
+                accepted += 1
+            if accepted != len(libraries):
+                raise QualificationError("installed_multiple_libraries_unproved")
+            paused = client.post("/api/v1/field-effects/pause", headers=mutation_headers)
+            activity = client.get("/api/v1/activity")
+            if paused.status_code != 204 or activity.status_code != 200 or activity.json().get("paused") is not True:
+                raise QualificationError("installed_pause_failed")
+            resumed = client.post("/api/v1/field-effects/resume", headers=mutation_headers)
+            consented = client.post(
+                "/api/v1/activity/consent", headers=mutation_headers,
+                json={"libraries": [name for name, _, _ in libraries]},
+            )
+            if resumed.status_code != 204 or consented.status_code != 200:
+                raise QualificationError("installed_consent_failed")
+            deadline = time.monotonic() + 90
+            final_activity = None
+            while time.monotonic() < deadline:
+                candidate = client.get("/api/v1/activity")
+                if candidate.status_code == 200:
+                    final_activity = candidate.json()
+                    if final_activity.get("counts", {}).get("verified", 0) >= accepted:
+                        break
+                time.sleep(0.25)
+            if (final_activity is None
+                    or final_activity.get("counts", {}).get("verified", 0) < accepted):
+                raise QualificationError("installed_scheduler_failed")
+            before_rescan = repository.count_current_review_cases(None)
+            for name, _, _ in libraries:
+                response = client.post(
+                    f"/api/v1/review-preparation/canary/{name}/scan",
+                    headers=mutation_headers,
+                )
+                if response.status_code != 202:
+                    raise QualificationError("installed_rescan_failed")
+            _wait_for_preparation(client, len(libraries))
+            if repository.count_current_review_cases(None) != before_rescan:
+                raise QualificationError("installed_rescan_not_idempotent")
+            drifted = _mapping(_request(
+                "PATCH", base, "/api/items/" + drift_item + "/media",
+                token=writer_key, payload={"metadata": {"title": "External drift qualification"}},
+            ), "installed_drift_invalid")
+            if drifted.get("updated") is not True:
+                raise QualificationError("installed_drift_failed")
+            response = client.post(
+                "/api/v1/review-preparation/canary/alpha/scan",
+                headers=mutation_headers,
+            )
+            if response.status_code != 202:
+                raise QualificationError("installed_drift_scan_failed")
+            _wait_for_preparation(client, len(libraries))
+            regenerated = client.get("/api/v1/library?lens=all&limit=50")
+            regenerated_ids = {
+                value.get("review_case_id") for value in regenerated.json().get("items", [])
+                if type(value) is dict and type(value.get("review_case_id")) is str
+            }
+            if regenerated.status_code != 200 or regenerated_ids == original_case_ids:
+                raise QualificationError("installed_drift_not_regenerated")
+    finally:
+        client.close()
+
+    restarted, _ = composed_client()
+    try:
+        with restarted:
+            login = restarted.post(
+                "/api/v1/session/login", headers=origin, json={"password": password}
+            )
+            if login.status_code != 200:
+                raise QualificationError("installed_restart_login_failed")
+            activity = restarted.get("/api/v1/activity")
+            if (activity.status_code != 200
+                    or activity.json().get("counts", {}).get("verified", 0) < len(libraries)
+                    or len(activity.json().get("enabled_libraries", [])) != len(libraries)):
+                raise QualificationError("installed_restart_recovery_failed")
+    finally:
+        restarted.close()
+        repository.close()
+    return {
+        "activity_api": True, "continuous_scheduler": True,
+        "external_drift_regeneration": True,
+        "human_decision_api": True, "idempotent_rescan": True,
+        "installed_composition": True, "libraries": len(libraries),
+        "pause_resume": True, "restart_resume": True,
+        "supported_preparation": True,
+    }
+
+
 def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
     image = IMAGES[version]
     owner = "ml-f14-" + uuid.uuid4().hex
@@ -391,14 +638,18 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
     base: str | None = None
     try:
         library_dir = root / "library"; library_dir.mkdir(mode=0o700)
+        alpha_dir = library_dir / "alpha"; alpha_dir.mkdir(mode=0o700)
+        beta_dir = library_dir / "beta"; beta_dir.mkdir(mode=0o700)
         config_dir = root / "config"; config_dir.mkdir(mode=0o700)
         metadata_dir = root / "metadata"; metadata_dir.mkdir(mode=0o700)
         corpus_sources = _corpus_sources(corpus)
         if corpus_sources:
             for index, source in enumerate(corpus_sources, 1):
-                shutil.copyfile(source, library_dir / f"operator-{index:03d}.epub")
+                destination = alpha_dir if index % 2 else beta_dir
+                shutil.copyfile(source, destination / f"operator-{index:03d}.epub")
         else:
-            _epub(library_dir / "synthetic.epub")
+            _epub(alpha_dir / "synthetic-alpha.epub")
+            _epub(beta_dir / "synthetic-beta.epub")
         _run("docker", "run", "-d", "--name", owner, "--label", OWNERSHIP_LABEL + "=" + owner, "-p", "127.0.0.1::80", "-v", str(config_dir) + ":/config", "-v", str(metadata_dir) + ":/metadata", "-v", str(library_dir) + ":/library:ro", image)
         port = _run("docker", "port", owner, "80/tcp").stdout.strip().rsplit(":", 1)[1]
         base = "http://127.0.0.1:" + port
@@ -407,28 +658,32 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         _request("POST", base, "/init", payload={"newRoot": {"username": username, "password": password}})
         login = _request("POST", base, "/login", payload={"username": username, "password": password})
         root_token = _string(_mapping(_mapping(login, "root_login_invalid").get("user"), "root_login_invalid").get("token"), "root_login_invalid")
-        created = _mapping(_request("POST", base, "/api/libraries", token=root_token, payload={"name": "canary", "folders": [{"fullPath": "/library"}], "mediaType": "book", "provider": "openlibrary", "settings": {"disableWatcher": True}}), "library_response_invalid")
+        created = _mapping(_request("POST", base, "/api/libraries", token=root_token, payload={"name": "canary-alpha", "folders": [{"fullPath": "/library/alpha"}], "mediaType": "book", "provider": "openlibrary", "settings": {"disableWatcher": True}}), "library_response_invalid")
         library_id = _string(created.get("id"), "library_response_invalid")
+        second_created = _mapping(_request("POST", base, "/api/libraries", token=root_token, payload={"name": "canary-beta", "folders": [{"fullPath": "/library/beta"}], "mediaType": "book", "provider": "openlibrary", "settings": {"disableWatcher": True}}), "library_response_invalid")
+        second_library_id = _string(second_created.get("id"), "library_response_invalid")
+        library_ids = (library_id, second_library_id)
         writer_id = _create_user(base, root_token, username="writer", password=password,
-                                 library_id=library_id, update=True, upload=True)
+                                 library_ids=library_ids, update=True, upload=True)
         writer_key_id, writer_key = _create_api_key(base, root_token, writer_id, "canary-writer")
         key_ids.append(writer_key_id)
         read_only_id = _create_user(base, root_token, username="read-only", password=password,
-                                    library_id=library_id, update=False, upload=False)
+                                    library_ids=library_ids, update=False, upload=False)
         read_only_key_id, read_only_key = _create_api_key(base, root_token, read_only_id, "canary-read-only")
         key_ids.append(read_only_key_id)
         update_only_id = _create_user(base, root_token, username="update-only", password=password,
-                                      library_id=library_id, update=True, upload=False)
+                                      library_ids=library_ids, update=True, upload=False)
         update_only_key_id, update_only_key = _create_api_key(base, root_token, update_only_id, "canary-update-only")
         key_ids.append(update_only_key_id)
         _request("POST", base, "/api/libraries/" + library_id + "/scan?force=1", token=root_token)
+        _request("POST", base, "/api/libraries/" + second_library_id + "/scan?force=1", token=root_token)
         deadline = time.monotonic() + 90
         item = None
         items: list[object] = []
         while time.monotonic() < deadline:
             listing = _mapping(_request("GET", base, "/api/libraries/" + library_id + "/items?limit=10&page=0", token=root_token), "listing_invalid")
             results = listing.get("results")
-            expected = len(corpus_sources) or 1
+            expected = len(tuple(alpha_dir.glob("*.epub")))
             if (listing.get("total") == expected and type(results) is list
                     and len(results) == expected
                     and all(type(value) is dict for value in results)):
@@ -439,6 +694,32 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             raise QualificationError("synthetic_library_did_not_scan")
         if (not isinstance(items, list) or any(not isinstance(value, str) for value in items)):
             raise QualificationError("synthetic_library_did_not_scan")
+        deadline = time.monotonic() + 90
+        second_expected = len(tuple(beta_dir.glob("*.epub")))
+        second_item = None
+        while time.monotonic() < deadline:
+            second_listing = _mapping(_request(
+                "GET", base,
+                "/api/libraries/" + second_library_id + "/items?limit=10&page=0",
+                token=root_token,
+            ), "listing_invalid")
+            second_results = second_listing.get("results")
+            if (second_listing.get("total") == second_expected
+                    and type(second_results) is list and second_results
+                    and type(second_results[0]) is dict
+                    and type(second_results[0].get("id")) is str):
+                second_item = second_results[0]["id"]
+                break
+            time.sleep(1)
+        else:
+            raise QualificationError("second_library_did_not_scan")
+        assert isinstance(second_item, str)
+        seeded = _mapping(_request(
+            "PATCH", base, "/api/items/" + second_item + "/media",
+            token=writer_key, payload={"metadata": {"title": "Beta qualification seed"}},
+        ), "second_library_seed_invalid")
+        if seeded.get("updated") is not True:
+            raise QualificationError("second_library_seed_failed")
         # The service must reject a key inherited from an active but read-only
         # user before the least-authority writer is allowed to mutate anything.
         read_only_patch = _mapping(_request("PATCH", base, "/api/items/" + item + "/media", token=read_only_key, payload={"tags": ["forbidden"]}), "read_only_response_invalid")
@@ -518,12 +799,18 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             outcomes = [_apply(service, repository, target, capabilities, writes, recovery, item, "title", "After", clock()), _apply(service, repository, target, capabilities, writes, recovery, item, "tags", ["canary"], clock())]
             _stable_cover_observation(target, item)
             outcomes.append(_apply(service, repository, target, capabilities, writes, recovery, item, "cover", artifact.artifact_id, clock()))
+        installed = _installed_continuous_qualification(
+            root, base, writer_key,
+            (("alpha", library_id, alpha_dir),
+             ("beta", second_library_id, beta_dir)),
+            item,
+        )
         repository.close()
         digest = _run("docker", "image", "inspect", image, "--format", "{{index .RepoDigests 0}}").stdout.strip()
         expected_digest = image.rsplit("@", 1)[1]
         if not digest.endswith("@" + expected_digest) or any(row["state"] != "verified" for row in outcomes):
             raise QualificationError("guarded_write_not_verified")
-        return {"version": version, "image_digest": expected_digest, "resolved_image_digest": digest.rsplit("@", 1)[1], "authentication": "api_key_accepted", "least_authority_refusal": True, "operator_cases": len(corpus_sources), "destinations": len(outcomes), "mixed_origins": {row["origin"] for row in outcomes} == {"human", "automatic_policy"} if corpus_sources else False, "metadata_tags": all(row["destination"] in {"title", "tags"} and row["state"] == "verified" for row in outcomes[:2]) if not corpus_sources else True, "cover": outcomes[-1]["destination"] == "cover" and outcomes[-1]["state"] == "verified", "outcomes": outcomes}
+        return {"version": version, "image_digest": expected_digest, "resolved_image_digest": digest.rsplit("@", 1)[1], "authentication": "api_key_accepted", "least_authority_refusal": True, "operator_cases": len(corpus_sources), "destinations": len(outcomes), "mixed_origins": {row["origin"] for row in outcomes} == {"human", "automatic_policy"} if corpus_sources else False, "metadata_tags": all(row["destination"] in {"title", "tags"} and row["state"] == "verified" for row in outcomes[:2]) if not corpus_sources else True, "cover": outcomes[-1]["destination"] == "cover" and outcomes[-1]["state"] == "verified", "installed_continuous": installed, "outcomes": outcomes}
     finally:
         if base is not None and root_token is not None:
             for key_id in key_ids:
