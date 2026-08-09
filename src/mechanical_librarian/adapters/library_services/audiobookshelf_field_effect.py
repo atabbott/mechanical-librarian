@@ -65,7 +65,15 @@ class AudiobookshelfFieldEffectCapabilities:
         return self._result(plan.destination, "allowed" if active and selected and item_matches and update and (plan.destination != "cover" or upload) else "insufficient_permission", update, upload, selected and item_matches)
 
     def _result(self, destination: str, category: str, update: bool, upload: bool, selected: bool = False) -> AudiobookshelfCapabilityResult:
-        payload = json.dumps({"destination": destination, "category": category, "update": update, "upload": upload, "selected": selected}, sort_keys=True, separators=(",", ":")).encode()
+        capability = {
+            "destination": destination,
+            "category": category,
+            "update": update,
+            "selected": selected,
+        }
+        if destination == "cover":
+            capability["upload"] = upload
+        payload = json.dumps(capability, sort_keys=True, separators=(",", ":")).encode()
         return AudiobookshelfCapabilityResult(category, hashlib.sha256(payload).hexdigest())
 
 

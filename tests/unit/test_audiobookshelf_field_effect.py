@@ -168,10 +168,16 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
             client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handle)),
             endpoint="https://abs.example.invalid", library_id="library-1",
         )
-        self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "allowed")
-        self.assertEqual(capabilities.result(self.plan("cover", None, self.cover)).category, "insufficient_permission")
+        title_before = capabilities.result(self.plan("title", "Before", "After"))
+        cover_before = capabilities.result(self.plan("cover", None, self.cover))
+        self.assertEqual(title_before.category, "allowed")
+        self.assertEqual(cover_before.category, "insufficient_permission")
         user["permissions"]["upload"] = True
-        self.assertEqual(capabilities.result(self.plan("cover", None, self.cover)).category, "allowed")
+        title_after = capabilities.result(self.plan("title", "Before", "After"))
+        cover_after = capabilities.result(self.plan("cover", None, self.cover))
+        self.assertEqual(title_after, title_before)
+        self.assertEqual(cover_after.category, "allowed")
+        self.assertNotEqual(cover_after.digest, cover_before.digest)
         user["librariesAccessible"] = "library-1"
         self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "insufficient_permission")
         user["permissions"]["accessAllLibraries"] = True
