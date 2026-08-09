@@ -219,7 +219,7 @@ def _plan(repository, *, item: str, destination: str, value: object, desired: ob
     consent = EffectConsent.create(connection="canary", library="books", destination=destination, granted_at=clock)
     try:
         provisional = FieldEffectPlan.create(connection="canary", library="books", work_id=item, destination=destination, pre_value=value, desired_value=desired, target_fingerprint="c" * 64, target_version=observation.version, dependency_digests=("d" * 64,), authority=authority, consent=consent, capability_digest="e" * 64, created_at=clock)
-        plan = FieldEffectPlan.create(connection="canary", library="books", work_id=item, destination=destination, pre_value=value, desired_value=desired, target_fingerprint="c" * 64, target_version=observation.version, dependency_digests=("d" * 64,), authority=authority, consent=consent, capability_digest=capabilities.observe(provisional), created_at=clock)
+        plan = FieldEffectPlan.create(connection="canary", library="books", work_id=item, destination=destination, pre_value=value, desired_value=desired, target_fingerprint="c" * 64, target_version=observation.version, dependency_digests=("d" * 64,), authority=authority, consent=consent, capability_digest=capabilities.observe(provisional).digest, created_at=clock)
     except Exception as error:
         raise RuntimeError("synthetic field setup is invalid: " + destination) from error
     repository.record_field_effect(FieldEffectOperation(plan, updated_at=clock))
