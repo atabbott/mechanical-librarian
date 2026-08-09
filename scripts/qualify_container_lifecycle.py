@@ -187,6 +187,9 @@ def main() -> None:
             _run(["docker", "cp", f"{container}:/data/application.sqlite3", str(first)])
             first_hash = _sha256(first)
             _run(["docker", "start", container])
+            port = int(_run([
+                "docker", "port", container, "8443/tcp"
+            ]).rsplit(":", 1)[1])
             if not _health(port, "/health/ready", time.monotonic() + 20):
                 raise QualificationError("container_restart_failed")
             _run(["docker", "stop", "--time", "8", container])
