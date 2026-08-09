@@ -243,7 +243,9 @@ def _epub(path: Path) -> None:
         archive.writestr("OEBPS/chapter.xhtml", "<?xml version='1.0'?><html xmlns='http://www.w3.org/1999/xhtml'><head><title>Chapter</title></head><body><p>Synthetic qualification content.</p></body></html>")
 
 
-def _operator_epub(source: Path, destination: Path, index: int) -> tuple[str, str]:
+def _operator_epub(
+    source: Path, destination: Path, index: int,
+) -> tuple[str, str, str]:
     """Copy one real work with a private, deterministic qualification metadata overlay."""
     stem = f"9780306406{index:02d}"
     checksum = (10 - sum(
@@ -270,6 +272,18 @@ def _operator_epub(source: Path, destination: Path, index: int) -> tuple[str, st
         metadata = package.find("{http://www.idpf.org/2007/opf}metadata")
         if metadata is None:
             raise QualificationError("operator_corpus_invalid")
+        original_creator = next((
+            str(child.text).strip()
+            for child in metadata
+            if child.tag == "{http://purl.org/dc/elements/1.1/}creator"
+            and child.text and str(child.text).strip()
+        ), None)
+        if original_creator is None:
+            raise QualificationError("operator_corpus_invalid")
+        qualified_creator = (
+            original_creator if original_creator.endswith(".")
+            else original_creator + "."
+        )
         for child in tuple(metadata):
             metadata.remove(child)
         manifest = package.find("{http://www.idpf.org/2007/opf}manifest")
@@ -295,10 +309,9 @@ def _operator_epub(source: Path, destination: Path, index: int) -> tuple[str, st
             "{http://www.idpf.org/2007/opf}scheme": "ISBN",
         }).text = isbn
         ET.SubElement(metadata, dc + "title").text = title
-        for author in ("Synthetic Author", "Second Qualified Author"):
-            ET.SubElement(metadata, dc + "creator", {
-                "{http://www.idpf.org/2007/opf}role": "aut",
-            }).text = author
+        ET.SubElement(metadata, dc + "creator", {
+            "{http://www.idpf.org/2007/opf}role": "aut",
+        }).text = qualified_creator
         ET.SubElement(metadata, dc + "language").text = "fr"
         ET.SubElement(metadata, dc + "publisher").text = "Qualification Press"
         ET.SubElement(metadata, dc + "date").text = "2025-02-03"
@@ -307,7 +320,7 @@ def _operator_epub(source: Path, destination: Path, index: int) -> tuple[str, st
             for member in incoming.infolist():
                 payload = package_bytes if member.filename == package_path else incoming.read(member)
                 outgoing.writestr(member, payload)
-    return isbn, title
+    return isbn, title, qualified_creator
 
 
 def _plan(repository, *, item: str, destination: str, value: object,
@@ -500,6 +513,7 @@ def _wait_for_preparation(
 def _qualification_hardcover_client(
     title_corrections: dict[str, str], provider_identity: str,
     observations: dict[str, int], isbn_titles: dict[str, str],
+    isbn_authors: dict[str, str],
     *_: object, **__: object
 ) -> httpx.Client:
     """Return an isolated provider boundary backed by request-local evidence."""
@@ -528,8 +542,8 @@ def _qualification_hardcover_client(
                 requested_title = isbn_titles.get(
                     requested_isbn, "Guarded qualification title"
                 )
-                authors = ["Synthetic Author"]
-                contribution_authors = (*authors, "Second Qualified Author")
+                authors = [isbn_authors.get(requested_isbn, "Synthetic Author")]
+                contribution_authors = tuple(authors)
             else:
                 observations["title"] = observations.get("title", 0) + 1
                 requested_isbn = "9780306406157"
@@ -636,6 +650,7 @@ def _installed_continuous_qualification(
     title_corrections: dict[str, str],
     operator_item_ids: set[str],
     isbn_titles: dict[str, str],
+    isbn_authors: dict[str, str],
     supplemental_automatic: set[str],
 ) -> dict[str, object]:
     """Exercise the installed preparation, decision, Activity and scheduler path."""
@@ -735,7 +750,7 @@ def _installed_continuous_qualification(
         )
         return _qualification_hardcover_client(
             title_corrections, provider_identity, provider_observations,
-            isbn_titles,
+            isbn_titles, isbn_authors,
             *args[1:], **kwargs
         )
 
@@ -1325,6 +1340,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         metadata_dir = root / "metadata"; metadata_dir.mkdir(mode=0o700)
         corpus_sources = _corpus_sources(corpus)
         operator_metadata: dict[str, str] = {}
+        operator_authors: dict[str, str] = {}
         if not corpus_sources:
             _epub(alpha_dir / "qualification-alpha.epub")
         if not corpus_sources:
@@ -1332,10 +1348,11 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         if corpus_sources:
             for index, source in enumerate(corpus_sources, 1):
                 destination = alpha_dir if index % 2 else beta_dir
-                isbn, title = _operator_epub(
+                isbn, title, author = _operator_epub(
                     source, destination / f"operator-{index:03d}.epub", index
                 )
                 operator_metadata[isbn] = title
+                operator_authors[isbn] = author
         _run("docker", "run", "-d", "--name", owner, "--label", OWNERSHIP_LABEL + "=" + owner, "-p", "127.0.0.1::80", "-v", str(config_dir) + ":/config", "-v", str(metadata_dir) + ":/metadata", "-v", str(library_dir) + ":/library:ro", image)
         port = _run("docker", "port", owner, "80/tcp").stdout.strip().rsplit(":", 1)[1]
         base = "http://127.0.0.1:" + port
@@ -1579,6 +1596,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             },
             operator_item_ids,
             operator_metadata,
+            operator_authors,
             set(),
         )
         repository.close()

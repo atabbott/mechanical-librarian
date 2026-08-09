@@ -16,7 +16,7 @@ class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
             source = root / "source.epub"
             destination = root / "operator.epub"
             _epub(source)
-            isbn, title = _operator_epub(source, destination, 3)
+            isbn, title, author = _operator_epub(source, destination, 3)
 
             self.assertEqual(13, len(isbn))
             self.assertTrue(isbn.isdigit())
@@ -38,7 +38,8 @@ class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
                 dc = "{http://purl.org/dc/elements/1.1/}"
                 self.assertEqual(title, metadata.findtext(dc + "title"))
                 self.assertEqual(isbn, metadata.findtext(dc + "identifier"))
-            self.assertEqual(2, len(metadata.findall(dc + "creator")))
+            self.assertEqual("Synthetic Author.", author)
+            self.assertEqual(1, len(metadata.findall(dc + "creator")))
 
 
 if __name__ == "__main__":
