@@ -65,6 +65,7 @@ from mechanical_librarian.domain.automatic_decision import (
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
+    ProviderStatus,
     REPORT_SCHEMA,
     ReportValueError,
 )
@@ -1456,13 +1457,47 @@ class SQLiteMetadataReportRepository:
                     "field_suspended", "owner_pause", "runtime"
                 ))
             authentication = self._connection.execute(
-                "SELECT failure_root "
-                "FROM review_preparation_work "
-                "WHERE state='failed' AND failure_code='authentication' "
-                "AND failure_root IS NOT NULL "
-                "GROUP BY failure_root ORDER BY failure_root LIMIT 64"
+                "SELECT work.failure_root,work.report_id,report.report_id,"
+                "report.document FROM review_preparation_work AS work "
+                "LEFT JOIN metadata_reports AS report "
+                "ON report.report_id=work.report_id "
+                "WHERE work.state='failed' "
+                "AND work.failure_code='authentication' "
+                "ORDER BY work.updated_at DESC,work.work_id LIMIT 256"
             ).fetchall()
-            for (provider_root,) in authentication:
+            authentication_roots: set[str] = set()
+            for failure_root, work_report_id, report_id, document in authentication:
+                if work_report_id is None:
+                    if failure_root is None:
+                        raise FieldEffectError("persistence")
+                    authentication_roots.add(failure_root)
+                    continue
+                if report_id != work_report_id or type(document) is not str:
+                    raise FieldEffectError("persistence")
+                try:
+                    report = MetadataReport.from_json(document)
+                except (ReportValueError, TypeError, ValueError) as error:
+                    raise FieldEffectError("persistence") from error
+                if report.report_id != report_id:
+                    raise FieldEffectError("persistence")
+                report_roots = {
+                    provider.provider
+                    for provider in report.providers
+                    if any(
+                        status in {
+                            ProviderStatus.AUTHENTICATION,
+                            ProviderStatus.AUTHORIZATION,
+                        }
+                        for status in (
+                            provider.status,
+                            *(lane.status for lane in provider.lanes),
+                        )
+                    )
+                }
+                if not report_roots:
+                    raise FieldEffectError("persistence")
+                authentication_roots.update(report_roots)
+            for provider_root in sorted(authentication_roots)[:64]:
                 signals.append(_operational_signal(
                     "authentication_failure", "provider_authentication",
                     "connection", connection=provider_root,

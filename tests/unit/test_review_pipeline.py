@@ -153,7 +153,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             "field": None,
         }, signals)
 
-    def test_observed_provider_authentication_persists_its_binding_root(self) -> None:
+    def test_observed_provider_authentication_projects_every_distinct_root(self) -> None:
         base = _report()
         report = MetadataReport.create(
             target=base.target,
@@ -161,6 +161,9 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             local_claims=base.local_claims,
             local_reasons=base.local_reasons,
             providers=(
+                ProviderObservation(
+                    "google-main", ProviderStatus.AUTHORIZATION
+                ),
                 ProviderObservation(
                     "hardcover-main", ProviderStatus.AUTHENTICATION
                 ),
@@ -201,17 +204,22 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             "FROM review_preparation_work"
         ).fetchone()
         signals = repository.operational_snapshot()["signals"]
+        replayed_signals = repository.operational_snapshot()["signals"]
         repository.close()
         self.assertEqual(
             work,
-            ("provider", "failed", "authentication", "hardcover-main"),
+            ("provider", "failed", "authentication", "google-main"),
         )
-        self.assertEqual(
-            [
-                signal for signal in signals
-                if signal["kind"] == "authentication_failure"
-            ],
-            [{
+        expected = [{
+                "kind": "authentication_failure",
+                "cause": "provider_authentication",
+                "scope": "connection",
+                "connection": "google-main",
+                "library": None,
+                "category": None,
+                "work_id": None,
+                "field": None,
+            }, {
                 "kind": "authentication_failure",
                 "cause": "provider_authentication",
                 "scope": "connection",
@@ -220,7 +228,16 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 "category": None,
                 "work_id": None,
                 "field": None,
-            }],
+            }]
+        self.assertEqual(
+            [signal for signal in signals
+             if signal["kind"] == "authentication_failure"],
+            expected,
+        )
+        self.assertEqual(
+            [signal for signal in replayed_signals
+             if signal["kind"] == "authentication_failure"],
+            expected,
         )
 
     def test_thousand_work_three_library_backlog_is_bounded_and_fair(self) -> None:
