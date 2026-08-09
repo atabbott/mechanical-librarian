@@ -255,7 +255,7 @@ def _operator_epub(source: Path, destination: Path, index: int) -> tuple[str, st
         isbn = "9780306406157"
     title = (
         "Before" if index == 6 else
-        "Before operator" if index == 1 else
+        "Before" if index == 1 else
         f"Operator qualification {index}"
     )
     with zipfile.ZipFile(source) as incoming:
@@ -1321,7 +1321,8 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         metadata_dir = root / "metadata"; metadata_dir.mkdir(mode=0o700)
         corpus_sources = _corpus_sources(corpus)
         operator_metadata: dict[str, str] = {}
-        _epub(alpha_dir / "qualification-alpha.epub")
+        if not corpus_sources:
+            _epub(alpha_dir / "qualification-alpha.epub")
         if not corpus_sources:
             _epub(beta_dir / "qualification-beta.epub")
         if corpus_sources:
@@ -1426,7 +1427,8 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         operator_titles = set(operator_metadata.values())
         operator_item_ids = {
             value for value in scanned_item_ids
-            if value != item and current_title(value) in operator_titles
+            if (corpus_sources or value != item)
+            and current_title(value) in operator_titles
         }
         if corpus_sources and len(operator_item_ids) != len(corpus_sources):
             raise QualificationError("operator_corpus_identity_failed")
