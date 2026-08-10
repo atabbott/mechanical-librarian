@@ -7,9 +7,11 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from scripts.qualify_audiobookshelf_field_effect import (
     QualificationError,
+    _compose_review_client,
     _epub,
     _qualification_hardcover_client,
     _require_installed_return_automatic_transition,
@@ -20,6 +22,48 @@ from scripts.qualify_audiobookshelf_field_effect import (
 
 
 class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
+    def test_installed_qualification_composes_application_before_fastapi(self) -> None:
+        repository = Mock()
+        review = SimpleNamespace(
+            owner_password_hash_file="/synthetic/owner.hash",
+            session_lifetime_seconds=600,
+            graceful_shutdown_seconds=5,
+        )
+        preparation = Mock()
+        continuous = Mock()
+        application = object()
+        client = object()
+
+        with (
+            patch(
+                "scripts.qualify_audiobookshelf_field_effect.load_owner_password_verifier",
+                return_value=lambda _: False,
+            ),
+            patch(
+                "scripts.qualify_audiobookshelf_field_effect.compose_review_application",
+                return_value=application,
+            ) as compose,
+            patch(
+                "scripts.qualify_audiobookshelf_field_effect.create_review_app",
+                return_value=object(),
+            ) as create,
+            patch(
+                "scripts.qualify_audiobookshelf_field_effect.TestClient",
+                return_value=client,
+            ),
+        ):
+            result = _compose_review_client(
+                repository,
+                review,
+                preparation,
+                continuous,
+                (("books", None),),
+            )
+
+        self.assertIs(result, client)
+        compose.assert_called_once()
+        create.assert_called_once_with(application, review)
+
     def test_return_to_automatic_retains_manual_hold_until_fresh_lineage(self) -> None:
         _require_installed_return_automatic_transition(204, object())
 

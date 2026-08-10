@@ -43,6 +43,16 @@ Workbench contained-reviewer scenario -> narrow source contract
                                       -> bounded schema-validated JSON result
 ```
 
+Bootstrap composes one authenticated `ReviewApplication` before creating
+FastAPI. Named session, case, decision, Library, Attention, policy,
+preparation, Activity, field-effect, recovery, and support operations share one
+application serialization gate, while SQLite remains the only transaction
+owner. HTTP owns routing, bounded DTO translation, and the unchanged security
+boundary; it receives no repository and constructs no workflow. Critical
+top-level case, Library, Attention, and preparation reads cross the interface as
+bounded application view models, with evidence and history retained as separate
+reads because they load independently.
+
 Contained-reviewer authentication actions are adapter-owned and establish no
 product lifecycle. The workbench is source-only, disposable by default,
 excluded from the wheel and container, and has no production-target bridge.

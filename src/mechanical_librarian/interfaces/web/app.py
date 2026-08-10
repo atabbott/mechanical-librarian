@@ -5,12 +5,10 @@ from __future__ import annotations
 import os
 import re
 import stat
-import threading
-import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Literal
 from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
@@ -33,43 +31,19 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
-from mechanical_librarian.application.field_effects import (
-    GuardedApplicationError,
-    GuardedFieldApplication,
-)
-from mechanical_librarian.application.continuous_field_effects import (
-    ContinuousGuardedApplication,
-)
+from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     SUPPORTED_DESTINATIONS,
 )
-from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls, MetadataPolicyApplicationError, PolicyNotebook, PolicyTransition
-from mechanical_librarian.application.operations import (
-    OperationalStatus, OperationsError, StageTimer, SupportExporter,
-    TimingRepository,
-)
-from mechanical_librarian.application.review_web import (
-    BrowseReviewLibrary,
-    CurrentReviewCaseSnapshot,
-    InspectCurrentReviewCase,
-    OwnerSessionService,
-    RecordHumanDecision,
-    ReviewAttentionSnapshot,
-    ReviewLibrarySnapshot,
-    ReviewWebError,
-    ReviewWebRepository,
-)
-from mechanical_librarian.application.review_pipeline import (
-    ReviewPipelineError,
-    ReviewPreparationSupervisor,
-)
-from mechanical_librarian.domain.human_decision import HumanDecision
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyError, MetadataPolicyProfile
+from mechanical_librarian.application.metadata_policy import MetadataPolicyApplicationError, PolicyTransition
+from mechanical_librarian.application.operations import OperationsError
+from mechanical_librarian.application.review_application import ReviewApplication
+from mechanical_librarian.application.review_web import ReviewWebError
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyError
 from mechanical_librarian.interfaces.web import review_frontend
 
 
-_SerializedResult = TypeVar("_SerializedResult")
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _COOKIE_NAME = "ml_session"
 
@@ -516,12 +490,6 @@ def _policy_problem(error: MetadataPolicyError) -> str:
     }.get(str(error), "policy_validation")
 
 
-def _require_permitted_policy_destinations(
-    profile: MetadataPolicyProfile, notebook: PolicyNotebook
-) -> None:
-    notebook.validate(profile)
-
-
 class _BodyLimitMiddleware:
     def __init__(
         self,
@@ -603,93 +571,19 @@ async def _oversized_body_response(
 
 
 def create_review_app(
-    repository: ReviewWebRepository,
+    application: ReviewApplication,
     configuration: ReviewWebConfiguration,
-    *,
-    clock: Callable[[], int] = lambda: int(time.time()),
-    close_repository: bool = False,
-    review_preparation: ReviewPreparationSupervisor | None = None,
-    policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
-    field_application: GuardedFieldApplication | ContinuousGuardedApplication | None = None,
-    operational_timings: TimingRepository | None = None,
-    operational_support: SupportExporter | None = None,
-    operational_timer: StageTimer | None = None,
 ) -> FastAPI:
-    serialized_repository = _SerializedReviewRepository(repository)
-    if isinstance(field_application, ContinuousGuardedApplication):
-        field_application.attach_serialization(serialized_repository.call_serialized)
-    operational_status = (
-        None if operational_timings is None else OperationalStatus(
-            snapshot=lambda: serialized_repository.call_serialized(
-                repository.operational_snapshot  # type: ignore[attr-defined]
-            ),
-            timings=operational_timings,
-            support=operational_support,
-        )
-    )
-    verifier = _owner_password_verifier(Path(configuration.owner_password_hash_file))
-    sessions = OwnerSessionService(
-        serialized_repository,
-        verifier,
-        clock,
-        configuration.session_lifetime_seconds,
-    )
-    cases = InspectCurrentReviewCase(serialized_repository)
-    timing = operational_timer or StageTimer(operational_timings, clock=clock)
-    decisions = RecordHumanDecision(serialized_repository, clock, timing)
-    if field_application is not None:
-        field_application.attach_timing(timing)
-    browse = BrowseReviewLibrary(serialized_repository)
-    overrides = {name: value for name, value in policy_libraries if value is not None}
-    notebook = PolicyNotebook(serialized_repository, tuple(name for name, _ in policy_libraries), overrides)
-    automatic_safety = AutomaticSafetyControls(serialized_repository)
+    sessions = application
     origin = urlsplit(configuration.canonical_origin)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        if operational_status is not None:
-            operational_status.start()
-        if field_application is not None:
-            field_application.start()
-        if review_preparation is not None:
-            review_preparation.start()
+        application.start()
         try:
             yield
         finally:
-            deadline = time.monotonic() + configuration.graceful_shutdown_seconds
-            shutdown_errors: list[Exception] = []
-            if isinstance(field_application, ContinuousGuardedApplication):
-                try:
-                    field_application.close_admission()
-                except Exception as error:
-                    shutdown_errors.append(error)
-            if review_preparation is not None:
-                try:
-                    review_preparation.begin_drain()
-                except Exception as error:
-                    shutdown_errors.append(error)
-            if operational_status is not None:
-                try:
-                    operational_status.begin_drain()
-                except Exception as error:
-                    shutdown_errors.append(error)
-            if field_application is not None:
-                try:
-                    if isinstance(field_application, ContinuousGuardedApplication):
-                        field_application.wait_for_drain(deadline)
-                    else:
-                        field_application.begin_drain()
-                except Exception as error:
-                    shutdown_errors.append(error)
-            if review_preparation is not None:
-                try:
-                    review_preparation.stop(deadline)
-                except Exception as error:
-                    shutdown_errors.append(error)
-            if shutdown_errors:
-                raise shutdown_errors[0]
-            if close_repository:
-                repository.close()  # type: ignore[attr-defined]
+            application.stop()
 
     app = FastAPI(
         title="Mechanical Librarian Review API",
@@ -746,9 +640,48 @@ def create_review_app(
 
     @app.get("/health/ready", include_in_schema=False)
     def readiness() -> PlainTextResponse:
-        ready = operational_status is None or operational_status.ready()
+        ready = application.ready()
         return PlainTextResponse("ready\n" if ready else "draining\n",
                                  status_code=200 if ready else 503)
+
+    _register_session_and_operations_routes(
+        app, application, configuration, authenticated_session_cookie
+    )
+    _register_policy_routes(app, application, authenticated_session_cookie)
+    _register_case_and_effect_routes(
+        app, application, session_cookie, authenticated_session_cookie
+    )
+    _register_browse_and_preparation_routes(
+        app, application, session_cookie, authenticated_session_cookie
+    )
+    _register_html_routes(
+        app, application, session_cookie, browser_csrf
+    )
+
+    @app.exception_handler(HTTPException)
+    async def http_error(_: Request, error: HTTPException) -> JSONResponse:
+        detail = error.detail
+        code = detail.get("code") if type(detail) is dict else "request"
+        return _error(error.status_code, str(code))
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
+        if request.url.path.startswith("/api/v1/metadata-policy/"):
+            if any(item.get("loc") == ("header", "x-csrf-token") for item in error.errors()):
+                return _error(403, "csrf")
+            return _error(422, "policy_validation")
+        return _error(422, "invalid")
+
+    return app
+
+
+def _register_session_and_operations_routes(
+    app: FastAPI,
+    application: ReviewApplication,
+    configuration: ReviewWebConfiguration,
+    authenticated_session_cookie: Callable[[str | None], str],
+) -> None:
+    sessions = application
 
     @app.get("/api/v1/operations/status", response_model=_OperationalResponse,
              responses={status: {"model": _ErrorResponse} for status in (401, 503)})
@@ -756,10 +689,10 @@ def create_review_app(
         ml_session: str = Depends(authenticated_session_cookie),
     ) -> _OperationalResponse:
         _require_session(sessions, ml_session)
-        if operational_status is None:
+        if not application.operations_available:
             raise HTTPException(503, detail={"code": "operations_unavailable"})
         try:
-            return _OperationalResponse.model_validate(operational_status.status())
+            return _OperationalResponse.model_validate(application.operations_status())
         except (OperationsError, FieldEffectError):
             raise HTTPException(503, detail={"code": "operations_unavailable"}) from None
 
@@ -771,10 +704,10 @@ def create_review_app(
     ) -> _SupportPreviewResponse:
         _require_session(sessions, ml_session)
         try:
-            if operational_status is None:
+            if not application.operations_available:
                 raise OperationsError("support_unavailable")
             return _SupportPreviewResponse.model_validate(
-                operational_status.support_preview()
+                application.support_preview()
             )
         except OperationsError:
             raise HTTPException(503, detail={"code": "support_unavailable"}) from None
@@ -787,9 +720,9 @@ def create_review_app(
     ) -> Response:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            if operational_status is None:
+            if not application.operations_available:
                 raise OperationsError("support_unavailable")
-            return Response(operational_status.support_export(),
+            return Response(application.support_export(),
                             media_type="application/json",
                             headers={"Content-Disposition":
                                      "attachment; filename=mechanical-librarian-support.json"})
@@ -860,6 +793,16 @@ def create_review_app(
         response.status_code = 204
         return response
 
+
+def _register_policy_routes(
+    app: FastAPI,
+    application: ReviewApplication,
+    authenticated_session_cookie: Callable[[str | None], str],
+) -> None:
+    sessions = application
+    notebook = application.policy
+    automatic_safety = application.automatic_safety
+
     @app.post(
         "/api/v1/metadata-policy/drafts",
         response_model=_PolicyDraftResponse,
@@ -873,9 +816,9 @@ def create_review_app(
     ) -> _PolicyDraftResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            candidate = MetadataPolicyProfile.create(payload.name, payload.options, payload.destinations)
-            _require_permitted_policy_destinations(candidate, notebook)
-            profile = notebook.create(candidate.name, dict(candidate.options), dict(candidate.destinations))
+            profile = application.create_policy_draft(
+                payload.name, payload.options, payload.destinations
+            )
             policy_id = profile.policy_id
         except MetadataPolicyError as error:
             raise HTTPException(422, detail={"code": _policy_problem(error)}) from None
@@ -909,7 +852,7 @@ def create_review_app(
     def enter_shadow_preview(ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _ShadowPostureResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            return _ShadowPostureResponse.model_validate(notebook.enter_preview(clock()))
+            return _ShadowPostureResponse.model_validate(notebook.enter_preview(application.now()))
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 
@@ -917,7 +860,7 @@ def create_review_app(
     def confirm_automatic(ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _ShadowPostureResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            return _ShadowPostureResponse.model_validate(notebook.confirm_automatic(clock()))
+            return _ShadowPostureResponse.model_validate(notebook.confirm_automatic(application.now()))
         except MetadataPolicyApplicationError:
             raise HTTPException(422, detail={"code": "automatic_unavailable"}) from None
 
@@ -934,7 +877,7 @@ def create_review_app(
     def set_automatic_pause(payload: _AutomaticPauseRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _AutomaticSafetyResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            automatic_safety.pause(payload.paused, clock())
+            automatic_safety.pause(payload.paused, application.now())
             return _automatic_safety_response()
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
@@ -948,7 +891,7 @@ def create_review_app(
             category = payload.category
             if category is not None and not category:
                 raise ValueError
-            automatic_safety.recover(clock(), category)
+            automatic_safety.recover(application.now(), category)
             return _automatic_safety_response()
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
@@ -961,7 +904,7 @@ def create_review_app(
         try:
             if payload.category is not None and not payload.category:
                 raise ValueError
-            automatic_safety.suspend(payload.reason, clock(), payload.category)
+            automatic_safety.suspend(payload.reason, application.now(), payload.category)
             return _automatic_safety_response()
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
@@ -989,8 +932,9 @@ def create_review_app(
     def validate_metadata_policy(payload: _PolicyDraftRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyProfileResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            profile = MetadataPolicyProfile.create(payload.name, payload.options, payload.destinations)
-            _require_permitted_policy_destinations(profile, notebook)
+            profile = application.validate_policy(
+                payload.name, payload.options, payload.destinations
+            )
         except MetadataPolicyError as error:
             raise HTTPException(422, detail={"code": _policy_problem(error)}) from None
         except MetadataPolicyApplicationError as error:
@@ -1014,9 +958,9 @@ def create_review_app(
     def preview_metadata_policy(payload: _PolicyDraftRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyPreviewResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            profile = MetadataPolicyProfile.create(payload.name, payload.options, payload.destinations)
-            _require_permitted_policy_destinations(profile, notebook)
-            preview = notebook.preview(profile)
+            profile, preview = application.preview_policy(
+                payload.name, payload.options, payload.destinations
+            )
         except MetadataPolicyError as error:
             raise HTTPException(422, detail={"code": _policy_problem(error)}) from None
         except MetadataPolicyApplicationError as error:
@@ -1027,7 +971,11 @@ def create_review_app(
     def activate_metadata_policy(payload: _PolicyActivationRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyActivationResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            result = notebook.activate(payload.policy_id, payload.expected_active_policy_id, clock())
+            result = notebook.activate(
+                payload.policy_id,
+                payload.expected_active_policy_id,
+                application.now(),
+            )
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None
         return _PolicyActivationResponse(policy_id=result.active.policy_id, transition=None if result.transition is None else _policy_transition_response(result.transition))
@@ -1044,7 +992,9 @@ def create_review_app(
     def retry_metadata_policy_transition(transition_id: str, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyTransitionResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            return _policy_transition_response(notebook.retry(transition_id, clock()))
+            return _policy_transition_response(
+                notebook.retry(transition_id, application.now())
+            )
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None
 
@@ -1052,9 +1002,20 @@ def create_review_app(
     def acknowledge_metadata_policy_transition(transition_id: str, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyTransitionResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            return _policy_transition_response(notebook.acknowledge(transition_id, clock()))
+            return _policy_transition_response(
+                notebook.acknowledge(transition_id, application.now())
+            )
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None
+
+
+def _register_case_and_effect_routes(
+    app: FastAPI,
+    application: ReviewApplication,
+    session_cookie: APIKeyCookie,
+    authenticated_session_cookie: Callable[[str | None], str],
+) -> None:
+    sessions = application
 
     @app.get(
         "/api/v1/review-cases/{review_case_id}",
@@ -1070,22 +1031,8 @@ def create_review_app(
     ) -> _CaseDetailResponse:
         _require_session(sessions, ml_session)
         _require_case_id(review_case_id)
-        detail = _case_call(lambda: cases.run(review_case_id))
-        target = detail["target"]
-        if isinstance(field_application, ContinuousGuardedApplication):
-            for field in detail["fields"]:
-                suspension = serialized_repository.call_serialized(
-                    lambda field=field: repository.field_effect_capability_suspension(
-                        target["connection"], field["destination"]
-                    )
-                )
-                field["effect_capability"] = (
-                    "allowed" if suspension is None else suspension
-                )
-        else:
-            for field in detail["fields"]:
-                field["effect_capability"] = "unavailable"
-        return _CaseDetailResponse.model_validate(detail)
+        detail = _case_call(lambda: application.case_detail(review_case_id))
+        return _CaseDetailResponse.model_validate(detail.to_data())
 
     @app.post(
         "/api/v1/review-cases/{review_case_id}/decisions",
@@ -1108,7 +1055,7 @@ def create_review_app(
         _require_case_id(review_case_id)
         acknowledgement = _DecisionAcknowledgement.model_validate(
             _decision_call(
-                lambda: decisions.run(
+                lambda: application.record_decision(
                     review_case_id,
                     proposal_id=payload.proposal_id,
                     target_fingerprint=payload.target_fingerprint,
@@ -1124,24 +1071,17 @@ def create_review_app(
                 )
             )
         )
-        if isinstance(field_application, ContinuousGuardedApplication):
-            field_application.wake()
         return acknowledgement
 
-    def serialized_field_effect_call(callable_):
-        if field_application is None:
-            raise HTTPException(503, detail={"code": "unavailable"})
+    def field_effect_call(callable_):
         try:
-            return serialized_repository.call_serialized(callable_)
-        except (GuardedApplicationError, FieldEffectError) as error:
-            code = getattr(error, "code", "persistence")
+            return callable_()
+        except (GuardedApplicationError, FieldEffectError, RuntimeError) as error:
+            code = getattr(error, "code", "unavailable")
             status_code = 404 if code == "not_found" else 409 if code in {
                 "claim_conflict", "transition_conflict", "draining", "paused"
             } else 503
             raise HTTPException(status_code, detail={"code": code}) from None
-
-    def field_effect_call(callable_):
-        return serialized_field_effect_call(lambda: callable_().to_data())
 
     @app.get("/api/v1/activity", response_model=dict[str, object],
              responses={status: {"model": _ErrorResponse} for status in (401, 503)})
@@ -1149,9 +1089,7 @@ def create_review_app(
         ml_session: str = Depends(authenticated_session_cookie),
     ) -> dict[str, object]:
         _require_session(sessions, ml_session)
-        if not isinstance(field_application, ContinuousGuardedApplication):
-            raise HTTPException(503, detail={"code": "unavailable"})
-        return serialized_field_effect_call(field_application.activity)
+        return field_effect_call(application.activity)
 
     @app.post("/api/v1/activity/consent", response_model=dict[str, object],
               responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)})
@@ -1161,10 +1099,8 @@ def create_review_app(
         x_csrf_token: str = Header(),
     ) -> dict[str, object]:
         _require_session(sessions, ml_session, x_csrf_token)
-        if not isinstance(field_application, ContinuousGuardedApplication):
-            raise HTTPException(503, detail={"code": "unavailable"})
-        return serialized_field_effect_call(
-            lambda: field_application.enable(tuple(payload.libraries))
+        return field_effect_call(
+            lambda: application.enable_activity(tuple(payload.libraries))
         )
 
     @app.post("/api/v1/activity/{connection}/{library}/revoke",
@@ -1177,10 +1113,8 @@ def create_review_app(
         x_csrf_token: str = Header(),
     ) -> dict[str, object]:
         _require_session(sessions, ml_session, x_csrf_token)
-        if not isinstance(field_application, ContinuousGuardedApplication):
-            raise HTTPException(503, detail={"code": "unavailable"})
-        return serialized_field_effect_call(
-            lambda: field_application.revoke(connection, library)
+        return field_effect_call(
+            lambda: application.revoke_activity(connection, library)
         )
 
     @app.post(
@@ -1197,11 +1131,10 @@ def create_review_app(
     ) -> Response:
         _require_session(sessions, ml_session, x_csrf_token)
         _require_case_id(review_case_id)
-        if (not isinstance(field_application, ContinuousGuardedApplication)
-                or destination not in SUPPORTED_DESTINATIONS):
+        if destination not in SUPPORTED_DESTINATIONS:
             raise HTTPException(404, detail={"code": "not_found"})
-        serialized_field_effect_call(
-            lambda: field_application.return_to_automatic(
+        field_effect_call(
+            lambda: application.return_to_automatic(
                 review_case_id, destination
             )
         )
@@ -1213,10 +1146,7 @@ def create_review_app(
                             ml_session: str = Depends(authenticated_session_cookie)) -> dict[str, object]:
         if not re.fullmatch(r"effect_plan_[0-9a-f]{64}", plan_id):
             raise HTTPException(404, detail={"code": "not_found"})
-        application = field_application
-        if application is None:
-            raise HTTPException(503, detail={"code": "unavailable"})
-        return field_effect_call(lambda: application.status(plan_id))
+        return field_effect_call(lambda: application.field_effect_status(plan_id))
 
     @app.post("/api/v1/field-effects/{plan_id}/apply", response_model=dict[str, object],
               responses={status: {"model": _ErrorResponse} for status in (401, 403, 404, 409, 422, 503)})
@@ -1225,10 +1155,7 @@ def create_review_app(
         _require_session(sessions, ml_session, x_csrf_token)
         if not re.fullmatch(r"effect_plan_[0-9a-f]{64}", plan_id):
             raise HTTPException(404, detail={"code": "not_found"})
-        application = field_application
-        if application is None:
-            raise HTTPException(503, detail={"code": "unavailable"})
-        return field_effect_call(lambda: application.apply(plan_id))
+        return field_effect_call(lambda: application.apply_field_effect(plan_id))
 
     @app.post("/api/v1/field-effects/{plan_id}/reconcile", response_model=dict[str, object],
               responses={status: {"model": _ErrorResponse} for status in (401, 403, 404, 409, 422, 503)})
@@ -1237,21 +1164,16 @@ def create_review_app(
         _require_session(sessions, ml_session, x_csrf_token)
         if not re.fullmatch(r"effect_plan_[0-9a-f]{64}", plan_id):
             raise HTTPException(404, detail={"code": "not_found"})
-        application = field_application
-        if application is None:
-            raise HTTPException(503, detail={"code": "unavailable"})
-        return field_effect_call(lambda: application.reconcile(plan_id))
+        return field_effect_call(
+            lambda: application.reconcile_field_effect(plan_id)
+        )
 
     @app.post("/api/v1/field-effects/pause", status_code=204,
               responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)})
     def pause_field_effects(ml_session: str = Depends(authenticated_session_cookie),
                             x_csrf_token: str = Header()) -> Response:
         _require_session(sessions, ml_session, x_csrf_token)
-        if field_application is None:
-            raise HTTPException(503, detail={"code": "unavailable"})
-        serialized_field_effect_call(
-            lambda: field_application.set_paused(True)
-        )
+        field_effect_call(application.pause_field_effects)
         return Response(status_code=204)
 
     @app.post("/api/v1/field-effects/resume", status_code=204,
@@ -1259,11 +1181,7 @@ def create_review_app(
     def resume_field_effects(ml_session: str = Depends(authenticated_session_cookie),
                              x_csrf_token: str = Header()) -> Response:
         _require_session(sessions, ml_session, x_csrf_token)
-        if field_application is None:
-            raise HTTPException(503, detail={"code": "unavailable"})
-        serialized_field_effect_call(
-            lambda: field_application.set_paused(False)
-        )
+        field_effect_call(application.resume_field_effects)
         return Response(status_code=204)
 
     @app.get("/api/v1/openapi.json", include_in_schema=False)
@@ -1272,6 +1190,15 @@ def create_review_app(
     ) -> JSONResponse:
         _require_session(sessions, ml_session)
         return JSONResponse(app.openapi())
+
+
+def _register_browse_and_preparation_routes(
+    app: FastAPI,
+    application: ReviewApplication,
+    session_cookie: APIKeyCookie,
+    authenticated_session_cookie: Callable[[str | None], str],
+) -> None:
+    sessions = application
 
     @app.get(
         "/api/v1/library",
@@ -1291,13 +1218,13 @@ def create_review_app(
         _require_session(sessions, ml_session)
         return _LibraryResponse.model_validate(
             _query_call(
-                lambda: browse.library(
+                lambda: application.library(
                     lens=lens,
                     search=q,
                     limit=limit,
                     cursor=cursor,
                 )
-            )
+            ).to_data()
         )
 
     @app.get(
@@ -1317,12 +1244,12 @@ def create_review_app(
         _require_session(sessions, ml_session)
         return _AttentionResponse.model_validate(
             _query_call(
-                lambda: browse.attention(
+                lambda: application.attention(
                     search=q,
                     limit=limit,
                     cursor=cursor,
                 )
-            )
+            ).to_data()
         )
 
     @app.get(
@@ -1334,42 +1261,12 @@ def create_review_app(
         ml_session: str | None = Security(session_cookie),
     ) -> _PreparationResponse:
         _require_session(sessions, ml_session)
-        if review_preparation is None:
-            return _PreparationResponse(libraries=[])
-        values: list[_PreparationProgress] = []
         try:
-            progress_values, paused = review_preparation.status()
-            if len(progress_values) != len(review_preparation.libraries):
-                raise ReviewPipelineError("state")
-            for (connection, library_name, library_id), progress in zip(
-                review_preparation.libraries, progress_values, strict=True
-            ):
-                values.append(
-                    _PreparationProgress(
-                        scan_id=None if progress is None else progress.scan_id,
-                        connection=connection,
-                        library=library_name,
-                        library_id=library_id,
-                        state="idle" if progress is None else progress.state,
-                        checked=0 if progress is None else progress.checked,
-                        total=0 if progress is None else progress.total,
-                        ready=0 if progress is None else progress.ready,
-                        blocked=0 if progress is None else progress.blocked,
-                        rescan_requested=(
-                            False if progress is None else progress.rescan_requested
-                        ),
-                    )
-                )
-        except ReviewPipelineError:
-            raise HTTPException(503, detail={"code": "persistence"}) from None
+            return _PreparationResponse.model_validate(
+                application.preparation().to_data()
+            )
         except Exception:
             raise HTTPException(503, detail={"code": "persistence"}) from None
-        return _PreparationResponse(
-            libraries=values,
-            paused=paused,
-            active=any(value.state in {"queued", "discovering", "processing"} for value in values),
-            actionable=any(value.state == "completed_with_failures" for value in values),
-        )
 
     @app.post(
         "/api/v1/review-preparation/{connection}/{library_name}/scan",
@@ -1387,45 +1284,29 @@ def create_review_app(
         x_csrf_token: str = Header(),
     ) -> _PreparationProgress:
         _require_session(sessions, ml_session, x_csrf_token)
-        if review_preparation is None:
-            raise HTTPException(503, detail={"code": "unavailable"})
         if not 1 <= len(connection) <= 64 or not 1 <= len(library_name) <= 64:
             raise HTTPException(404, detail={"code": "library"})
         try:
-            progress = review_preparation.request(connection, library_name)
-            library_id = next(
-                item[2]
-                for item in review_preparation.libraries
-                if item[:2] == (connection, library_name)
+            return _PreparationProgress.model_validate(
+                application.request_review_scan(connection, library_name)
             )
-        except (ReviewPipelineError, StopIteration) as error:
+        except (RuntimeError, StopIteration) as error:
             code = getattr(error, "code", "")
             status = 404 if code == "library" else 409 if code == "paused" else 503
             raise HTTPException(status, detail={"code": code if status != 503 else "persistence"}) from None
         except Exception:
             raise HTTPException(503, detail={"code": "persistence"}) from None
-        return _PreparationProgress(
-            scan_id=progress.scan_id,
-            connection=progress.connection,
-            library=progress.library,
-            library_id=library_id,
-            state=progress.state,
-            checked=progress.checked,
-            total=progress.total,
-            ready=progress.ready,
-            blocked=progress.blocked,
-            rescan_requested=progress.rescan_requested,
-        )
 
     def preparation_control(paused: bool, ml_session: str, csrf: str) -> _PreparationResponse:
         _require_session(sessions, ml_session, csrf)
-        if review_preparation is None:
-            raise HTTPException(503, detail={"code": "unavailable"})
         try:
-            review_preparation.set_paused(paused)
-            return review_preparation_status(ml_session)
-        except ReviewPipelineError:
-            raise HTTPException(503, detail={"code": "persistence"}) from None
+            return _PreparationResponse.model_validate(
+                (
+                    application.pause_review_preparation()
+                    if paused
+                    else application.resume_review_preparation()
+                ).to_data()
+            )
         except Exception:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 
@@ -1464,23 +1345,16 @@ def create_review_app(
         x_csrf_token: str = Header(),
     ) -> _PreparationProgress:
         _require_session(sessions, ml_session, x_csrf_token)
-        if review_preparation is None:
-            raise HTTPException(503, detail={"code": "unavailable"})
         if not 1 <= len(connection) <= 64 or not 1 <= len(library_name) <= 64:
             raise HTTPException(404, detail={"code": "library"})
         try:
-            progress = review_preparation.retry(connection, library_name)
-            library_id = next(item[2] for item in review_preparation.libraries if item[:2] == (connection, library_name))
-        except (ReviewPipelineError, StopIteration) as error:
+            return _PreparationProgress.model_validate(
+                application.retry_review_scan(connection, library_name)
+            )
+        except (RuntimeError, StopIteration) as error:
             code = getattr(error, "code", "library")
             status = 409 if code in {"retry", "paused"} else 404 if code == "library" else 503
             raise HTTPException(status, detail={"code": code}) from None
-        return _PreparationProgress(
-            scan_id=progress.scan_id, connection=progress.connection,
-            library=progress.library, library_id=library_id, state=progress.state,
-            checked=progress.checked, total=progress.total, ready=progress.ready,
-            blocked=progress.blocked, rescan_requested=progress.rescan_requested,
-        )
 
     @app.get(
         "/api/v1/review-cases/{review_case_id}/evidence",
@@ -1500,7 +1374,7 @@ def create_review_app(
         _require_case_id(review_case_id)
         return _EvidenceResponse.model_validate(
             _case_call(
-                lambda: cases.evidence(
+                lambda: application.evidence(
                     review_case_id,
                     limit=limit,
                     cursor=cursor,
@@ -1523,8 +1397,17 @@ def create_review_app(
         _require_session(sessions, ml_session)
         _require_case_id(review_case_id)
         return _HistoryResponse.model_validate(
-            _case_call(lambda: cases.history(review_case_id))
+            _case_call(lambda: application.history(review_case_id))
         )
+
+
+def _register_html_routes(
+    app: FastAPI,
+    application: ReviewApplication,
+    session_cookie: APIKeyCookie,
+    browser_csrf: Callable[[str], str],
+) -> None:
+    sessions = application
 
     @app.get("/review/{review_case_id}", include_in_schema=False)
     def review_page(
@@ -1546,7 +1429,7 @@ def create_review_app(
         assert ml_session is not None
         return HTMLResponse(
             review_frontend.library_html(
-                browser_csrf(ml_session), review_preparation is not None
+                browser_csrf(ml_session), application.preparation_available
             )
         )
 
@@ -1596,24 +1479,8 @@ def create_review_app(
             review_frontend.SHADOW_POLICY_JS, media_type="text/javascript"
         )
 
-    @app.exception_handler(HTTPException)
-    async def http_error(_: Request, error: HTTPException) -> JSONResponse:
-        detail = error.detail
-        code = detail.get("code") if type(detail) is dict else "request"
-        return _error(error.status_code, str(code))
 
-    @app.exception_handler(RequestValidationError)
-    async def validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
-        if request.url.path.startswith("/api/v1/metadata-policy/"):
-            if any(item.get("loc") == ("header", "x-csrf-token") for item in error.errors()):
-                return _error(403, "csrf")
-            return _error(422, "policy_validation")
-        return _error(422, "invalid")
-
-    return app
-
-
-def _owner_password_verifier(path: Path) -> Callable[[str], bool]:
+def load_owner_password_verifier(path: Path) -> Callable[[str], bool]:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     if not getattr(os, "O_NOFOLLOW", 0):
         raise ReviewWebError("password_hash")
@@ -1646,208 +1513,6 @@ def _owner_password_verifier(path: Path) -> Callable[[str], bool]:
     return verify
 
 
-class _SerializedReviewRepository:
-    """Serialize one cross-thread SQLite connection at the HTTP adapter edge."""
-
-    def __init__(self, repository: ReviewWebRepository) -> None:
-        self._repository = repository
-        self._lock = threading.RLock()
-
-    def call_serialized(
-        self, call: Callable[[], _SerializedResult]
-    ) -> _SerializedResult:
-        with self._lock:
-            return call()
-
-    def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
-        with self._lock:
-            return self._repository.begin_login(now, window_seconds, maximum_failures)
-
-    def create_review_session(self, session_digest: str, csrf_digest: str, created_at: int, expires_at: int) -> None:
-        with self._lock:
-            self._repository.create_review_session(
-                session_digest, csrf_digest, created_at, expires_at
-            )
-
-    def authenticate_review_session(self, session_digest: str, now: int) -> tuple[str, str, int]:
-        with self._lock:
-            return self._repository.authenticate_review_session(session_digest, now)
-
-    def rotate_review_session_csrf(
-        self, session_digest: str, csrf_digest: str, now: int
-    ) -> str:
-        with self._lock:
-            return self._repository.rotate_review_session_csrf(
-                session_digest, csrf_digest, now
-            )
-
-    def revoke_review_session(
-        self, session_digest: str, csrf_digest: str, now: int
-    ) -> str:
-        with self._lock:
-            return self._repository.revoke_review_session(
-                session_digest, csrf_digest, now
-            )
-
-    def get_review_case(self, review_case_id: str) -> str:
-        with self._lock:
-            return self._repository.get_review_case(review_case_id)
-
-    def review_case_ready_at(self, review_case_id: str) -> int | None:
-        with self._lock:
-            return self._repository.review_case_ready_at(review_case_id)
-
-    def read_current_review_case(
-        self, review_case_id: str, history_limit: int | None
-    ) -> CurrentReviewCaseSnapshot:
-        with self._lock:
-            return self._repository.read_current_review_case(
-                review_case_id, history_limit
-            )
-
-    def read_review_library(
-        self,
-        search: str | None,
-        limit: int,
-        offset: int,
-        attention: bool | None,
-    ) -> ReviewLibrarySnapshot:
-        with self._lock:
-            return self._repository.read_review_library(
-                search, limit, offset, attention
-            )
-
-    def read_review_attention(
-        self, search: str | None, limit: int, offset: int
-    ) -> ReviewAttentionSnapshot:
-        with self._lock:
-            return self._repository.read_review_attention(search, limit, offset)
-
-    def review_case_exists(self, review_case_id: str) -> bool:
-        with self._lock:
-            return self._repository.review_case_exists(review_case_id)
-
-    def find_human_decision(self, idempotency_digest: str) -> str | None:
-        with self._lock:
-            return self._repository.find_human_decision(idempotency_digest)
-
-    def record_human_decision(self, decision: HumanDecision) -> str:
-        with self._lock:
-            return self._repository.record_human_decision(decision)
-
-    def record_field_effect(self, operation):
-        with self._lock:
-            return self._repository.record_field_effect(operation)
-
-    def get_field_effect(self, plan_id: str):
-        with self._lock:
-            return self._repository.get_field_effect(plan_id)
-
-    def claim_field_effect(self, plan_id: str, expected_state: str, claim_token: str, claimed_at: int):
-        with self._lock:
-            return self._repository.claim_field_effect(plan_id, expected_state, claim_token, claimed_at)
-
-    def transition_field_effect(self, plan_id: str, expected_state: str, state: str, changed_at: int, failure: str | None = None):
-        with self._lock:
-            return self._repository.transition_field_effect(plan_id, expected_state, state, changed_at, failure)
-
-    def supersede_field_effect(self, decision_id: str, superseded_at: int) -> int:
-        with self._lock:
-            return self._repository.supersede_field_effect(decision_id, superseded_at)
-
-    def set_field_effect_paused(self, paused: bool, changed_at: int) -> None:
-        with self._lock:
-            self._repository.set_field_effect_paused(paused, changed_at)
-
-    def field_effect_paused(self) -> bool:
-        with self._lock:
-            return self._repository.field_effect_paused()
-
-    def create_metadata_policy_draft(self, document: str) -> str:
-        with self._lock:
-            return self._repository.create_metadata_policy_draft(document)
-
-    def shadow_posture(self) -> str:
-        with self._lock:
-            if not hasattr(self._repository, "shadow_posture"):
-                return "review"
-            return self._repository.shadow_posture()
-
-    def enter_shadow_preview(self, updated_at: int) -> str:
-        with self._lock:
-            return self._repository.enter_shadow_preview(updated_at)
-
-    def activate_qualified_automatic(self, updated_at: int) -> str:
-        with self._lock:
-            return self._repository.activate_qualified_automatic(updated_at)
-
-    def automatic_safety_state(self):
-        with self._lock:
-            return self._repository.automatic_safety_state()
-
-    def set_automatic_safety_state(self, state, updated_at: int) -> None:
-        with self._lock:
-            self._repository.set_automatic_safety_state(state, updated_at)
-
-    def list_shadow_outcomes(self, limit: int) -> tuple[tuple[str, int], ...]:
-        with self._lock:
-            if not hasattr(self._repository, "list_shadow_outcomes"):
-                return ()
-            return self._repository.list_shadow_outcomes(limit)
-
-    def get_metadata_policy_draft(self, policy_id: str) -> str:
-        with self._lock:
-            return self._repository.get_metadata_policy_draft(policy_id)
-
-    def current_unapplied_count(self, library: str) -> int:
-        with self._lock:
-            return self._repository.current_unapplied_count(library)
-
-    def active_metadata_policy(self) -> str:
-        with self._lock:
-            if not hasattr(self._repository, "active_metadata_policy"):
-                return MetadataPolicyProfile.builtin().canonical_json
-            return self._repository.active_metadata_policy()
-
-    def activate_metadata_policy(self, policy_id: str, expected_active_policy_id: str, resolutions: tuple[tuple[str, str, str], ...], activated_at: int) -> PolicyTransition | None:
-        with self._lock:
-            return self._repository.activate_metadata_policy(policy_id, expected_active_policy_id, resolutions, activated_at)
-
-    def metadata_policy_transition(self) -> PolicyTransition | None:
-        with self._lock:
-            return self._repository.metadata_policy_transition()
-
-    def retry_metadata_policy_transition(self, transition_id: str, retried_at: int) -> PolicyTransition:
-        with self._lock:
-            return self._repository.retry_metadata_policy_transition(transition_id, retried_at)
-
-    def acknowledge_metadata_policy_transition(self, transition_id: str, acknowledged_at: int) -> PolicyTransition:
-        with self._lock:
-            return self._repository.acknowledge_metadata_policy_transition(transition_id, acknowledged_at)
-
-    def current_resolved_policy_id(self, library: str) -> str:
-        with self._lock:
-            return self._repository.current_resolved_policy_id(library)
-
-    def current_resolved_metadata_policy(self, library: str):
-        with self._lock:
-            if not hasattr(self._repository, "current_resolved_metadata_policy"):
-                return None
-            return self._repository.current_resolved_metadata_policy(library)
-
-    def metadata_policy_resolution_for_preview(self, library: str):
-        with self._lock:
-            if hasattr(
-                self._repository, "metadata_policy_resolution_for_preview"
-            ):
-                return self._repository.metadata_policy_resolution_for_preview(
-                    library
-                )
-            if not hasattr(self._repository, "current_resolved_metadata_policy"):
-                return None
-            return self._repository.current_resolved_metadata_policy(library)
-
-
 def _request_matches_origin(request: Request, configuration: ReviewWebConfiguration) -> bool:
     host = request.headers.get("host", "")
     scheme = request.url.scheme
@@ -1870,7 +1535,7 @@ def _request_matches_origin(request: Request, configuration: ReviewWebConfigurat
 
 
 def _require_session(
-    sessions: OwnerSessionService,
+    sessions: ReviewApplication,
     session_token: str | None,
     csrf_token: str | None = None,
 ) -> str:

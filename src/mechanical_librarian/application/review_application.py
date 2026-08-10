@@ -1,0 +1,719 @@
+"""Composed authenticated-browser operations over one serialized state owner."""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from threading import RLock
+from typing import Literal, Protocol, TypeVar
+
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
+from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.metadata_policy import (
+    AutomaticSafetyControls,
+    PolicyActivation,
+    PolicyImpactRepository,
+    PolicyNotebook,
+    PolicyPreview,
+    PolicyTransition,
+)
+from mechanical_librarian.application.operations import (
+    OperationalStatus,
+    StageTimer,
+    SupportExporter,
+    TimingRepository,
+)
+from mechanical_librarian.application.review_pipeline import ReviewPreparationSupervisor
+from mechanical_librarian.application.review_web import (
+    BrowseReviewLibrary,
+    CurrentReviewCaseStore,
+    HumanDecisionStore,
+    InspectCurrentReviewCase,
+    OwnerSessionService,
+    RecordHumanDecision,
+    ReviewLibraryStore,
+    ReviewSessionStore,
+    SessionTokens,
+)
+from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
+from mechanical_librarian.domain.field_effect import SUPPORTED_DESTINATIONS
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
+
+
+_Result = TypeVar("_Result")
+
+
+class ReviewApplicationError(RuntimeError):
+    """A fixed, value-free application-boundary failure."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+class BrowserStateOwner(Protocol):
+    """Composition-only lifecycle and status capabilities of the SQLite owner."""
+
+    def close(self) -> None: ...
+
+    def operational_snapshot(self) -> dict[str, object]: ...
+
+    def field_effect_capability_suspension(
+        self, connection: str, destination: str
+    ) -> str | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class CaseDetailView:
+    current: bool
+    fields: tuple[dict[str, object], ...]
+    review_case_id: str
+    schema_version: str
+    target: dict[str, object]
+
+    @classmethod
+    def from_data(cls, value: dict[str, object]) -> "CaseDetailView":
+        return cls(
+            bool(value["current"]),
+            tuple(dict(item) for item in value["fields"]),  # type: ignore[arg-type]
+            str(value["review_case_id"]),
+            str(value["schema_version"]),
+            dict(value["target"]),  # type: ignore[arg-type]
+        )
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "current": self.current,
+            "fields": [dict(item) for item in self.fields],
+            "review_case_id": self.review_case_id,
+            "schema_version": self.schema_version,
+            "target": dict(self.target),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryView:
+    counts: dict[str, int]
+    items: tuple[dict[str, object], ...]
+    lens: str
+    next_cursor: str | None
+    query: str | None
+    schema_version: str
+
+    @classmethod
+    def from_data(cls, value: dict[str, object]) -> "LibraryView":
+        counts = value["counts"]
+        items = value["items"]
+        assert isinstance(counts, dict)
+        assert isinstance(items, list)
+        return cls(
+            {str(key): int(count) for key, count in counts.items()},
+            tuple(dict(item) for item in items),
+            str(value["lens"]),
+            value["next_cursor"] if isinstance(value["next_cursor"], str) else None,
+            value["query"] if isinstance(value["query"], str) else None,
+            str(value["schema_version"]),
+        )
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "counts": dict(self.counts),
+            "items": [dict(item) for item in self.items],
+            "lens": self.lens,
+            "next_cursor": self.next_cursor,
+            "query": self.query,
+            "schema_version": self.schema_version,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AttentionView:
+    items: tuple[dict[str, object], ...]
+    next_cursor: str | None
+    query: str | None
+    schema_version: str
+    total: int
+
+    @classmethod
+    def from_data(cls, value: dict[str, object]) -> "AttentionView":
+        items = value["items"]
+        assert isinstance(items, list)
+        return cls(
+            tuple(dict(item) for item in items),
+            value["next_cursor"] if isinstance(value["next_cursor"], str) else None,
+            value["query"] if isinstance(value["query"], str) else None,
+            str(value["schema_version"]),
+            int(value["total"]),
+        )
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "items": [dict(item) for item in self.items],
+            "next_cursor": self.next_cursor,
+            "query": self.query,
+            "schema_version": self.schema_version,
+            "total": self.total,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PreparationView:
+    libraries: tuple[dict[str, object], ...]
+    paused: bool
+    active: bool
+    actionable: bool
+    schema_version: str = "review-preparation-v1"
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "libraries": [dict(item) for item in self.libraries],
+            "paused": self.paused,
+            "active": self.active,
+            "actionable": self.actionable,
+            "schema_version": self.schema_version,
+        }
+
+
+class PolicyOperations:
+    """Serialized named policy operations; transport never receives its store."""
+
+    def __init__(self, notebook: PolicyNotebook, gate: Callable[[Callable[[], _Result]], _Result]) -> None:
+        self._notebook = notebook
+        self._gate = gate
+
+    def active(self) -> MetadataPolicyProfile:
+        return self._gate(self._notebook.active)
+
+    def validate(self, profile: MetadataPolicyProfile) -> MetadataPolicyProfile:
+        return self._gate(lambda: self._notebook.validate(profile))
+
+    def create(self, name: object, options: object, destinations: object) -> MetadataPolicyProfile:
+        return self._gate(lambda: self._notebook.create(name, options, destinations))
+
+    def read(self, policy_id: object) -> MetadataPolicyProfile:
+        return self._gate(lambda: self._notebook.read(policy_id))
+
+    def preview(self, profile: MetadataPolicyProfile) -> PolicyPreview:
+        return self._gate(lambda: self._notebook.preview(profile))
+
+    def shadow_state(self) -> dict[str, object]:
+        return self._gate(self._notebook.shadow_state)
+
+    def confirm_automatic(self, updated_at: object) -> dict[str, object]:
+        return self._gate(lambda: self._notebook.confirm_automatic(updated_at))
+
+    def enter_preview(self, updated_at: object) -> dict[str, object]:
+        return self._gate(lambda: self._notebook.enter_preview(updated_at))
+
+    def preview_leave(self) -> dict[str, object]:
+        return self._gate(self._notebook.preview_leave)
+
+    def shadow_sample(self, limit: object = 20) -> dict[str, object]:
+        return self._gate(lambda: self._notebook.shadow_sample(limit))
+
+    def activate(
+        self, policy_id: object, expected_active_policy_id: object, activated_at: object
+    ) -> PolicyActivation:
+        return self._gate(
+            lambda: self._notebook.activate(
+                policy_id, expected_active_policy_id, activated_at
+            )
+        )
+
+    def transition(self) -> PolicyTransition | None:
+        return self._gate(self._notebook.transition)
+
+    def retry(self, transition_id: object, retried_at: object) -> PolicyTransition:
+        return self._gate(lambda: self._notebook.retry(transition_id, retried_at))
+
+    def acknowledge(
+        self, transition_id: object, acknowledged_at: object
+    ) -> PolicyTransition:
+        return self._gate(
+            lambda: self._notebook.acknowledge(transition_id, acknowledged_at)
+        )
+
+
+class AutomaticSafetyOperations:
+    def __init__(
+        self,
+        controls: AutomaticSafetyControls,
+        gate: Callable[[Callable[[], _Result]], _Result],
+    ) -> None:
+        self._controls = controls
+        self._gate = gate
+
+    def state(self) -> AutomaticSafetyState:
+        return self._gate(self._controls.state)
+
+    def pause(self, paused: object, changed_at: object) -> None:
+        self._gate(lambda: self._controls.pause(paused, changed_at))
+
+    def recover(self, changed_at: object, category: object = None) -> None:
+        self._gate(lambda: self._controls.recover(changed_at, category))
+
+    def suspend(self, reason: object, changed_at: object, category: object = None) -> None:
+        self._gate(lambda: self._controls.suspend(reason, changed_at, category))
+
+
+class ReviewApplication:
+    """One deep application boundary consumed by every HTTP transport route."""
+
+    def __init__(
+        self,
+        *,
+        state_owner: BrowserStateOwner,
+        sessions: OwnerSessionService,
+        cases: InspectCurrentReviewCase,
+        decisions: RecordHumanDecision,
+        browse: BrowseReviewLibrary,
+        policy: PolicyNotebook,
+        automatic_safety: AutomaticSafetyControls,
+        clock: Callable[[], int],
+        graceful_shutdown_seconds: int,
+        close_state_owner: bool,
+        preparation: ReviewPreparationSupervisor | None,
+        field_application: GuardedFieldApplication | ContinuousGuardedApplication | None,
+        operations: OperationalStatus | None,
+        gate: RLock,
+    ) -> None:
+        self._state_owner = state_owner
+        self._sessions = sessions
+        self._cases = cases
+        self._decisions = decisions
+        self._browse = browse
+        self._gate = gate
+        self._policy = PolicyOperations(policy, self.serialized)
+        self._automatic_safety = AutomaticSafetyOperations(
+            automatic_safety, self.serialized
+        )
+        self._clock = clock
+        self._graceful_shutdown_seconds = graceful_shutdown_seconds
+        self._close_state_owner = close_state_owner
+        self._preparation = preparation
+        self._field_application = field_application
+        self._operations = operations
+
+    @property
+    def preparation_available(self) -> bool:
+        return self._preparation is not None
+
+    @property
+    def operations_available(self) -> bool:
+        return self._operations is not None
+
+    def now(self) -> int:
+        return self._clock()
+
+    def serialized(self, call: Callable[[], _Result]) -> _Result:
+        with self._gate:
+            return call()
+
+    def start(self) -> None:
+        if self._operations is not None:
+            self._operations.start()
+        if self._field_application is not None:
+            self._field_application.start()
+        if self._preparation is not None:
+            self._preparation.start()
+
+    def stop(self) -> None:
+        deadline = time.monotonic() + self._graceful_shutdown_seconds
+        failures: list[Exception] = []
+        if isinstance(self._field_application, ContinuousGuardedApplication):
+            try:
+                self._field_application.close_admission()
+            except Exception as error:
+                failures.append(error)
+        if self._preparation is not None:
+            try:
+                self._preparation.begin_drain()
+            except Exception as error:
+                failures.append(error)
+        if self._operations is not None:
+            try:
+                self._operations.begin_drain()
+            except Exception as error:
+                failures.append(error)
+        if self._field_application is not None:
+            try:
+                if isinstance(self._field_application, ContinuousGuardedApplication):
+                    self._field_application.wait_for_drain(deadline)
+                else:
+                    self._field_application.begin_drain()
+            except Exception as error:
+                failures.append(error)
+        if self._preparation is not None:
+            try:
+                self._preparation.stop(deadline)
+            except Exception as error:
+                failures.append(error)
+        if failures:
+            raise failures[0]
+        if self._close_state_owner:
+            self._state_owner.close()
+
+    def ready(self) -> bool:
+        return self._operations is None or self._operations.ready()
+
+    def login(self, password: str) -> SessionTokens:
+        return self.serialized(lambda: self._sessions.login(password))
+
+    def authenticate(self, session_token: str, csrf_token: str | None = None) -> str:
+        return self.serialized(
+            lambda: self._sessions.authenticate(session_token, csrf_token)
+        )
+
+    def issue_browser_csrf(self, session_token: str) -> str:
+        return self.serialized(lambda: self._sessions.issue_browser_csrf(session_token))
+
+    def logout(self, session_token: str, csrf_token: str) -> None:
+        self.serialized(lambda: self._sessions.logout(session_token, csrf_token))
+
+    def operations_status(self) -> dict[str, object]:
+        if self._operations is None:
+            raise RuntimeError("operations unavailable")
+        return self._operations.status()
+
+    def support_preview(self) -> dict[str, object]:
+        if self._operations is None:
+            raise RuntimeError("support unavailable")
+        return self._operations.support_preview()
+
+    def support_export(self) -> bytes:
+        if self._operations is None:
+            raise RuntimeError("support unavailable")
+        return self._operations.support_export()
+
+    def create_policy_draft(
+        self, name: object, options: object, destinations: object
+    ) -> MetadataPolicyProfile:
+        candidate = MetadataPolicyProfile.create(name, options, destinations)
+        self._policy.validate(candidate)
+        return self._policy.create(
+            candidate.name,
+            dict(candidate.options),
+            dict(candidate.destinations),
+        )
+
+    def validate_policy(
+        self, name: object, options: object, destinations: object
+    ) -> MetadataPolicyProfile:
+        candidate = MetadataPolicyProfile.create(name, options, destinations)
+        return self._policy.validate(candidate)
+
+    def preview_policy(
+        self, name: object, options: object, destinations: object
+    ) -> tuple[MetadataPolicyProfile, PolicyPreview]:
+        candidate = self.validate_policy(name, options, destinations)
+        return candidate, self._policy.preview(candidate)
+
+    def case_detail(self, review_case_id: str) -> CaseDetailView:
+        def read() -> CaseDetailView:
+            detail = self._cases.run(review_case_id)
+            target = detail["target"]
+            assert isinstance(target, dict)
+            for field in detail["fields"]:
+                assert isinstance(field, dict)
+                if isinstance(self._field_application, ContinuousGuardedApplication):
+                    suspension = self._state_owner.field_effect_capability_suspension(
+                        str(target["connection"]), str(field["destination"])
+                    )
+                    field["effect_capability"] = (
+                        "allowed" if suspension is None else suspension
+                    )
+                else:
+                    field["effect_capability"] = "unavailable"
+            return CaseDetailView.from_data(detail)
+
+        return self.serialized(read)
+
+    def evidence(self, review_case_id: str, limit: int, cursor: str | None) -> dict[str, object]:
+        return self.serialized(
+            lambda: self._cases.evidence(review_case_id, limit=limit, cursor=cursor)
+        )
+
+    def history(self, review_case_id: str) -> dict[str, object]:
+        return self.serialized(lambda: self._cases.history(review_case_id))
+
+    def library(
+        self, *, lens: str, search: str | None, limit: int, cursor: str | None
+    ) -> LibraryView:
+        return self.serialized(
+            lambda: LibraryView.from_data(
+                self._browse.library(
+                    lens=lens, search=search, limit=limit, cursor=cursor
+                )
+            )
+        )
+
+    def attention(
+        self, *, search: str | None, limit: int, cursor: str | None
+    ) -> AttentionView:
+        return self.serialized(
+            lambda: AttentionView.from_data(
+                self._browse.attention(search=search, limit=limit, cursor=cursor)
+            )
+        )
+
+    def record_decision(
+        self,
+        review_case_id: str,
+        *,
+        proposal_id: str,
+        target_fingerprint: str,
+        destination: str,
+        actor: str,
+        outcome: str,
+        selected_value: dict[str, object] | None,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        result = self.serialized(
+            lambda: self._decisions.run(
+                review_case_id,
+                proposal_id=proposal_id,
+                target_fingerprint=target_fingerprint,
+                destination=destination,
+                actor=actor,
+                outcome=outcome,
+                selected_value=selected_value,
+                idempotency_key=idempotency_key,
+            )
+        )
+        if isinstance(self._field_application, ContinuousGuardedApplication):
+            self._field_application.wake()
+        return result
+
+    @property
+    def policy(self) -> PolicyOperations:
+        return self._policy
+
+    @property
+    def automatic_safety(self) -> AutomaticSafetyOperations:
+        return self._automatic_safety
+
+    def policy_call(self, call: Callable[[], _Result]) -> _Result:
+        return self.serialized(call)
+
+    def automatic_state(self) -> dict[str, object]:
+        state = self._automatic_safety.state()
+        return {
+            "paused": state.paused,
+            "global_suspension": state.global_suspension,
+            "category_suspensions": dict(state.category_suspensions),
+        }
+
+    def activity(self) -> dict[str, object]:
+        application = self._continuous_application()
+        return self.serialized(application.activity)
+
+    def enable_activity(self, libraries: tuple[str, ...]) -> dict[str, object]:
+        application = self._continuous_application()
+        return self.serialized(lambda: application.enable(libraries))
+
+    def revoke_activity(self, connection: str, library: str) -> dict[str, object]:
+        application = self._continuous_application()
+        return self.serialized(lambda: application.revoke(connection, library))
+
+    def return_to_automatic(self, review_case_id: str, destination: str) -> None:
+        if destination not in SUPPORTED_DESTINATIONS:
+            raise KeyError("not_found")
+        application = self._continuous_application()
+        self.serialized(
+            lambda: application.return_to_automatic(review_case_id, destination)
+        )
+
+    def field_effect_status(self, plan_id: str) -> dict[str, object]:
+        return self._field_effect("status", plan_id)
+
+    def apply_field_effect(self, plan_id: str) -> dict[str, object]:
+        return self._field_effect("apply", plan_id)
+
+    def reconcile_field_effect(self, plan_id: str) -> dict[str, object]:
+        return self._field_effect("reconcile", plan_id)
+
+    def pause_field_effects(self) -> None:
+        self._set_field_effect_paused(True)
+
+    def resume_field_effects(self) -> None:
+        self._set_field_effect_paused(False)
+
+    def _field_effect(
+        self, operation: Literal["status", "apply", "reconcile"], plan_id: str
+    ) -> dict[str, object]:
+        if self._field_application is None:
+            raise ReviewApplicationError("unavailable")
+        selected = getattr(self._field_application, operation)
+        return self.serialized(lambda: selected(plan_id).to_data())
+
+    def _set_field_effect_paused(self, paused: bool) -> None:
+        if self._field_application is None:
+            raise ReviewApplicationError("unavailable")
+        self.serialized(lambda: self._field_application.set_paused(paused))
+
+    def preparation(self) -> PreparationView:
+        if self._preparation is None:
+            return PreparationView((), False, False, False)
+        progress_values, paused = self.serialized(self._preparation.status)
+        if len(progress_values) != len(self._preparation.libraries):
+            raise ReviewApplicationError("persistence")
+        libraries = tuple(
+            {
+                "scan_id": None if progress is None else progress.scan_id,
+                "connection": connection,
+                "library": library,
+                "library_id": library_id,
+                "state": "idle" if progress is None else progress.state,
+                "checked": 0 if progress is None else progress.checked,
+                "total": 0 if progress is None else progress.total,
+                "ready": 0 if progress is None else progress.ready,
+                "blocked": 0 if progress is None else progress.blocked,
+                "rescan_requested": False if progress is None else progress.rescan_requested,
+            }
+            for (connection, library, library_id), progress in zip(
+                self._preparation.libraries, progress_values, strict=True
+            )
+        )
+        return PreparationView(
+            libraries,
+            paused,
+            any(item["state"] in {"queued", "discovering", "processing"} for item in libraries),
+            any(item["state"] == "completed_with_failures" for item in libraries),
+        )
+
+    def request_review_scan(
+        self, connection: str, library: str
+    ) -> dict[str, object]:
+        return self._preparation_request("request", connection, library)
+
+    def retry_review_scan(
+        self, connection: str, library: str
+    ) -> dict[str, object]:
+        return self._preparation_request("retry", connection, library)
+
+    def pause_review_preparation(self) -> PreparationView:
+        return self._set_preparation_paused(True)
+
+    def resume_review_preparation(self) -> PreparationView:
+        return self._set_preparation_paused(False)
+
+    def _preparation_request(
+        self, action: Literal["request", "retry"], connection: str, library: str
+    ) -> dict[str, object]:
+        if self._preparation is None:
+            raise ReviewApplicationError("unavailable")
+        selected = getattr(self._preparation, action)
+        progress = self.serialized(lambda: selected(connection, library))
+        library_id = next(
+            item[2] for item in self._preparation.libraries
+            if item[:2] == (connection, library)
+        )
+        return {
+            "scan_id": progress.scan_id,
+            "connection": progress.connection,
+            "library": progress.library,
+            "library_id": library_id,
+            "state": progress.state,
+            "checked": progress.checked,
+            "total": progress.total,
+            "ready": progress.ready,
+            "blocked": progress.blocked,
+            "rescan_requested": progress.rescan_requested,
+        }
+
+    def _set_preparation_paused(self, paused: bool) -> PreparationView:
+        if self._preparation is None:
+            raise ReviewApplicationError("unavailable")
+        self.serialized(lambda: self._preparation.set_paused(paused))
+        return self.preparation()
+
+    def _continuous_application(self) -> ContinuousGuardedApplication:
+        if not isinstance(self._field_application, ContinuousGuardedApplication):
+            raise ReviewApplicationError("unavailable")
+        return self._field_application
+
+
+def compose_review_application(
+    *,
+    state_owner: BrowserStateOwner,
+    session_store: ReviewSessionStore,
+    case_store: CurrentReviewCaseStore,
+    decision_store: HumanDecisionStore,
+    library_store: ReviewLibraryStore,
+    policy_store: PolicyImpactRepository,
+    verify_password: Callable[[str], bool],
+    clock: Callable[[], int],
+    session_lifetime_seconds: int,
+    graceful_shutdown_seconds: int,
+    close_state_owner: bool = False,
+    preparation: ReviewPreparationSupervisor | None = None,
+    policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
+    field_application: GuardedFieldApplication | ContinuousGuardedApplication | None = None,
+    operational_timings: TimingRepository | None = None,
+    operational_support: SupportExporter | None = None,
+    operational_timer: StageTimer | None = None,
+) -> ReviewApplication:
+    """Compose every operation before the HTTP adapter is created."""
+    gate = RLock()
+
+    def serialized(call: Callable[[], _Result]) -> _Result:
+        with gate:
+            return call()
+
+    timing = operational_timer or StageTimer(operational_timings, clock=clock)
+    if field_application is not None:
+        field_application.attach_timing(timing)
+    if isinstance(field_application, ContinuousGuardedApplication):
+        field_application.attach_serialization(serialized)
+    operations = (
+        None
+        if operational_timings is None
+        else OperationalStatus(
+            snapshot=lambda: serialized(state_owner.operational_snapshot),
+            timings=operational_timings,
+            support=operational_support,
+        )
+    )
+    overrides = {
+        name: value for name, value in policy_libraries if value is not None
+    }
+    application = ReviewApplication(
+        state_owner=state_owner,
+        sessions=OwnerSessionService(
+            session_store, verify_password, clock, session_lifetime_seconds
+        ),
+        cases=InspectCurrentReviewCase(case_store),
+        decisions=RecordHumanDecision(decision_store, clock, timing),
+        browse=BrowseReviewLibrary(library_store),
+        policy=PolicyNotebook(
+            policy_store,
+            tuple(name for name, _ in policy_libraries),
+            overrides,
+        ),
+        automatic_safety=AutomaticSafetyControls(policy_store),  # type: ignore[arg-type]
+        clock=clock,
+        graceful_shutdown_seconds=graceful_shutdown_seconds,
+        close_state_owner=close_state_owner,
+        preparation=preparation,
+        field_application=field_application,
+        operations=operations,
+        gate=gate,
+    )
+    return application
+
+
+__all__ = [
+    "AttentionView",
+    "AutomaticSafetyOperations",
+    "BrowserStateOwner",
+    "CaseDetailView",
+    "LibraryView",
+    "PreparationView",
+    "PolicyOperations",
+    "ReviewApplication",
+    "ReviewApplicationError",
+    "compose_review_application",
+]

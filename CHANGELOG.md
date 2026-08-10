@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Compose authenticated browser workflows behind one application boundary with
+  bounded case, Library, Attention, and preparation views. FastAPI now receives
+  named operations instead of a broad repository, while SQLite remains the sole
+  transaction owner and all existing security, currentness, idempotency, and
+  API contracts remain unchanged. (#494)
+
 - Remove the retired qualification-only shadow-review product workflow,
   request/attempt/dispatch/result persistence, browser model-advice projection,
   and its qualification machinery. Preserve the deterministic packet and

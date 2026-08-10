@@ -14,10 +14,8 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
 )
-from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.review_case import ReviewCase
-from mechanical_librarian.application.metadata_policy import PolicyTransition
 from mechanical_librarian.application.operations import StageTimer
 
 
@@ -58,7 +56,7 @@ class ReviewAttentionSnapshot:
     total: int
 
 
-class ReviewWebRepository(Protocol):
+class ReviewSessionStore(Protocol):
     def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool: ...
     def create_review_session(
         self,
@@ -76,12 +74,18 @@ class ReviewWebRepository(Protocol):
     def revoke_review_session(
         self, session_digest: str, csrf_digest: str, now: int
     ) -> str: ...
+
+
+class CurrentReviewCaseStore(Protocol):
     def review_case_exists(self, review_case_id: str) -> bool: ...
     def get_review_case(self, review_case_id: str) -> str: ...
     def review_case_ready_at(self, review_case_id: str) -> int | None: ...
     def read_current_review_case(
         self, review_case_id: str, history_limit: int | None
     ) -> CurrentReviewCaseSnapshot: ...
+
+
+class ReviewLibraryStore(Protocol):
     def read_review_library(
         self,
         search: str | None,
@@ -92,31 +96,17 @@ class ReviewWebRepository(Protocol):
     def read_review_attention(
         self, search: str | None, limit: int, offset: int
     ) -> ReviewAttentionSnapshot: ...
+
+
+class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
     def find_human_decision(self, idempotency_digest: str) -> str | None: ...
     def record_human_decision(self, decision: HumanDecision) -> str: ...
-    def record_field_effect(self, operation: FieldEffectOperation) -> FieldEffectOperation: ...
-    def get_field_effect(self, plan_id: str) -> FieldEffectOperation: ...
-    def claim_field_effect(self, plan_id: str, expected_state: str, claim_token: str, claimed_at: int) -> FieldEffectOperation: ...
-    def transition_field_effect(self, plan_id: str, expected_state: str, state: str, changed_at: int, failure: str | None = None) -> FieldEffectOperation: ...
-    def supersede_field_effect(self, decision_id: str, superseded_at: int) -> int: ...
-    def set_field_effect_paused(self, paused: bool, changed_at: int) -> None: ...
-    def field_effect_paused(self) -> bool: ...
-    def create_metadata_policy_draft(self, document: str) -> str: ...
-    def get_metadata_policy_draft(self, policy_id: str) -> str: ...
-    def current_unapplied_count(self, library: str) -> int: ...
-    def active_metadata_policy(self) -> str: ...
-    def activate_metadata_policy(self, policy_id: str, expected_active_policy_id: str, resolutions: tuple[tuple[str, str, str], ...], activated_at: int) -> PolicyTransition | None: ...
-    def metadata_policy_transition(self) -> PolicyTransition | None: ...
-    def retry_metadata_policy_transition(self, transition_id: str, retried_at: int) -> PolicyTransition: ...
-    def acknowledge_metadata_policy_transition(self, transition_id: str, acknowledged_at: int) -> PolicyTransition: ...
-    def current_resolved_policy_id(self, library: str) -> str: ...
-    def current_resolved_metadata_policy(self, library: str): ...
 
 
 class OwnerSessionService:
     def __init__(
         self,
-        repository: ReviewWebRepository,
+        repository: ReviewSessionStore,
         verify_password: Callable[[str], bool],
         clock: Callable[[], int],
         lifetime_seconds: int,
@@ -205,7 +195,7 @@ class OwnerSessionService:
 
 
 class InspectCurrentReviewCase:
-    def __init__(self, repository: ReviewWebRepository) -> None:
+    def __init__(self, repository: CurrentReviewCaseStore) -> None:
         self._repository = repository
 
     def _read(
@@ -393,7 +383,7 @@ class RecordHumanDecision:
 
     def __init__(
         self,
-        repository: ReviewWebRepository,
+        repository: HumanDecisionStore,
         clock: Callable[[], int],
         timing: StageTimer | None = None,
     ) -> None:
@@ -503,7 +493,7 @@ class RecordHumanDecision:
             raise ReviewWebError("persistence") from error
 
 class BrowseReviewLibrary:
-    def __init__(self, repository: ReviewWebRepository) -> None:
+    def __init__(self, repository: ReviewLibraryStore) -> None:
         self._repository = repository
 
     def library(

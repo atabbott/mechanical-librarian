@@ -117,6 +117,9 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationSupervisor,
     provider_failure_disposition,
 )
+from mechanical_librarian.application.review_application import (
+    compose_review_application,
+)
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
@@ -171,7 +174,10 @@ from mechanical_librarian.infrastructure.security.review_protocol import (
     MAX_REVIEW_CONNECTIONS,
     REVIEW_TLS_CIPHERS,
 )
-from mechanical_librarian.interfaces.web import create_review_app
+from mechanical_librarian.interfaces.web import (
+    create_review_app,
+    load_owner_password_verifier,
+)
 
 
 def compose_audiobookshelf_field_effect_target(
@@ -1500,11 +1506,21 @@ def run_review_server(
                     "timing_records": len(timing_store.list()),
                 },
             ),))
-            app = create_review_app(
-                repository,
-                review,
-                close_repository=True,
-                review_preparation=preparation,
+            review_application = compose_review_application(
+                state_owner=repository,
+                session_store=repository,
+                case_store=repository,
+                decision_store=repository,
+                library_store=repository,
+                policy_store=repository,
+                verify_password=load_owner_password_verifier(
+                    Path(review.owner_password_hash_file)
+                ),
+                clock=lambda: int(time.time()),
+                session_lifetime_seconds=review.session_lifetime_seconds,
+                graceful_shutdown_seconds=review.graceful_shutdown_seconds,
+                close_state_owner=True,
+                preparation=preparation,
                 policy_libraries=tuple(
                     (library.name, library.policy_override)
                     for library in getattr(configuration, "libraries", ())
@@ -1514,6 +1530,7 @@ def run_review_server(
                 operational_timer=timing,
                 field_application=field_application,
             )
+            app = create_review_app(review_application, review)
             uvicorn.run(
                 app,
                 host=host,

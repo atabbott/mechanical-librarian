@@ -56,7 +56,9 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
 )
-from mechanical_librarian.interfaces.web import create_review_app
+from tests.unit.review_app_fixture import (
+    create_transport_test_app,
+)
 from mechanical_librarian.application.metadata_policy import PolicyTransition
 from mechanical_librarian.adapters.operational_evidence import LocalTimingStore, SupportBundle
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
@@ -512,7 +514,7 @@ class ReviewWebTests(unittest.TestCase):
             session_lifetime_seconds=600,
         )
         self.client = TestClient(
-            create_review_app(
+            create_transport_test_app(
                 self.repository, configuration, clock=lambda: self.now
             ),
             base_url="https://review.test",
@@ -554,7 +556,7 @@ class ReviewWebTests(unittest.TestCase):
             owner_password_hash_file=str(self.hash_path),
             session_lifetime_seconds=600,
         )
-        app = create_review_app(
+        app = create_transport_test_app(
             self.repository, configuration, close_repository=True,
             field_application=application,
         )
@@ -602,7 +604,7 @@ class ReviewWebTests(unittest.TestCase):
                             raise ReviewPipelineError("shutdown_timeout")
 
                 self.repository.close = lambda: closed.append(True)
-                app = create_review_app(
+                app = create_transport_test_app(
                     self.repository, configuration, close_repository=True,
                     field_application=_FieldApplication(),
                     review_preparation=_Preparation(),
@@ -641,7 +643,7 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.client.close()
         self.client = TestClient(
-            create_review_app(
+            create_transport_test_app(
                 self.repository, configuration, clock=lambda: self.now,
                 field_application=application,
             ),
@@ -704,7 +706,7 @@ class ReviewWebTests(unittest.TestCase):
         )
         preparation = _Preparation()
         self.client = TestClient(
-            create_review_app(
+            create_transport_test_app(
                 self.repository,
                 configuration,
                 clock=lambda: self.now,
@@ -794,7 +796,7 @@ class ReviewWebTests(unittest.TestCase):
             "status": "degraded", "secret": "never-export",
         }),))
         self.client.close()
-        self.client = TestClient(create_review_app(
+        self.client = TestClient(create_transport_test_app(
             self.repository, configuration, clock=lambda: self.now,
             operational_timings=timings, operational_support=support,
         ), base_url="https://review.test")
@@ -1380,7 +1382,7 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.client.close()
         self.client = TestClient(
-            create_review_app(
+            create_transport_test_app(
                 self.repository, configuration, clock=lambda: self.now,
                 operational_timings=timings,
             ),
@@ -2070,7 +2072,7 @@ class ReviewWebTests(unittest.TestCase):
             owner_password_hash_file=str(self.hash_path),
         )
         with self.assertRaises(Exception):
-            create_review_app(self.repository, configuration)
+            create_transport_test_app(self.repository, configuration)
 
 
 class ReviewSessionPersistenceTests(unittest.TestCase):
@@ -2397,7 +2399,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 "review_case_id"
             ]
             client = TestClient(
-                create_review_app(
+                create_transport_test_app(
                     repository,
                     ReviewWebConfiguration(
                         canonical_origin="https://review.test",
@@ -2773,7 +2775,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             os.chmod(hash_path, 0o600)
             repository = open_repository(database, cross_thread=True)
             client = TestClient(
-                create_review_app(
+                create_transport_test_app(
                     repository,
                     ReviewWebConfiguration(
                         canonical_origin="https://review.test",

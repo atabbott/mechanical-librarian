@@ -13,6 +13,14 @@ payloads, transport clients, SQLite rows, credential bytes, and direct
 filesystem operations remain implementation-side; the composition root selects
 concrete adapters. The domain does not depend on them.
 
+The authenticated browser consumes one pre-composed `ReviewApplication`, not a
+repository. Its named operations own sessions, current ReviewCase inspection,
+human decisions, Library and Attention projections, policy, preparation,
+Activity, field effects, recovery, and support. Narrow application-owned store
+protocols describe only the persistence each operation needs. A shared
+application gate serializes access, and the concrete SQLite adapter remains the
+sole owner of transactions and cross-capability atomicity.
+
 ## Contract families
 
 - Evidence reporting reads one selected current item, isolates EPUB inspection,
