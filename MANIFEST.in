@@ -1,0 +1,7 @@
+include scripts/build_frontend.py
+include docs/reference/review-openapi-v1.json
+recursive-include frontend *.json *.js *.mjs *.ts *.tsx *.css *.html
+prune frontend/node_modules
+prune frontend/dist
+prune frontend/src/generated
+global-exclude *.map

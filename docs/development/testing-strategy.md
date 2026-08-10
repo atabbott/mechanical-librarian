@@ -53,6 +53,14 @@ architecture behavior:
 uv run python scripts/run_test_tier.py fast
 ```
 
+The same public source job uses exact Node 24.19.0/npm 11.17.0 to run the
+frontend lock install with lifecycle scripts disabled, regenerate DTOs from the
+committed OpenAPI document, typecheck, lint, run Vitest/Testing Library, build
+the asset graph, and require a clean diff. Generated DTOs and assets remain
+ignored. Before a candidate is accepted, two fresh output directories must be
+byte-identical and `npm audit` must report no known vulnerability in the exact
+lock.
+
 The required exact-installed-artifact tier owns wheel identity, archive and
 installed `RECORD` integrity, installed imports, generated package/schema
 integrity, the installed console, and a representative end-to-end lifecycle:
@@ -71,6 +79,13 @@ uv run playwright install --with-deps chromium
 uv run python scripts/verify_playwright_browser.py
 uv run python scripts/run_test_tier.py browser
 ```
+
+For the unactivated React platform, the tier also receives a freshly built
+`ML_REACT_ASSET_DIR` and opens its real hashed shell at a synthetic direct-entry
+URL while fulfilling only bounded synthetic API data in-process. This proves
+the packaged module graph, Query loader, route search, focus, and accessible
+rendering without activating current FastAPI routes or duplicating the existing
+end-to-end product suite.
 
 The explicit slow tier owns scale, memory/resource ceilings, endurance,
 exhaustive aggregate corpora, and extended recovery:
@@ -108,6 +123,16 @@ distribution payloads are byte-identical, validates the installer-updated
 `RECORD`, rechecks the whole-wheel hash, and runs the selected installed tier with
 the isolated environment's interpreter. It then checks the PEP 610 install
 origin and invokes the installed console command from outside the checkout.
+For Mechanical Librarian, wheel admission additionally requires the generated
+expected build identity, canonical React asset manifest, shell, and every and
+only reachable hashed script/style. It rejects frontend source, generated DTOs,
+`node_modules`, and source maps. The container repeats the frontend build in a
+pinned Node stage and copies only the validated bundle into the Python build;
+Node/npm are absent from the runtime stage.
+The exact container lifecycle emits `container-lifecycle-evidence-v3` only
+after the packaged loader accepts that bundle and an isolated final-image probe
+finds no Node/npm executable, frontend/generated/`node_modules`/Vite directory,
+package manifest, or source map.
 Its path-free JSON evidence binds the source SHA, wheel SHA-256, payload
 SHA-256, and console-output SHA-256. A dirty or different source, ambiguous or
 changed wheel, invalid archive/record, reused destination, unlocked dependency,

@@ -96,6 +96,43 @@ published artifacts. All three Python-package licences are compatible with
 AGPL-3.0-or-later distribution; the browser's release inventory remains a
 qualification input and future release-SBOM concern, not runtime content.
 
+## React platform build dependencies
+
+Issue #495 adds an exact development/build graph. Node 24.19.0 (Krypton LTS)
+and its bundled npm 11.17.0 are required exactly; neither enters the runtime
+image. The lockfile binds every transitive integrity hash, `npm ci` disables
+package lifecycle scripts, generated DTOs consume only the committed OpenAPI
+document, and the build receives no credential, private data, network-runtime,
+database, media, target, provider, or effect authority.
+Node is MIT with its incorporated third-party notices; npm is Artistic-2.0.
+The 297-entry locked package inventory contains only the reviewed MIT, MIT-0,
+ISC, Apache-2.0, BSD-2-Clause, BSD-3-Clause, BlueOak-1.0.0, MPL-2.0,
+Python-2.0, Unlicense, CC0-1.0, CC-BY-4.0, and `(MIT OR CC0-1.0)` declarations.
+The source gate fails if an entry lacks licence metadata or introduces another
+declaration; all reviewed declarations are compatible with this build/test and
+browser-distribution use under AGPL-3.0-or-later.
+
+| Package | Exact version | Licence | Build responsibility |
+| --- | ---: | --- | --- |
+| React / React DOM | 19.2.8 | MIT | browser rendering only |
+| TypeScript | 5.9.3 | Apache-2.0 | strict source and generated-DTO checking |
+| Vite / React plugin | 8.2.1 / 6.0.5 | MIT | deterministic hashed browser build |
+| TanStack Router | 1.170.25 | MIT | typed routes, search state and intent preload |
+| TanStack Query | 5.101.4 | MIT | in-memory server-state ownership and cancellation |
+| openapi-typescript | 7.13.0 | MIT | type-only DTO generation |
+| Vitest / jsdom | 4.1.10 / 30.0.1 | MIT | source-only unit/component environment |
+| Testing Library DOM / React / jest-dom / user-event | 10.4.1 / 16.3.2 / 7.0.1 / 14.6.3 | MIT | semantic component interaction tests |
+| ESLint / JavaScript config / typescript-eslint | 10.8.1 / 10.0.1 / 8.66.0 | MIT | static source checks |
+| React hooks / refresh / globals lint support | 7.1.1 / 0.5.3 / 17.9.0 | MIT | React-specific static checks |
+| React / React DOM / Node type declarations | 19.2.18 / 19.2.4 / 24.13.3 | MIT | compile-time declarations only |
+
+React Router 8.3.0 was installed only in the deleted disposable comparison and
+is not in the product lockfile. The accepted direct packages are compatible
+with AGPL-3.0-or-later distribution. Exact-lock `npm audit`, lock-integrity,
+licence inventory, deterministic double-build, wheel, and container checks are
+required before delivery; release notice/SBOM generation remains a separate
+release gate.
+
 F06 adds no direct or transitive runtime dependency and changes no lockfile. It
 targets the CPython 3.13/3.14 standard-library boundary, with these
 incorporated or system components recorded for dependency inventory, notices,

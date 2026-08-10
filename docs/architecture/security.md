@@ -227,6 +227,17 @@ itself remains non-mutating and never advances. An expired session instead
 offers a focused sign-in link and does not retry a decision without fresh
 authentication.
 
+The unactivated React platform preserves this boundary. Generated OpenAPI DTOs
+grant no request authority; its handwritten same-origin client keeps CSRF only
+in page memory, retries an unsafe request once only after a private page-token
+renewal, converts a 401 into document navigation to `/login`, and passes abort
+signals through critical and progressive reads. It uses no browser storage,
+inline script, external origin, worker, blob, source map, credential, target
+client, or write adapter. The packaged loader validates bounded exact paths,
+sizes, digests, a content-derived build identity, and the independently emitted
+expected identity before activation; any failure becomes one stable owner
+recovery state with no automatic reload loop.
+
 ## Credentials and egress
 
 Secret material is read only in infrastructure and represented nowhere in the

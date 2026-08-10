@@ -55,6 +55,7 @@ context and consequences rather than reproducing code.
 | [0040](0040-source-only-contributor-workbench.md) | accepted | Separate the runtime launcher from the contributor workbench |
 | [0041](0041-contract-contained-reviewer-kernel.md) | accepted | Contract the contained-reviewer kernel and retire F11 product workflow |
 | [0042](0042-compose-authenticated-browser-operations.md) | accepted | Compose authenticated browser operations before transport |
+| [0043](0043-reproducible-react-browser-platform.md) | accepted | Build a reproducible, currently unactivated React browser platform |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

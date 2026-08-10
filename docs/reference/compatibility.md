@@ -94,6 +94,14 @@ state is not interpreted or migrated. The source-only contained-reviewer
 workbench has its own bounded request and result contract and is excluded from
 the installed wheel and production container.
 
+The currently unactivated React shell has one exact build surface:
+`review-react-assets-v1`, its content-derived build identity, and the
+independently packaged expected identity must agree. Missing, extra, stale,
+corrupt, source-map-bearing, or earlier browser bundles are not interpreted or
+migrated; activation receives only the stable owner-rebuild recovery state.
+Generated OpenAPI DTOs and frontend source are build inputs, not installed
+compatibility surfaces.
+
 Until the first production release, every database, report, artifact,
 configuration, and internal-document schema accepts only absent state or its
 exact current state. Earlier schemas are rejected fail-closed and never silently
