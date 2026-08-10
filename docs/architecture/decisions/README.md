@@ -48,8 +48,11 @@ context and consequences rather than reproducing code.
 | [0033](0033-versioned-policy-draft-preview.md) | accepted | Persist immutable metadata-policy drafts before activation |
 | [0034](0034-atomic-policy-generation-cutover.md) | accepted | Cut over metadata policy with one atomic generation |
 | [0035](0035-persist-non-authoritative-policy-preview-outcomes.md) | accepted | Persist non-authoritative policy Preview outcomes |
+| [0036](0036-qualified-decision-only-automatic-policy.md) | accepted | Qualify decision-only automatic policy defaults |
 | [0037](0037-origin-neutral-guarded-field-effects.md) | accepted | Use one origin-neutral guarded field-effect boundary |
 | [0038](0038-bounded-single-container-operations.md) | accepted | Bound operational evidence inside the single container |
+| [0039](0039-continuous-guarded-application.md) | accepted | Run continuous guarded application without target CAS |
+| [0040](0040-source-only-contributor-workbench.md) | accepted | Separate the runtime launcher from the contributor workbench |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

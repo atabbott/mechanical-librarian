@@ -5,6 +5,7 @@
 - [Current book catalogue](operations/catalogue.md)
 - [Foreground ebook evidence batches](operations/ebook-evidence-batches.md)
 - [Metadata report operation](operations/metadata-report.md)
+- [Contributor workbench](development/contributor-workbench.md)
 - [ProposalSet operation](operations/proposal-set.md)
 - [Review-case admission](operations/review-case.md)
 - [Qualification-only shadow review](operations/shadow-review.md)
@@ -23,6 +24,7 @@
 - [ADR-0014: review-case admission](architecture/decisions/0014-review-case-admission.md)
 - [ADR-0015: isolated qualification-only shadow review](architecture/decisions/0015-isolated-shadow-reviewer.md)
 - [ADR-0016: explainable publication-date shadow review](architecture/decisions/0016-freeze-explainable-shadow-reviewer.md)
+- [ADR-0040: source-only contributor workbench](architecture/decisions/0040-source-only-contributor-workbench.md)
 
 ## Development
 

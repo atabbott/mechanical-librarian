@@ -1,29 +1,16 @@
 # ProposalSet operation
 
-The 0.9 runtime can create one immutable ProposalSet from an exact current
-metadata report:
-
-```text
-mechanical-librarian proposal-set-create \
-  --config /run/secrets/mechanical-librarian.json \
-  --database /data/reports.sqlite \
-  --artifact-store /data/cover-artifacts \
-  --report-id report_<64-lowercase-hex-characters>
-```
-
-Every option is required. The command reopens the exact report, revalidates its
+The `CreateProposalSet` application operation creates one immutable ProposalSet
+from an exact current metadata report. It is used by authenticated review
+preparation; source-only contributor inspection uses the typed workbench and is
+not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
 `fixed-conservative-v6` policy. It does not construct or contact a metadata or
 cover provider.
 
-An exact ProposalSet can be reopened offline:
-
-```text
-mechanical-librarian proposal-set-get \
-  --database /data/reports.sqlite \
-  --proposal-set-id proposal_set_<64-lowercase-hex-characters>
-```
+An exact ProposalSet can be reopened offline through the application repository
+or typed source-only inspector.
 
 Success is exactly one canonical `proposal-set-v4` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.

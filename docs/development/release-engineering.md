@@ -22,7 +22,7 @@ of release publication or checkpoint completion.
 ### 0.4.0 boundary
 
 0.4.0 is specifically a pre-deployment clean-state simplification checkpoint.
-Its completion, including the installed `metadata-report` demonstration, does
+Its completion, including the then-installed report demonstration, does
 not authorize a tag, GitHub Release, supported version, release artifact, or
 publication. It has no supported pre-0.4 upgrade source; its clean-state reset
 must not be presented as a release migration. The governing scope and safety

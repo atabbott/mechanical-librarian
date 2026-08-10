@@ -1,9 +1,10 @@
 # Configuration reference
 
-The installed `metadata-report`, `proposal-set-create`, `catalogue`, `batch`,
-and `review-serve`
-operations accept one strict UTF-8 JSON document with schema version
-`config-v5`. Unknown and duplicate fields are rejected. The generated schema is
+The installed `review-serve` runtime and the shared application composition
+accept one strict UTF-8 JSON document with schema version `config-v5`. The
+source-only contributor workbench may load the same schema only inside its
+disposable or explicitly approved test context. Unknown and duplicate fields
+are rejected. The generated schema is
 [`config-v5.schema.json`](config-v5.schema.json) and is regenerated with:
 
 ```text

@@ -34,10 +34,11 @@ failure before the shared repository closes, and resumes from its durable
 checkpoint on restart. No fake target, direct database write or writable media
 path is composed.
 
-The command-line development runtime remains unreleased.
-It supports current catalogue, report, ProposalSet, ReviewCase, and
-qualification-only shadow-review operations; it is not a daemon or published
-container release.
+The installed command surface contains only `review-serve`. Catalogue, report,
+ProposalSet, ReviewCase, batch, and qualification-only reviewer experiments are
+not installed commands or container entrypoints; contributor-only access is
+source-bound as documented in the
+[workbench guide](../development/contributor-workbench.md).
 
 ## Runtime prerequisites
 

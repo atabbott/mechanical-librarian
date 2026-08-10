@@ -63,20 +63,6 @@ def _report(
 
 
 class ReviewCaseLifecycleTests(unittest.TestCase):
-    def test_exact_cli_admit_and_get_serialization(self):
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory) / "reviews.sqlite"; repository = open_repository(database)
-            report = _report()
-            repository.publish(report, lambda: True); proposal = _actionable(report); repository.publish_proposal(proposal)
-            out, err = io.StringIO(), io.StringIO()
-            code = cli_main(["review-case-admit", "--config", "/synthetic-config", "--database", str(database), "--artifact-store", "/synthetic-artifacts", "--proposal-set-id", proposal.proposal_set_id], review_admit_runner=lambda *_: repository.admit_review_case(proposal), stdout=out, stderr=err)
-            self.assertEqual(0, code); self.assertEqual("", err.getvalue())
-            admitted = json.loads(out.getvalue()); case_id = admitted["review_case_id"]
-            out = io.StringIO()
-            self.assertEqual(0, cli_main(["review-case-get", "--database", str(database), "--review-case-id", case_id], review_get_runner=lambda *_: repository.get_review_case(case_id), stdout=out, stderr=err))
-            self.assertTrue(json.loads(out.getvalue())["current"])
-            self.assertEqual(2, cli_main(["review-case-get", "--database", str(database), "--review-case-id", "bad"], review_get_runner=lambda *_: self.fail("called"), stdout=io.StringIO(), stderr=io.StringIO()))
-            repository.close()
     def test_absent_restart_replay_successor_and_retirement(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "reviews.sqlite"

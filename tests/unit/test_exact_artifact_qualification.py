@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import io
 import os
 import stat
 import subprocess
@@ -18,10 +17,7 @@ import scripts.qualify_exact_artifact as qualifier_module
 from scripts.qualify_exact_artifact import (
     QualificationFailure,
     _decode_stdout,
-    _proposal_identifier,
-    _valid_shadow_decisions,
     _qualification_environment,
-    _review_probe_epub,
     _run,
     _validate_wheel,
     _verify_installed_payload,
@@ -30,61 +26,7 @@ from scripts.qualify_exact_artifact import (
 
 
 class ExactArtifactQualificationTests(unittest.TestCase):
-    def test_installed_probe_accepts_identity_reordered_fixed_decisions(self) -> None:
-        decisions = [
-            {"destination": destination}
-            for destination in ("language", "title", "isbn")
-        ]
-        self.assertTrue(_valid_shadow_decisions(decisions))
-        self.assertFalse(_valid_shadow_decisions(decisions[:2]))
-        self.assertFalse(_valid_shadow_decisions([{ "destination": "title" }] * 3))
-    def test_installed_probe_requires_the_current_proposal_policy(self) -> None:
-        proposal = {
-            "policy_version": "fixed-conservative-v6",
-            "resolved_policy_id": "resolved_policy_" + "d" * 64,
-            "relationships": {
-                "bibliographic_combinations": [],
-                "schema_version": "bibliographic-relationships-v1",
-            },
-            "report": {
-                "report_id": "report_" + "a" * 64,
-                "target_fingerprint": "b" * 64,
-            },
-            "results": [],
-            "schema_version": "proposal-set-v4",
-        }
-        identifier = _proposal_identifier(proposal)
-        self.assertTrue(identifier.startswith("proposal_set_"))
-        proposal["relationships"]["bibliographic_combinations"] = [  # type: ignore[index]
-            {"combination_id": "combination_" + "c" * 64}
-        ]
-        self.assertNotEqual(identifier, _proposal_identifier(proposal))
-        proposal["policy_version"] = "fixed-conservative-v5"
-        with self.assertRaises(QualificationFailure):
-            _proposal_identifier(proposal)
-        proposal["policy_version"] = "fixed-conservative-v6"
-        proposal["resolved_policy_id"] = "d" * 64
-        with self.assertRaises(QualificationFailure):
-            _proposal_identifier(proposal)
-        proposal["resolved_policy_id"] = 7
-        with self.assertRaises(QualificationFailure):
-            _proposal_identifier(proposal)
-
-    def test_review_probe_epub_has_fixed_member_timestamps(self) -> None:
-        for actionable in (False, True):
-            with self.subTest(actionable=actionable):
-                payload = _review_probe_epub(actionable=actionable)
-                with ZipFile(io.BytesIO(payload)) as archive:
-                    self.assertEqual(
-                        {(2026, 1, 13, 0, 0, 0)},
-                        {member.date_time for member in archive.infolist()},
-                    )
-                    self.assertIn(
-                        '<dc:creator opf:role="author"> \n UnKnOwN \t</dc:creator>',
-                        archive.read("EPUB/package.opf").decode("utf-8"),
-                    )
-
-    def test_review_probe_runs_from_owner_only_directory(self) -> None:
+    def test_runtime_probe_runs_from_owner_only_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)
             _write_probe(source, "source")
@@ -102,7 +44,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
 
             with patch.object(
                 qualifier_module,
-                "_qualify_review_case_console",
+                "_qualify_runtime_console",
                 side_effect=inspect_run_directory,
             ):
                 evidence = qualify_exact_artifact(
@@ -113,11 +55,11 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                     console_script="cache-probe",
                     console_args=(),
                     test_args=None,
-                    review_case_probe=True,
+                    runtime_probe=True,
                 )
 
         self.assertEqual([0o700], observed_modes)
-        self.assertTrue(evidence.review_case_lifecycle_executed)
+        self.assertTrue(evidence.runtime_surface_executed)
 
     def test_same_version_shared_cache_executes_exact_second_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -198,7 +140,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
         self.assertFalse(first.required_suite_executed)
         self.assertFalse(first.slow_qualification_executed)
         self.assertFalse(partial.full_suite_executed)
-        self.assertFalse(second.review_case_lifecycle_executed)
+        self.assertFalse(second.runtime_surface_executed)
         self.assertNotEqual(first.source_sha, second.source_sha)
         self.assertNotEqual(first.wheel_sha256, second.wheel_sha256)
         self.assertEqual(

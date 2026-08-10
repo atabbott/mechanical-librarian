@@ -1,31 +1,34 @@
 # Architecture overview
 
-The development runtime exposes synchronous CLI command families plus one
-authenticated, owner-requested preparation path:
+The installed runtime exposes one authenticated review service. Its
+owner-requested preparation path composes the application operations that
+contributors may also exercise through the repository-only workbench:
 
 ```text
-CLI catalogue -> application RefreshCurrentCatalogue
-              -> Audiobookshelf catalogue adapter
-              -> SQLite catalogue repository
+review-serve -> authenticated browser/API -> application services
 
-CLI metadata-report -> application GenerateMetadataReport
+Workbench catalogue scenario -> application RefreshCurrentCatalogue
+                             -> Audiobookshelf catalogue adapter
+                             -> SQLite catalogue repository
+
+Workbench report scenario -> application GenerateMetadataReport
                     |-> Audiobookshelf current-item adapter
                     |-> isolated EPUB inspector child
                     |-> Hardcover, Open Library, and Google Books metadata adapters
                     |-> constrained cover-decoder child
                     `-> SQLite report repository + cover artifact store
 
-CLI batch -> application manifest selection / ForegroundBatchRun
+Workbench batch scenario -> application manifest selection / ForegroundBatchRun
           -> current catalogue snapshot
           -> GenerateMetadataReport once per frozen eligible entry
 
-CLI proposal-set-create -> application CreateProposalSet
+Workbench proposal scenario -> application CreateProposalSet
                         |-> exact current report
                         |-> reused target/media/cover currentness
                         |-> pure fixed-policy evaluator
                         `-> append-only ProposalSet repository
 
-CLI review-case-admit -> application AdmitReviewCase
+Workbench case scenario -> application AdmitReviewCase
                       `-> exact-current ProposalSet/report/lineage recheck
                       `-> append-only immutable ReviewCase repository
 
@@ -35,30 +38,32 @@ Web Scan now -> application ReviewPreparationPipeline
              |-> two fixed independently claimable work lanes
              `-> bounded persisted scan/work state and read-only projection
 
-CLI shadow-review-preview -> application preview
+Workbench reviewer preview -> application preview
                           -> profile bytes + exact-current ReviewCase lineage
                           -> no reviewer construction or egress
 
-CLI shadow-review-inspect -> application inspect
+Workbench reviewer inspector -> application inspect
                           -> exact persisted request, including historical
                              `current: false` state
                           -> no reviewer construction or egress
 
-CLI shadow-review-request -> application execution
+Workbench reviewer request -> application execution
                           |-> exact-current case/report/proposal/profile/packet
                           |-> append-only request/attempt/dispatch/outcome records
                           `-> isolated Codex reviewer for one request only
 
-CLI shadow-review-reevaluate -> application explicit reevaluation
+Workbench reviewer reevaluation -> application explicit reevaluation
                              |-> latest-attempt and process-absence checks
                              |-> append-only successor attempt records
                              `-> isolated Codex reviewer for one request only
 
-CLI reviewer-auth-* -> bootstrap profile load -> CodexShadowReviewer.auth
+Workbench reviewer authentication -> bootstrap profile load -> CodexShadowReviewer.auth
 ```
 
 Reviewer authentication is deliberately bootstrap-owned; it is separate from
 the application-owned shadow-review execution and persistence contracts.
+The workbench is source-only, disposable by default, excluded from the wheel and
+container, and has no production-target bridge.
 
 Dependency direction remains:
 

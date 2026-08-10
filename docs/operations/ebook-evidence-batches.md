@@ -1,50 +1,28 @@
 # Foreground ebook evidence batches
 
-The 0.9 runtime can preview and explicitly run one immutable foreground batch
-over the current Audiobookshelf book catalogue. It serially reuses the complete
-metadata-and-cover report operation and remains report-only.
+The source-only contributor workbench can preview and explicitly run one
+immutable foreground batch over a disposable current Audiobookshelf book
+catalogue. This is not an installed runtime or container capability. It
+serially reuses the complete metadata-and-cover report operation and remains
+report-only. See [Contributor workbench](../development/contributor-workbench.md).
 
 ## Prepare the catalogue
 
-Refresh the catalogue into its own current-schema database:
-
-```text
-mechanical-librarian catalogue refresh \
-  --config /run/secrets/mechanical-librarian.json \
-  --database /data/catalogue.sqlite
-```
-
-Inspect eligible entries before creating a batch:
-
-```text
-mechanical-librarian catalogue list \
-  --config /run/secrets/mechanical-librarian.json \
-  --database /data/catalogue.sqlite \
-  --filter eligible --limit 100
-```
+Use the typed catalogue-refresh scenario against an explicitly supplied test
+workspace, then inspect eligible entries before creating a batch.
 
 The catalogue operation is documented in
 [Current book catalogue](catalogue.md).
 
 ## Create and inspect a manifest
 
-Preview all currently eligible EPUBs:
-
-```text
-mechanical-librarian batch preview \
-  --config /run/secrets/mechanical-librarian.json \
-  --catalogue /data/catalogue.sqlite \
-  --manifest /data/batches/ebook-batch.json \
-  --all-eligible
-```
-
-Alternatively, repeat `--select CONNECTION LIBRARY LIBRARY_ID ITEM_ID` for an
-explicit ordered set. A preview accepts at most 10,000 entries. Explicit
-selection and `--all-eligible` are mutually exclusive.
+Preview either all currently eligible EPUBs or an explicit ordered tuple of
+connection, library, library ID, and item ID. A preview accepts at most 10,000
+entries. Explicit selection and all-eligible selection are mutually exclusive.
 
 When any selected library references an enabled `open_library` provider,
 preview accepts only an explicit selection of at most five entries.
-`--all-eligible` and larger explicit selections fail before manifest creation,
+All-eligible and larger explicit selections fail before manifest creation,
 provider-client construction, credential access, or egress. Existing larger and
 all-eligible batches remain available when Open Library is disabled.
 
@@ -64,32 +42,16 @@ The manifest contains no title, author,
 path, credential, operational contact email, report body, execution state, or
 history.
 
-Inspect the exact document before granting run authority:
-
-```text
-mechanical-librarian batch inspect \
-  --manifest /data/batches/ebook-batch.json
-```
+Inspect the exact document before granting run authority.
 
 The manifest ID is the lowercase 64-character content digest in that output.
 Changing, replacing, or corrupting the file invalidates it.
 
 ## Run the batch
 
-Run the exact inspected manifest:
-
-```text
-mechanical-librarian batch run \
-  --config /run/secrets/mechanical-librarian.json \
-  --catalogue /data/catalogue.sqlite \
-  --manifest /data/batches/ebook-batch.json \
-  --manifest-id <64-lowercase-hex-characters> \
-  --database /data/reports.sqlite \
-  --artifact-store /data/cover-artifacts
-```
-
-The command runs serially in the foreground and streams deterministic JSON
-lines followed by one final summary. It reloads no configuration during the
+The typed batch-run scenario runs the exact inspected manifest serially in the
+foreground and returns deterministic bounded evidence
+followed by one final summary. It reloads no configuration during the
 run, revalidates the current catalogue and exact item before each report, and
 binds every report to the file identity frozen in the manifest.
 
@@ -109,7 +71,7 @@ There is no durable retry or attempt state, resume, background retry, queue,
 worker, lease, scheduler, parallel execution, or report adoption. Recovery is
 an operator-created fresh manifest and foreground run. Existing completed
 reports remain available through the normal exact-ID and current-scope reopen
-commands.
+operations.
 
 ## Authority and privacy
 

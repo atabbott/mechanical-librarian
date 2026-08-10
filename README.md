@@ -49,6 +49,11 @@ Only absent or exact-current pre-release state is supported. Earlier
 development databases, manifests, configuration schemas, and retired commands
 are intentionally rejected rather than migrated or interpreted.
 
+The installed command surface contains only the authenticated `review-serve`
+launcher. Contributor-only catalogue, evidence, proposal, case, decision, and
+contained-reviewer workflows live in a typed source-only workbench that is
+excluded from the wheel and container and refuses production targets.
+
 See the [catalogue guide](docs/operations/catalogue.md),
 [foreground batch guide](docs/operations/ebook-evidence-batches.md),
 [metadata report guide](docs/operations/metadata-report.md),

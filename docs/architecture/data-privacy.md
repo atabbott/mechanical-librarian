@@ -1,5 +1,16 @@
 # Data privacy
 
+## Contributor workbench
+
+The repository-only workbench accepts synthetic fixtures, explicitly supplied
+test workspaces, or an explicitly approved private corpus. Disposable state is
+the default. It rejects production workspaces and targets and offers no force
+bypass. Results expose only bounded status, artifact identifiers, byte counts,
+and SHA-256 digests; operation exceptions are replaced with closed diagnostics.
+Network experiments require a named isolated profile whose sanitization and
+bounded authority are recorded before every attempt. Workbench code and state
+are absent from the wheel and production container.
+
 ## Review preparation progress
 
 The authenticated preparation surface exposes only configured connection and

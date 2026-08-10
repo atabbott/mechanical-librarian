@@ -327,9 +327,10 @@ The suite covers:
 - installed package shape, distribution exclusions, generated-schema drift,
   static dependency direction, and retired-surface absence.
 
-The exact-artifact suite includes the activation demonstration and exercises the
-CLI against a disposable loopback target, synthetic media, private secrets, and
-an absent database. Unit proposal-policy coverage includes whitespace, case, and
+The exact-artifact suite exercises `review-serve` outside the checkout and proves
+the source-only workbench is absent from the installed wheel and container.
+Workbench integration tests use a disposable loopback target, synthetic media,
+private test secrets, and an absent database. Unit proposal-policy coverage includes whitespace, case, and
 width variants of the controlled package creator placeholder. The installed
 proposal path uses a whitespace/case variant and requires a nonmutating authors
 result under `fixed-conservative-v6`. Persistence tests reject prior proposal

@@ -19,6 +19,10 @@ class PackageSmokeTests(unittest.TestCase):
             mechanical_librarian.__version__,
         )
 
+    def test_distribution_excludes_source_only_workbench(self) -> None:
+        files = tuple(str(path) for path in (metadata.files("mechanical-librarian") or ()))
+        self.assertFalse(any("mechanical_librarian_workbench" in path for path in files))
+
     def test_composed_cli_exposes_help(self) -> None:
         with self.assertRaises(SystemExit) as raised:
             main(["--help"])

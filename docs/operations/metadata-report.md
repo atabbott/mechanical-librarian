@@ -1,61 +1,30 @@
 # Metadata report
 
-The current runtime retains one synchronous single-item report operation
-alongside the 0.9 catalogue, foreground batch, and ProposalSet surfaces:
-
-```text
-mechanical-librarian metadata-report \
-  --config /run/secrets/mechanical-librarian.json \
-  --database /data/reports.sqlite \
-  --artifact-store /data/cover-artifacts \
-  --connection primary \
-  --library ebooks \
-  --item ITEM_ID \
-  --file-index 0
-```
-
-Every option is required. There are no default paths, current-directory lookup,
-implicit filenames, environment fallbacks, presentation flags, or alternate
-output formats.
+The `GenerateMetadataReport` application operation remains the single-item
+evidence seam used by authenticated review preparation. Contributors can invoke
+it only through the source-only typed workbench against disposable state. It is
+not an installed command or container entrypoint. See
+[Contributor workbench](../development/contributor-workbench.md).
 
 An exact persisted report can be reopened without operational configuration,
 credentials, target access, provider construction, or network access:
 
-```text
-mechanical-librarian metadata-report-get \
-  --database /data/reports.sqlite \
-  --report-id report_<64-lowercase-hex-characters>
-```
-
 The current report for a known scope can also be reopened offline:
 
-```text
-mechanical-librarian metadata-report-get --database /data/reports.sqlite --current \
-  --connection primary --library ebooks --item ITEM_ID --file-identity <64-lowercase-hex>
-```
-
-On success stdout is exactly the persisted canonical JSON report followed by
-one newline. On failure stdout is empty, stderr contains one fixed bounded
-diagnostic, and the exit status is nonzero. Diagnostics never include paths,
+Success is the exact persisted canonical JSON report. Failure uses one fixed
+bounded diagnostic. Diagnostics never include paths,
 credentials, target values, provider bodies, or EPUB text.
 
 Cover evidence is report-only. Where valid cover bytes are available, the report
 contains a source outcome and a private artifact reference. The only supported
 offline read is a report-bound preview:
 
-```text
-mechanical-librarian metadata-report-cover-preview \
-  --database /data/reports.sqlite --artifact-store /data/cover-artifacts \
-  --report-id report_<64-lowercase-hex-characters> \
-  --artifact-id cover_<64-lowercase-hex-characters> \
-  --preview-variant preview-320x480-rgba-png-v1
-```
-
-It writes raw preview bytes only to non-interactive stdout. It never performs
-target, provider, or remote-cover transport and it cannot retrieve originals.
+The preview is retained only as a private digest-addressed workbench artifact.
+It never performs target, provider, or remote-cover transport and it cannot
+retrieve originals.
 
 An exact current report can be evaluated by the separate fixed-policy
-[`proposal-set-create`](proposal-set.md) operation. That operation references
+[ProposalSet](proposal-set.md) operation. That operation references
 this evidence without changing or duplicating the report and performs no
 provider call.
 
@@ -66,14 +35,14 @@ provider call.
 - `metadata-report-v1` through `metadata-report-v21`, and all earlier development
   schemas are rejected before mutation. There is no migration, import,
   preservation, or compatibility parser. Keep an old database offline if
-  required, initialize a clean database, and rerun the supported report command.
+  required, initialize a clean database, and rerun supported review preparation.
   This database procedure is the narrower current-runtime application of
   ADR-0013's repository-wide pre-release clean-schema rule.
 - On supported Linux deployments, the database parent directory is owned by
   the process user and grants no group or other permissions. The configured
   database basename has no `-journal`, `-wal`, or `-shm` recovery sidecar.
 - The artifact-store path already exists as a directory owned by the process
-  user and grants no group or other permissions. The command does not create
+  user and grants no group or other permissions. The operation does not create
   this directory.
 - Every absolute parent-path component is a real directory rather than a
   symbolic link. Its directory entry is protected by root/process ownership
@@ -103,7 +72,7 @@ but do not claim the Linux production exclusion guarantee.
 
 ## Evidence and replay
 
-The command reads the current target item directly; it does not persist an
+The operation reads the current target item directly; it does not persist an
 inventory. The target projection contains exactly title, subtitle, authors,
 narrators, series, genres, publishedYear, publishedDate, publisher,
 description, isbn, asin, language, explicit, tags, and cover. Each destination
@@ -435,7 +404,7 @@ current schema remain retrievable internally by stable ID.
 
 ## Authority
 
-The command can read configured target metadata, read the selected mounted
+The operation can read configured target metadata, read the selected mounted
 EPUB, contact explicitly enabled referenced providers, and append neutral
 reports. Its repository may initialize an absent database or open an exact
 current-schema database after schema-object, foreign-key, and SQLite-integrity
