@@ -590,7 +590,8 @@ The outcomes are not one serial chain. Readiness records the real dependencies:
 applicable current human decisions and qualifies the first-release browser
 baseline; F13 has delivered the common human/qualified-automatic guarded
 fake-service path; and F14 follows completed F13 qualification for its disposable
-Audiobookshelf canary. F11 remains independently shadowable; F15a supplies the
+Audiobookshelf canary. F11 is terminal historical context with only its
+deterministic packet and decision projection retained; F15a supplies the
 supported operating surface; and F17 composes the useful guarded path under
 repeated operation without depending on future target CAS. F08 remains an
 independent evidence outcome.

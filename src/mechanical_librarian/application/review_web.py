@@ -40,7 +40,6 @@ class SessionTokens:
 class CurrentReviewCaseSnapshot:
     case_document: str
     report_document: str
-    model_advice: dict[str, object]
     decision_documents: tuple[str, ...]
     history: tuple[dict[str, object], ...]
     automatic_attention_destinations: tuple[str, ...] = ()
@@ -313,7 +312,6 @@ class InspectCurrentReviewCase:
         return {
             "current": True,
             "fields": fields,
-            "model_advice": snapshot.model_advice,
             "review_case_id": case.review_case_id,
             "schema_version": "review-case-detail-v1",
             "target": {
@@ -341,15 +339,6 @@ class InspectCurrentReviewCase:
             for field in fields
             for reference in field["provenance"]
         }
-        model_advice = detail["model_advice"]
-        assert type(model_advice) is dict
-        for result in model_advice["results"]:
-            assert type(result) is dict
-            for recommendation in result["recommendations"]:
-                assert type(recommendation) is dict
-                citations = recommendation["citations"]
-                assert type(citations) is list
-                wanted.update(citations)
         evidence = _evidence_by_reference(report)
         if wanted.difference(evidence):
             raise ReviewWebError("not_found")

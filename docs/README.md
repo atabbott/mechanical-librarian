@@ -8,7 +8,6 @@
 - [Contributor workbench](development/contributor-workbench.md)
 - [ProposalSet operation](operations/proposal-set.md)
 - [Review-case admission](operations/review-case.md)
-- [Qualification-only shadow review](operations/shadow-review.md)
 - [Observability](operations/observability.md)
 - [Deployment model](operations/deployment.md)
 - [Configuration](reference/configuration.md)
@@ -25,6 +24,7 @@
 - [ADR-0015: isolated qualification-only shadow review](architecture/decisions/0015-isolated-shadow-reviewer.md)
 - [ADR-0016: explainable publication-date shadow review](architecture/decisions/0016-freeze-explainable-shadow-reviewer.md)
 - [ADR-0040: source-only contributor workbench](architecture/decisions/0040-source-only-contributor-workbench.md)
+- [ADR-0041: contained reviewer kernel](architecture/decisions/0041-contract-contained-reviewer-kernel.md)
 
 ## Development
 
@@ -32,7 +32,6 @@
 - [Documentation standards](development/documentation-standards.md)
 - [Recoverability qualification](development/recoverability-qualification.md)
 - [Testing strategy](development/testing-strategy.md)
-- [Shadow-review qualification evidence](development/reviewer-qualification.md)
 - [Repository structure](development/repository-structure.md)
 - [Functional slice delivery](development/slice-delivery.md)
 - [Exact-head merging](development/exact-head-merging.md)

@@ -22,9 +22,7 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
 )
 from mechanical_librarian.domain.shadow_review import (
-    ReviewerProfileIdentity,
     ShadowReviewPacket,
-    ShadowReviewRequest,
     ShadowReviewValueError,
 )
 from mechanical_librarian.domain.shadow_review_actions import (
@@ -39,27 +37,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
-
-
-def _identity() -> ReviewerProfileIdentity:
-    return ReviewerProfileIdentity(
-        "a" * 64,
-        "codex-cli 0.146.0-alpha.3.1",
-        "b" * 64,
-        "bubblewrap-v1",
-        "gpt-5.6-sol",
-        "medium",
-        "shadow-review-prompt-v3",
-        "codex-shadow-profile-v2",
-        "shadow-review-packet-v5",
-        "shadow-review-result-v2",
-        "qualification-only-policy-v1",
-        120,
-        65_536,
-        536_870_912,
-        16,
-        131_072,
-    )
+from tests.unit.shadow_packet_fixtures import synthetic_packet
 
 
 def _packet(
@@ -71,7 +49,7 @@ def _packet(
     target_only: int = 0,
     candidate_count: int = 1,
 ) -> ShadowReviewPacket:
-    data = json.loads(ShadowReviewRequest.synthetic_canary(_identity()).packet.to_json())
+    data = json.loads(synthetic_packet().to_json())
     proposal = data["proposals"][0]
     proposal["destination"] = destination
     proposal["decision_summary"] = {

@@ -1001,12 +1001,6 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     strip = page.locator(".field-strip")
                     self.assertEqual(strip.locator(":scope > .field").count(), 3)
                     self.assertEqual(strip.locator("details").count(), 0)
-                    self.assertTrue(
-                        page.get_by_text("Model advice: not requested").evaluate(
-                            "(advice, strip) => Boolean(strip.compareDocumentPosition(advice) & Node.DOCUMENT_POSITION_FOLLOWING)",
-                            strip.element_handle(),
-                        )
-                    )
                     sibling = context.new_page()
                     sibling.goto(f"{origin}/review/{case_id}")
                     sibling.get_by_role(

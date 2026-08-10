@@ -14,22 +14,14 @@ The current installed contract is intentionally narrow:
   `metadata-report-v22` plus `proposal-set-v4` under
   `fixed-conservative-v6`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v5`,
-  `shadow-review-request-v9`, `shadow-review-result-v2`,
-  `shadow-review-inspect-v3`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v5`,
-  `shadow-review-failure-v2`, and the exact-current append-only
-  qualification-only shadow request/attempt/dispatch/outcome schema with
-  required `shadow-review-execution-provenance-v1` outcomes;
+  and the exact-current deterministic shadow decision/outcome schema;
 - `review-session-v1`, `review-case-detail-v1`, `human-decision-v1`,
   `human-decision-event-v1`, `human-decision-ack-v1`, bounded
   evidence/current-case history projections, and the exact-current
   opaque-session, login-throttle, immutable human-decision and decision-event
   tables; older application databases without those exact tables are rejected;
-- canonical `reviewer-qualification-profile-v1` with exact
-  `shadow-review-prompt-v3`, `codex-shadow-profile-v2`,
-  `gpt-5.6-sol`/`medium`, and pinned Codex CLI/Bubblewrap identities; shadow
-  request execution requires Linux;
 - strict `batch-manifest-v5` for foreground evidence batches;
 - Audiobookshelf v2.35.1 library, library-items, and current-item responses for
   explicitly configured book libraries;
@@ -60,15 +52,17 @@ The installed runtime supports current catalogue refresh/list/get, immutable
 foreground batch preview/inspect/run, single-item metadata report generation,
 exact/current report reopen, report-bound cover-preview reopen, exact-current
 ProposalSet create, offline exact ProposalSet reopen, review-case admission,
-offline exact ReviewCase reopen, ChatGPT subscription auth, no-egress shadow
-preview, one qualification-only foreground request, offline inspect, and
-explicit reevaluation, authenticated exact-current ReviewCase inspection, and
+offline exact ReviewCase reopen, authenticated exact-current ReviewCase inspection, and
 one individual immutable ordinary-field human decision through the bundled
 `review-serve` API and browser round trip in pinned Playwright Chromium.
 It does not support
 durable batch attempts, resume, automatic retry, workers, schedulers, parallel
-execution, normal reviewer activation, automatic decisions, bulk or reversal,
+execution, model advice, reviewer activation, automatic decisions, bulk or reversal,
 or apply.
+
+The source-only workbench retains one `contained-reviewer` scenario for
+sanitized, bounded JSON/text experiments. It is not an installed runtime or
+database compatibility contract.
 
 `shadow-decision-preview` supports one exact current ReviewCase from an existing
 regular report database on the platform where its read-only/no-create
@@ -89,17 +83,13 @@ outcomes without choosing one. No earlier proposal policy is interpreted:
 pre-release databases using `fixed-conservative-v5` or earlier are rejected
 before mutation and require a clean rebuild.
 
-Packet v5 decision summaries are exact projections of the current report,
-ProposalSet, ReviewCase, and bibliographic combinations. Request v9 compiles a
-packet-only action catalogue and binds a finite output schema containing only
-admissible actions and their exact citations. When bibliographic combinations
-exist, each schema branch contains only actions compatible with one shared
-combination, while manual actions remain reachable. The qualification profile
-schema mechanically binds packet v5, prompt v3, profile v2, and result v2.
-Request v9 binds those exact bytes and the combination-coherent generated
-output-schema contract. Request-v8 and earlier stores are not interpreted or
-migrated. Model, effort, provider transport, and qualification-only policy
-versions are unchanged.
+Packet v5 decision summaries are exact deterministic projections of the current
+report, ProposalSet, ReviewCase, and bibliographic combinations. The former F11
+request, prompt, qualification-profile, provider-transport, and result contracts
+are retired and have no current compatibility surface. Their stored lifecycle
+state is not interpreted or migrated. The source-only contained-reviewer
+workbench has its own bounded request and result contract and is excluded from
+the installed wheel and production container.
 
 Until the first production release, every database, report, artifact,
 configuration, and internal-document schema accepts only absent state or its

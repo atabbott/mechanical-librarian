@@ -228,7 +228,7 @@ Evidence readiness counts unique evidence records and target scopes. It
 preserves current, missing, stale, unsupported, and policy-approved-skip states
 rather than collapsing them into one boolean. Approved skip records the exact
 policy version and rule. The projection carries evidence references only; facts
-remain in bounded evidence detail and reviewer-packet schemas.
+remain in bounded evidence detail and deterministic packet schemas.
 
 ## Bulk decisions
 
@@ -339,11 +339,8 @@ with the exact same request and idempotency key; any unsuccessful second result
 reloads authoritative state or requires sign in without describing the decision
 as unrecorded.
 Automatic-only fields are collapsed read-only context outside the strip and
-never expose those controls;
-model advice follows the human-decision surface. Its visible state and bounded
-result are derived only from the latest persisted reevaluation attempt; older
-attempts remain immutable history but cannot override or resurface as current
-advice.
+never expose those controls. The supported detail response contains no model
+advice or contained-reviewer result.
 
 Outcome #195 extends those budgets and checks across its cross-case summaries,
 history, bulk and reversal flows, and additional browser and viewport matrix.

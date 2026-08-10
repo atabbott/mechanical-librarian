@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Remove the retired qualification-only shadow-review product workflow,
+  request/attempt/dispatch/result persistence, browser model-advice projection,
+  and its qualification machinery. Preserve the deterministic packet and
+  automatic-decision contracts, and retain one source-only contained-reviewer
+  workbench kernel for sanitized bounded experiments. (#493)
+
 - Contract the installed command surface to the authenticated `review-serve`
   launcher. Catalogue, report, batch, proposal, case, deterministic decision,
   and contained-reviewer experiments now live in a typed source-only contributor

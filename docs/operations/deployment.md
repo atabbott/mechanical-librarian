@@ -53,18 +53,10 @@ configuration and supported egress rules are defined in the
 [configuration reference](../reference/configuration.md) and [security
 model](../architecture/security.md).
 
-Reviewer authentication, shadow request, and explicit reevaluation additionally
-require an owner-only qualification profile, private `0700` auth-store, empty
-private job parent, and the exact maintainer-provisioned Codex CLI and
-Bubblewrap artifacts declared by that profile. Preview and inspect remain
-offline: they require the complete owner-only canonical qualification profile
-file and application database, validate the profile bytes, and do not require
-or inspect its declared executable, auth-store, or job-parent paths. The runtime
-neither installs, upgrades, nor bundles the external artifacts; their profile,
-authentication, and isolation requirements are authoritative in the
-[shadow-review guide](shadow-review.md).
-Authentication and shadow advice do not activate normal review or grant
-decision, apply, or write authority.
+The installed runtime has no reviewer authentication, model invocation, model
+advice, or reviewer persistence. The repository-only contained-reviewer
+workbench may use explicitly provisioned private test artifacts, but those are
+not deployment prerequisites and never enter the wheel or container.
 
 The process needs no HTTP port, queue, scheduler, worker, external database, or
 writable media mount. Do not mount the Docker socket or grant host networking,
@@ -76,8 +68,7 @@ read-only where packaging permits.
 Back up the stopped application SQLite database together with its paired cover
 artifact store using the recovery procedure in
 [backups and recovery](backups-and-recovery.md). Keep configuration,
-qualification profiles, executable paths, and auth stores in the host's
-encrypted secret-backup policy.
+runtime configuration in the host's encrypted secret-backup policy.
 
 The review runtime can gain bounded target-field authority only through the
 authenticated Activity consent flow. Consent is library scoped, pause and

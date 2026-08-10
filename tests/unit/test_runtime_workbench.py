@@ -3,11 +3,13 @@ from __future__ import annotations
 import io
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from mechanical_librarian.interfaces.cli import main
 from mechanical_librarian.bootstrap import composition
@@ -19,13 +21,12 @@ from mechanical_librarian_workbench import (  # noqa: E402
     CAPABILITIES,
     BatchRequest,
     CatalogueRequest,
+    ContainedReviewerRequest,
     DecisionPreviewRequest,
     IsolatedNetworkProfile,
     ProposalRequest,
     ReportRequest,
     ReviewCaseRequest,
-    ReviewerAuthRequest,
-    ReviewerRequest,
     WorkbenchContext,
     WorkbenchFailure,
     WorkbenchOperations,
@@ -48,11 +49,17 @@ def _network_files(context: WorkbenchContext) -> tuple[str, ...]:
         '{"connections":[{"endpoint":"http://127.0.0.1:8765"}]}',
         encoding="utf-8",
     )
-    context.path("qualification-profile.json").write_text("{}", encoding="utf-8")
+    profile = context.path("contained-reviewer-profile.json")
+    profile.write_text("{}", encoding="utf-8")
+    profile.chmod(0o600)
+    context.path("reviewer-instruction.txt").write_text("Summarize the input.", encoding="utf-8")
+    context.path("reviewer-input.json").write_text('{"value":"synthetic"}', encoding="utf-8")
+    context.path("reviewer-output-schema.json").write_text('{"$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"properties":{"summary":{"type":"string"}},"required":["summary"],"type":"object"}', encoding="utf-8")
     context.path("batch.json").write_text("{}", encoding="utf-8")
     return tuple(sorted({
         hashlib.sha256(context.path(name).read_bytes()).hexdigest()
-        for name in ("config.json", "qualification-profile.json", "batch.json")
+        for name in ("config.json", "contained-reviewer-profile.json", "reviewer-instruction.txt",
+                     "reviewer-input.json", "reviewer-output-schema.json", "batch.json")
     }))
 
 
@@ -63,7 +70,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
         self.assertEqual(errors.getvalue(), "Review server failed: invalid invocation.\n")
 
     def test_workbench_catalogue_maps_every_relocated_capability(self) -> None:
-        self.assertEqual(len(CAPABILITIES), 18)
+        self.assertEqual(len(CAPABILITIES), 14)
         self.assertEqual(
             {operation for capability in CAPABILITIES for operation in capability.operations},
             set(WorkbenchOperations.__dataclass_fields__),
@@ -72,7 +79,10 @@ class RuntimeWorkbenchTests(unittest.TestCase):
     def test_default_bindings_are_the_shared_application_composition(self) -> None:
         operations = WorkbenchOperations.production_operations()
         for name in WorkbenchOperations.__dataclass_fields__:
-            self.assertIs(getattr(operations, name), getattr(composition, name))
+            if name == "run_contained_reviewer":
+                self.assertEqual(getattr(operations, name).__module__, "mechanical_librarian_workbench.reviewer")
+            else:
+                self.assertIs(getattr(operations, name), getattr(composition, name))
 
     def test_every_catalogued_scenario_executes_through_typed_requests(self) -> None:
         digest = "a" * 64
@@ -84,9 +94,12 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             ReviewCaseRequest("admit", "proposal"), ReviewCaseRequest("inspect", "case"),
             CatalogueRequest("refresh", connection="primary"), CatalogueRequest("list"),
             BatchRequest("preview"), BatchRequest("inspect"), BatchRequest("run", manifest_id=digest),
-            DecisionPreviewRequest("case"), ReviewerRequest("packet-preview", "case"),
-            ReviewerRequest("request", "case"), ReviewerRequest("inspect", "request"),
-            ReviewerRequest("reevaluate", "request"), ReviewerAuthRequest("status"),
+            DecisionPreviewRequest("case"),
+            ContainedReviewerRequest(
+                "invoke", instruction="reviewer-instruction.txt",
+                input_document="reviewer-input.json",
+                output_schema="reviewer-output-schema.json",
+            ),
         )
         with WorkbenchContext.temporary() as context:
             context.network = IsolatedNetworkProfile(
@@ -103,7 +116,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             operations = replace(_operations(), run_batch=batch)
             results = tuple(execute(context, request, operations) for request in requests)
             self.assertEqual([item.name for item in results], [item.name for item in CAPABILITIES])
-            self.assertEqual(len(tuple(context.path("attempts").iterdir())), 6)
+            self.assertEqual(len(tuple(context.path("attempts").iterdir())), 4)
             batch_artifact = context.path("artifacts/" + results[11].artifacts[0])
             self.assertEqual(
                 json.loads(batch_artifact.read_text(encoding="utf-8")),
@@ -141,6 +154,60 @@ class RuntimeWorkbenchTests(unittest.TestCase):
         })
         self.assertEqual(result.data["status"], "failed")
         self.assertIn("batch-run failed", result.summary)
+
+    def test_contained_reviewer_uses_admitted_bytes_after_durable_attempt(self) -> None:
+        request = ContainedReviewerRequest(
+            "invoke",
+            instruction="reviewer-instruction.txt",
+            input_document="reviewer-input.json",
+            output_schema="reviewer-output-schema.json",
+        )
+        with WorkbenchContext.temporary() as context:
+            context.network = IsolatedNetworkProfile(
+                "isolated-test", True, True, _network_files(context)
+            )
+            expected = tuple(
+                context.path(name).read_bytes()
+                for name in (
+                    "contained-reviewer-profile.json",
+                    "reviewer-instruction.txt",
+                    "reviewer-input.json",
+                    "reviewer-output-schema.json",
+                )
+            )
+            original_require_network = context.require_network
+            fsync_calls: list[int] = []
+            real_fsync = os.fsync
+
+            def bind_then_replace(
+                *paths: Path,
+                private_first: bool = False,
+            ) -> tuple[bytes, ...]:
+                bound = original_require_network(
+                    *paths,
+                    private_first=private_first,
+                )
+                for path in paths:
+                    path.write_bytes(b'"replaced after admission"')
+                return bound
+
+            def invoke(*payloads: object) -> str:
+                self.assertGreaterEqual(len(fsync_calls), 2)
+                self.assertEqual(
+                    (expected[0], "invoke", expected[1], expected[2], expected[3]),
+                    payloads,
+                )
+                return '{"ok":true}'
+
+            context.require_network = bind_then_replace  # type: ignore[method-assign]
+            operations = replace(_operations(), run_contained_reviewer=invoke)
+            with mock.patch(
+                "mechanical_librarian_workbench.context.os.fsync",
+                side_effect=lambda descriptor: (
+                    fsync_calls.append(descriptor), real_fsync(descriptor)
+                )[1],
+            ):
+                execute(context, request, operations)
 
     def test_result_has_equivalent_canonical_and_summary_rendering(self) -> None:
         digest = "a" * 64

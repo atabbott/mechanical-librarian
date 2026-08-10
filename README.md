@@ -20,9 +20,6 @@ evidence workflow. An operator can:
   report; and
 - admit one exact current actionable ProposalSet as an immutable undecided
   review case, with typed no-case retirement for non-actionable sets; and
-- preview, request, inspect, or explicitly reevaluate one isolated
-  qualification-only Codex shadow recommendation over an exact current case;
-  and
 - compute one canonical provider-independent deterministic decision preview for
   an exact current case without model/provider calls, persistence, or write
   authority.
@@ -41,9 +38,9 @@ produces exactly one explainable result for each destination without contacting
 providers, configurable ranking, or write authority. Catalogue and batch
 operations retain the same read-only boundary. Review admission records no
 decision, apply, target write, media write, background execution, automatic
-retry, or supported release. Shadow advice is permanently
-`qualification_only`, uses an exact pinned tuple under a Linux sandbox, and
-adds no normal review activation or authority.
+retry, model advice, or supported release. A minimal contained reviewer remains
+reachable only through the source workbench for bounded, sanitized experiments
+and has no product workflow or persistence.
 
 Only absent or exact-current pre-release state is supported. Earlier
 development databases, manifests, configuration schemas, and retired commands
@@ -58,7 +55,7 @@ See the [catalogue guide](docs/operations/catalogue.md),
 [foreground batch guide](docs/operations/ebook-evidence-batches.md),
 [metadata report guide](docs/operations/metadata-report.md),
 [ProposalSet guide](docs/operations/proposal-set.md), [review-case guide](docs/operations/review-case.md),
-[shadow-review guide](docs/operations/shadow-review.md), and
+[contributor workbench](docs/development/contributor-workbench.md), and
 [documentation index](docs/README.md).
 
 ## Product direction

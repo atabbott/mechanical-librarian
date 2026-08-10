@@ -7,13 +7,10 @@ the 1.0 checkpoint. It is planning authority for the outcomes and safety
 boundaries below, not a statement of current behavior or permission to begin
 implementation.
 
-The initial checkpoint plan remains unchanged:
-
-- Codex CLI is the first reviewer backend;
-- F11 delivers isolated AI shadow recommendations;
-- the current 1.0 outcome set and exit criteria in the
-  [delivery-slice plan](delivery-slices.md) remain authoritative; and
-- the normal deployment remains one Mechanical Librarian container.
+F11's qualification-only product workflow has been retired by ADR-0041. The
+repository retains only a semantic-neutral, source-only contained-reviewer
+kernel; it is not a current product backend or persistence contract. Any future
+backend requires a newly promoted outcome and current trust-boundary decision.
 
 After the 1.0.0 checkpoint is complete, two optional reviewer capabilities may
 be scheduled as separate functional slices:
@@ -22,16 +19,17 @@ be scheduled as separate functional slices:
    qualified free or paid model configuration; and
 2. a reviewer connected to a separately operated compatible model server.
 
-Neither capability depends on the other. Both depend on the completed F11
-reviewer contract and isolation boundary, stable continuous operation from F17,
-and structured reviewer configuration and secret references. F17 is not a
-release cohort. These outcomes receive slice IDs only when maintainers schedule
-and explicitly promote them.
+Neither capability depends on the other. Both depend on stable continuous
+operation from F17 and a future explicit application contract, configuration,
+privacy, and secret-reference decision. F17 is not a release cohort. These
+outcomes receive slice IDs only when maintainers schedule and explicitly
+promote them.
 
 ## Shared contract
 
-Every future backend implements the application-owned `Reviewer` port and
-preserves the [AI trust boundary](../architecture/ai-boundary.md). A backend:
+Every future backend must define a new application-owned port and preserve the
+[AI trust boundary](../architecture/ai-boundary.md). The current source-only
+kernel does not pre-decide that port. A backend:
 
 - receives only the versioned bounded reviewer packet and selected staged
   attachments;
@@ -100,9 +98,9 @@ OpenRouter credential, selects one exact qualified free or paid reviewer
 configuration, and receives validated recommendations through the existing
 reviewer contract without changing production authority.
 
-**Dependencies:** F11, F17, the accepted reviewer-isolation decision,
-structured reviewer authentication references, and the authenticated owner
-configuration surface.
+**Dependencies:** F17, a separately promoted product reviewer contract and
+isolation decision, structured reviewer authentication references, and the
+authenticated owner configuration surface.
 
 ### OpenRouter supported demonstration
 
@@ -114,7 +112,7 @@ configuration surface.
    prove each is blocked locally with zero OpenRouter requests and zero
    credential transmission.
 3. Accept the disclosure matching the free configuration, explicitly enable
-   it, perform its preflight, run the synthetic F11 packet, validate its direct
+   it, perform its preflight, run a synthetic bounded packet, validate its direct
    closed-schema result, and inspect the persisted model, provider, routing,
    usage, and validation provenance.
 4. Select one distinct exact qualified paid model configuration and prove the
@@ -320,9 +318,9 @@ receives validated recommendations without adding an inference runtime, model
 weights, device integration, or sidecar requirement to the Mechanical
 Librarian image.
 
-**Dependencies:** F11, F17, the accepted reviewer-isolation decision,
-structured reviewer endpoint and authentication configuration, and the
-authenticated owner configuration surface.
+**Dependencies:** F17, a separately promoted product reviewer contract and
+isolation decision, structured reviewer endpoint and authentication
+configuration, and the authenticated owner configuration surface.
 
 ### External-server supported demonstration
 
@@ -339,7 +337,7 @@ authenticated owner configuration surface.
    and explicitly enable the endpoint.
 5. Preflight transport, direct structured output, context, image, model
    identity, authentication, and response-limit capabilities.
-6. Run the synthetic F11 packet, validate the response, and inspect immutable
+6. Run a synthetic bounded packet, validate the response, and inspect immutable
    endpoint/profile/model and validation provenance.
 7. Restart Mechanical Librarian without managing or restarting the external
    server.

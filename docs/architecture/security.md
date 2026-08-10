@@ -247,7 +247,7 @@ access time from the adapter's injected wall clock. Invalid, non-finite, or
 out-of-range clock output fails before egress. Disabled, insufficient-input,
 query-overflow, repeated-call, and pre-dispatch deadline or budget outcomes do
 not read that clock and retain an explicit absent time. Later lanes, retries,
-report reopen, proposal derivation, and reviewer projection reuse the original
+report reopen, proposal derivation, and deterministic packet projection reuse the original
 value; none refreshes it.
 
 Each referenced enabled Hardcover provider makes one fixed GraphQL query per
@@ -404,139 +404,28 @@ application preflight. It stores bounded identities and canonical proposal
 projections only; no credentials, reviewer identity, decision, or target-write
 capability is accepted by the command.
 
-Qualification-only shadow review rechecks one exact current ReviewCase and its
-report/ProposalSet bindings inside SQLite before it persists a content-addressed
-sanitized packet and attempt. Preview reads only profile bytes and application
-state; it constructs no executable, auth, target, provider, reviewer, or other
-network client and is not fresh eligibility proof. Request may invoke only the
-exact declared Codex/model/reasoning/prompt/profile/packet/output/policy tuple.
-Private qualification analysis keeps dispatch completion, semantic-output
-validity, and action quality as separate trust-boundary decisions. It cannot
-turn a process failure or ordinary timeout into a semantic result, infer a
-missing provider response identity, or admit an action absent from the exact
-frozen compiler catalogue. Its bounded append-only retry pairs are evidence
-handling only and grant no product retry, egress, decision, or write authority.
-ADR-0025 introduced packet-v5/request-v6. ADR-0026 binds
-prompt-v3/profile-v2/result-v2 and advances the current request to v7 without
-widening the compiler catalogue, provider transport, or qualification-only
-authority. Before dispatch, the
-packet-only action compiler applies fixed admissibility and abstention rules to
-each candidate, keep-current, and manual action independently. The request
-schema enumerates only compiled actions and their exact citation closures;
-unknown obligations and grounded but inadmissible nonmanual actions fail
-closed with typed exclusions. The compiler has no gold, prior-output, score,
-latency, identity, or response-metadata input. Decision summaries contain
-only closed enums, bounded counts, existing citation IDs and bibliographic
-combination IDs. They recompute local/provider correlation identities from the
-exact report, never inspect opaque hash prefixes, and never convert target-only,
-excluded-role, wrong-scope, unresolved-manifestation, or unrepresentable facts
-into independent support. Creator-role facts come only from the same exact
-representation/correlation groups as a complete author candidate. The packet
-byte limit and explicit role/count bounds apply before egress; no path,
-credential, raw provider body, rejected value, or new source text is added.
-Source-bound replay reconstructs the complete summary and rejects forged counts,
-bindings, roles, combination membership, date pairing, or sufficiency.
-Provider publication
-citations expose only bounded allowlisted identifier and physical-format fact
-objects already admitted to the report; exact reference membership, closed
-shape, ordering, and limits are revalidated so opaque-only or malformed
-linkage cannot cross the reviewer boundary. Identifier references are
-recomputed from public-safe provider/candidate membership and the exact fixed
-valid claim projection, including raw order, ISBN checksum, or closed ASIN
-syntax. Typed provider claims and rich date evidence both require linkage;
-rich evidence citation identities are recomputed from their closed content.
-Those internal identities do not by themselves prove that a sibling occurred
-in the source candidate. Provider-linked packet/request decode therefore
-requires the immutable persisted report and compares each complete citation
-with the projection rebuilt from that exact candidate. Missing source context
-or any invented/omitted sibling fails closed without exposing the report to
-the reviewer.
-Shared-month candidates contain only the common `YYYY-MM` precision supported
-by independent retained observations. They never choose or pad a day, and the
-original finer observations remain cited. This is reviewer input only:
-Audiobookshelf partial-date writes and read-back are unqualified and remain
-unreachable.
-All auth and reviewer processes serialize on one owner-only auth-store lock.
-Only the exact canonical ChatGPT subscription status on one process stream is
-accepted when the other stream is empty and the command succeeds. Mixed,
-additional, malformed, API-key, and nonzero results fail.
+The installed runtime has no model reviewer, reviewer authentication, model-advice
+projection, or request/attempt/dispatch/result persistence. The retained
+deterministic packet and shadow decision/outcome contracts perform no model or
+provider dispatch.
 
-The Linux Bubblewrap boundary exposes the pinned runtime and system libraries,
-one empty private job directory, but no repository,
-database, profile, media, service configuration, or target/provider
-credentials. Explicit authentication management may mount the owner-private
-authentication store writable. Ordinary review instead mounts a new private
-provider-state directory as writable `/auth` and nests only the primary
-`auth.json` credential as a read-only file from its validated, held no-follow
-descriptor. Its authentication-status preflight uses the same contained mount,
-while version verification uses an empty credential-free Bubblewrap home and
-an unshared network namespace. Auth uses the same descriptor-bound boundary and masks
-`/auth/config.toml` with an immutable empty `--perms 0400 --ro-bind-data`
-read-only bind for the entire child lifetime, so a same-UID creation or
-replacement after preflight cannot alter the authentication invocation. Review
-user configuration and rules are ignored, and the isolated ordinary command
-uses `--skip-git-repo-check` because `/job` is deliberately empty; shell and unified
-execution, web search, apps, agents, hooks, memories, remote plugins, update,
-feedback, analytics, history, and approval are disabled by exact configuration.
-Resource, time, file, output, and process counts are bounded. The exact
-per-case structured-output schema bytes are subset-validated, digest-bound into
-the canonical request and untrusted prompt, and raw output failure classes
-remain value-free. Malformed UTF-8/JSON, duplicate-key, non-object, and
-truncated documents are distinct from parsed results that violate their
-request semantics. Insignificant JSON whitespace and object-key order are
-accepted only in the transient provider result, whose exact raw bytes remain
-private until cleanup; canonicalization occurs before typed domain construction
-and persistence. Only the ADR-0017 diagnostic category, closed
-component/stage, optional retryability/currentness, and bounded aggregate count
-cross the trust boundary.
-The pinned ordinary command enables JSONL output. Only exit status 1 with empty
-stderr and a bounded, strict-UTF-8 stream ending in the exact terminal
-`turn.failed` response-format rejection for the controller-owned
-`codex_output_schema` maps to `live_schema_rejection`. The raw message is never
-retained. Every variant, other nonzero exit, and unrecognized failure remains
-conservatively `spawn_runtime`; malformed result documents and zero-exit
-semantic or citation failures remain distinct. Once parsed outer shape and
-exact request-ID syntax are proven, a zero-exit result whose request identity
-differs from the bound request maps through a typed domain error to
-reviewer/identity/identity before citation normalization or membership checks,
-without string matching or retaining either identifier. Missing or malformed
-identity remains semantic. Formatting variance alone is normalized after
-bounded duplicate-free parsing; malformed content still fails closed.
-Exact repository faults map to the persistence component/category/stage rather
-than runtime, including database open and inspection failures crossing the
-CLI-runner boundary. A dispatched attempt with no terminal outcome reopens
-with a bounded reviewer/unknown/execution aggregate, so unknown inspection
-never requires the CLI to invent a replacement runtime failure.
-Request, attempt,
-dispatch, and outcome facts are append-only. Raw streams and reasoning are
-discarded. Dispatched ambiguity is `unknown`; there is no automatic retry, and
-explicit reevaluation requires proof that the complete prior supervised process
-group is absent.
+The repository-only contained reviewer accepts only bounded canonical sanitized
+JSON/text and a locally admitted output schema. Its private profile binds exact
+artifacts, credential store, limits, and model configuration. The isolated child
+has no repository, database, media, service configuration, target/provider
+credential, shell, tool, plugin, web, history, approval, or environment authority.
+A durable workbench attempt records the bounded authority and input identities
+before adapter invocation. The adapter separately withholds child release until
+its in-memory callback has observed the exact PID, process group, and start
+token; those process facts are deliberately not persisted. Returned JSON is
+bounded, duplicate-free, canonical, and locally validated against the bound
+schema. Timeout or cancellation kills the captured process group and proves its
+identity dead; credential drift or cleanup failure blocks success. Raw streams,
+paths, prompts, credentials, and reasoning never cross the boundary.
 
-Ordinary execution fingerprints the owner-only primary credential before
-dispatch and after terminal cleanup. Drift is never repaired or overwritten:
-it creates a value-free owner-only trust-failure marker and blocks subsequent
-dispatch pending explicit recovery. Mutable provider cache, database, log, and
-runtime state remains inside the attempt and is deleted at terminal exit.
-Cleanup failure is terminal and creates a durable value-free dispatch block;
-any retained attempt is an independent block.
-
-Shadow outcome rows persist one canonical ADR-0017 diagnostic document and one
-`shadow-review-execution-provenance-v1` document, not a
-legacy code, exception digest, raw stream, path, prompt, packet, process fact,
-or malformed value. Provenance keeps the exact requested profile separate from
-provider-observed model, route, tier, effort, fallback, usage, and cost; missing
-provider fields are explicitly `not_exposed` or `unverifiable`, never inferred.
-Offline `shadow-review-inspect-v3` aggregates identical diagnostic documents,
-validates bounded provenance projections, binds the case and request identities,
-and exposes no request/result content, credential, provider state, or private
-path. CLI
-failures use the same object in `shadow-review-failure-v2`; unknown exceptions
-map to `unknown` without inspecting their text. Persistence record and replay,
-application inspection, and CLI inspection reject any diagnostic that is not
-one exact closed reviewer producer shape; a provider-only category/stage cannot
-cross by claiming the reviewer component. The legitimate
-persistence/persistence/persistence producer remains accepted.
+Authentication actions remain adapter-owned and create no product lifecycle. The
+kernel is reachable only through the source workbench, excluded from installed
+artifacts, and receives only synthetic or irreversibly sanitized inputs.
 
 The final report database, `catalogue-v2` database, `config-v5`, artifact
 records, and `batch-manifest-v5` each accept only absent or their exact current

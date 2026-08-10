@@ -1,4 +1,4 @@
-"""Pinned, tool-free Codex CLI qualification adapter."""
+"""Pinned, tool-free contained reviewer for source-mode workbenches."""
 
 from __future__ import annotations
 
@@ -20,27 +20,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, cast
 
-from mechanical_librarian.application.shadow_reviews import (
-    CitationNormalizationMarker,
-    ReviewerExecutionProvenance,
-    ShadowReviewError,
-    ShadowReviewRunResult,
-)
-from mechanical_librarian.domain.shadow_review import (
-    MAX_CITATIONS,
-    QUALIFICATION_MODE,
-    RESULT_SCHEMA,
-    ReviewerProfileIdentity,
-    ShadowReviewDocumentError,
-    ShadowReviewIdentityError,
-    ShadowReviewRequest,
-    ShadowReviewResult,
-    ShadowReviewSemanticError,
-    ShadowReviewValueError,
+from mechanical_librarian_workbench.contained_reviewer_contract import (
+    ContainedReviewRequest,
+    ContainedReviewResult,
+    ContainedReviewerError,
+    ContainedReviewerIdentity,
     canonical_json,
 )
 
-PROFILE_SCHEMA = "reviewer-qualification-profile-v1"
+PROFILE_SCHEMA = "contained-reviewer-profile-v1"
 MAX_PROFILE_BYTES = 65_536
 MAX_FAILURE_SIGNAL_BYTES = 65_536
 _LIVE_SCHEMA_REJECTION_PREFIX = (
@@ -48,16 +36,11 @@ _LIVE_SCHEMA_REJECTION_PREFIX = (
 )
 _FAILURES = frozenset(
     {
-        "runtime", "setup", "auth", "profile", "timeout", "cancel", "schema",
-        "response_format", "malformed_output", "semantic_validation",
-        "identity",
+        "runtime", "setup", "auth", "profile", "timeout", "cancel",
+        "response_format", "malformed_output",
     }
 )
-MAX_CITATIONS = 256
-MAX_PROBLEMS = 32
-
-
-class ShadowReviewerError(ShadowReviewError):
+class ContainedReviewerProcessError(ContainedReviewerError):
     """Typed, value-free failure at the reviewer trust boundary."""
 
     def __init__(self, code: str, *, count: int = 0, digest: str | None = None):
@@ -73,15 +56,16 @@ class ShadowReviewerError(ShadowReviewError):
 class _SchemaBinding:
     serialized: bytes
     digest: str
+    schema: dict[str, object]
 
 
 @dataclass(frozen=True, slots=True)
-class QualificationProfile:
+class ContainedReviewerProfile:
     codex_path: Path
     sandbox_path: Path
     auth_store_path: Path
     job_root_path: Path
-    identity: ReviewerProfileIdentity
+    identity: ContainedReviewerIdentity
     schema_version: str = PROFILE_SCHEMA
 
     def __post_init__(self) -> None:
@@ -96,13 +80,12 @@ class QualificationProfile:
                     self.job_root_path,
                 )
             )
-            or type(self.identity) is not ReviewerProfileIdentity
-            or self.identity.mode != QUALIFICATION_MODE
+            or type(self.identity) is not ContainedReviewerIdentity
         ):
-            raise ShadowReviewerError("profile")
+            raise ContainedReviewerProcessError("profile")
 
 
-def load_qualification_profile(path: Path) -> QualificationProfile:
+def load_contained_reviewer_profile(path: Path) -> ContainedReviewerProfile:
     """Read only canonical profile bytes; do not touch declared artifacts."""
     descriptor = -1
     try:
@@ -117,7 +100,7 @@ def load_qualification_profile(path: Path) -> QualificationProfile:
             or information.st_mode & 0o077
             or not 1 <= information.st_size <= MAX_PROFILE_BYTES
         ):
-            raise ShadowReviewerError("profile")
+            raise ContainedReviewerProcessError("profile")
         chunks: list[bytes] = []
         remaining = information.st_size
         while remaining:
@@ -128,7 +111,22 @@ def load_qualification_profile(path: Path) -> QualificationProfile:
             remaining -= len(chunk)
         payload = b"".join(chunks)
         if len(payload) != information.st_size:
-            raise ShadowReviewerError("profile")
+            raise ContainedReviewerProcessError("profile")
+        return load_contained_reviewer_profile_bytes(payload)
+    except ContainedReviewerProcessError:
+        raise
+    except (OSError, UnicodeError) as error:
+        raise ContainedReviewerProcessError("profile") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def load_contained_reviewer_profile_bytes(payload: bytes) -> ContainedReviewerProfile:
+    """Parse the exact profile bytes already admitted by the workbench authority."""
+    try:
+        if type(payload) is not bytes or not 1 <= len(payload) <= MAX_PROFILE_BYTES:
+            raise ContainedReviewerProcessError("profile")
         serialized = payload.decode("utf-8", errors="strict")
         raw = json.loads(serialized, object_pairs_hook=_unique_object)
         if (
@@ -140,19 +138,12 @@ def load_qualification_profile(path: Path) -> QualificationProfile:
                 "codex",
                 "job_root_path",
                 "limits",
-                "mode",
                 "model",
-                "output_version",
-                "packet_version",
-                "policy_version",
-                "profile_version",
-                "prompt_version",
                 "reasoning",
                 "sandbox",
                 "schema_version",
             }
             or raw["schema_version"] != PROFILE_SCHEMA
-            or raw["mode"] != QUALIFICATION_MODE
             or type(raw["codex"]) is not dict
             or set(raw["codex"]) != {"path", "sha256", "version"}
             or type(raw["sandbox"]) is not dict
@@ -167,33 +158,28 @@ def load_qualification_profile(path: Path) -> QualificationProfile:
                 "timeout_seconds",
             }
         ):
-            raise ShadowReviewerError("profile")
-        identity = ReviewerProfileIdentity(
+            raise ContainedReviewerProcessError("profile")
+        identity = ContainedReviewerIdentity(
             raw["codex"]["sha256"],
             raw["codex"]["version"],
             raw["sandbox"]["sha256"],
             raw["sandbox"]["version"],
             raw["model"],
             raw["reasoning"],
-            raw["prompt_version"],
-            raw["profile_version"],
-            raw["packet_version"],
-            raw["output_version"],
-            raw["policy_version"],
             raw["limits"]["timeout_seconds"],
             raw["limits"]["output_bytes"],
             raw["limits"]["memory_bytes"],
             raw["limits"]["processes"],
             raw["limits"]["file_bytes"],
         )
-        return QualificationProfile(
+        return ContainedReviewerProfile(
             Path(raw["codex"]["path"]),
             Path(raw["sandbox"]["path"]),
             Path(raw["auth_store_path"]),
             Path(raw["job_root_path"]),
             identity,
         )
-    except ShadowReviewerError:
+    except ContainedReviewerProcessError:
         raise
     except (
         KeyError,
@@ -203,21 +189,18 @@ def load_qualification_profile(path: Path) -> QualificationProfile:
         UnicodeError,
         RecursionError,
         json.JSONDecodeError,
-        ShadowReviewValueError,
+        ContainedReviewerError,
     ) as error:
-        raise ShadowReviewerError("profile") from error
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
+        raise ContainedReviewerProcessError("profile") from error
 
 
-class CodexShadowReviewer:
-    def __init__(self, profile: QualificationProfile) -> None:
+class ContainedReviewerAdapter:
+    def __init__(self, profile: ContainedReviewerProfile) -> None:
         self._profile = profile
 
     def auth(self, action: str) -> str:
         if action not in {"start", "status", "logout"}:
-            raise ShadowReviewerError("profile")
+            raise ContainedReviewerProcessError("profile")
         with _bound_artifact(
             self._profile.codex_path,
             self._profile.identity.executable_sha256,
@@ -238,10 +221,10 @@ class CodexShadowReviewer:
                             interactive=True,
                         )
                         if completed.returncode != 0:
-                            raise ShadowReviewerError("auth")
+                            raise ContainedReviewerProcessError("auth")
                         return canonical_json(
                             {
-                                "mode": QUALIFICATION_MODE,
+                                "mode": "contained",
                                 "schema_version": "reviewer-auth-v1",
                                 "status": "started",
                             }
@@ -254,10 +237,10 @@ class CodexShadowReviewer:
                             [*command, "logout"], codex, sandbox, empty_config
                         )
                         if completed.returncode != 0:
-                            raise ShadowReviewerError("auth")
+                            raise ContainedReviewerProcessError("auth")
                         return canonical_json(
                             {
-                                "mode": QUALIFICATION_MODE,
+                                "mode": "contained",
                                 "schema_version": "reviewer-auth-v1",
                                 "status": "logged_out",
                             }
@@ -267,7 +250,7 @@ class CodexShadowReviewer:
                     )
                     return canonical_json(
                         {
-                            "mode": QUALIFICATION_MODE,
+                            "mode": "contained",
                             "schema_version": "reviewer-auth-v1",
                             "status": "chatgpt",
                         }
@@ -275,11 +258,11 @@ class CodexShadowReviewer:
 
     def run(
         self,
-        request: ShadowReviewRequest,
+        request: ContainedReviewRequest,
         dispatched: Callable[[int, int, str], None],
-    ) -> ShadowReviewRunResult:
+    ) -> ContainedReviewResult:
         if not sys.platform.startswith("linux"):
-            raise ShadowReviewerError("setup")
+            raise ContainedReviewerProcessError("setup")
         job_path: Path | None = None
         self._require_private_directory(self._profile.auth_store_path)
         self._require_private_directory(self._profile.job_root_path)
@@ -299,17 +282,17 @@ class CodexShadowReviewer:
         ):
             with self._auth_lock():
                 if _path_entry_exists(trust_failure_path):
-                    raise ShadowReviewerError("setup")
+                    raise ContainedReviewerProcessError("setup")
                 with _bound_credential(credential_path) as credential:
                     try:
                         if any(
-                            path.name.startswith("shadow-review-")
+                            path.name.startswith("contained-reviewer-")
                             for path in self._profile.job_root_path.iterdir()
                         ):
-                            raise ShadowReviewerError("setup")
+                            raise ContainedReviewerProcessError("setup")
                         job_path = Path(
                             tempfile.mkdtemp(
-                                prefix="shadow-review-",
+                                prefix="contained-reviewer-",
                                 dir=self._profile.job_root_path,
                             )
                         )
@@ -373,24 +356,19 @@ class CodexShadowReviewer:
                                     stderr_file,
                                     returncode=returncode,
                                 )
-                                raise ShadowReviewerError(
+                                raise ContainedReviewerProcessError(
                                     code, count=count, digest=digest
                                 )
                         try:
                             result_bytes = result_path.read_bytes()
                         except OSError as error:
-                            raise ShadowReviewerError(
+                            raise ContainedReviewerProcessError(
                                 "malformed_output"
                             ) from error
                         return _validated_result(
                             result_bytes,
-                            request,
                             maximum=self._profile.identity.output_bytes,
-                            execution_provenance=(
-                                ReviewerExecutionProvenance.with_state(
-                                    request.profile, "not_exposed"
-                                )
-                            ),
+                            schema=binding.schema,
                         )
                     finally:
                         cleanup_error: OSError | None = None
@@ -405,9 +383,9 @@ class CodexShadowReviewer:
                         if credential_drifted or cleanup_error is not None:
                             _record_trust_failure(trust_failure_path)
                         if credential_drifted:
-                            raise ShadowReviewerError("auth")
+                            raise ContainedReviewerProcessError("auth")
                         if cleanup_error is not None:
-                            raise ShadowReviewerError("runtime") from cleanup_error
+                            raise ContainedReviewerProcessError("runtime") from cleanup_error
 
     def _verify_codex(
         self, codex: "_BoundArtifact", sandbox: "_BoundArtifact"
@@ -469,14 +447,14 @@ class CodexShadowReviewer:
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as error:
-            raise ShadowReviewerError("setup") from error
+            raise ContainedReviewerProcessError("setup") from error
         expected = self._profile.identity.executable_version.encode("utf-8")
         if (
             completed.returncode != 0
             or completed.stderr
             or completed.stdout.rstrip(b"\r\n") != expected
         ):
-            raise ShadowReviewerError("setup")
+            raise ContainedReviewerProcessError("setup")
 
     def _require_chatgpt_auth(
         self,
@@ -505,7 +483,7 @@ class CodexShadowReviewer:
                 or (completed.stderr in canonical and not completed.stdout)
             )
         ):
-            raise ShadowReviewerError("auth")
+            raise ContainedReviewerProcessError("auth")
 
     def _auth_command(
         self,
@@ -517,7 +495,7 @@ class CodexShadowReviewer:
         credential_path: str | None = None,
     ) -> list[str]:
         if (provider_state_path is None) != (credential_path is None):
-            raise ShadowReviewerError("setup")
+            raise ContainedReviewerProcessError("setup")
         command = [
             sandbox.invocation_path,
             "--die-with-parent",
@@ -625,11 +603,11 @@ class CodexShadowReviewer:
                 check=False,
             )
         except subprocess.TimeoutExpired as error:
-            raise ShadowReviewerError("timeout") from error
+            raise ContainedReviewerProcessError("timeout") from error
         except KeyboardInterrupt as error:
-            raise ShadowReviewerError("cancel") from error
+            raise ContainedReviewerProcessError("cancel") from error
         except (OSError, subprocess.SubprocessError) as error:
-            raise ShadowReviewerError("auth") from error
+            raise ContainedReviewerProcessError("auth") from error
 
     @contextmanager
     def _empty_auth_config(self) -> Iterator[int]:
@@ -641,7 +619,7 @@ class CodexShadowReviewer:
             write_descriptor = -1
             yield read_descriptor
         except OSError as error:
-            raise ShadowReviewerError("setup") from error
+            raise ContainedReviewerProcessError("setup") from error
         finally:
             if write_descriptor >= 0:
                 os.close(write_descriptor)
@@ -674,7 +652,7 @@ class CodexShadowReviewer:
             or information.st_mode & 0o077
         ):
             os.close(descriptor)
-            raise ShadowReviewerError("auth")
+            raise ContainedReviewerProcessError("auth")
 
         class _Lock:
             def __enter__(self):
@@ -694,13 +672,13 @@ class CodexShadowReviewer:
         try:
             information = path.stat()
         except OSError as error:
-            raise ShadowReviewerError("setup") from error
+            raise ContainedReviewerProcessError("setup") from error
         if (
             not stat.S_ISDIR(information.st_mode)
             or information.st_uid != os.geteuid()
             or information.st_mode & 0o077
         ):
-            raise ShadowReviewerError("setup")
+            raise ContainedReviewerProcessError("setup")
 
     def _sandbox_command(
         self,
@@ -836,7 +814,7 @@ class CodexShadowReviewer:
         released = False
         try:
             if os.read(ready_read, 1) != b"R":
-                raise ShadowReviewerError("runtime")
+                raise ContainedReviewerProcessError("runtime")
             pgid = pid
             token = _process_start_token(pid)
             try:
@@ -845,7 +823,7 @@ class CodexShadowReviewer:
                 os.close(release_write)
                 release_write = -1
                 _wait_for_exit(pid, 5)
-                if process_identity_alive(pid, pgid, token):
+                if _process_identity_alive(pid, pgid, token):
                     _kill_and_prove_dead(pid, pgid, token)
                 raise
             os.write(release_write, b"G")
@@ -857,10 +835,10 @@ class CodexShadowReviewer:
             )
         except TimeoutError as error:
             _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
-            raise ShadowReviewerError("timeout") from error
+            raise ContainedReviewerProcessError("timeout") from error
         except KeyboardInterrupt as error:
             _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
-            raise ShadowReviewerError("cancel") from error
+            raise ContainedReviewerProcessError("cancel") from error
         finally:
             os.close(ready_read)
             if release_write >= 0:
@@ -892,7 +870,7 @@ class CodexShadowReviewer:
         )
 
 
-def process_identity_alive(pid: int, pgid: int, start_token: str) -> bool:
+def _process_identity_alive(pid: int, pgid: int, start_token: str) -> bool:
     if (
         type(pid) is not int
         or type(pgid) is not int
@@ -902,16 +880,16 @@ def process_identity_alive(pid: int, pgid: int, start_token: str) -> bool:
         or not start_token.isascii()
         or not start_token.isdigit()
     ):
-        raise ShadowReviewerError("runtime")
+        raise ContainedReviewerProcessError("runtime")
     try:
         if os.getpgid(pid) == pgid and _process_start_token(pid) == start_token:
             return True
-    except (OSError, ShadowReviewerError):
+    except (OSError, ContainedReviewerProcessError):
         pass
     try:
         names = os.listdir("/proc")
     except OSError as error:
-        raise ShadowReviewerError("runtime") from error
+        raise ContainedReviewerProcessError("runtime") from error
     for name in names:
         if not name.isascii() or not name.isdigit():
             continue
@@ -923,26 +901,6 @@ def process_identity_alive(pid: int, pgid: int, start_token: str) -> bool:
         if member_group == pgid:
             return True
     return False
-
-
-def process_identity_matches(pid: int, start_token: str) -> bool:
-    if (
-        type(pid) is not int
-        or pid < 2
-        or type(start_token) is not str
-        or not start_token.isascii()
-        or not start_token.isdigit()
-    ):
-        raise ShadowReviewerError("runtime")
-    try:
-        return _process_start_token(pid) == start_token
-    except ShadowReviewerError:
-        return False
-
-
-def current_process_identity() -> tuple[int, str]:
-    pid = os.getpid()
-    return pid, _process_start_token(pid)
 
 
 @dataclass(frozen=True, slots=True)
@@ -962,7 +920,7 @@ def _descriptor_fingerprint(
         or information.st_mode & 0o077
         or not 1 <= information.st_size <= MAX_PROFILE_BYTES
     ):
-        raise ShadowReviewerError("auth")
+        raise ContainedReviewerProcessError("auth")
     before = (
         information.st_dev,
         information.st_ino,
@@ -981,7 +939,7 @@ def _descriptor_fingerprint(
         stat.S_IMODE(after_information.st_mode),
     )
     if before != after:
-        raise ShadowReviewerError("auth")
+        raise ContainedReviewerProcessError("auth")
     return (*before, digest.hexdigest())
 
 
@@ -995,7 +953,7 @@ def _bound_credential(path: Path) -> Iterator[_BoundCredential]:
             | getattr(os, "O_NOFOLLOW", 0),
         )
     except OSError as error:
-        raise ShadowReviewerError("auth") from error
+        raise ContainedReviewerProcessError("auth") from error
     try:
         try:
             bound = _BoundCredential(
@@ -1004,7 +962,7 @@ def _bound_credential(path: Path) -> Iterator[_BoundCredential]:
                 _descriptor_fingerprint(descriptor),
             )
         except OSError as error:
-            raise ShadowReviewerError("auth") from error
+            raise ContainedReviewerProcessError("auth") from error
         yield bound
     finally:
         os.close(descriptor)
@@ -1032,7 +990,7 @@ def _credential_unchanged(
             _descriptor_fingerprint(credential.descriptor)
             == credential.fingerprint
         )
-    except (OSError, ShadowReviewerError):
+    except (OSError, ContainedReviewerProcessError):
         return False
 
 
@@ -1042,7 +1000,7 @@ def _path_entry_exists(path: Path) -> bool:
     except FileNotFoundError:
         return False
     except OSError as error:
-        raise ShadowReviewerError("setup") from error
+        raise ContainedReviewerProcessError("setup") from error
     return True
 
 
@@ -1062,7 +1020,7 @@ def _record_trust_failure(path: Path) -> None:
     except FileExistsError:
         return
     except OSError as error:
-        raise ShadowReviewerError("setup") from error
+        raise ContainedReviewerProcessError("setup") from error
     finally:
         if descriptor >= 0:
             os.close(descriptor)
@@ -1091,21 +1049,21 @@ def _bound_artifact(
             or information.st_mode & 0o022
             or not information.st_mode & stat.S_IXUSR
         ):
-            raise ShadowReviewerError("setup")
+            raise ContainedReviewerProcessError("setup")
         digest = hashlib.sha256()
         while chunk := os.read(descriptor, 1_048_576):
             digest.update(chunk)
         if digest.hexdigest() != expected_digest:
-            raise ShadowReviewerError("setup")
+            raise ContainedReviewerProcessError("setup")
         os.lseek(descriptor, 0, os.SEEK_SET)
         invocation_root = "/proc/self/fd" if sys.platform.startswith("linux") else "/dev/fd"
         yield _BoundArtifact(
             descriptor, f"{invocation_root}/{descriptor}"
         )
-    except ShadowReviewerError:
+    except ContainedReviewerProcessError:
         raise
     except OSError as error:
-        raise ShadowReviewerError("setup") from error
+        raise ContainedReviewerProcessError("setup") from error
     finally:
         if descriptor >= 0:
             os.close(descriptor)
@@ -1117,7 +1075,7 @@ def _process_start_token(pid: int) -> str:
             Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
         )
     except (OSError, UnicodeError, ValueError) as error:
-        raise ShadowReviewerError("runtime") from error
+        raise ContainedReviewerProcessError("runtime") from error
     return token
 
 
@@ -1140,7 +1098,7 @@ def _proc_identity(raw: str) -> tuple[str, int]:
 def _safe_start_token(pid: int) -> str:
     try:
         return _process_start_token(pid)
-    except ShadowReviewerError:
+    except ContainedReviewerProcessError:
         return "0"
 
 
@@ -1170,9 +1128,9 @@ def _kill_and_prove_dead(pid: int, pgid: int, start_token: str) -> None:
     try:
         _wait_for_exit(pid, 5)
     except TimeoutError as error:
-        raise ShadowReviewerError("runtime") from error
-    if process_identity_alive(pid, pgid, start_token):
-        raise ShadowReviewerError("runtime")
+        raise ContainedReviewerProcessError("runtime") from error
+    if _process_identity_alive(pid, pgid, start_token):
+        raise ContainedReviewerProcessError("runtime")
 
 
 def _diagnostic(stdout_file, stderr_file) -> tuple[int, str]:
@@ -1302,141 +1260,75 @@ def _unique_failure_object(
 
 def _validated_result(
     result_bytes: bytes,
-    request: ShadowReviewRequest,
     *,
     maximum: int,
-    execution_provenance: ReviewerExecutionProvenance | None = None,
-) -> ShadowReviewRunResult:
+    schema: dict[str, object],
+) -> ContainedReviewResult:
     digest = hashlib.sha256(result_bytes).hexdigest()
     if len(result_bytes) > maximum:
-        raise ShadowReviewerError(
+        raise ContainedReviewerProcessError(
             "malformed_output", count=len(result_bytes), digest=digest
         )
     try:
         serialized = result_bytes.decode("utf-8", errors="strict")
     except UnicodeError as error:
-        raise ShadowReviewerError(
+        raise ContainedReviewerProcessError(
             "malformed_output", count=len(result_bytes), digest=digest
         ) from error
     try:
         raw = json.loads(
             serialized,
-            object_pairs_hook=_unique_result_object,
+            object_pairs_hook=_unique_output_object,
             parse_constant=lambda value: (_ for _ in ()).throw(
                 ValueError(value)
             ),
         )
-        if type(raw) is not dict:
-            raise ShadowReviewDocumentError(
-                "shadow-review result document is malformed"
-            )
+        if (
+            type(raw) is not dict
+            or canonical_json(raw) != serialized
+            or not _matches_output_schema(raw, schema)
+        ):
+            raise ValueError
     except (
         TypeError,
         ValueError,
         UnicodeError,
         RecursionError,
         json.JSONDecodeError,
-        ShadowReviewDocumentError,
     ) as error:
-        raise ShadowReviewerError(
+        raise ContainedReviewerProcessError(
             "malformed_output", count=len(result_bytes), digest=digest
         ) from error
-    try:
-        ShadowReviewResult.validate_identity_for(raw, request)
-        marker = _normalize_result_citations(raw, request)
-        result = ShadowReviewResult.from_json(canonical_json(raw), request)
-    except ShadowReviewIdentityError as error:
-        raise ShadowReviewerError(
-            "identity", count=len(result_bytes), digest=digest
-        ) from error
-    except ShadowReviewValueError as error:
-        raise ShadowReviewerError(
-            "semantic_validation", count=len(result_bytes), digest=digest
-        ) from error
-    return ShadowReviewRunResult(result, marker, execution_provenance)
+    return ContainedReviewResult(serialized, digest)
 
 
-def _normalize_result_citations(
-    raw: dict[str, object], request: ShadowReviewRequest
-) -> CitationNormalizationMarker:
-    """Validate raw citations, then normalize them without retaining their shape."""
-    allowed = {
-        citation["citation_id"] for citation in request.packet.citations
-    }
-    recommendations = raw.get("recommendations")
-    if type(recommendations) is not list:
-        raise ShadowReviewSemanticError("shadow-review result is invalid")
-    changed = False
-    duplicate_count = 0
-    for recommendation in recommendations:
-        if type(recommendation) is not dict:
-            raise ShadowReviewSemanticError("shadow-review result is invalid")
-        citations = recommendation.get("citations")
-        if type(citations) is not list:
-            raise ShadowReviewSemanticError("shadow-review result is invalid")
-        if any(
-            type(citation) is not str or citation not in allowed
-            for citation in citations
-        ):
-            raise ShadowReviewSemanticError("shadow-review result is invalid")
-        if len(citations) > MAX_CITATIONS:
-            raise ShadowReviewSemanticError("shadow-review result is invalid")
-        normalized = sorted(set(citations))
-        duplicate_count += len(citations) - len(normalized)
-        if normalized != citations:
-            changed = True
-            recommendation["citations"] = normalized
-    return CitationNormalizationMarker(changed, duplicate_count)
-
-
-def _unique_result_object(
-    pairs: list[tuple[str, object]],
-) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ShadowReviewDocumentError(
-                "shadow-review result document is malformed"
-            )
-        result[key] = value
-    return result
-
-
-def _prompt(request: ShadowReviewRequest, *, schema_digest: str) -> str:
+def _prompt(request: ContainedReviewRequest, *, schema_digest: str) -> str:
     return (
-        "Outcome: provide one bounded shadow recommendation for every proposal.\n"
-        "Constraints: use only packet candidates, citations, and decision summaries; "
-        "do not infer missing facts or choose a closest, plausible, or familiar value. "
-        "candidate_id is non-null only for recommend_candidate and must name the exact "
-        "supported packet candidate; it is null for manual and recommend_keep_current. "
-        "keep-current is evidence-positive: use it only when cited packet evidence and "
-        "the decision summary support the current value under the closed destination "
-        "policy. Choose manual when evidence is insufficient or conflicting, when a "
-        "supported value is absent from packet candidates, or when the decision summary "
-        "requires manual review. Give at least one reason. problems contains adverse "
-        "facts only; problems may be empty when no adverse fact is present.\n"
-        "Evidence: the canonical packet follows.\nOutput: return only one object "
-        "matching " + RESULT_SCHEMA + ".\nStop: after every proposal "
-        "is covered exactly once.\nSchema digest: "
-        + schema_digest + "\n"
-        + request.packet.to_json()
+        "Follow the bounded instruction using only the canonical input. "
+        "Return exactly one canonical JSON object matching the supplied schema.\n"
+        "Instruction: " + request.instruction + "\n"
+        "Schema digest: " + schema_digest + "\n"
+        "Input: " + request.input_document
     )
 
 
-def _output_schema(request: ShadowReviewRequest) -> dict[str, object]:
-    raw = json.loads(request.output_schema)
+def _output_schema(request: ContainedReviewRequest) -> dict[str, object]:
+    raw = json.loads(
+        request.output_schema,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
+    )
     if type(raw) is not dict:
-        raise ShadowReviewerError("schema")
+        raise ContainedReviewerProcessError("response_format")
     return raw
 
 
-def _schema_binding(request: ShadowReviewRequest) -> _SchemaBinding:
+def _schema_binding(request: ContainedReviewRequest) -> _SchemaBinding:
     schema = _output_schema(request)
     _validate_output_schema(schema)
     serialized = request.output_schema.encode("utf-8")
-    if hashlib.sha256(serialized).hexdigest() != request.output_schema_digest:
-        raise ShadowReviewerError("schema")
-    return _SchemaBinding(serialized, request.output_schema_digest)
+    return _SchemaBinding(
+        serialized, hashlib.sha256(serialized).hexdigest(), schema
+    )
 
 
 def _validate_output_schema(schema: object) -> None:
@@ -1468,21 +1360,21 @@ def _validate_output_schema(schema: object) -> None:
 
     def visit(value: object, *, root: bool = False) -> None:
         if type(value) is not dict or not value or not set(value) <= allowed:
-            raise ShadowReviewerError("schema")
+            raise ContainedReviewerProcessError("response_format")
         if root:
             if value.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
-                raise ShadowReviewerError("schema")
+                raise ContainedReviewerProcessError("response_format")
         elif "$schema" in value:
-            raise ShadowReviewerError("schema")
+            raise ContainedReviewerProcessError("response_format")
         primitive = value.get("type")
         if primitive is not None and (
             type(primitive) is not str or primitive not in all_types
         ):
-            raise ShadowReviewerError("schema")
+            raise ContainedReviewerProcessError("response_format")
         if "const" in value or "enum" in value:
             enum = value.get("enum", [])
             if type(enum) is not list:
-                raise ShadowReviewerError("schema")
+                raise ContainedReviewerProcessError("response_format")
             values = ([value["const"]] if "const" in value else []) + enum
             if (
                 primitive not in primitive_types
@@ -1493,16 +1385,16 @@ def _validate_output_schema(schema: object) -> None:
                     and len({canonical_json(item) for item in enum}) != len(enum)
                 )
             ):
-                raise ShadowReviewerError("schema")
+                raise ContainedReviewerProcessError("response_format")
         if (
             "const" in value
             and "enum" in value
             and value["const"] not in value["enum"]
         ):
-            raise ShadowReviewerError("schema")
+            raise ContainedReviewerProcessError("response_format")
         if "items" in value:
             if primitive != "array":
-                raise ShadowReviewerError("schema")
+                raise ContainedReviewerProcessError("response_format")
             visit(value["items"])
         for key in ("maxItems", "minItems"):
             if key in value and (
@@ -1510,14 +1402,14 @@ def _validate_output_schema(schema: object) -> None:
                 or type(value[key]) is not int
                 or value[key] < 0
             ):
-                raise ShadowReviewerError("schema")
+                raise ContainedReviewerProcessError("response_format")
         for key in ("maxLength", "minLength"):
             if key in value and (
                 primitive != "string"
                 or type(value[key]) is not int
                 or value[key] < 0
             ):
-                raise ShadowReviewerError("schema")
+                raise ContainedReviewerProcessError("response_format")
         if "required" in value and (
             primitive != "object"
             or type(value["required"]) is not list
@@ -1525,18 +1417,18 @@ def _validate_output_schema(schema: object) -> None:
             or any(type(item) is not str for item in value["required"])
             or len(set(value["required"])) != len(value["required"])
         ):
-            raise ShadowReviewerError("schema")
+            raise ContainedReviewerProcessError("response_format")
         if "additionalProperties" in value and (
             primitive != "object" or value["additionalProperties"] is not False
         ):
-            raise ShadowReviewerError("schema")
+            raise ContainedReviewerProcessError("response_format")
         if "anyOf" in value:
             if (
                 set(value) != {"anyOf"}
                 or type(value["anyOf"]) is not list
                 or not value["anyOf"]
             ):
-                raise ShadowReviewerError("schema")
+                raise ContainedReviewerProcessError("response_format")
             for child in value["anyOf"]:
                 visit(child)
         if "properties" in value:
@@ -1548,23 +1440,64 @@ def _validate_output_schema(schema: object) -> None:
                 or set(value["required"]) != set(value["properties"])
                 or value.get("additionalProperties") is not False
             ):
-                raise ShadowReviewerError("schema")
+                raise ContainedReviewerProcessError("response_format")
             for child in value["properties"].values():
                 visit(child)
         if primitive == "array" and "items" not in value:
-            raise ShadowReviewerError("schema")
+            raise ContainedReviewerProcessError("response_format")
         if primitive == "object" and "properties" not in value:
-            raise ShadowReviewerError("schema")
+            raise ContainedReviewerProcessError("response_format")
         if "minItems" in value and "maxItems" in value and value["minItems"] > value["maxItems"]:
-            raise ShadowReviewerError("schema")
+            raise ContainedReviewerProcessError("response_format")
         if "minLength" in value and "maxLength" in value and value["minLength"] > value["maxLength"]:
-            raise ShadowReviewerError("schema")
+            raise ContainedReviewerProcessError("response_format")
 
     visit(schema, root=True)
 
 
-def _recommendations() -> set[str]:
-    return {"recommend_candidate", "recommend_keep_current", "manual"}
+def _matches_output_schema(value: object, schema: dict[str, object]) -> bool:
+    """Validate one result against the exact locally admitted schema subset."""
+    if "anyOf" in schema:
+        alternatives = cast(list[dict[str, object]], schema["anyOf"])
+        return any(
+            _matches_output_schema(value, alternative)
+            for alternative in alternatives
+        )
+    expected = schema.get("type")
+    type_matches = {
+        "null": value is None,
+        "boolean": type(value) is bool,
+        "integer": type(value) is int,
+        "number": type(value) in {int, float},
+        "string": type(value) is str,
+        "array": type(value) is list,
+        "object": type(value) is dict,
+    }
+    if not type_matches.get(cast(str, expected), False):
+        return False
+    if "const" in schema and value != schema["const"]:
+        return False
+    if "enum" in schema and value not in cast(list[object], schema["enum"]):
+        return False
+    if type(value) is str:
+        minimum = cast(int, schema.get("minLength", 0))
+        maximum = cast(int, schema.get("maxLength", len(value)))
+        return minimum <= len(value) <= maximum
+    if type(value) is list:
+        minimum = cast(int, schema.get("minItems", 0))
+        maximum = cast(int, schema.get("maxItems", len(value)))
+        item_schema = cast(dict[str, object], schema["items"])
+        return (
+            minimum <= len(value) <= maximum
+            and all(_matches_output_schema(item, item_schema) for item in value)
+        )
+    if type(value) is dict:
+        properties = cast(dict[str, dict[str, object]], schema["properties"])
+        return set(value) == set(properties) and all(
+            _matches_output_schema(item, properties[key])
+            for key, item in value.items()
+        )
+    return True
 
 
 def _exact_config(reasoning: str) -> tuple[str, ...]:
@@ -1614,22 +1547,29 @@ def _auth_config() -> tuple[str, ...]:
     )
 
 
+def _unique_output_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate result key")
+        result[key] = value
+    return result
+
+
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:
-            raise ShadowReviewerError("profile")
+            raise ContainedReviewerProcessError("profile")
         result[key] = value
     return result
 
 
 __all__ = [
-    "CodexShadowReviewer",
+    "ContainedReviewerAdapter",
     "PROFILE_SCHEMA",
-    "QualificationProfile",
-    "ShadowReviewerError",
-    "current_process_identity",
-    "load_qualification_profile",
-    "process_identity_alive",
-    "process_identity_matches",
+    "ContainedReviewerProfile",
+    "ContainedReviewerProcessError",
+    "load_contained_reviewer_profile",
+    "load_contained_reviewer_profile_bytes",
 ]

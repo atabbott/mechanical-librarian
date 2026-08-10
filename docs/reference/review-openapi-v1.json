@@ -303,9 +303,6 @@
             "title": "Fields",
             "type": "array"
           },
-          "model_advice": {
-            "$ref": "#/components/schemas/_ModelAdvice"
-          },
           "review_case_id": {
             "title": "Review Case Id",
             "type": "string"
@@ -321,7 +318,6 @@
         "required": [
           "current",
           "fields",
-          "model_advice",
           "review_case_id",
           "schema_version",
           "target"
@@ -1003,105 +999,6 @@
           "password"
         ],
         "title": "_LoginRequest",
-        "type": "object"
-      },
-      "_ModelAdvice": {
-        "additionalProperties": false,
-        "properties": {
-          "results": {
-            "items": {
-              "$ref": "#/components/schemas/_ModelAdviceResult"
-            },
-            "title": "Results",
-            "type": "array"
-          },
-          "state": {
-            "title": "State",
-            "type": "string"
-          }
-        },
-        "required": [
-          "results",
-          "state"
-        ],
-        "title": "_ModelAdvice",
-        "type": "object"
-      },
-      "_ModelAdviceResult": {
-        "additionalProperties": false,
-        "properties": {
-          "recommendations": {
-            "items": {
-              "$ref": "#/components/schemas/_ModelRecommendation"
-            },
-            "title": "Recommendations",
-            "type": "array"
-          },
-          "review_request_id": {
-            "title": "Review Request Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "recommendations",
-          "review_request_id"
-        ],
-        "title": "_ModelAdviceResult",
-        "type": "object"
-      },
-      "_ModelRecommendation": {
-        "additionalProperties": false,
-        "properties": {
-          "candidate_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Candidate Id"
-          },
-          "citations": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Citations",
-            "type": "array"
-          },
-          "problems": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Problems",
-            "type": "array"
-          },
-          "proposal_id": {
-            "title": "Proposal Id",
-            "type": "string"
-          },
-          "reasons": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Reasons",
-            "type": "array"
-          },
-          "recommendation": {
-            "title": "Recommendation",
-            "type": "string"
-          }
-        },
-        "required": [
-          "candidate_id",
-          "citations",
-          "problems",
-          "proposal_id",
-          "reasons",
-          "recommendation"
-        ],
-        "title": "_ModelRecommendation",
         "type": "object"
       },
       "_OperationalResponse": {

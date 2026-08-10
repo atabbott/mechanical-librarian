@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import stat
 import tempfile
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -85,13 +87,21 @@ class WorkbenchContext:
         if self.target_class not in {"fake", "isolated"}:
             raise PermissionError("production-target writes are refused")
 
-    def require_network(self, *authority_files: Path) -> None:
+    def require_network(
+        self,
+        *authority_files: Path,
+        private_first: bool = False,
+    ) -> tuple[bytes, ...]:
         if self.network is None:
             raise PermissionError("an isolated network profile is required")
         if not authority_files or len(authority_files) > 8:
             raise PermissionError("bounded network authority files are required")
-        digests = tuple(sorted(self._authority_digest(path) for path in authority_files))
-        if any(digest not in self.network.input_sha256 for digest in digests):
+        authorities = tuple(
+            self._authority_payload(path, private=private_first and index == 0)
+            for index, path in enumerate(authority_files)
+        )
+        digests = tuple(sorted(digest for digest, _ in authorities))
+        if any(digest not in self.network.input_sha256 for digest, _ in authorities):
             raise PermissionError("network authority is not bound to the isolated profile")
         for attempt_number in range(1_000):
             evidence = json.dumps(
@@ -112,7 +122,17 @@ class WorkbenchContext:
             try:
                 with target.open("x", encoding="utf-8") as stream:
                     stream.write(evidence + "\n")
-                return
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                directory = os.open(
+                    target.parent,
+                    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+                )
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+                return tuple(payload for _, payload in authorities)
             except FileExistsError:
                 continue
         raise RuntimeError("workbench attempt limit reached")
@@ -170,13 +190,44 @@ class WorkbenchContext:
             for item in value:
                 self._require_private_paths_confined(item, authority_files)
 
-    def _authority_digest(self, path: Path) -> str:
+    def _authority_payload(self, path: Path, *, private: bool = False) -> tuple[str, bytes]:
         resolved = path.resolve()
         if resolved != self.workspace and self.workspace not in resolved.parents:
             raise PermissionError("network authority file escapes its workspace")
-        if not resolved.is_file() or path.is_symlink() or resolved.stat().st_size > 1_048_576:
+        descriptor = -1
+        try:
+            descriptor = os.open(
+                path,
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+            )
+            information = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(information.st_mode)
+                or not 1 <= information.st_size <= 1_048_576
+                or private
+                and (
+                    information.st_uid != os.geteuid()
+                    or information.st_mode & 0o077
+                )
+            ):
+                raise PermissionError("network authority file is invalid")
+            chunks: list[bytes] = []
+            remaining = information.st_size
+            while remaining:
+                chunk = os.read(descriptor, min(remaining, 65_536))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            payload = b"".join(chunks)
+            if len(payload) != information.st_size:
+                raise PermissionError("network authority file is invalid")
+        except OSError:
             raise PermissionError("network authority file is invalid")
-        return sha256(resolved.read_bytes()).hexdigest()
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        return sha256(payload).hexdigest(), payload
 
     def store_artifact(self, payload: bytes) -> tuple[str, str]:
         self.require_write()

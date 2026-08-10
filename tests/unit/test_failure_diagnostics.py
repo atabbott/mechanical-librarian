@@ -9,8 +9,6 @@ from mechanical_librarian.application.failure_diagnostics import (
     FailureDiagnostic,
     FailureStage,
     provider_attempt_diagnostics,
-    reviewer_diagnostic_is_admissible,
-    reviewer_failure_diagnostic,
 )
 
 
@@ -92,13 +90,17 @@ class FailureDiagnosticTests(unittest.TestCase):
             self.assertNotIn(forbidden, serialized)
 
     def test_document_rejects_unknown_duplicate_and_noncanonical_fields(self) -> None:
-        valid = reviewer_failure_diagnostic("runtime").to_json()
+        valid = FailureDiagnostic(
+            FailureCategory.TRANSPORT,
+            FailureComponent.PROVIDER,
+            FailureStage.REQUEST,
+        ).to_json()
         malformed = (
             valid[:-1]
             + ',"category":"unknown"}'
         )
         cases = (
-            valid.replace('"spawn_runtime"', '"new_failure"'),
+            valid.replace('"transport"', '"new_failure"'),
             malformed,
             valid + "\n",
             '{"category":"unknown"}',
@@ -207,55 +209,7 @@ class FailureDiagnosticTests(unittest.TestCase):
                     tuple(value.category for value in diagnostics),
                 )
 
-    def test_reviewer_codes_map_to_same_closed_contract_and_unknown_fails_closed(
-        self,
-    ) -> None:
-        self.assertEqual(
-            FailureCategory.CITATION_MEMBERSHIP,
-            reviewer_failure_diagnostic("semantic_validation").category,
-        )
-        self.assertEqual(
-            FailureCategory.LIVE_SCHEMA_REJECTION,
-            reviewer_failure_diagnostic("response_format").category,
-        )
-        self.assertEqual(
-            FailureStage.SCHEMA,
-            reviewer_failure_diagnostic("response_format").stage,
-        )
-        self.assertEqual(
-            FailureCategory.MALFORMED_OUTPUT,
-            reviewer_failure_diagnostic("malformed_output").category,
-        )
-        self.assertEqual(
-            FailureCategory.CURRENTNESS,
-            reviewer_failure_diagnostic("currentness").category,
-        )
-        self.assertFalse(reviewer_failure_diagnostic("currentness").current)
-        self.assertEqual(
-            FailureCategory.UNKNOWN,
-            reviewer_failure_diagnostic("exception:/tmp/secret").category,
-        )
-        self.assertTrue(
-            reviewer_diagnostic_is_admissible(
-                reviewer_failure_diagnostic("persistence")
-            )
-        )
-        self.assertTrue(
-            reviewer_diagnostic_is_admissible(
-                reviewer_failure_diagnostic("unknown")
-            )
-        )
-        self.assertFalse(
-            reviewer_diagnostic_is_admissible(
-                FailureDiagnostic(
-                    FailureCategory.HTTP_NON_SUCCESS,
-                    FailureComponent.REVIEWER,
-                    FailureStage.RESPONSE,
-                )
-            )
-        )
-
-    def test_every_frozen_category_has_an_exact_production_signal_mapping(
+    def test_provider_signals_have_exact_production_mappings(
         self,
     ) -> None:
         def provider(
@@ -271,8 +225,6 @@ class FailureDiagnosticTests(unittest.TestCase):
             return values[0]
 
         signals = {
-            "reviewer.setup": reviewer_failure_diagnostic("setup"),
-            "reviewer.auth": reviewer_failure_diagnostic("auth"),
             "provider.lookup_limit": provider(
                 status="query_limit_exceeded"
             ),
@@ -281,42 +233,11 @@ class FailureDiagnosticTests(unittest.TestCase):
             "provider.quota": provider("http_429"),
             "provider.no_match": provider(status="no_match"),
             "provider.response_malformed": provider("response_malformed"),
-            "reviewer.schema": reviewer_failure_diagnostic("schema"),
-            "reviewer.live_schema": reviewer_failure_diagnostic(
-                "response_format"
-            ),
-            "reviewer.runtime": reviewer_failure_diagnostic("runtime"),
             "provider.transport": provider("transport_connect_error"),
             "provider.deadline": provider("deadline"),
             "provider.cancellation": provider("cancellation"),
-            "reviewer.malformed": reviewer_failure_diagnostic(
-                "malformed_output"
-            ),
-            "reviewer.citation": reviewer_failure_diagnostic(
-                "semantic_validation"
-            ),
-            "reviewer.identity": reviewer_failure_diagnostic("identity"),
-            "application.currentness": reviewer_failure_diagnostic(
-                "currentness"
-            ),
-            "persistence.repository": reviewer_failure_diagnostic(
-                "persistence"
-            ),
-            "unknown.fail_closed": reviewer_failure_diagnostic(
-                "unregistered"
-            ),
         }
         expected = {
-            "reviewer.setup": (
-                FailureCategory.SETUP_CONFIGURATION,
-                FailureComponent.REVIEWER,
-                FailureStage.SETUP,
-            ),
-            "reviewer.auth": (
-                FailureCategory.AUTHENTICATION,
-                FailureComponent.REVIEWER,
-                FailureStage.AUTHENTICATION,
-            ),
             "provider.lookup_limit": (
                 FailureCategory.LOOKUP_CONSTRUCTION,
                 FailureComponent.PROVIDER,
@@ -347,21 +268,6 @@ class FailureDiagnosticTests(unittest.TestCase):
                 FailureComponent.PROVIDER,
                 FailureStage.RESPONSE,
             ),
-            "reviewer.schema": (
-                FailureCategory.SCHEMA_CONSTRUCTION,
-                FailureComponent.REVIEWER,
-                FailureStage.SCHEMA,
-            ),
-            "reviewer.live_schema": (
-                FailureCategory.LIVE_SCHEMA_REJECTION,
-                FailureComponent.REVIEWER,
-                FailureStage.SCHEMA,
-            ),
-            "reviewer.runtime": (
-                FailureCategory.SPAWN_RUNTIME,
-                FailureComponent.REVIEWER,
-                FailureStage.EXECUTION,
-            ),
             "provider.transport": (
                 FailureCategory.TRANSPORT,
                 FailureComponent.PROVIDER,
@@ -377,42 +283,8 @@ class FailureDiagnosticTests(unittest.TestCase):
                 FailureComponent.PROVIDER,
                 FailureStage.EXECUTION,
             ),
-            "reviewer.malformed": (
-                FailureCategory.MALFORMED_OUTPUT,
-                FailureComponent.REVIEWER,
-                FailureStage.RESPONSE,
-            ),
-            "reviewer.citation": (
-                FailureCategory.CITATION_MEMBERSHIP,
-                FailureComponent.REVIEWER,
-                FailureStage.VALIDATION,
-            ),
-            "reviewer.identity": (
-                FailureCategory.IDENTITY,
-                FailureComponent.REVIEWER,
-                FailureStage.IDENTITY,
-            ),
-            "application.currentness": (
-                FailureCategory.CURRENTNESS,
-                FailureComponent.REVIEWER,
-                FailureStage.CURRENTNESS,
-            ),
-            "persistence.repository": (
-                FailureCategory.PERSISTENCE,
-                FailureComponent.PERSISTENCE,
-                FailureStage.PERSISTENCE,
-            ),
-            "unknown.fail_closed": (
-                FailureCategory.UNKNOWN,
-                FailureComponent.REVIEWER,
-                FailureStage.EXECUTION,
-            ),
         }
         self.assertEqual(set(expected), set(signals))
-        self.assertEqual(
-            set(FailureCategory),
-            {value.category for value in signals.values()},
-        )
         for signal, diagnostic in signals.items():
             with self.subTest(signal=signal):
                 self.assertEqual(

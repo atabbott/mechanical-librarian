@@ -186,42 +186,30 @@ class DecisionPreviewRequest:
 
 
 @dataclass(frozen=True)
-class ReviewerRequest:
+class ContainedReviewerRequest:
     action: str
-    identity: str
-    database: str = "reports.sqlite"
-    profile: str = "qualification-profile.json"
+    profile: str = "contained-reviewer-profile.json"
+    instruction: str | None = None
+    input_document: str | None = None
+    output_schema: str | None = None
 
     def __post_init__(self) -> None:
-        _member(self.action, {"packet-preview", "request", "inspect", "reevaluate"}, "reviewer action")
-        _required(self.identity, "reviewer identity")
+        _member(self.action, {"invoke", "auth-start", "auth-status", "auth-logout"}, "reviewer action")
+        if self.action == "invoke":
+            _required(self.instruction, "reviewer instruction")
+            _required(self.input_document, "reviewer input")
+            _required(self.output_schema, "reviewer output schema")
+        elif any(value is not None for value in (self.instruction, self.input_document, self.output_schema)):
+            raise ValueError("authentication does not accept reviewer input")
 
     @property
     def name(self) -> str:
-        return {
-            "packet-preview": "reviewer-packet-preview",
-            "request": "reviewer-request",
-            "inspect": "reviewer-request-inspect",
-            "reevaluate": "reviewer-request-reevaluate",
-        }[self.action]
-
-
-@dataclass(frozen=True)
-class ReviewerAuthRequest:
-    action: str
-    profile: str = "qualification-profile.json"
-
-    def __post_init__(self) -> None:
-        _member(self.action, {"start", "status", "logout"}, "reviewer authentication action")
-
-    @property
-    def name(self) -> str:
-        return "reviewer-authentication"
+        return "contained-reviewer"
 
 
 ScenarioRequest: TypeAlias = (
     ReportRequest | ProposalRequest | ReviewCaseRequest | CatalogueRequest
-    | BatchRequest | DecisionPreviewRequest | ReviewerRequest | ReviewerAuthRequest
+    | BatchRequest | DecisionPreviewRequest | ContainedReviewerRequest
 )
 
 
@@ -240,19 +228,18 @@ class WorkbenchOperations:
     inspect_batch: Operation
     run_batch: Operation
     preview_shadow_decision_case: Operation
-    preview_shadow_review_case: Operation
-    request_shadow_review: Operation
-    inspect_shadow_review_request: Operation
-    reevaluate_shadow_review: Operation
-    run_reviewer_auth: Operation
+    run_contained_reviewer: Operation
 
     @classmethod
     def production_operations(cls) -> "WorkbenchOperations":
         """Bind source workbench scenarios to the same application composition seams."""
         from mechanical_librarian.bootstrap import composition
 
+        from .reviewer import run_contained_reviewer
+
         return cls(**{
-            name: getattr(composition, name)
+            name: run_contained_reviewer if name == "run_contained_reviewer"
+            else getattr(composition, name)
             for name in cls.__dataclass_fields__
         })
 
@@ -380,21 +367,19 @@ def _execute(
         raw = selected.preview_shadow_decision_case(
             context.path(request.database), request.review_case_id
         )
-    elif isinstance(request, ReviewerRequest):
-        if request.action in {"request", "reevaluate"}:
-            context.require_network(context.path(request.profile))
-        operation = {
-            "packet-preview": selected.preview_shadow_review_case,
-            "request": selected.request_shadow_review,
-            "inspect": selected.inspect_shadow_review_request,
-            "reevaluate": selected.reevaluate_shadow_review,
-        }[request.action]
-        raw = operation(
-            context.path(request.database), request.identity, context.path(request.profile)
+    elif isinstance(request, ContainedReviewerRequest):
+        paths = tuple(
+            context.path(value) for value in
+            (request.profile, request.instruction, request.input_document, request.output_schema)
+            if value is not None
         )
-    elif isinstance(request, ReviewerAuthRequest):
-        context.require_network(context.path(request.profile))
-        raw = selected.run_reviewer_auth(context.path(request.profile), request.action)
+        bound = context.require_network(*paths, private_first=True)
+        raw = selected.run_contained_reviewer(
+            bound[0], request.action,
+            bound[1] if request.instruction is not None else None,
+            bound[2] if request.input_document is not None else None,
+            bound[3] if request.output_schema is not None else None,
+        )
     else:
         raise TypeError("unsupported workbench request")
     return _complete(context, request.name, raw, status=result_status)
@@ -417,7 +402,7 @@ def execute(
 
 
 __all__ = [
-    "BatchRequest", "CatalogueRequest", "DecisionPreviewRequest", "ProposalRequest",
-    "ReportRequest", "ReviewCaseRequest", "ReviewerAuthRequest", "ReviewerRequest",
+    "BatchRequest", "CatalogueRequest", "ContainedReviewerRequest", "DecisionPreviewRequest", "ProposalRequest",
+    "ReportRequest", "ReviewCaseRequest",
     "ScenarioRequest", "WorkbenchFailure", "WorkbenchOperations", "execute",
 ]

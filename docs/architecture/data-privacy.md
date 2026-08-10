@@ -79,16 +79,12 @@ Review cases are likewise append-only, retaining only the already bounded
 ProposalSet projection and target facts needed for exact currentness. Admission
 does not add reviewer identity, decision text, raw evidence, or service secrets.
 
-Shadow review adds append-only sanitized canonical packets, validated canonical
-results, path-free executable/model/profile/policy identities, attempt and
-dispatch process facts, and canonical bounded failure diagnostics. The
-packet uses only the opaque ReviewCase ID, current field projections, declared
-candidate/evidence identities, and the bounded report facts those candidates
-already reference. It excludes connection/library/item IDs, file identities,
-paths, credentials, target/provider payloads, raw CLI streams, chain-of-thought,
-and arbitrary diagnostics. Public inspection aggregates only category, closed
-component/stage, optional retryability/currentness, and count; it omits packets,
-results, process facts, attempt identifiers and ordinals, and legacy digests.
+Deterministic decision and outcome persistence retains the source-validated
+packet projection and closed action/evidence identities required by the fixed
+engine. It adds no model result, executable/profile identity, request, attempt,
+dispatch process fact, raw stream, reasoning, or model advice. The source-only
+contained reviewer persists no product data; its disposable workbench artifacts
+remain private and outside installed runtime state.
 
 Policy Preview additionally retains append-only canonical deterministic outcome
 sets. They contain only opaque case/report/proposal/target fingerprints,
@@ -100,8 +96,8 @@ text. Authenticated samples request at most 50 records and are truncated at one
 MiB without adding a pagination or export surface. There is no per-outcome
 purge, retention, or selective export command.
 
-The complete application SQLite database—including shadow packets and advice—
-is exposed to whoever can read a backup. Store it and its backups as private
+The complete application SQLite database—including deterministic packets and
+outcomes—is exposed to whoever can read a backup. Store it and its backups as private
 application state with owner-scoped access and encrypted-at-rest backup
 controls. Version 0.10 has no per-record purge, pruning, selective export, or
 retention command; recovery and deletion operate on the complete database.

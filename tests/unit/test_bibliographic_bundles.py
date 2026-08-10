@@ -5,7 +5,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mechanical_librarian.adapters.reviewers import codex_shadow
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -25,9 +24,6 @@ from mechanical_librarian.domain.review_case import (
 )
 from mechanical_librarian.domain.shadow_review import (
     ShadowReviewPacket,
-    ShadowReviewRequest,
-    ShadowReviewResult,
-    ShadowReviewSemanticError,
     ShadowReviewValueError,
     canonical_json,
 )
@@ -35,7 +31,6 @@ from mechanical_librarian.domain.shadow_review_actions import (
     compile_shadow_review_actions,
 )
 from tests.unit.test_proposal_set import _claim, _fields, _provider, _report
-from tests.unit.test_shadow_reviews import _identity
 
 
 def _bibliographic_report(
@@ -147,73 +142,6 @@ def _selections(proposal) -> list[dict[str, object]]:
 
 
 class BibliographicBundleTests(unittest.TestCase):
-    def test_output_schema_partitions_actions_by_allowed_combination(self) -> None:
-        report = _bibliographic_report(
-            current_title="Synthetic Title",
-            providers=(
-                _source(
-                    "catalogue",
-                    "edition-1",
-                    titles=("Synthetic Title",),
-                    subtitle="Synthetic Subtitle",
-                ),
-                _source(
-                    "other",
-                    "edition-2",
-                    titles=("Synthetic Title",),
-                    series="Synthetic Series",
-                    sequence="1",
-                ),
-            ),
-        )
-        proposal = evaluate_report(report)
-        case = ReviewCase.create(proposal, report)
-        packet = ShadowReviewPacket.create(case, proposal, report)
-        request = ShadowReviewRequest.create(case, _identity(), packet)
-
-        schema = json.loads(request.output_schema)
-        recommendations = schema["properties"]["recommendations"]
-        branches = recommendations["anyOf"]
-        self.assertEqual(2, len(branches))
-        codex_shadow._validate_output_schema(schema)
-
-        variants_by_branch = []
-        for branch in branches:
-            self.assertEqual(len(packet.proposals), branch["minItems"])
-            self.assertEqual(len(packet.proposals), branch["maxItems"])
-            variants_by_branch.append(
-                {
-                    (
-                        variant["properties"]["proposal_id"]["const"],
-                        variant["properties"]["recommendation"]["const"],
-                        variant["properties"]["candidate_id"]["const"],
-                    )
-                    for variant in branch["items"]["anyOf"]
-                }
-            )
-
-        catalogue = compile_shadow_review_actions(packet)
-        constrained_candidates = [
-            action
-            for action in catalogue.actions
-            if len(action.combination_ids) == 1
-            and action.destination
-            in {TargetDestination.SERIES.value, TargetDestination.SUBTITLE.value}
-            and action.recommendation == "recommend_candidate"
-        ]
-        self.assertEqual(2, len(constrained_candidates))
-        constrained_keys = [
-            (action.proposal_id, action.recommendation, action.candidate_id)
-            for action in constrained_candidates
-        ]
-        for key in constrained_keys:
-            self.assertEqual(1, sum(key in branch for branch in variants_by_branch))
-        self.assertFalse(
-            any(
-                all(key in branch for key in constrained_keys)
-                for branch in variants_by_branch
-            )
-        )
 
     def test_title_to_subtitle_is_one_explicit_complete_combination(self) -> None:
         report = _bibliographic_report(
@@ -455,495 +383,107 @@ class BibliographicBundleTests(unittest.TestCase):
             ).reasons,
         )
 
-    def test_no_safe_combination_requires_manual_reviewer_advice(self) -> None:
-        report = _bibliographic_report(
-            current_title="Mistborn Secret History",
-            providers=(
-                _source(
-                    "catalogue",
-                    "edition-1",
-                    titles=(),
-                    series="Mistborn",
-                ),
-            ),
-        )
+
+
+
+
+
+    def test_action_catalogue_partitions_candidates_by_allowed_combination(self) -> None:
+        report = _bibliographic_report(current_title='Synthetic Title', providers=(_source('catalogue', 'edition-1', titles=('Synthetic Title',), subtitle='Synthetic Subtitle'), _source('other', 'edition-2', titles=('Synthetic Title',), series='Synthetic Series', sequence='1')))
         proposal = evaluate_report(report)
         case = ReviewCase.create(proposal, report)
-        title_result = next(
-            value
-            for value in proposal.results
-            if value.destination is TargetDestination.TITLE
-        )
+        packet = ShadowReviewPacket.create(case, proposal, report)
+        catalogue = compile_shadow_review_actions(packet)
+        constrained_candidates = [action for action in catalogue.actions if len(action.combination_ids) == 1 and action.destination in {TargetDestination.SERIES.value, TargetDestination.SUBTITLE.value} and (action.recommendation == 'recommend_candidate')]
+        self.assertEqual(2, len(constrained_candidates))
+        expected = {value['combination_id'] for value in packet.bibliographic_combinations}
+        self.assertEqual(expected, {action.combination_ids[0] for action in constrained_candidates})
+
+    def test_no_safe_combination_requires_manual_catalogue_actions(self) -> None:
+        report = _bibliographic_report(current_title='Mistborn Secret History', providers=(_source('catalogue', 'edition-1', titles=(), series='Mistborn'),))
+        proposal = evaluate_report(report)
+        case = ReviewCase.create(proposal, report)
+        title_result = next((value for value in proposal.results if value.destination is TargetDestination.TITLE))
         self.assertEqual((), title_result.alternatives)
         self.assertIs(ProposalOutcome.DEFER, title_result.outcome)
-        self.assertTrue(
-            all(
-                value["manual_required"]
-                for value in case.proposals
-                if value["destination"]
-                in {
-                    TargetDestination.TITLE.value,
-                    TargetDestination.SUBTITLE.value,
-                    TargetDestination.SERIES.value,
-                }
-            )
-        )
+        self.assertTrue(all((value['manual_required'] for value in case.proposals if value['destination'] in {TargetDestination.TITLE.value, TargetDestination.SUBTITLE.value, TargetDestination.SERIES.value})))
         packet = ShadowReviewPacket.create(case, proposal, report)
-        request = ShadowReviewRequest.create(case, _identity(), packet)
-        citation = packet.citations[0]["citation_id"]
-        self.assertEqual(
-            {
-                TargetDestination.TITLE.value,
-                TargetDestination.SUBTITLE.value,
-                TargetDestination.SERIES.value,
-            },
-            {value["destination"] for value in packet.proposals},
-        )
-        self.assertEqual(
-            [],
-            next(
-                value["candidates"]
-                for value in packet.proposals
-                if value["destination"] == TargetDestination.TITLE.value
-            ),
-        )
-        title_packet = next(
-            value
-            for value in packet.proposals
-            if value["destination"] == TargetDestination.TITLE.value
-        )
-        self.assertEqual(
-            {
-                "evidence_sufficiency": "manual",
-                "target_only_preservation": 1,
-            },
-            title_packet["decision_summary"],
-        )
-        self.assertTrue(
-            all(
-                value["outcome"] == ProposalOutcome.UNRESOLVED_CHOICE.value
-                and value["reasons"]
-                == ["no_safe_bibliographic_combination"]
-                for value in packet.proposals
-            )
-        )
-        recommendations = tuple(
-            {
-                "candidate_id": (
-                    value["candidates"][0]["candidate_id"]
-                    if value["candidates"]
-                    else None
-                ),
-                "citations": [citation],
-                "problems": [],
-                "proposal_id": value["proposal_id"],
-                "reasons": ["Candidate is present."],
-                "recommendation": (
-                    "recommend_candidate"
-                    if value["candidates"]
-                    else "recommend_keep_current"
-                ),
-            }
-            for value in packet.proposals
-        )
-
-        with self.assertRaises(ShadowReviewSemanticError):
-            ShadowReviewResult(
-                request.review_request_id,
-                recommendations,
-            ).validate_for(request)
+        self.assertEqual({TargetDestination.TITLE.value, TargetDestination.SUBTITLE.value, TargetDestination.SERIES.value}, {value['destination'] for value in packet.proposals})
+        self.assertEqual([], next((value['candidates'] for value in packet.proposals if value['destination'] == TargetDestination.TITLE.value)))
+        title_packet = next((value for value in packet.proposals if value['destination'] == TargetDestination.TITLE.value))
+        self.assertEqual({'evidence_sufficiency': 'manual', 'target_only_preservation': 1}, title_packet['decision_summary'])
+        self.assertTrue(all((value['outcome'] == ProposalOutcome.UNRESOLVED_CHOICE.value and value['reasons'] == ['no_safe_bibliographic_combination'] for value in packet.proposals)))
         catalogue = compile_shadow_review_actions(packet)
-        affected_proposal_ids = {
-            value["proposal_id"]
-            for value in packet.proposals
-            if "no_safe_bibliographic_combination" in value["reasons"]
-        }
-        self.assertFalse(
-            any(
-                action.proposal_id in affected_proposal_ids
-                and action.recommendation != "manual"
-                for action in catalogue.actions
-            )
-        )
-        self.assertTrue(
-            all(
-                "no_safe_bibliographic_combination" in exclusion.reasons
-                for exclusion in catalogue.exclusions
-                if exclusion.proposal_id in affected_proposal_ids
-            )
-        )
-        manual_entries = []
-        for value in recommendations:
-            action = catalogue.action_for(value["proposal_id"], "manual", None)
-            assert action is not None
-            manual_entries.append(
-                {
-                    **value,
-                    "candidate_id": None,
-                    "citations": list(action.citation_ids),
-                    "problems": ["No safe bibliographic combination."],
-                    "recommendation": "manual",
-                }
-            )
-        manual = tuple(manual_entries)
-        ShadowReviewResult(
-            request.review_request_id,
-            manual,
-        ).validate_for(request)
+        affected_proposal_ids = {value['proposal_id'] for value in packet.proposals if 'no_safe_bibliographic_combination' in value['reasons']}
+        self.assertFalse(any((action.proposal_id in affected_proposal_ids and action.recommendation != 'manual' for action in catalogue.actions)))
+        self.assertTrue(all(('no_safe_bibliographic_combination' in exclusion.reasons for exclusion in catalogue.exclusions if exclusion.proposal_id in affected_proposal_ids)))
 
     def test_combination_identity_round_trips_canonically(self) -> None:
-        report = _bibliographic_report(
-            current_title="Secret History: Mistborn",
-            providers=(
-                _source(
-                    "catalogue",
-                    "edition-1",
-                    titles=("Secret History",),
-                    series="Mistborn",
-                ),
-            ),
-        )
+        report = _bibliographic_report(current_title='Secret History: Mistborn', providers=(_source('catalogue', 'edition-1', titles=('Secret History',), series='Mistborn'),))
         proposal = evaluate_report(report)
-
         replay = ProposalSet.from_json(proposal.to_json())
-
         self.assertEqual(proposal, replay)
-        self.assertEqual(
-            proposal.bibliographic_combinations,
-            replay.bibliographic_combinations,
-        )
+        self.assertEqual(proposal.bibliographic_combinations, replay.bibliographic_combinations)
 
-    def test_relationships_do_not_change_per_destination_proposal_ids(
-        self,
-    ) -> None:
-        report = _bibliographic_report(
-            current_title="Secret History: Mistborn",
-            providers=(
-                _source(
-                    "catalogue",
-                    "edition-1",
-                    titles=("Secret History",),
-                    series="Mistborn",
-                ),
-            ),
-        )
+    def test_relationships_do_not_change_per_destination_proposal_ids(self) -> None:
+        report = _bibliographic_report(current_title='Secret History: Mistborn', providers=(_source('catalogue', 'edition-1', titles=('Secret History',), series='Mistborn'),))
         with_relationships = evaluate_report(report)
-        without_relationships = ProposalSet.create(
-            report_id=with_relationships.report_id,
-            target_fingerprint=with_relationships.target_fingerprint,
-            results=with_relationships.results,
-            resolved_policy_id=with_relationships.resolved_policy_id,
-        )
-
-        self.assertNotEqual(
-            with_relationships.proposal_set_id,
-            without_relationships.proposal_set_id,
-        )
-        case_with_relationships = ReviewCase.create(
-            with_relationships,
-            report,
-        )
-        case_without_relationships = ReviewCase.create(
-            without_relationships,
-            report,
-        )
-        self.assertNotEqual(
-            case_with_relationships.review_case_id,
-            case_without_relationships.review_case_id,
-        )
-        self.assertEqual(
-            {
-                value["destination"]: value["proposal_id"]
-                for value in case_with_relationships.proposals
-            },
-            {
-                value["destination"]: value["proposal_id"]
-                for value in case_without_relationships.proposals
-            },
-        )
-        packet_with_relationships = ShadowReviewPacket.create(
-            case_with_relationships,
-            with_relationships,
-            report,
-        )
-        packet_without_relationships = ShadowReviewPacket.create(
-            case_without_relationships,
-            without_relationships,
-            report,
-        )
-        self.assertNotEqual(
-            packet_with_relationships.to_json(),
-            packet_without_relationships.to_json(),
-        )
-        self.assertNotEqual(
-            ShadowReviewRequest.create(
-                case_with_relationships,
-                _identity(),
-                packet_with_relationships,
-            ).review_request_id,
-            ShadowReviewRequest.create(
-                case_without_relationships,
-                _identity(),
-                packet_without_relationships,
-            ).review_request_id,
-        )
+        without_relationships = ProposalSet.create(report_id=with_relationships.report_id, target_fingerprint=with_relationships.target_fingerprint, results=with_relationships.results, resolved_policy_id=with_relationships.resolved_policy_id)
+        self.assertNotEqual(with_relationships.proposal_set_id, without_relationships.proposal_set_id)
+        case_with_relationships = ReviewCase.create(with_relationships, report)
+        case_without_relationships = ReviewCase.create(without_relationships, report)
+        self.assertNotEqual(case_with_relationships.review_case_id, case_without_relationships.review_case_id)
+        self.assertEqual({value['destination']: value['proposal_id'] for value in case_with_relationships.proposals}, {value['destination']: value['proposal_id'] for value in case_without_relationships.proposals})
+        packet_with_relationships = ShadowReviewPacket.create(case_with_relationships, with_relationships, report)
+        packet_without_relationships = ShadowReviewPacket.create(case_without_relationships, without_relationships, report)
+        self.assertNotEqual(packet_with_relationships.to_json(), packet_without_relationships.to_json())
 
     def test_confirmed_current_title_is_a_preserve_member(self) -> None:
-        report = _bibliographic_report(
-            current_title="secret history",
-            providers=(
-                _source(
-                    "catalogue",
-                    "edition-1",
-                    titles=("Secret History",),
-                    subtitle="A Mistborn Novella",
-                ),
-            ),
-        )
+        report = _bibliographic_report(current_title='secret history', providers=(_source('catalogue', 'edition-1', titles=('Secret History',), subtitle='A Mistborn Novella'),))
         proposal = evaluate_report(report)
         self.assertEqual(proposal, ProposalSet.from_json(proposal.to_json()))
         self.assertEqual(1, len(proposal.bibliographic_combinations))
         combination = proposal.bibliographic_combinations[0]
-        title_selection = next(
-            value
-            for value in combination.selections
-            if value.destination is TargetDestination.TITLE
-        )
-        self.assertEqual("preserve_target", title_selection.kind.value)
+        title_selection = next((value for value in combination.selections if value.destination is TargetDestination.TITLE))
+        self.assertEqual('preserve_target', title_selection.kind.value)
         self.assertIsNone(title_selection.alternative_id)
         self.assertIsNotNone(title_selection.target_field_fingerprint)
         self.assertEqual(1, len(combination.source_representations))
-
         case = ReviewCase.create(proposal, report)
         self.assertEqual(case, ReviewCase.from_json(case.to_json()))
         packet = ShadowReviewPacket.create(case, proposal, report)
-        title_packet = next(
-            value
-            for value in packet.proposals
-            if value["destination"] == TargetDestination.TITLE.value
-        )
-        self.assertNotEqual(
-            title_packet["current"]["value"],
-            title_packet["candidates"][0]["value"]["value"],
-        )
-        self.assertEqual(
-            {
-                "evidence_sufficiency": "keep_current",
-                "target_only_preservation": 0,
-            },
-            title_packet["decision_summary"],
-        )
-        self.assertEqual(
-            packet,
-            ShadowReviewPacket.from_json(packet.to_json(), report),
-        )
-        request = ShadowReviewRequest.create(case, _identity(), packet)
-        packet_combination = packet.bibliographic_combinations[0]
+        title_packet = next((value for value in packet.proposals if value['destination'] == TargetDestination.TITLE.value))
+        self.assertNotEqual(title_packet['current']['value'], title_packet['candidates'][0]['value']['value'])
+        self.assertEqual({'evidence_sufficiency': 'keep_current', 'target_only_preservation': 0}, title_packet['decision_summary'])
+        self.assertEqual(packet, ShadowReviewPacket.from_json(packet.to_json(), report))
         catalogue = compile_shadow_review_actions(packet)
-        recommendations = []
-        for proposal_entry in packet.proposals:
-            destination = proposal_entry["destination"]
-            selection = next(
-                value
-                for value in packet_combination["selections"]
-                if value["destination"] == destination
-            )
-            recommendation = {
-                "candidate_id": (
-                    selection["alternative_id"]
-                    if selection["kind"] == "candidate"
-                    else None
-                ),
-                "problems": [],
-                "proposal_id": proposal_entry["proposal_id"],
-                "reasons": ["Exact allowed bibliographic combination."],
-                "recommendation": (
-                    "recommend_candidate"
-                    if selection["kind"] == "candidate"
-                    else "recommend_keep_current"
-                ),
-            }
-            action = catalogue.action_for(
-                recommendation["proposal_id"],
-                recommendation["recommendation"],
-                recommendation["candidate_id"],
-            )
-            assert action is not None
-            recommendation["citations"] = list(action.citation_ids)
-            recommendations.append(recommendation)
-        result = ShadowReviewResult(
-            request.review_request_id,
-            tuple(recommendations),
-        )
-        result.validate_for(request)
-        self.assertEqual(
-            packet_combination["combination_id"],
-            result.selected_bibliographic_combination_id(request),
-        )
+        keep = catalogue.action_for(title_packet['proposal_id'], 'recommend_keep_current', None)
+        self.assertIsNotNone(keep)
+        assert keep is not None
+        self.assertEqual((packet.bibliographic_combinations[0]['combination_id'],), keep.combination_ids)
 
-        invalid = json.loads(result.to_json())
-        title_proposal = next(
-            value
-            for value in packet.proposals
-            if value["destination"] == TargetDestination.TITLE.value
-        )
-        title_recommendation = next(
-            value
-            for value in invalid["recommendations"]
-            if value["proposal_id"] == title_proposal["proposal_id"]
-        )
-        title_recommendation["candidate_id"] = title_proposal["candidates"][0][
-            "candidate_id"
-        ]
-        title_recommendation["recommendation"] = "recommend_candidate"
-        candidate_action = catalogue.action_for(
-            title_recommendation["proposal_id"],
-            title_recommendation["recommendation"],
-            title_recommendation["candidate_id"],
-        )
-        assert candidate_action is not None
-        title_recommendation["citations"] = list(
-            candidate_action.citation_ids
-        )
-        candidate_result = ShadowReviewResult.from_json(
-            json.dumps(
-                invalid,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
-            request,
-        )
-        self.assertEqual(
-            packet_combination["combination_id"],
-            candidate_result.selected_bibliographic_combination_id(request),
-        )
-
-    def test_packet_and_result_bind_one_allowed_combination(self) -> None:
-        report = _bibliographic_report(
-            current_title="Secret History: Mistborn",
-            providers=(
-                _source(
-                    "catalogue",
-                    "edition-1",
-                    titles=("Secret History",),
-                    series="Mistborn",
-                ),
-            ),
-        )
+    def test_packet_and_actions_bind_one_allowed_combination(self) -> None:
+        report = _bibliographic_report(current_title='Secret History: Mistborn', providers=(_source('catalogue', 'edition-1', titles=('Secret History',), series='Mistborn'),))
         proposal = evaluate_report(report)
         case = ReviewCase.create(proposal, report)
         packet = ShadowReviewPacket.create(case, proposal, report)
         self.assertEqual(case, ReviewCase.from_json(case.to_json()))
-        self.assertEqual(
-            packet,
-            ShadowReviewPacket.from_json(packet.to_json(), report),
-        )
-        request = ShadowReviewRequest.create(case, _identity(), packet)
+        self.assertEqual(packet, ShadowReviewPacket.from_json(packet.to_json(), report))
         combination = packet.bibliographic_combinations[0]
         catalogue = compile_shadow_review_actions(packet)
-        for selection in combination["selections"]:
-            if selection["kind"] != "candidate":
+        for selection in combination['selections']:
+            if selection['kind'] != 'candidate':
                 continue
-            candidate = next(
-                candidate
-                for proposal_entry in packet.proposals
-                for candidate in proposal_entry["candidates"]
-                if candidate["candidate_id"]
-                == selection["alternative_id"]
-            )
-            self.assertEqual(
-                [combination["combination_id"]],
-                candidate["decision_summary"][
-                    "bibliographic_compatibility_ids"
-                ],
-            )
+            candidate = next((candidate for proposal_entry in packet.proposals for candidate in proposal_entry['candidates'] if candidate['candidate_id'] == selection['alternative_id']))
+            self.assertEqual([combination['combination_id']], candidate['decision_summary']['bibliographic_compatibility_ids'])
         forged_packet = json.loads(packet.to_json())
-        constrained_candidate = next(
-            candidate
-            for proposal_entry in forged_packet["proposals"]
-            for candidate in proposal_entry["candidates"]
-            if candidate["decision_summary"][
-                "bibliographic_compatibility_ids"
-            ]
-        )
-        constrained_candidate["decision_summary"][
-            "bibliographic_compatibility_ids"
-        ] = []
+        constrained_candidate = next((candidate for proposal_entry in forged_packet['proposals'] for candidate in proposal_entry['candidates'] if candidate['decision_summary']['bibliographic_compatibility_ids']))
+        constrained_candidate['decision_summary']['bibliographic_compatibility_ids'] = []
         with self.assertRaises(ShadowReviewValueError):
-            ShadowReviewPacket.from_json(
-                canonical_json(forged_packet),
-                report,
-            )
-        recommendation_by_destination = {}
-        for proposal_entry in packet.proposals:
-            destination = proposal_entry["destination"]
-            selection = next(
-                (
-                    value
-                    for value in combination["selections"]
-                    if value["destination"] == destination
-                ),
-                None,
-            )
-            if selection is None:
-                candidate = proposal_entry["candidates"][0]["candidate_id"]
-                kind = "recommend_candidate"
-            elif selection["kind"] == "candidate":
-                candidate = selection["alternative_id"]
-                kind = "recommend_candidate"
-            else:
-                candidate = None
-                kind = "recommend_keep_current"
-            recommendation = {
-                "candidate_id": candidate,
-                "problems": [],
-                "proposal_id": proposal_entry["proposal_id"],
-                "reasons": ["Exact allowed bibliographic combination."],
-                "recommendation": kind,
-            }
-            action = catalogue.action_for(
-                recommendation["proposal_id"],
-                recommendation["recommendation"],
-                recommendation["candidate_id"],
-            )
-            assert action is not None
-            recommendation["citations"] = list(action.citation_ids)
-            recommendation_by_destination[destination] = recommendation
-        recommendations = tuple(
-            recommendation_by_destination[value["destination"]]
-            for value in packet.proposals
-        )
-        result = ShadowReviewResult(request.review_request_id, recommendations)
-        result.validate_for(request)
-        self.assertEqual(
-            combination["combination_id"],
-            result.selected_bibliographic_combination_id(request),
-        )
-
-        contradictory = json.loads(result.to_json())
-        title_proposal_id = next(
-            value["proposal_id"]
-            for value in packet.proposals
-            if value["destination"] == TargetDestination.TITLE.value
-        )
-        title_recommendation = next(
-            value
-            for value in contradictory["recommendations"]
-            if value["proposal_id"] == title_proposal_id
-        )
-        title_recommendation["candidate_id"] = None
-        title_recommendation["recommendation"] = "recommend_keep_current"
-        with self.assertRaises(ShadowReviewSemanticError):
-            ShadowReviewResult.from_json(
-                json.dumps(
-                    contradictory,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ),
-                request,
-            )
+            ShadowReviewPacket.from_json(canonical_json(forged_packet), report)
+        candidate_actions = [action for action in catalogue.actions if action.recommendation == 'recommend_candidate' and action.combination_ids]
+        self.assertTrue(candidate_actions)
+        self.assertTrue(all((action.combination_ids == (combination['combination_id'],) for action in candidate_actions)))
 
     def test_persistence_replay_and_currentness_include_combinations(self) -> None:
         report = _bibliographic_report(

@@ -41,9 +41,5 @@ CAPABILITIES = (
     Capability("batch-inspect", "inspector", "inspect_batch"),
     Capability("batch-run", "scenario", "run_batch"),
     Capability("decision-preview", "inspector", "preview_shadow_decision_case"),
-    Capability("reviewer-packet-preview", "inspector", "preview_shadow_review_case"),
-    Capability("reviewer-request", "scenario", "request_shadow_review"),
-    Capability("reviewer-request-inspect", "inspector", "inspect_shadow_review_request"),
-    Capability("reviewer-request-reevaluate", "scenario", "reevaluate_shadow_review"),
-    Capability("reviewer-authentication", "scenario", "run_reviewer_auth"),
+    Capability("contained-reviewer", "scenario", "run_contained_reviewer"),
 )
