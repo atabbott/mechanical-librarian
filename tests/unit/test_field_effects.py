@@ -25,7 +25,10 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     FakeTargetService,
     PrivateCoverRecoveryStore,
 )
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    MetadataReportError,
+    open_repository,
+)
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
@@ -185,6 +188,68 @@ class FieldEffectTests(unittest.TestCase):
             self.repository.current_field_effect_consent(
                 "primary", "books", "title"
             ),
+        )
+
+    def test_matrix_consent_rolls_back_on_second_library_policy_failure(self) -> None:
+        original = self.repository.grant_field_effect_consents(
+            "primary", ("books",), ("title", "subtitle"), 0,
+        )
+        repository_type = type(self.repository)
+        with patch.object(
+            repository_type, "current_resolved_policy_id",
+            side_effect=("a" * 64, MetadataReportError("policy")),
+        ):
+            with self.assertRaisesRegex(FieldEffectError, "persistence"):
+                self.repository.grant_field_effect_consent_matrix(
+                    "primary", (("books", ("title",)), ("other", ("subtitle",))), 1,
+                )
+        self.assertEqual(
+            self.repository._connection.execute(
+                "SELECT count(*) FROM field_effect_consents WHERE current=1"
+            ).fetchone(),
+            (2,),
+        )
+        self.assertTrue(all(
+            self.repository.field_effect_consent_is_current(consent)
+            for consent in original
+        ))
+        self.assertFalse(self.repository._connection.in_transaction)
+
+    def test_matrix_consent_replaces_prior_library_destination_set(self) -> None:
+        original = self.repository.grant_field_effect_consents(
+            "primary", ("books",), ("title", "subtitle"), 1,
+        )
+
+        current = self.repository.grant_field_effect_consent_matrix(
+            "primary", (("books", ("title",)),), 2,
+        )
+
+        self.assertEqual(tuple(value.destination for value in current), ("title",))
+        self.assertTrue(self.repository.field_effect_consent_is_current(current[0]))
+        self.assertFalse(self.repository.field_effect_consent_is_current(original[1]))
+        with self.assertRaisesRegex(FieldEffectError, "consent"):
+            self.repository.current_field_effect_consent(
+                "primary", "books", "subtitle"
+            )
+
+    def test_stale_success_does_not_clear_newer_capability_suspension(self) -> None:
+        self.repository.suspend_field_effect_capability(
+            scope="destination", connection="primary", destination="title",
+            reason="field_unavailable", changed_at=10,
+        )
+        self.repository.clear_field_effect_capability_suspension(
+            scope="destination", connection="primary", destination="title", observed_at=9,
+        )
+        self.assertEqual(
+            self.repository.field_effect_capability_suspension("primary", "title"),
+            "field_unavailable",
+        )
+        self.repository.clear_field_effect_capability_suspension(
+            scope="destination", connection="primary", destination="title", observed_at=10,
+        )
+        self.assertEqual(
+            self.repository.field_effect_capability_suspension("primary", "title"),
+            "field_unavailable",
         )
 
     def test_manual_hold_requires_explicit_return_and_later_human_wins(self) -> None:

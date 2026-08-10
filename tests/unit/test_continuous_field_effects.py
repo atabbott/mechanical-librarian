@@ -10,7 +10,7 @@ from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.field_effects import GuardedApplicationError
-from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.field_effect import FieldEffectError, SUPPORTED_DESTINATIONS
 from mechanical_librarian.domain.human_decision import HumanDecision
 
 
@@ -141,8 +141,11 @@ class _PagedRepository:
     def field_effect_backup_ready(self):
         return True
 
-    def grant_field_effect_consents(self, *arguments):
+    def grant_field_effect_consent_matrix(self, *arguments):
         raise AssertionError("consent must not be granted before capability proof")
+
+    def clear_field_effect_capability_suspension(self, **_):
+        pass
 
 
 class _HoldRepository(_Repository):
@@ -195,6 +198,17 @@ class _AllowedCapability:
 class _DeniedCapability:
     def observe(self, probe):
         return SimpleNamespace(category="insufficient_permission", digest="b" * 64)
+
+
+class _MixedCapability:
+    def observe(self, probe):
+        category = "field_unavailable" if probe.destination == "subtitle" else "allowed"
+        return SimpleNamespace(category=category, digest="c" * 64)
+
+
+class _ConnectionUnavailableCapability:
+    def observe(self, _):
+        return SimpleNamespace(category="connection_unavailable", digest="d" * 64)
 
 
 class ContinuousGuardedApplicationTests(unittest.TestCase):
@@ -314,6 +328,49 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(GuardedApplicationError, "capability"):
             service.enable(("alpha",))
+
+    def test_enable_grants_only_field_locally_eligible_destinations(self) -> None:
+        decision = self._decisions(1)[0]
+
+        class Repository(_PagedRepository):
+            def __init__(self):
+                super().__init__([decision])
+                self.grants = None
+
+            def grant_field_effect_consent_matrix(self, *arguments):
+                self.grants = arguments
+
+            def field_effect_activity_data(self, _): return {"cleanup": {}, "suspensions": []}
+
+        repository = Repository()
+        service = ContinuousGuardedApplication(
+            repository, {("primary", "alpha"): _Planner()},
+            {("primary", "alpha"): _MixedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 1, lambda *_: None,
+        )
+        service.enable(("alpha",))
+        self.assertIsNotNone(repository.grants)
+        self.assertNotIn("subtitle", repository.grants[1][0][1])
+
+    def test_readiness_is_exactly_field_bounded_and_connection_fail_closed(self) -> None:
+        decision = self._decisions(1)[0]
+        for capability, state in (
+            (_MixedCapability(), "partially_allowed"),
+            (_ConnectionUnavailableCapability(), "connection_unavailable"),
+        ):
+            repository = _PagedRepository([decision])
+            service = ContinuousGuardedApplication(
+                repository, {("primary", "alpha"): _Planner()},
+                {("primary", "alpha"): capability}, _Authority(),
+                (("primary", "alpha"),), lambda: 1, lambda *_: None,
+            )
+            readiness = service._capability_readiness(("alpha",), force=True)[0]
+            self.assertEqual(readiness["state"], state)
+            self.assertEqual(len(readiness["destinations"]), 14)
+            self.assertEqual(
+                {value["destination"] for value in readiness["destinations"]},
+                set(SUPPORTED_DESTINATIONS),
+            )
 
     def test_blocked_oldest_page_does_not_starve_later_eligible_work(self) -> None:
         decisions = self._decisions(101)

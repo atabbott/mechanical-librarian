@@ -44,7 +44,8 @@ cross-case bibliographic history, bulk and reversal remain #195.
 Continuous guarded application adds authenticated `GET /api/v1/activity`,
 CSRF-protected library-envelope consent and revocation, existing pause/resume,
 and an exact field `return-to-automatic` command. Activity exposes bounded
-counts, configured/consented library identity, a value-limited representative
+counts, configured/consented library identity, bounded per-destination readiness
+for the existing 14 destinations, a value-limited representative
 example, plan events, and typed suspensions. It does not expose credentials,
 cover bytes, unrestricted paths, an arbitrary target, or a generic queue/apply
 command. Consent is restricted to configured libraries and the existing 14
