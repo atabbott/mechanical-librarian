@@ -706,6 +706,8 @@ describe('typed review routes', () => {
     ))
     await waitFor(() => expect(choice).not.toBeChecked())
     expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
+    expect(screen.getAllByText('Activity state refreshed from the authoritative server.')).toHaveLength(1)
+    expect(screen.getByText('Activity state refreshed from the authoritative server.')).toHaveAttribute('role', 'status')
   })
 
   it.each([
