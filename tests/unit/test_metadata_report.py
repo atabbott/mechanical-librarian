@@ -5142,46 +5142,5 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(repository.values, {})
         self.assertTrue(repository.closed)
 
-    def test_cli_has_only_required_contract_and_redacts_failure(self) -> None:
-        output = io.StringIO()
-        errors = io.StringIO()
-        exit_code = main(["metadata-report", "--config", "/private/config"], runner=lambda *args: "", stdout=output, stderr=errors)
-        self.assertEqual(exit_code, 2)
-        self.assertEqual(output.getvalue(), "")
-        self.assertEqual(errors.getvalue(), "Metadata report failed: invalid invocation.\n")
-        self.assertNotIn("private", errors.getvalue())
-
-    def test_cli_success_is_exact_and_unexpected_failures_are_redacted(self) -> None:
-        report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
-            file=FileFacts(0, "a" * 64, "b" * 64),
-            local_claims=(),
-            local_reasons=("no_opening_claims",),
-            providers=(),
-        )
-        arguments = [
-            "metadata-report", "--config", "/private/config.json", "--database", "/private/reports.sqlite", "--artifact-store", "/private/artifacts",
-            "--connection", "primary", "--library", "ebooks", "--item", "item-1", "--file-index", "0",
-        ]
-        output = io.StringIO()
-        errors = io.StringIO()
-        self.assertEqual(main(arguments, runner=lambda *args: report.to_json(), stdout=output, stderr=errors), 0)
-        self.assertEqual(output.getvalue(), report.to_json() + "\n")
-        self.assertEqual(errors.getvalue(), "")
-
-        output = io.StringIO()
-        errors = io.StringIO()
-        self.assertEqual(main(arguments, runner=lambda *args: (_ for _ in ()).throw(RuntimeError("token=/private/secret")), stdout=output, stderr=errors), 1)
-        self.assertEqual(output.getvalue(), "")
-        self.assertEqual(errors.getvalue(), "Metadata report failed safely.\n")
-
-    def test_cli_rejects_missing_artifact_store_before_runner(self) -> None:
-        arguments = [
-            "metadata-report", "--config", "config", "--database", "reports", "--connection", "primary",
-            "--library", "ebooks", "--item", "item-1", "--file-index", "0",
-        ]
-        self.assertEqual(2, main(arguments, runner=lambda *_: (_ for _ in ()).throw(AssertionError()), stdout=io.StringIO(), stderr=io.StringIO()))
-
-
 if __name__ == "__main__":
     unittest.main()

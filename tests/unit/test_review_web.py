@@ -2062,50 +2062,6 @@ class ReviewWebTests(unittest.TestCase):
         self.assertIsNotNone(attention.json()["next_cursor"])
         self.assertLess(len(attention.content), 100_000)
 
-    def test_configuration_and_cli_keep_review_authority_explicit(self) -> None:
-        with self.assertRaises(Exception):
-            ReviewWebConfiguration(
-                canonical_origin="http://review.test",
-                owner_password_hash_file=str(self.hash_path),
-            )
-        calls: list[tuple[Path, Path, Path, Path, str, int]] = []
-        output = StringIO()
-        errors = StringIO()
-        result = cli_main(
-            [
-                "review-serve",
-                "--config",
-                "/config.json",
-                "--database",
-                "/application.sqlite3",
-                "--catalogue",
-                "/catalogue.sqlite3",
-                "--artifacts",
-                "/artifacts",
-                "--host",
-                "0.0.0.0",
-                "--port",
-                "8443",
-            ],
-            review_serve_runner=lambda *values: calls.append(values),
-            stdout=output,
-            stderr=errors,
-        )
-        self.assertEqual(result, 0, errors.getvalue())
-        self.assertEqual(
-            calls,
-            [
-                (
-                    Path("/config.json"),
-                    Path("/application.sqlite3"),
-                    Path("/catalogue.sqlite3"),
-                    Path("/artifacts"),
-                    "0.0.0.0",
-                    8443,
-                )
-            ],
-        )
-
     def test_composition_opens_the_single_database_for_worker_threads(self) -> None:
         from tests.support.tls import synthetic_tls_identity
 

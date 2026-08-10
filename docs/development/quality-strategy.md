@@ -9,8 +9,9 @@ qualifier validates a newly built wheel before installation, seeds a new
 environment from all locked dependency groups, installs the explicit wheel
 without dependency resolution, validates archive and installed `RECORD`
 integrity, and compares the wheel and installed distribution payloads byte for
-byte. Its isolated interpreter runs a representative smoke cohort before the
-installed CLI is exercised outside the checkout. Scale, endurance, exhaustive,
+byte. Its isolated interpreter runs a representative smoke cohort before
+installed `review-serve` help is exercised outside the checkout and the
+source-only workbench is proved absent. Scale, endurance, exhaustive,
 and resource proofs remain in the explicit exact-head slow tier. Aggregate
 evidence binds the source, wheel, payload, selected tier, and command-output
 digests. A test that makes no progress for 30 seconds emits one bounded,

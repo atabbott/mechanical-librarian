@@ -183,7 +183,6 @@ from mechanical_librarian.infrastructure.security.review_protocol import (
     MAX_REVIEW_CONNECTIONS,
     REVIEW_TLS_CIPHERS,
 )
-from mechanical_librarian.interfaces.cli import main as cli_main
 from mechanical_librarian.interfaces.web import create_review_app
 
 
@@ -1618,28 +1617,8 @@ def run_review_server(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    return cli_main(
-        argv,
-        runner=run_metadata_report,
-        reopen_runner=reopen_metadata_report,
-        current_reopen_runner=reopen_current_metadata_report,
-        preview_runner=reopen_cover_preview,
-        catalogue_runner=run_catalogue,
-        batch_preview_runner=preview_batch,
-        batch_inspect_runner=inspect_batch,
-        batch_run_runner=run_batch,
-        proposal_create_runner=create_proposal_set,
-        proposal_get_runner=reopen_proposal_set,
-        review_admit_runner=admit_review_case,
-        review_get_runner=reopen_review_case,
-        review_serve_runner=run_review_server,
-        reviewer_auth_runner=run_reviewer_auth,
-        shadow_preview_runner=preview_shadow_review_case,
-        shadow_request_runner=request_shadow_review,
-        shadow_inspect_runner=inspect_shadow_review_request,
-        shadow_reevaluate_runner=reevaluate_shadow_review,
-        shadow_decision_runner=preview_shadow_decision_case,
-    )
+    from mechanical_librarian.interfaces.cli import main as runtime_main
+    return runtime_main(argv, review_serve_runner=run_review_server)
 
 
 __all__ = [

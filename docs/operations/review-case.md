@@ -1,11 +1,9 @@
 # Review-case admission
 
-Admit one exact current ProposalSet:
-
-```sh
-mechanical-librarian review-case-admit --config config.json --database reports.sqlite \
-  --artifact-store artifacts --proposal-set-id proposal_set_<64-lowercase-hex-characters>
-```
+The `AdmitReviewCase` application operation admits one exact current ProposalSet
+during authenticated review preparation. A typed source-only inspector is
+available to contributors against disposable state; admission and inspection
+are not installed commands.
 
 The typed canonical result is `admitted`, `replayed`, `superseded`, `no_case`,
 `retired`, or `stale`. `propose_change`, `acceptable_choice`, and
@@ -41,14 +39,9 @@ clean rebuild and regenerate supported reports/ProposalSets for an older
 database; admission itself performs no decision, apply, or write, and no
 migration command exists.
 
-```sh
-mechanical-librarian review-case-get --database reports.sqlite \
-  --review-case-id review_case_<64-lowercase-hex-characters>
-```
-
-Get returns the immutable case and derived currentness without writing it.
-Both commands validate the complete canonical typed result before printing
-success. Earlier schemas are rejected under the clean-state policy.
+Inspection returns the immutable case and derived currentness without writing
+it. Both operations validate the complete canonical typed result. Earlier
+schemas are rejected under the clean-state policy.
 
 ## Authenticated exact-current inspection
 

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Contract the installed command surface to the authenticated `review-serve`
+  launcher. Catalogue, report, batch, proposal, case, deterministic decision,
+  and contained-reviewer experiments now live in a typed source-only contributor
+  workbench with disposable state, production-target refusal, isolated-network
+  attempt evidence, bounded redacted results, and wheel/container exclusion.
+  (#492)
+
 - Label persisted qualified-automatic Activity events accurately, leave
   unrecognised origins neutral, and keep eligible prepared libraries available
   for authenticated, CSRF-bound later consent after another library is already

@@ -31,10 +31,11 @@ to `main`. It has read-only repository contents permission and:
 6. proves the wheel and installed distribution payloads are byte-identical,
    validates the installer-updated `RECORD`, and runs the complete public test
    suite with that isolated installed interpreter; and
-7. verifies the recorded install and import origins, then exercises the
-   installed `metadata-report` command from outside the checkout. The emitted
-   path-free evidence binds the event source SHA and wheel, payload, and command
-   output SHA-256 values.
+7. verifies the recorded install and import origins, then proves from outside
+   the checkout that installed help exposes only `review-serve` and that the
+   contributor workbench cannot be imported. The emitted path-free evidence
+   binds the event source SHA and wheel, payload, and command output SHA-256
+   values.
 
 The concurrency key distinguishes pull-request work from `main` push events. A
 new head may cancel obsolete work for the same pull request. Each push event

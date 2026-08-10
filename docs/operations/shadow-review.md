@@ -1,28 +1,24 @@
 # Qualification-only shadow review
 
-This development surface produces untrusted advice for one exact current
-ReviewCase. It cannot decide, approve, apply, write to Audiobookshelf or media,
+This source-only contributor qualification surface produces untrusted advice
+for one exact current ReviewCase against disposable or approved private-corpus
+state. It is absent from the installed runtime and container. It cannot decide,
+approve, apply, write to Audiobookshelf or media,
 run in the background, retry automatically, or activate normal review.
 
 Private cohort qualification uses the separate
 [qualification-evidence contract](../development/reviewer-qualification.md).
-Its append-only experimental retry accounting does not change this command's
+Its append-only experimental retry accounting does not change this operation's
 product behavior: there is still no automatic retry, and an ordinary retained
 timeout is a terminal diagnostic observation for the experiment that observed
 it.
 
 ## Deterministic decision preview
 
-An operator can compute one provider-independent decision document for an exact
-current ReviewCase without a qualification profile, model call, provider call,
-credential, or network client:
-
-```sh
-mechanical-librarian shadow-decision-preview --database reports.sqlite \
-  --review-case-id review_case_<64-lowercase-hex>
-```
-
-The command opens the existing database read-only and no-create, covers every
+The typed workbench inspector can compute one provider-independent decision
+document for an exact current disposable ReviewCase without a qualification
+profile, model call, provider call, credential, or network client. It opens the
+existing database read-only and no-create, covers every
 proposal exactly once, and emits canonical `shadow-decision-set-v1` JSON.
 Replaying identical input is byte-identical. Ambiguous, conflicting,
 unsupported, non-unique, or insufficient evidence selects the compiler's exact
@@ -130,12 +126,6 @@ support manual review without an adverse fact.
 
 All auth and review processes serialize on one owner-only auth-store lock:
 
-```sh
-mechanical-librarian reviewer-auth-start --qualification-profile profile.json
-mechanical-librarian reviewer-auth-status --qualification-profile profile.json
-mechanical-librarian reviewer-auth-logout --qualification-profile profile.json
-```
-
 Start uses device authentication. Status accepts only the exact canonical
 ChatGPT subscription line on either process stream when the command succeeds
 and the other stream is empty. Mixed, additional, malformed, API-key, and
@@ -147,12 +137,6 @@ preview, request, inspect, or reevaluate.
 Preview validates only profile bytes and the exact persisted case lineage. It
 does not inspect declared executables or auth state, construct a target,
 provider, reviewer, or other network client, or invoke Codex:
-
-```sh
-mechanical-librarian shadow-review-preview --database reports.sqlite \
-  --review-case-id review_case_<64-lowercase-hex> \
-  --qualification-profile profile.json
-```
 
 Preview is not fresh eligibility proof. Request atomically revalidates the
 current persisted case/report/proposal/profile/packet, persists the request and
@@ -219,20 +203,8 @@ retained candidates remain unresolved raw results; exact target-bound
 companions carry no invented candidate and become manual only in the review
 projection. No prompt, output schema, or decision authority is added.
 
-```sh
-mechanical-librarian shadow-review-request --database reports.sqlite \
-  --review-case-id review_case_<64-lowercase-hex> \
-  --qualification-profile profile.json
-```
-
-An identical request command reopens state and never egresses again. Inspect is
+An identical typed request reopens state and never egresses again. Inspect is
 offline:
-
-```sh
-mechanical-librarian shadow-review-inspect --database reports.sqlite \
-  --review-request-id review_request_<64-lowercase-hex> \
-  --qualification-profile profile.json
-```
 
 A successful status is permanently `qualification_only`. A dispatched
 timeout, cancellation, runtime, response-format rejection, malformed output, or
@@ -240,12 +212,6 @@ semantic-validation failure remains `unknown`, because
 the external service may have received the packet. There is no silent retry.
 After the supervised Linux process tree is proved absent, an operator may make
 one explicit new attempt:
-
-```sh
-mechanical-librarian shadow-review-reevaluate --database reports.sqlite \
-  --review-request-id review_request_<64-lowercase-hex> \
-  --qualification-profile profile.json
-```
 
 The reevaluation claim compares the exact latest attempt inside the write
 transaction, so concurrent operators cannot both append or overlap. If a
@@ -256,7 +222,7 @@ persisted claimant PID and Linux start token absent, then may safely claim its
 successor. Any unreleased controller could not execute or egress.
 The transaction permits reevaluation only when the latest attempt has no
 outcome, or has a failure after durable dispatch. A successful result and a
-known pre-dispatch failure are terminal; the command rejects them without
+known pre-dispatch failure are terminal; the operation rejects them without
 starting another reviewer.
 
 Executable paths are opened, verified, and held by descriptor through version,
@@ -305,7 +271,7 @@ python scripts/qualify_reviewer_cli_parser.py \
 ```
 
 Process-local failures retain the adapter's narrow internal signals, but every
-durable and CLI boundary maps them to the ADR-0017 diagnostic object. It
+durable and the workbench boundary maps them to the ADR-0017 diagnostic object. It
 contains only category, closed component/stage, optional
 retryability/currentness, and bounded count. Raw stdout, stderr, reasoning,
 malformed content, profile paths, auth data, exception text, and digests are
@@ -351,7 +317,7 @@ remains a semantic failure. Other canonical results that violate their bound
 request remain `citation_membership`; none retains raw bytes, rejected values,
 request IDs, or exception digests in status. Exact repository failures map to
 `persistence` with the persistence component and stage. A store failure can
-prevent a new durable outcome, but its CLI projection remains the same bounded
+prevent a new durable outcome, but its inspector projection remains the same bounded
 diagnostic.
 For a parsed result object, the adapter validates every raw citation identifier
 against the exact packet allowlist and enforces the 256-item raw bound before
@@ -384,8 +350,9 @@ credential, private path, raw provider state, or timing.
 A dispatched attempt without a durable terminal outcome reopens as `unknown`
 with one bounded reviewer/unknown/execution diagnostic; `unknown` and `failed`
 inspection states therefore never carry an empty diagnostic list.
-`shadow-review-failure-v2` uses the identical diagnostic shape on CLI stderr.
-Failure record, durable replay, application inspection, and CLI validation all
+`shadow-review-failure-v2` uses the identical diagnostic shape at the redacting
+workbench boundary. Failure record, durable replay, application inspection, and
+workbench validation all
 enforce the same closed reviewer diagnostic shapes. Impossible relabellings,
 such as a provider HTTP response with a reviewer component, fail closed without
 retaining the rejected value.

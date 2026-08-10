@@ -10,13 +10,13 @@ closed to the authenticated human queue, and recovery is an explicit
 CSRF-protected owner action. Private qualification cases, values, and paths are
 not stored in the repository or public API.
 
-The `catalogue` command may make only bounded GET observations of configured ABS
+The `RefreshCurrentCatalogue` application operation may make only bounded GET observations of configured ABS
 book libraries and publish a local current generation. Its bearer credential is
 attached only to the configured origin's library, library-items, and item-detail
 GET routes. It has no provider, metadata-write, media-write, report, apply,
 background, retry, or cleanup authority.
 
-`metadata-report` may read one configured target item, one selected read-only
+The `GenerateMetadataReport` application operation may read one configured target item, one selected read-only
 EPUB, owner-only credential files, at most nine fixed credential-bearing
 Hardcover metadata queries and 27 aggregate attempts, at most nine
 credential-free Open Library Search queries and 49 aggregate Open Library
