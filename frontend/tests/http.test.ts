@@ -85,12 +85,15 @@ describe('ReviewApiClient', () => {
       consented_libraries: [], enabled_libraries: [], counts: { verified: 1 },
       capabilities: [{ connection: 'primary', library: 'Fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: true }] }],
       events: [{ destination: 'title', library: 'Fiction', occurred_at: 1, origin: 'human', state: 'verified', work_id: 'work-1' }],
-      example: null, last_failure: null, prepared: { automatic: 1, human: 2, total: 3 }, suspensions: [],
+      example: { after: 'After', before: 'Before', destination: 'title', library: 'Fiction', work_id: 'work-1' }, last_failure: null, prepared: { automatic: 1, human: 2, total: 3 }, suspensions: [{ connection: 'primary', destination: null, reason: 'recovery', scope: 'library', updated_at: 1 }],
     })
 
     expect(activity.configured_libraries[0]?.library).toBe('Fiction')
     expect(activity.capabilities[0]?.destinations[0]).toMatchObject({ destination: 'title', consented: true })
     expect(activity.events[0]).toMatchObject({ library: 'Fiction', state: 'verified', origin: 'human' })
+    expect(activity.suspensions[0]).toMatchObject({ scope: 'library', destination: null })
+    expect(() => mapActivity({ ...activity, suspensions: [{ connection: 'primary', destination: null, reason: 'recovery', scope: 'library', updated_at: 'later' }] })).toThrow(ApiError)
+    expect(() => mapActivity({ ...activity, example: { after: 'After' } })).toThrow(ApiError)
   })
 
   it('renews CSRF once but requires an explicit retry of an unsafe request', async () => {

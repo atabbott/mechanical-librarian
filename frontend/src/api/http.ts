@@ -54,6 +54,8 @@ export interface ActivityLibraryView { connection: string; library: string; prep
 export interface ActivityDestinationView { consented: boolean; destination: string; state: string }
 export interface ActivityCapabilityView { connection: string; destinations: readonly ActivityDestinationView[]; library: string; state: string }
 export interface ActivityEventView { destination: string; failure: string | null; library: string; occurred_at: number | null; origin: string; state: string; work_id: string }
+export interface ActivityExampleView { after: unknown; before: unknown; destination: string; library: string; work_id: string }
+export interface ActivitySuspensionView { connection: string; destination: string | null; reason: string; scope: string; updated_at: number }
 export interface ActivityDisplayView {
   readonly [key: string]: unknown
   backup_ready: boolean
@@ -63,12 +65,12 @@ export interface ActivityDisplayView {
   counts: Readonly<Record<string, number>>
   enabled_libraries: readonly ActivityLibraryView[]
   events: readonly ActivityEventView[]
-  example: Readonly<Record<string, unknown>> | null
+  example: ActivityExampleView | null
   last_failure: string | null
   paused: boolean
   prepared: ActivityPreparedView
   schema_version: 'continuous-field-activity-v1'
-  suspensions: readonly Readonly<Record<string, unknown>>[]
+  suspensions: readonly ActivitySuspensionView[]
 }
 
 export interface DecisionCommand {
@@ -219,6 +221,15 @@ const activityPrepared = (value: unknown, field: string): ActivityPreparedView =
   if (!record(value)) throw new ApiError(502, `invalid_${field}`)
   return { automatic: integerValue(value.automatic, `${field}_automatic`), human: integerValue(value.human, `${field}_human`), total: integerValue(value.total, `${field}_total`) }
 }
+const activityExample = (value: unknown): ActivityExampleView | null => {
+  if (value === null) return null
+  if (!record(value)) throw new ApiError(502, 'invalid_activity_example')
+  return { after: value.after, before: value.before, destination: stringValue(value.destination, 'activity_example_destination'), library: stringValue(value.library, 'activity_example_library'), work_id: stringValue(value.work_id, 'activity_example_work_id') }
+}
+const activitySuspensions = (value: unknown): ActivitySuspensionView[] => {
+  if (!Array.isArray(value)) throw new ApiError(502, 'invalid_activity_suspensions')
+  return value.map((item, index) => { if (!record(item)) throw new ApiError(502, `invalid_activity_suspension_${String(index)}`); return { connection: stringValue(item.connection, 'activity_suspension_connection'), destination: item.destination === null ? null : stringValue(item.destination, 'activity_suspension_destination'), reason: stringValue(item.reason, 'activity_suspension_reason'), scope: stringValue(item.scope, 'activity_suspension_scope'), updated_at: integerValue(item.updated_at, 'activity_suspension_updated_at') } })
+}
 export const mapActivity = (value: unknown): ActivityDisplayView => {
   if (!record(value) || value.schema_version !== 'continuous-field-activity-v1') throw new ApiError(502, 'invalid_activity_response')
   const libraries = (raw: unknown, field: string): ActivityLibraryView[] => {
@@ -233,7 +244,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
   return {
     backup_ready: typeof value.backup_ready === 'boolean' ? value.backup_ready : (() => { throw new ApiError(502, 'invalid_activity_backup_ready') })(), capabilities: capabilities.map((item, index) => { if (!record(item) || !Array.isArray(item.destinations)) throw new ApiError(502, `invalid_activity_capability_${String(index)}`); return { connection: stringValue(item.connection, 'activity_connection'), library: stringValue(item.library, 'activity_library'), state: stringValue(item.state, 'activity_state'), destinations: item.destinations.map((destination, destinationIndex) => { if (!record(destination) || typeof destination.consented !== 'boolean') throw new ApiError(502, `invalid_activity_destination_${String(destinationIndex)}`); return { destination: stringValue(destination.destination, 'activity_destination'), state: stringValue(destination.state, 'activity_destination_state'), consented: destination.consented } }) } }),
     configured_libraries: libraries(value.configured_libraries, 'activity_configured_libraries'), consented_libraries: libraries(value.consented_libraries, 'activity_consented_libraries'), counts, enabled_libraries: libraries(value.enabled_libraries, 'activity_enabled_libraries'), events: events.map((event, index) => { if (!record(event)) throw new ApiError(502, `invalid_activity_event_${String(index)}`); const occurred_at = event.occurred_at === undefined || event.occurred_at === null ? null : integerValue(event.occurred_at, 'activity_occurred_at'); const failure = event.failure === undefined || event.failure === null ? null : stringValue(event.failure, 'activity_failure'); return { destination: stringValue(event.destination, 'activity_event_destination'), library: stringValue(event.library, 'activity_event_library'), origin: stringValue(event.origin, 'activity_event_origin'), state: stringValue(event.state, 'activity_event_state'), work_id: stringValue(event.work_id, 'activity_work_id'), occurred_at, failure } }),
-    example: value.example === null ? null : record(value.example) ? value.example : (() => { throw new ApiError(502, 'invalid_activity_example') })(), last_failure: value.last_failure === null ? null : stringValue(value.last_failure, 'activity_last_failure'), paused: typeof value.paused === 'boolean' ? value.paused : (() => { throw new ApiError(502, 'invalid_activity_paused') })(), prepared: activityPrepared(value.prepared, 'activity_prepared'), schema_version: 'continuous-field-activity-v1', suspensions: Array.isArray(value.suspensions) && value.suspensions.every(record) ? value.suspensions : (() => { throw new ApiError(502, 'invalid_activity_suspensions') })(),
+    example: activityExample(value.example), last_failure: value.last_failure === null ? null : stringValue(value.last_failure, 'activity_last_failure'), paused: typeof value.paused === 'boolean' ? value.paused : (() => { throw new ApiError(502, 'invalid_activity_paused') })(), prepared: activityPrepared(value.prepared, 'activity_prepared'), schema_version: 'continuous-field-activity-v1', suspensions: activitySuspensions(value.suspensions),
   }
 }
 

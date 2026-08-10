@@ -19,14 +19,16 @@ _HOSTILE = "Hostile <img src=x onerror=window.__metadataExecuted=true>"
 
 
 def _payload(path: str) -> object:
+    if path.startswith("/api/v1/review-cases/case-") and not path.endswith(("/evidence", "/history")):
+        path = "/api/v1/review-cases/case-1"
     if path == "/api/v1/review-preparation":
         return {"schema_version": "review-preparation-v1", "active": False, "actionable": False, "paused": False, "libraries": []}
     if path == "/api/v1/library":
-        return {"schema_version": "review.v1", "lens": "all", "query": None, "next_cursor": None, "counts": {"needs_attention": 1, "all": 1, "no_attention_needed": 0}, "items": [{"review_case_id": "case-1", "title": _HOSTILE, "library": "Synthetic library", "item": "item-1", "attention_count": 1, "attention_state": "needs_attention", "detail_url": "/review/case-1", "dispositions": ["review"]}]}
+        return {"schema_version": "review.v1", "lens": "all", "query": None, "next_cursor": None, "counts": {"needs_attention": 1, "all": 3, "no_attention_needed": 2}, "items": [{"review_case_id": "case-1", "title": _HOSTILE, "library": "Synthetic library", "item": "item-1", "attention_count": 1, "attention_state": "needs_attention", "detail_url": "/review/case-1", "dispositions": ["review"]}, {"review_case_id": "case-2", "title": "Automatic-only work", "library": "Synthetic library", "item": "item-2", "attention_count": 0, "attention_state": "no_attention_needed", "detail_url": "/review/case-2", "dispositions": ["automatic"]}, {"review_case_id": "case-3", "title": "Resolved work", "library": "Synthetic library", "item": "item-3", "attention_count": 0, "attention_state": "no_attention_needed", "detail_url": "/review/case-3", "dispositions": ["resolved"]}]}
     if path == "/api/v1/attention":
         return {"schema_version": "attention-v1", "query": None, "next_cursor": None, "total": 1, "items": [{"review_case_id": "case-1", "destination": "title", "title": _HOSTILE, "library": "Synthetic library", "item": "item-1", "detail_url": "/review/case-1?field=title", "notices": [], "provenance": []}]}
     if path == "/api/v1/review-cases/case-1":
-        return {"schema_version": "review-case-v1", "review_case_id": "case-1", "current": True, "target": {"connection": "primary", "library": "Synthetic library", "item": _HOSTILE}, "fields": [{"destination": "title", "deterministic_disposition": "review", "effect_capability": "manual", "needs_attention": True, "manual_hold": False, "manual_required": True, "current": {"kind": "text", "value": "Current <script>"}, "proposed_values": [{"kind": "text", "value": "Proposed <img>"}], "proposal_id": "proposal-1", "target_fingerprint": "f" * 64, "human_decision": None, "automatic_decision": None, "notices": [], "provenance": [], "uncertainty": []}]}
+        return {"schema_version": "review-case-v1", "review_case_id": "case-1", "current": True, "target": {"connection": "primary", "library": "Synthetic library", "item": _HOSTILE}, "fields": [{"destination": "title", "deterministic_disposition": "review", "effect_capability": "manual", "needs_attention": True, "manual_hold": False, "manual_required": True, "current": {"kind": "text", "value": "Current <script>"}, "proposed_values": [{"kind": "text", "value": "First proposed <img>"}, {"kind": "text", "value": "Second proposed"}, {"kind": "text", "value": "Third proposed"}], "proposal_id": "proposal-1", "target_fingerprint": "f" * 64, "human_decision": None, "automatic_decision": None, "notices": ["Synthetic reviewer fact"], "provenance": ["Synthetic provenance"], "uncertainty": ["Synthetic uncertainty"]}, {"destination": "subtitle", "deterministic_disposition": "automatic", "effect_capability": "manual", "needs_attention": False, "manual_hold": False, "manual_required": False, "current": {"kind": "text", "value": "Current subtitle"}, "proposed_values": [], "proposal_id": "proposal-2", "target_fingerprint": "f" * 64, "human_decision": None, "automatic_decision": {"decision_id": "automatic-1", "outcome": "keep_current", "origin": "automatic_policy"}, "notices": [], "provenance": [], "uncertainty": []}]}
     if path == "/api/v1/review-cases/case-1/evidence":
         return {"schema_version": "review-case-evidence-v2", "review_case_id": "case-1", "next_cursor": None, "items": [{"reference": "local-1", "kind": "title", "source": "provider_claim", "provider": "catalogue", "candidate": "candidate-1", "fact": _HOSTILE}]}
     if path == "/api/v1/review-cases/case-1/history":
@@ -59,6 +61,8 @@ def _payload(path: str) -> object:
             "events": [
                 {"work_id": "book-1", "library": "fiction", "destination": "title", "state": "verified", "origin": "automatic_policy"},
                 {"work_id": "book-2", "library": "fiction", "destination": "subtitle", "state": "stale", "origin": "unrecognised_origin"},
+                {"work_id": "book-3", "library": "fiction", "destination": "title", "state": "applying", "origin": "human"},
+                {"work_id": "book-4", "library": "fiction", "destination": "title", "state": "recovered", "origin": "human"},
             ],
             "counts": {},
             "example": None,
@@ -155,6 +159,17 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     before_entry + (2 if path == "/activity" else 1),
                 )
 
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.goto("https://react-platform.invalid/library?lens=all")
+            page.get_by_text("Automatic-only work", exact=True).wait_for()
+            self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 1440)
+            page.goto("https://react-platform.invalid/review/case-1?field=title&subview=review")
+            page.get_by_role("button", name="Accept proposed value 1: First proposed <img>").wait_for()
+            page.get_by_role("button", name="Accept proposed value 2: Second proposed").wait_for()
+            page.get_by_role("button", name="Accept proposed value 3: Third proposed").wait_for()
+            page.set_viewport_size({"width": 390, "height": 844})
+            self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
+
             self.assertEqual(activity_failures, 1)
             self.assertEqual(consent_payloads, [{
                 "grants": [{"library": "fiction", "destinations": ["authors", "title"]}]
@@ -167,7 +182,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.get_by_role("heading", name="Fields needing attention").wait_for()
             page.go_back()
             page.get_by_role("heading", name="Review library").wait_for()
-            self.assertEqual(documents, before_navigation)
+            self.assertEqual(documents, before_navigation + 1)
             page.get_by_role("button", name="Sign out").click()
             page.get_by_text("Writes are blocked", exact=False).wait_for()
             fail_policy_persistently = True
