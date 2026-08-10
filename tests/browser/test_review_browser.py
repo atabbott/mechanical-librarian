@@ -307,12 +307,12 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         activity_requests += 1
                         response = route.fetch()
                         payload = response.json()
-                        payload["counts"] = {"claimed": 1}
+                        payload["counts"]["claimed"] = 1
                         route.fulfill(status=response.status, json=payload)
 
                     page.route("**/api/v1/activity", activity_poll)
                     page.get_by_role("link", name="Activity", exact=True).click()
-                    page.get_by_role("heading", name="Ready when you are").wait_for()
+                    page.get_by_role("heading", name="Ready work is waiting safely").wait_for()
                     self.assertGreaterEqual(activity_requests, 1)
                     page.get_by_role("link", name="Library", exact=True).click()
                     page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
