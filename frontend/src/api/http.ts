@@ -15,9 +15,9 @@ export interface AttentionSearch { q?: string; cursor?: string }
 export interface DetailSearch { field?: string; subview: DetailSubview }
 export interface PolicySearch { section: PolicySection }
 
-export interface LibraryWorkView { id: string; title: string; authors: readonly string[]; subtitle: string; attention: string; dispositions: readonly string[] }
+export interface LibraryWorkView { id: string; reviewCaseId?: string; title: string; authors: readonly string[]; library: string; mediaKind: string; attentionCount: number; attention: string }
 export interface LibraryView { lens: LibraryLens; query?: string; nextCursor?: string; counts: { attention: number; all: number; clear: number }; works: readonly LibraryWorkView[] }
-export interface AttentionItemView { id: string; destination: string; title: string; authors: readonly string[]; subtitle: string; notices: readonly string[]; provenance: readonly string[] }
+export interface AttentionItemView { id: string; destination: string; title: string; authors: readonly string[]; library: string; mediaKind: string; notices: readonly string[]; provenance: readonly string[]; workAttentionCount: number }
 export interface AttentionView { query?: string; nextCursor?: string; total: number; items: readonly AttentionItemView[] }
 export interface ReviewFieldView {
   destination: string
@@ -270,14 +270,14 @@ export const mapLibrary = (value: unknown): LibraryView => {
   const lens = stringValue(value.lens, 'library_lens'); if (!['needs_attention', 'all', 'no_attention_needed'].includes(lens)) throw new ApiError(502, 'invalid_library_lens')
   const dto = value as unknown as LibraryDto; stringValue(dto.schema_version, 'schema_version')
   const query = optionalString(dto.query, 'library_query'); const nextCursor = optionalString(dto.next_cursor, 'library_cursor')
-  return { lens: lens as LibraryLens, ...(query ? { query } : {}), ...(nextCursor ? { nextCursor } : {}), counts: { attention: integerValue(dto.counts.needs_attention, 'attention_count'), all: integerValue(dto.counts.all, 'all_count'), clear: integerValue(dto.counts.no_attention_needed, 'clear_count') }, works: dto.items.map((item) => ({ id: stringValue(item.review_case_id, 'review_case_id'), title: stringValue(item.title, 'title'), authors: stringArray(item.authors, 'authors'), subtitle: `${stringValue(item.library, 'library')} · ${stringValue(item.media_kind, 'media_kind')} · ${stringValue(item.item, 'item')}`, attention: stringValue(item.attention_state, 'attention_state'), dispositions: stringArray(item.dispositions, 'dispositions') })) }
+  return { lens: lens as LibraryLens, ...(query ? { query } : {}), ...(nextCursor ? { nextCursor } : {}), counts: { attention: integerValue(dto.counts.needs_attention, 'attention_count'), all: integerValue(dto.counts.all, 'all_count'), clear: integerValue(dto.counts.no_attention_needed, 'clear_count') }, works: dto.items.map((item) => { const reviewCaseId = optionalString(item.review_case_id, 'review_case_id'); return { id: reviewCaseId ?? stringValue(item.work_id, 'work_id'), ...(reviewCaseId ? { reviewCaseId } : {}), title: stringValue(item.title, 'title'), authors: stringArray(item.authors, 'authors'), library: stringValue(item.library, 'library'), mediaKind: stringValue(item.media_kind, 'media_kind'), attentionCount: integerValue(item.attention_count, 'attention_count'), attention: stringValue(item.attention_state, 'attention_state') } }) }
 }
 
 export const mapAttention = (value: unknown): AttentionView => {
   if (!record(value) || !Array.isArray(value.items)) throw new ApiError(502, 'invalid_attention_response')
   const dto = value as unknown as AttentionDto; stringValue(dto.schema_version, 'schema_version')
   const query = optionalString(dto.query, 'attention_query'); const nextCursor = optionalString(dto.next_cursor, 'attention_cursor')
-  return { ...(query ? { query } : {}), ...(nextCursor ? { nextCursor } : {}), total: integerValue(dto.total, 'attention_total'), items: dto.items.map((item) => ({ id: stringValue(item.review_case_id, 'review_case_id'), destination: stringValue(item.destination, 'destination'), title: stringValue(item.title, 'title'), authors: stringArray(item.authors, 'authors'), subtitle: `${stringValue(item.library, 'library')} · ${stringValue(item.media_kind, 'media_kind')} · ${stringValue(item.item, 'item')}`, notices: stringArray(item.notices, 'notices'), provenance: stringArray(item.provenance, 'provenance') })) }
+  return { ...(query ? { query } : {}), ...(nextCursor ? { nextCursor } : {}), total: integerValue(dto.total, 'attention_total'), items: dto.items.map((item) => ({ id: stringValue(item.review_case_id, 'review_case_id'), destination: stringValue(item.destination, 'destination'), title: stringValue(item.title, 'title'), authors: stringArray(item.authors, 'authors'), library: stringValue(item.library, 'library'), mediaKind: stringValue(item.media_kind, 'media_kind'), notices: stringArray(item.notices, 'notices'), provenance: stringArray(item.provenance, 'provenance'), workAttentionCount: integerValue(item.work_attention_count, 'work_attention_count') })) }
 }
 
 export const mapCaseDetail = (value: unknown): CaseDetailView => {

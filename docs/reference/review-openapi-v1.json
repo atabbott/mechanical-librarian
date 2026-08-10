@@ -443,6 +443,10 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "work_attention_count": {
+            "title": "Work Attention Count",
+            "type": "integer"
           }
         },
         "required": [
@@ -455,7 +459,8 @@
           "notices",
           "provenance",
           "review_case_id",
-          "title"
+          "title",
+          "work_attention_count"
         ],
         "title": "_AttentionItem",
         "type": "object"
@@ -1337,8 +1342,15 @@
             "type": "array"
           },
           "detail_url": {
-            "title": "Detail Url",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail Url"
           },
           "dispositions": {
             "items": {
@@ -1360,11 +1372,22 @@
             "type": "string"
           },
           "review_case_id": {
-            "title": "Review Case Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Case Id"
           },
           "title": {
             "title": "Title",
+            "type": "string"
+          },
+          "work_id": {
+            "title": "Work Id",
             "type": "string"
           }
         },
@@ -1378,7 +1401,8 @@
           "library",
           "media_kind",
           "review_case_id",
-          "title"
+          "title",
+          "work_id"
         ],
         "title": "_LibraryWork",
         "type": "object"

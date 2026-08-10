@@ -415,6 +415,19 @@ _CURRENT_REVIEW_FROM_SQL = (
     "AND mf.file_identity=json_extract(rc.document,'$.file_identity') "
     "AND mf.report_id=rc.report_id"
 )
+_CURRENT_LIBRARY_FROM_SQL = (
+    "FROM current_metadata_report_lineages ml "
+    "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
+    "JOIN current_metadata_reports mf "
+    "ON mf.connection_name=ml.connection_name "
+    "AND mf.library_name=ml.library_name AND mf.item_id=ml.item_id "
+    "AND mf.report_id=ml.report_id "
+    "LEFT JOIN current_review_case_lineages c "
+    "ON c.connection_name=ml.connection_name "
+    "AND c.library_name=ml.library_name AND c.item_id=ml.item_id "
+    "AND c.report_id=ml.report_id "
+    "LEFT JOIN review_cases rc ON rc.review_case_id=c.review_case_id"
+)
 _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL = (
     "EXISTS (SELECT 1 FROM json_each(rc.document,'$.results') manual_result "
     "WHERE json_extract(manual_result.value,'$.destination') "
@@ -458,8 +471,14 @@ _REVIEW_ATTENTION_SQL = (
 _REVIEW_SEARCH_SQL = (
     " AND (? IS NULL OR "
     "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) "
-    "LIKE ? ESCAPE '\\' OR ml_casefold(c.item_id) LIKE ? ESCAPE '\\' "
-    "OR ml_casefold(c.library_name) LIKE ? ESCAPE '\\')"
+    "LIKE ? ESCAPE '\\' OR ml_casefold(ml.item_id) LIKE ? ESCAPE '\\' "
+    "OR ml_casefold(ml.library_name) LIKE ? ESCAPE '\\' "
+    "OR EXISTS (SELECT 1 FROM json_each(mr.document,'$.target.fields') author_field, "
+    "json_each(author_field.value,'$.value') author WHERE "
+    "json_extract(author_field.value,'$.destination')='authors' "
+    "AND ml_casefold(COALESCE(author.value,'')) LIKE ? ESCAPE '\\') "
+    "OR ml_casefold(COALESCE(json_extract(mr.document,'$.file.format'),'')) "
+    "LIKE ? ESCAPE '\\')"
 )
 _SHADOW_DECISION_OUTCOMES_SQL = (
     "CREATE TABLE shadow_decision_outcomes ("
@@ -4254,12 +4273,26 @@ class SQLiteMetadataReportRepository:
                 (
                     case_document,
                     report_document,
-                    self.get_review_case_decisions(
-                        ReviewCase.from_json(case_document).review_case_id
+                    (
+                        ()
+                        if case_document is None
+                        else self.get_review_case_decisions(
+                            ReviewCase.from_json(case_document).review_case_id
+                        )
                     ),
-                    self._automatic_attention_destinations(ReviewCase.from_json(case_document).review_case_id),
-                    self._field_effect_capability_suspended_destinations(
-                        ReviewCase.from_json(case_document).review_case_id
+                    (
+                        ()
+                        if case_document is None
+                        else self._automatic_attention_destinations(
+                            ReviewCase.from_json(case_document).review_case_id
+                        )
+                    ),
+                    (
+                        ()
+                        if case_document is None
+                        else self._field_effect_capability_suspended_destinations(
+                            ReviewCase.from_json(case_document).review_case_id
+                        )
                     ),
                 )
                 for case_document, report_document in rows
@@ -4322,7 +4355,7 @@ class SQLiteMetadataReportRepository:
         limit: int,
         offset: int,
         attention: bool | None,
-    ) -> tuple[tuple[str, str], ...]:
+    ) -> tuple[tuple[str | None, str], ...]:
         try:
             query, pattern = _review_search_pattern(search)
             condition = _REVIEW_ATTENTION_SQL
@@ -4331,30 +4364,68 @@ class SQLiteMetadataReportRepository:
             elif attention is None:
                 condition = "1"
             rows = self._connection.execute(
-                "SELECT rc.document,mr.document "
-                + _CURRENT_REVIEW_FROM_SQL
-                + " WHERE "
+                "SELECT rc.document,mr.document,ml.connection_name,ml.library_name,"
+                "ml.item_id,c.outcome "
+                + _CURRENT_LIBRARY_FROM_SQL
+                + " WHERE COALESCE(c.outcome,'')<>'tombstoned' AND "
                 + condition
                 + _REVIEW_SEARCH_SQL
                 + " ORDER BY CASE WHEN "
                 + _REVIEW_ATTENTION_SQL
                 + " THEN 0 ELSE 1 END,"
                 "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')),"
-                "c.library_name,c.item_id,rc.review_case_id LIMIT ? OFFSET ?",
-                (query, pattern, pattern, pattern, limit, offset),
+                "ml.library_name,ml.item_id,ml.connection_name,"
+                "COALESCE(rc.review_case_id,'') LIMIT ? OFFSET ?",
+                (query, pattern, pattern, pattern, pattern, pattern, limit, offset),
             ).fetchall()
-            return tuple(
-                _validate_review_browse_row(
-                    row,
+            values: list[tuple[str | None, str]] = []
+            for row in rows:
+                if (
+                    len(row) != 6
+                    or type(row[1]) is not str
+                    or any(type(value) is not str for value in row[2:5])
+                    or (row[5] is not None and type(row[5]) is not str)
+                ):
+                    raise MetadataReportError("review browse row is invalid")
+                lineage = (row[2], row[3], row[4])
+                report = MetadataReport.from_json(row[1])
+                if (
+                    (
+                        report.target.connection,
+                        report.target.library,
+                        report.target.item,
+                    )
+                    != lineage
+                ):
+                    raise MetadataReportError("review browse row disagrees")
+                if row[5] is None:
+                    if row[0] is not None:
+                        raise MetadataReportError("review browse row disagrees")
+                    values.append((None, report.to_json()))
+                    continue
+                pointer = self._validated_review_pointer(lineage)
+                if (
+                    pointer is None
+                    or pointer[1] != report.report_id
+                    or pointer[5] != row[5]
+                ):
+                    raise MetadataReportError("review browse row disagrees")
+                if row[0] is None:
+                    if row[5] not in {"no_case", "retired"}:
+                        raise MetadataReportError("review browse row disagrees")
+                    values.append((None, report.to_json()))
+                    continue
+                case_document, report_document = _validate_review_browse_row(
+                    row[:2],
                     self._policy_destinations_for(
-                        MetadataReport.from_json(row[1]),
+                        report,
                         ProposalSet.from_json(
                             ReviewCase.from_json(row[0]).proposal_document
                         ),
                     ),
                 )
-                for row in rows
-            )
+                values.append((case_document, report_document))
+            return tuple(values)
         except (
             sqlite3.Error,
             MetadataReportError,
@@ -4374,10 +4445,10 @@ class SQLiteMetadataReportRepository:
                 "SELECT count(*),COALESCE(sum(CASE WHEN "
                 + _REVIEW_ATTENTION_SQL
                 + " THEN 1 ELSE 0 END),0) "
-                + _CURRENT_REVIEW_FROM_SQL
-                + " WHERE 1"
+                + _CURRENT_LIBRARY_FROM_SQL
+                + " WHERE COALESCE(c.outcome,'')<>'tombstoned'"
                 + _REVIEW_SEARCH_SQL,
-                (query, pattern, pattern, pattern),
+                (query, pattern, pattern, pattern, pattern, pattern),
             ).fetchone()
             if (
                 row is None
@@ -4392,12 +4463,14 @@ class SQLiteMetadataReportRepository:
 
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[tuple[str, str, str], ...]:
+    ) -> tuple[tuple[str, str, str, int], ...]:
         try:
             query, pattern = _review_search_pattern(search)
             rows = self._connection.execute(
                 "SELECT rc.document,mr.document,"
-                "json_extract(result.value,'$.destination') "
+                "json_extract(result.value,'$.destination'),"
+                "(SELECT count(*) FROM json_each(rc.document,'$.results') result "
+                "WHERE " + _REVIEW_FIELD_ATTENTION_SQL + ") "
                 + _CURRENT_REVIEW_FROM_SQL
                 + ",json_each(rc.document,'$.results') result "
                 "WHERE "
@@ -4408,7 +4481,7 @@ class SQLiteMetadataReportRepository:
                 "c.library_name,c.item_id,"
                 "json_extract(result.value,'$.destination'),rc.review_case_id "
                 "LIMIT ? OFFSET ?",
-                (query, pattern, pattern, pattern, limit, offset),
+                (query, pattern, pattern, pattern, pattern, pattern, limit, offset),
             ).fetchall()
             values = []
             for row in rows:
@@ -4421,9 +4494,13 @@ class SQLiteMetadataReportRepository:
                         ),
                     ),
                 )
-                if type(row[2]) is not str:
+                if (
+                    type(row[2]) is not str
+                    or type(row[3]) is not int
+                    or row[3] < 1
+                ):
                     raise MetadataReportError("review attention field is invalid")
-                values.append((case_document, report_document, row[2]))
+                values.append((case_document, report_document, row[2], row[3]))
             return tuple(values)
         except (
             sqlite3.Error,
@@ -4445,7 +4522,7 @@ class SQLiteMetadataReportRepository:
                 "WHERE "
                 + _REVIEW_FIELD_ATTENTION_SQL
                 + _REVIEW_SEARCH_SQL,
-                (query, pattern, pattern, pattern),
+                (query, pattern, pattern, pattern, pattern, pattern),
             ).fetchone()
             if (
                 row is None

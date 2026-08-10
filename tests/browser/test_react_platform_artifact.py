@@ -22,11 +22,11 @@ def _payload(path: str) -> object:
     if path.startswith("/api/v1/review-cases/case-") and not path.endswith(("/evidence", "/history")):
         path = "/api/v1/review-cases/case-1"
     if path == "/api/v1/review-preparation":
-        return {"schema_version": "review-preparation-v1", "active": False, "actionable": False, "paused": False, "libraries": []}
+        return {"schema_version": "review-preparation-v1", "active": True, "actionable": False, "paused": False, "libraries": [{"blocked": 0, "checked": 1, "connection": "primary", "library": "Synthetic library", "library_id": "library-1", "ready": 0, "rescan_requested": False, "scan_id": "scan-1", "state": "scanning", "total": 2}]}
     if path == "/api/v1/library":
-        return {"schema_version": "review.v1", "lens": "all", "query": None, "next_cursor": None, "counts": {"needs_attention": 1, "all": 3, "no_attention_needed": 2}, "items": [{"review_case_id": "case-1", "title": _HOSTILE, "authors": ["Synthetic Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-1", "attention_count": 1, "attention_state": "needs_attention", "detail_url": "/review/case-1", "dispositions": ["review"]}, {"review_case_id": "case-2", "title": "Automatic-only work", "authors": ["Automatic Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-2", "attention_count": 0, "attention_state": "no_attention_needed", "detail_url": "/review/case-2", "dispositions": ["automatic"]}, {"review_case_id": "case-3", "title": "Resolved work", "authors": ["Resolved Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-3", "attention_count": 0, "attention_state": "no_attention_needed", "detail_url": "/review/case-3", "dispositions": ["resolved"]}]}
+        return {"schema_version": "review.v1", "lens": "all", "query": None, "next_cursor": None, "counts": {"needs_attention": 1, "all": 3, "no_attention_needed": 2}, "items": [{"work_id": "library_work_" + "1" * 64, "review_case_id": "case-1", "title": _HOSTILE, "authors": ["Synthetic Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-1", "attention_count": 1, "attention_state": "needs_attention", "detail_url": "/review/case-1", "dispositions": ["unresolved_choice"]}, {"work_id": "library_work_" + "2" * 64, "review_case_id": None, "title": "Catalogue-only work", "authors": ["Catalogue Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-2", "attention_count": 0, "attention_state": "no_attention_needed", "detail_url": None, "dispositions": []}, {"work_id": "library_work_" + "3" * 64, "review_case_id": "case-3", "title": "Resolved work", "authors": ["Resolved Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-3", "attention_count": 0, "attention_state": "no_attention_needed", "detail_url": "/review/case-3", "dispositions": ["ineligible"]}]}
     if path == "/api/v1/attention":
-        return {"schema_version": "attention-v1", "query": None, "next_cursor": None, "total": 1, "items": [{"review_case_id": "case-1", "destination": "title", "title": _HOSTILE, "authors": ["Synthetic Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-1", "detail_url": "/review/case-1?field=title", "notices": [], "provenance": []}]}
+        return {"schema_version": "attention-v1", "query": None, "next_cursor": None, "total": 1, "items": [{"review_case_id": "case-1", "destination": "title", "title": _HOSTILE, "authors": ["Synthetic Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-1", "detail_url": "/review/case-1?field=title", "notices": [], "provenance": [], "work_attention_count": 3}]}
     if path == "/api/v1/review-cases/case-1":
         return {"schema_version": "review-case-v1", "review_case_id": "case-1", "current": True, "target": {"connection": "primary", "library": "Synthetic library", "media_kind": "epub", "authors": ["Synthetic Author"], "item": _HOSTILE}, "fields": [{"destination": "title", "deterministic_disposition": "review", "effect_capability": "manual", "needs_attention": True, "manual_hold": False, "manual_required": True, "current": {"kind": "text", "value": "Current <script>"}, "proposed_values": [{"kind": "text", "value": "First proposed <img>"}, {"kind": "text", "value": "Second proposed"}, {"kind": "text", "value": "Third proposed"}], "proposal_id": "proposal-1", "target_fingerprint": "f" * 64, "human_decision": None, "automatic_decision": None, "notices": ["Synthetic reviewer fact"], "provenance": ["Synthetic provenance"], "uncertainty": ["Synthetic uncertainty"]}, {"destination": "subtitle", "deterministic_disposition": "automatic", "effect_capability": "manual", "needs_attention": False, "manual_hold": False, "manual_required": False, "current": {"kind": "text", "value": "Current subtitle"}, "proposed_values": [], "proposal_id": "proposal-2", "target_fingerprint": "f" * 64, "human_decision": None, "automatic_decision": {"decision_id": "automatic-1", "outcome": "keep_current", "origin": "automatic_policy"}, "notices": [], "provenance": [], "uncertainty": []}]}
     if path == "/api/v1/review-cases/case-1/evidence":
@@ -130,8 +130,8 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
             page.route("**/*", fulfill)
             routes = (
-                ("/library?lens=all", "Review library"),
-                ("/attention", "Fields needing attention"),
+                ("/library?lens=all", "Every work, with exceptions first"),
+                ("/attention", "Needs your attention"),
                 ("/review/case-1?field=title&subview=review", "Current review case"),
                 ("/policy?section=identity", "Choose how prepared metadata reaches you"),
                 ("/activity", "Ready when you are"),
@@ -164,9 +164,15 @@ class ReactPlatformArtifactTests(unittest.TestCase):
 
             page.set_viewport_size({"width": 1440, "height": 900})
             page.goto("https://react-platform.invalid/library?lens=all")
-            page.get_by_text("Automatic-only work", exact=True).wait_for()
-            page.locator(".work-row").first.get_by_text("Synthetic Author", exact=False).wait_for()
-            page.get_by_text("Synthetic library · epub · item-1", exact=True).wait_for()
+            page.get_by_text("Catalogue-only work", exact=True).wait_for()
+            page.locator(".library-work-row").first.get_by_text("Synthetic Author", exact=False).wait_for()
+            page.get_by_text("Synthetic library · Epub", exact=True).first.wait_for()
+            self.assertNotIn("item-1", page.locator(".library-work-row").first.inner_text())
+            no_case_row = page.locator(".library-work-row").filter(has_text="Catalogue-only work")
+            self.assertEqual(no_case_row.get_by_role("link").count(), 0)
+            self.assertEqual(no_case_row.get_by_role("button", name="Preview").count(), 0)
+            for control in page.locator(".masthead nav a, .shell-actions button").all():
+                self.assertGreaterEqual(control.bounding_box()["height"], 44)
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 1440)
             page.goto("https://react-platform.invalid/review/case-1?field=title&subview=review")
             page.get_by_text("Synthetic reviewer fact", exact=True).wait_for()
@@ -178,6 +184,8 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertIn("Third proposed", proposed.text_content() or "")
             page.get_by_text("Synthetic Author", exact=False).first.wait_for()
             page.set_viewport_size({"width": 390, "height": 844})
+            for control in page.locator(".masthead nav a, .shell-actions button").all():
+                self.assertGreaterEqual(control.bounding_box()["height"], 44)
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
 
             self.assertEqual(activity_failures, 1)
@@ -187,11 +195,26 @@ class ReactPlatformArtifactTests(unittest.TestCase):
 
             before_navigation = documents
             page.get_by_role("link", name="Library").click()
-            page.get_by_role("heading", name="Review library").wait_for()
+            page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
             page.get_by_role("link", name="Attention", exact=True).click()
-            page.get_by_role("heading", name="Fields needing attention").wait_for()
+            page.get_by_role("heading", name="Needs your attention").wait_for()
+            attention_header = page.locator(".attention-work > header").first
+            self.assertEqual(
+                attention_header.evaluate("node => getComputedStyle(node).flexDirection"),
+                "column",
+            )
+            self.assertEqual(
+                attention_header.locator(":scope > span").evaluate(
+                    "node => getComputedStyle(node).whiteSpace"
+                ),
+                "nowrap",
+            )
+            self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
+            attention_link = page.locator(".attention-field-row").first
+            self.assertIn("field=title", attention_link.get_attribute("href") or "")
+            self.assertNotIn("item-1", page.locator(".attention-groups").inner_text())
             page.go_back()
-            page.get_by_role("heading", name="Review library").wait_for()
+            page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
             self.assertEqual(documents, before_navigation)
             page.get_by_role("link", name="Policy", exact=True).click()
             page.get_by_role("button", name="Draft", exact=True).click()

@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError } from '../src/api/http'
-import type { ActivityDisplayView, ActivityView, CaseDetailView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
+import type { ActivityDisplayView, ActivityView, AttentionView, CaseDetailView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
 import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
 import { activityEventKeys, activityOutcome } from '../src/activityState'
 
@@ -14,11 +14,13 @@ const library: LibraryView = {
   counts: { attention: 1, all: 1, clear: 0 },
   works: [{
     id: 'case-1',
+    reviewCaseId: 'case-1',
     title: 'A Book',
     authors: [],
-    subtitle: 'Books · item-1',
+    library: 'Books',
+    mediaKind: 'ebook',
+    attentionCount: 1,
     attention: 'needs_attention',
-    dispositions: ['review'],
   }],
 }
 
@@ -129,17 +131,30 @@ describe('typed review routes', () => {
     expect(normalizeLibrarySearch({ lens: 'all', q: 'title', cursor: 'next', preview: 'case-1' })).toEqual({
       lens: 'all', q: 'title', cursor: 'next', preview: 'case-1',
     })
-    expect(normalizeLibrarySearch({ lens: 'hostile', q: 'x'.repeat(129) })).toEqual({ lens: 'needs_attention' })
+    expect(normalizeLibrarySearch({ lens: 'hostile', q: 'x'.repeat(129) })).toEqual({ lens: 'all' })
   })
+
+  it.each(['needs_attention', 'no_attention_needed'] as const)(
+    'keeps primary Library navigation active for the %s lens',
+    async (lens) => {
+      renderRoute(`/library?lens=${lens}`)
+      expect(await screen.findByRole('heading', { name: 'Every work, with exceptions first' })).toBeVisible()
+      expect(screen.getByRole('link', { name: 'Library' })).toHaveAttribute('aria-current', 'page')
+    },
+  )
 
   it('loads the critical library query and progressively reveals detail', async () => {
     const user = userEvent.setup()
-    const { http } = renderRoute('/library?lens=all&q=title')
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, title: 'item-1', subtitle: 'internal identity' })) }
+    renderRoute('/library?lens=all&q=title', http)
 
-    expect(await screen.findByRole('heading', { name: 'Review library' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Every work, with exceptions first' })).toBeVisible()
     expect(http.getLibrary).toHaveBeenCalledWith({ lens: 'all', q: 'title' }, expect.any(AbortSignal))
     await user.click(screen.getByRole('button', { name: 'Preview' }))
     expect(await screen.findByText('Progressive detail')).toBeVisible()
+    expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    expect(screen.queryByText('item-1')).toBeNull()
+    expect(screen.getByText('Author details unavailable · Books · ebook')).toBeVisible()
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
   })
 
@@ -148,12 +163,49 @@ describe('typed review routes', () => {
     const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1')
 
     expect(await screen.findByText('Progressive detail')).toBeVisible()
-    await user.clear(screen.getByLabelText('Search title, library, or item'))
-    await user.type(screen.getByLabelText('Search title, library, or item'), 'second')
+    await user.clear(screen.getByLabelText('Search title, author, library, or media'))
+    await user.type(screen.getByLabelText('Search title, author, library, or media'), 'second')
     await user.click(screen.getByRole('button', { name: 'Search' }))
 
     await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all', q: 'second' }))
     expect(screen.queryByText('Progressive detail')).toBeNull()
+  })
+
+  it('preserves an off-page preview deep link without exposing detail target identity', async () => {
+    const emptyLibrary: LibraryView = { lens: 'all', counts: { attention: 0, all: 0, clear: 0 }, works: [] }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => emptyLibrary),
+      getCaseDetail: vi.fn(async () => ({ ...detail, title: 'item-1', subtitle: 'internal identity' })),
+    }
+    renderRoute('/library?lens=all&preview=case-1', http)
+
+    expect(await screen.findByRole('heading', { name: 'Selected work' })).toBeVisible()
+    expect(screen.getByText('Readable work identity is not available on this Library page.')).toBeVisible()
+    expect(screen.queryByText('item-1')).toBeNull()
+    expect(screen.queryByText('internal identity')).toBeNull()
+    expect(screen.getByRole('link', { name: 'Open full review' })).toHaveAttribute('href', '/review/case-1?subview=review')
+  })
+
+  it('groups human-beneficial fields by work and links each exact destination', async () => {
+    const attention: AttentionView = {
+      total: 2,
+      items: [
+        { id: 'case-1', destination: 'title', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', notices: ['conflicting_evidence'], provenance: ['opaque-source-1'], workAttentionCount: 3 },
+        { id: 'case-1', destination: 'authors', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', notices: [], provenance: [], workAttentionCount: 3 },
+      ],
+    }
+    const http: ReviewHttp = { ...createHttp(), getAttention: vi.fn(async () => attention) }
+    renderRoute('/attention', http)
+
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+    expect(screen.getByText('3 fields')).toBeVisible()
+    expect(screen.getByText('Conflicting evidence')).toBeVisible()
+    expect(screen.queryByText('opaque-source-1')).toBeNull()
+    expect(screen.getByText(/1 evidence record available/u)).toBeVisible()
+    expect(screen.getByText(/Inspect the current value and available authors choices/u)).toBeVisible()
+    expect(screen.getByRole('link', { name: /Title/u })).toHaveAttribute('href', '/review/case-1?field=title&subview=review')
+    expect(screen.getByRole('link', { name: /Authors/u })).toHaveAttribute('href', '/review/case-1?field=authors&subview=review')
   })
 
   it('supports direct detail entry and focuses the settled main landmark', async () => {
@@ -577,6 +629,6 @@ describe('typed review routes', () => {
     renderRoute('/not-a-review-route')
 
     expect(await screen.findByRole('heading', { name: 'This review route does not exist.' })).toBeVisible()
-    expect(screen.getByRole('link', { name: 'Open review library' })).toHaveAttribute('href', '/library?lens=needs_attention')
+    expect(screen.getByRole('link', { name: 'Open review library' })).toHaveAttribute('href', '/library?lens=all')
   })
 })

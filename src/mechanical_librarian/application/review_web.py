@@ -45,14 +45,23 @@ class CurrentReviewCaseSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class ReviewLibrarySnapshot:
-    rows: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...]
+    rows: tuple[
+        tuple[
+            str | None,
+            str,
+            tuple[str, ...],
+            tuple[str, ...],
+            tuple[str, ...],
+        ],
+        ...,
+    ]
     total: int
     attention_total: int
 
 
 @dataclass(frozen=True, slots=True)
 class ReviewAttentionSnapshot:
-    rows: tuple[tuple[str, str, str], ...]
+    rows: tuple[tuple[str, str, str, int], ...]
     total: int
 
 
@@ -564,8 +573,10 @@ class BrowseReviewLibrary:
         except Exception as error:
             raise ReviewWebError("unavailable") from error
         items = [
-            _attention_item(case_document, report_document, destination)
-            for case_document, report_document, destination
+            _attention_item(
+                case_document, report_document, destination, work_attention_count
+            )
+            for case_document, report_document, destination, work_attention_count
             in snapshot.rows[:bounded_limit]
         ]
         return {
@@ -823,13 +834,19 @@ def _report_authors(report: MetadataReport) -> list[str]:
 
 
 def _library_item(
-    case_document: str,
+    case_document: str | None,
     report_document: str,
     decision_documents: tuple[str, ...],
     automatic_attention_destinations: tuple[str, ...] = (),
     suspended_destinations: tuple[str, ...] = (),
 ) -> dict[str, object]:
-    case, report = _case_and_report(case_document, report_document)
+    try:
+        report = MetadataReport.from_json(report_document)
+    except Exception as error:
+        raise ReviewWebError("unavailable") from error
+    case = None
+    if case_document is not None:
+        case, report = _case_and_report(case_document, report_document)
     decisions = set()
     for document in decision_documents:
         value = json.loads(document)
@@ -837,34 +854,41 @@ def _library_item(
             decisions.add(str(value["destination"]))
         else:
             decision = HumanDecision.from_json(document)
+            assert case is not None
             decision.validate_for(case)
             decisions.add(decision.destination)
-    attention = [
+    attention = [] if case is None else [
         value
         for value in case.proposals
         if (value["destination"] not in decisions
             and value["destination"] not in suspended_destinations
             and _needs_attention(value, automatic_attention_destinations))
     ]
-    outcomes = sorted(
+    outcomes = [] if case is None else sorted(
         {
             value["result"]["outcome"]  # type: ignore[index]
             for value in case.proposals
         }
     )
+    material = (
+        f"review-library-work-v1\0{report.target.connection}\0"
+        f"{report.target.library}\0{report.target.item}"
+    )
+    work_id = "library_work_" + hashlib.sha256(material.encode("utf-8")).hexdigest()
     return {
         "authors": _report_authors(report),
         "attention_count": len(attention),
         "attention_state": (
             "needs_attention" if attention else "no_attention_needed"
         ),
-        "detail_url": f"/review/{case.review_case_id}",
+        "detail_url": None if case is None else f"/review/{case.review_case_id}",
         "dispositions": outcomes,
         "item": report.target.item,
         "library": report.target.library,
         "media_kind": report.file.format,
-        "review_case_id": case.review_case_id,
+        "review_case_id": None if case is None else case.review_case_id,
         "title": report.target.current_title or "Untitled",
+        "work_id": work_id,
     }
 
 
@@ -872,6 +896,7 @@ def _attention_item(
     case_document: str,
     report_document: str,
     destination: str,
+    work_attention_count: int,
 ) -> dict[str, object]:
     case, report = _case_and_report(case_document, report_document)
     proposal = next(
@@ -903,4 +928,5 @@ def _attention_item(
         ),
         "review_case_id": case.review_case_id,
         "title": report.target.current_title or "Untitled",
+        "work_attention_count": work_attention_count,
     }
