@@ -491,6 +491,20 @@ def _policy_application_http_error(error: MetadataPolicyApplicationError) -> HTT
     return HTTPException(status, detail={"code": code.replace(" ", "_")})
 
 
+def _preparation_http_error(
+    error: RuntimeError | StopIteration, *, retry: bool = False
+) -> HTTPException:
+    """Preserve closed preparation controls; collapse unexpected failures."""
+    code = getattr(error, "code", "")
+    if code == "unavailable":
+        return HTTPException(503, detail={"code": code})
+    if code == "library":
+        return HTTPException(404, detail={"code": code})
+    if code == "paused" or (retry and code == "retry"):
+        return HTTPException(409, detail={"code": code})
+    return HTTPException(503, detail={"code": "persistence"})
+
+
 def _policy_problem(error: MetadataPolicyError) -> str:
     """Translate closed-domain failures without reflecting input values."""
     return {
@@ -1387,9 +1401,7 @@ def _register_browse_and_preparation_routes(
                 application.request_review_scan(connection, library_name)
             )
         except (RuntimeError, StopIteration) as error:
-            code = getattr(error, "code", "")
-            status = 404 if code == "library" else 409 if code == "paused" else 503
-            raise HTTPException(status, detail={"code": code if status != 503 else "persistence"}) from None
+            raise _preparation_http_error(error) from None
         except Exception:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 
@@ -1403,6 +1415,8 @@ def _register_browse_and_preparation_routes(
                     else application.resume_review_preparation()
                 ).to_data()
             )
+        except (RuntimeError, StopIteration) as error:
+            raise _preparation_http_error(error) from None
         except Exception:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 
@@ -1448,9 +1462,7 @@ def _register_browse_and_preparation_routes(
                 application.retry_review_scan(connection, library_name)
             )
         except (RuntimeError, StopIteration) as error:
-            code = getattr(error, "code", "library")
-            status = 409 if code in {"retry", "paused"} else 404 if code == "library" else 503
-            raise HTTPException(status, detail={"code": code}) from None
+            raise _preparation_http_error(error, retry=True) from None
 
     @app.get(
         "/api/v1/review-cases/{review_case_id}/evidence",
