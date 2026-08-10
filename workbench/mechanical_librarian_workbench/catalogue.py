@@ -37,6 +37,7 @@ CAPABILITIES = (
     Capability("case-inspect", "inspector", "reopen_review_case"),
     Capability("catalogue-refresh", "scenario", "run_catalogue"),
     Capability("catalogue-list", "inspector", "run_catalogue"),
+    Capability("catalogue-get", "inspector", "run_catalogue"),
     Capability("batch-preview", "scenario", "preview_batch"),
     Capability("batch-inspect", "inspector", "inspect_batch"),
     Capability("batch-run", "scenario", "run_batch"),

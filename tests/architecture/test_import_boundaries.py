@@ -6,6 +6,9 @@ from pathlib import Path
 
 
 PACKAGE_ROOT = Path(__file__).parents[2] / "src" / "mechanical_librarian"
+WORKBENCH_ROOT = (
+    Path(__file__).parents[2] / "workbench" / "mechanical_librarian_workbench"
+)
 LAYERS = {"interfaces", "application", "domain", "adapters", "infrastructure", "bootstrap"}
 ALLOWED = {
     "domain": {"domain"},
@@ -58,6 +61,25 @@ class ImportBoundaryTests(unittest.TestCase):
                 target_layer = _layer(target)
                 if target.startswith("tests") or (origin_layer and target_layer and target_layer not in ALLOWED[origin_layer]):
                     violations.append(f"{origin} imports {target}")
+        self.assertEqual(violations, [])
+
+    def test_source_only_workbench_does_not_import_production_adapters(self) -> None:
+        violations: list[str] = []
+        for path in sorted(WORKBENCH_ROOT.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    targets = [value.name for value in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    targets = [node.module or ""]
+                else:
+                    continue
+                if any(
+                    target == "mechanical_librarian.adapters"
+                    or target.startswith("mechanical_librarian.adapters.")
+                    for target in targets
+                ):
+                    violations.append(str(path.relative_to(WORKBENCH_ROOT)))
         self.assertEqual(violations, [])
 
     def test_epub_child_keeps_one_private_archive_session(self) -> None:

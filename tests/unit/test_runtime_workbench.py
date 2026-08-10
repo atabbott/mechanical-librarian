@@ -6,11 +6,13 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
+from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.interfaces.cli import main
 from mechanical_librarian.bootstrap import composition
 
@@ -70,7 +72,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
         self.assertEqual(errors.getvalue(), "Review server failed: invalid invocation.\n")
 
     def test_workbench_catalogue_maps_every_relocated_capability(self) -> None:
-        self.assertEqual(len(CAPABILITIES), 14)
+        self.assertEqual(len(CAPABILITIES), 15)
         self.assertEqual(
             {operation for capability in CAPABILITIES for operation in capability.operations},
             set(WorkbenchOperations.__dataclass_fields__),
@@ -93,6 +95,10 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             ProposalRequest("create", "report"), ProposalRequest("inspect", "proposal"),
             ReviewCaseRequest("admit", "proposal"), ReviewCaseRequest("inspect", "case"),
             CatalogueRequest("refresh", connection="primary"), CatalogueRequest("list"),
+            CatalogueRequest(
+                "get", connection="primary", library="books",
+                library_id="library-id", selector="item",
+            ),
             BatchRequest("preview"), BatchRequest("inspect"), BatchRequest("run", manifest_id=digest),
             DecisionPreviewRequest("case"),
             ContainedReviewerRequest(
@@ -116,8 +122,8 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             operations = replace(_operations(), run_batch=batch)
             results = tuple(execute(context, request, operations) for request in requests)
             self.assertEqual([item.name for item in results], [item.name for item in CAPABILITIES])
-            self.assertEqual(len(tuple(context.path("attempts").iterdir())), 4)
-            batch_artifact = context.path("artifacts/" + results[11].artifacts[0])
+            self.assertEqual(len(tuple(context.path("attempts").iterdir())), 6)
+            batch_artifact = context.path("artifacts/" + results[12].artifacts[0])
             self.assertEqual(
                 json.loads(batch_artifact.read_text(encoding="utf-8")),
                 {
@@ -209,6 +215,143 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             ):
                 execute(context, request, operations)
 
+    def test_network_operations_execute_exact_admitted_snapshots(self) -> None:
+        cases = (
+            (ReportRequest("observe", connection="primary", library="books", item="item"), "run_metadata_report"),
+            (ProposalRequest("create", "report"), "create_proposal_set"),
+            (ReviewCaseRequest("admit", "proposal"), "admit_review_case"),
+            (CatalogueRequest("refresh", connection="primary"), "run_catalogue"),
+        )
+        for request, operation_name in cases:
+            with self.subTest(operation=operation_name), WorkbenchContext.temporary() as context:
+                secret = context.path("secret.txt")
+                secret.write_bytes(b"admitted credential")
+                secret.chmod(0o600)
+                config = context.path("config.json")
+                config.write_text(
+                    json.dumps(
+                        {
+                            "connections": [{
+                                "endpoint": "http://127.0.0.1:8765",
+                                "secret_file": str(secret),
+                            }]
+                        },
+                        separators=(",", ":"),
+                    ),
+                    encoding="utf-8",
+                )
+                context.network = IsolatedNetworkProfile(
+                    "isolated-test", True, True,
+                    tuple(sorted({
+                        hashlib.sha256(config.read_bytes()).hexdigest(),
+                        hashlib.sha256(secret.read_bytes()).hexdigest(),
+                    })),
+                )
+                original_require_network = context.require_network
+
+                def bind_then_replace(
+                    *paths: Path,
+                    private_first: bool = False,
+                    private_tail: int = 0,
+                    first_payload: bytes | None = None,
+                ) -> tuple[bytes, ...]:
+                    bound = original_require_network(
+                        *paths,
+                        private_first=private_first,
+                        private_tail=private_tail,
+                        first_payload=first_payload,
+                    )
+                    config.write_bytes(b'{"connections":[{"endpoint":"https://live.invalid"}]}')
+                    secret.write_bytes(b"replacement credential")
+                    return bound
+
+                def operation(config_path: Path, *_args: object) -> str:
+                    self.assertNotEqual(config_path, config)
+                    execution = json.loads(config_path.read_text(encoding="utf-8"))
+                    connection = execution["connections"][0]
+                    self.assertEqual(
+                        connection["endpoint"], "http://127.0.0.1:8765"
+                    )
+                    execution_secret = Path(connection["secret_file"])
+                    self.assertNotEqual(execution_secret, secret)
+                    self.assertEqual(
+                        execution_secret.read_bytes(), b"admitted credential"
+                    )
+                    return '{"ok":true}'
+
+                context.require_network = bind_then_replace  # type: ignore[method-assign]
+                execute(
+                    context,
+                    request,
+                    replace(_operations(), **{operation_name: operation}),
+                )
+
+        with WorkbenchContext.temporary() as context:
+            secret = context.path("secret.txt")
+            secret.write_bytes(b"admitted credential")
+            secret.chmod(0o600)
+            config = context.path("config.json")
+            config.write_text(
+                json.dumps(
+                    {
+                        "connections": [{
+                            "endpoint": "http://127.0.0.1:8765",
+                            "secret_file": str(secret),
+                        }]
+                    },
+                    separators=(",", ":"),
+                ),
+                encoding="utf-8",
+            )
+            manifest = context.path("batch.json")
+            manifest.write_bytes(b"{}")
+            context.network = IsolatedNetworkProfile(
+                "isolated-test", True, True,
+                tuple(sorted({
+                    hashlib.sha256(config.read_bytes()).hexdigest(),
+                    hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                    hashlib.sha256(secret.read_bytes()).hexdigest(),
+                })),
+            )
+            expected_manifest = manifest.read_bytes()
+            original_require_network = context.require_network
+
+            def bind_batch_then_replace(
+                *paths: Path,
+                private_first: bool = False,
+                private_tail: int = 0,
+                first_payload: bytes | None = None,
+            ) -> tuple[bytes, ...]:
+                bound = original_require_network(
+                    *paths,
+                    private_first=private_first,
+                    private_tail=private_tail,
+                    first_payload=first_payload,
+                )
+                config.write_bytes(b'"replaced"')
+                manifest.write_bytes(b'"replaced"')
+                secret.write_bytes(b"replacement credential")
+                return bound
+
+            def run_batch(config_path: Path, _catalogue: Path, manifest_path: Path,
+                          *_args: object) -> bool:
+                self.assertEqual(manifest_path.read_bytes(), expected_manifest)
+                execution = json.loads(config_path.read_text(encoding="utf-8"))
+                execution_secret = Path(
+                    execution["connections"][0]["secret_file"]
+                )
+                self.assertEqual(
+                    execution_secret.read_bytes(), b"admitted credential"
+                )
+                return True
+
+            context.require_network = bind_batch_then_replace  # type: ignore[method-assign]
+            execute(
+                context,
+                BatchRequest("run", manifest_id="a" * 64),
+                replace(_operations(), run_batch=run_batch),
+            )
+
     def test_result_has_equivalent_canonical_and_summary_rendering(self) -> None:
         digest = "a" * 64
         artifact = "workbench_artifact_" + digest
@@ -247,6 +390,28 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             CatalogueRequest("refresh")
         with self.assertRaises(ValueError):
             ProposalRequest("inspect", None)  # type: ignore[arg-type]
+        exact = {
+            "connection": "primary",
+            "library": "books",
+            "library_id": "library-id",
+            "selector": "item-id",
+        }
+        for missing in exact:
+            values = {**exact, missing: None}
+            with self.subTest(missing=missing), self.assertRaises(ValueError):
+                CatalogueRequest("get", **values)  # type: ignore[arg-type]
+
+    def test_proposal_and_case_currentness_require_network_authority(self) -> None:
+        for request in (
+            ProposalRequest("create", "report"),
+            ReviewCaseRequest("admit", "proposal"),
+        ):
+            with self.subTest(request=request), WorkbenchContext.temporary() as context:
+                _network_files(context)
+                with self.assertRaises(WorkbenchFailure) as caught:
+                    execute(context, request, _operations())
+                self.assertEqual(caught.exception.category, "refused")
+                self.assertFalse(context.path("attempts").exists())
 
     def test_operation_failures_are_redacted(self) -> None:
         def fail(*_args: object) -> str:
@@ -258,11 +423,41 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                 execute(context, ReportRequest("inspect", report_id="report"), operations)
         self.assertNotIn("private", str(caught.exception))
 
+    def test_operation_contract_json_preserves_application_field_order(self) -> None:
+        raw = '[{"connection":"primary","item":"item","eligible":true}]'
+        operations = replace(_operations(), run_catalogue=lambda *_args: raw)
+        with WorkbenchContext.temporary() as context:
+            result = execute(context, CatalogueRequest("list"), operations)
+            artifact = context.path("artifacts/" + result.artifacts[0])
+            self.assertEqual(artifact.read_text(encoding="utf-8"), raw)
+
+    def test_runtime_configuration_failure_has_its_typed_exit(self) -> None:
+        def fail(*_args: object) -> None:
+            raise ConfigurationError("private configuration detail")
+
+        errors = io.StringIO()
+        result = main(
+            (
+                "review-serve", "--config", "config.json",
+                "--database", "reports.sqlite", "--catalogue", "catalogue.sqlite",
+                "--artifacts", "artifacts",
+            ),
+            review_serve_runner=fail,
+            stderr=errors,
+        )
+        self.assertEqual(result, 3)
+        self.assertEqual(
+            errors.getvalue(),
+            "Review server failed: configuration unavailable.\n",
+        )
+
     def test_network_profile_rejects_production_shaped_configuration(self) -> None:
         documents = (
             '{"connections":[{"endpoint":"https://library.example.com"}]}',
             '{"connections":[{"endpoint":"http://127.0.0.1:8765",'
             '"secret_file":"/run/secrets/production"}]}',
+            '{"connections":[{"endpoint":"http://127.0.0.1:8765",'
+            '"secret_file":"secret.txt"}]}',
             '{"connections":[{"endpoint":"http://127.0.0.1:8765"}],'
             '"providers":[{"enabled":true}]}',
         )
@@ -284,6 +479,202 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                     )
                 self.assertEqual(caught.exception.category, "refused")
 
+        with WorkbenchContext.temporary() as context:
+            secret = context.path("exposed.secret")
+            secret.write_bytes(b"synthetic")
+            secret.chmod(0o644)
+            config = context.path("config.json")
+            config.write_text(
+                json.dumps({
+                    "connections": [{
+                        "endpoint": "http://127.0.0.1:8765",
+                        "secret_file": str(secret),
+                    }]
+                }),
+                encoding="utf-8",
+            )
+            context.network = IsolatedNetworkProfile(
+                "isolated-test", True, True,
+                tuple(sorted({
+                    hashlib.sha256(config.read_bytes()).hexdigest(),
+                    hashlib.sha256(secret.read_bytes()).hexdigest(),
+                })),
+            )
+            with self.assertRaises(WorkbenchFailure) as caught:
+                execute(
+                    context,
+                    ReportRequest(
+                        "observe", connection="primary", library="books", item="item"
+                    ),
+                    _operations(),
+                )
+            self.assertEqual(caught.exception.category, "refused")
+
+    def test_isolated_configuration_is_bounded_before_json_decode(self) -> None:
+        with WorkbenchContext.temporary() as context:
+            config = context.path("config.json")
+            config.write_bytes(b"{" + b" " * 1_048_576 + b"}")
+            with mock.patch(
+                "mechanical_librarian_workbench.context.json.loads",
+                side_effect=AssertionError("decoder must not be reached"),
+            ) as loads, self.assertRaises(PermissionError):
+                context.require_isolated_configuration(config)
+            loads.assert_not_called()
+
+    def test_persistent_workspace_and_artifacts_are_owner_only(self) -> None:
+        with tempfile.TemporaryDirectory() as parent:
+            workspace = Path(parent) / "persistent"
+            context = WorkbenchContext(workspace, input_class="test")
+            self.assertEqual(workspace.stat().st_mode & 0o777, 0o700)
+            artifact_id, _ = context.store_artifact(b"private")
+            artifact = context.path("artifacts") / artifact_id
+            self.assertEqual(context.path("artifacts").stat().st_mode & 0o777, 0o700)
+            self.assertEqual(artifact.stat().st_mode & 0o777, 0o600)
+            config = context.path("config.json")
+            config.write_text(
+                '{"connections":[{"endpoint":"http://127.0.0.1:8765"}]}',
+                encoding="utf-8",
+            )
+            payload, private = context.require_isolated_configuration(config)
+            context.network = IsolatedNetworkProfile(
+                "isolated-test", True, True,
+                (hashlib.sha256(payload).hexdigest(),),
+            )
+            bound = context.require_network(config, *private, first_payload=payload)
+            snapshot = context.authority_snapshot(bound[0])
+            attempt = next(context.path("attempts").iterdir())
+            self.assertEqual(context.path("attempts").stat().st_mode & 0o777, 0o700)
+            self.assertEqual(attempt.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(context.path("authority").stat().st_mode & 0o777, 0o700)
+            self.assertEqual(snapshot.stat().st_mode & 0o777, 0o600)
+
+            artifact.chmod(0o644)
+            with self.assertRaises(PermissionError):
+                context.store_artifact(b"private")
+            artifact.chmod(0o600)
+            artifact.write_bytes(b"changed")
+            with self.assertRaises(PermissionError):
+                context.store_artifact(b"private")
+
+            unsafe_artifacts = Path(parent) / "unsafe-artifacts"
+            unsafe_artifacts.mkdir(mode=0o700)
+            unsafe_context = WorkbenchContext(unsafe_artifacts, input_class="test")
+            (unsafe_artifacts / "artifacts").mkdir(mode=0o755)
+            with self.assertRaises(PermissionError):
+                unsafe_context.store_artifact(b"private")
+
+            unsafe_workspace = Path(parent) / "unsafe-workspace"
+            unsafe_workspace.mkdir(mode=0o755)
+            with self.assertRaises(PermissionError):
+                WorkbenchContext(unsafe_workspace, input_class="test")
+
+    def test_repeated_large_result_artifact_reuses_exact_private_file(self) -> None:
+        payload = b"x" * 1_048_577
+        with WorkbenchContext.temporary() as context:
+            first = context.store_artifact(payload)
+            second = context.store_artifact(payload)
+            self.assertEqual(second, first)
+            artifact = context.path("artifacts") / first[0]
+            self.assertEqual(artifact.stat().st_size, len(payload))
+            self.assertEqual(artifact.stat().st_mode & 0o777, 0o600)
+
+    def test_authority_snapshot_write_failure_does_not_poison_retry(self) -> None:
+        payload = b"admitted authority"
+        with WorkbenchContext.temporary() as context:
+            real_write = os.write
+            writes = 0
+
+            def fail_after_prefix(descriptor: int, remaining: bytes) -> int:
+                nonlocal writes
+                writes += 1
+                if writes == 1:
+                    return real_write(descriptor, remaining[:1])
+                raise OSError("synthetic write failure")
+
+            with mock.patch(
+                "mechanical_librarian_workbench.context.os.write",
+                side_effect=fail_after_prefix,
+            ):
+                with self.assertRaises(PermissionError):
+                    context.authority_snapshot(payload)
+
+            snapshot = context.authority_snapshot(payload)
+            self.assertEqual(snapshot.read_bytes(), payload)
+            self.assertEqual(
+                tuple(context.path("authority").iterdir()),
+                (snapshot,),
+            )
+
+    def test_batch_accepts_exact_schema_maximum_authority_files(self) -> None:
+        with WorkbenchContext.temporary() as context:
+            connections: list[dict[str, str]] = []
+            authority_paths: list[Path] = []
+            for index in range(32):
+                secret = context.path(f"secret-{index}.txt")
+                secret.write_bytes(f"secret-{index}".encode("utf-8"))
+                secret.chmod(0o600)
+                authority_paths.append(secret)
+                connections.append(
+                    {
+                        "endpoint": "http://127.0.0.1:8765",
+                        "secret_file": str(secret),
+                    }
+                )
+            review: dict[str, str] = {
+                "owner_password_hash_file": "",
+                "tls_certificate_file": "",
+                "tls_private_key_file": "",
+            }
+            for field in tuple(review):
+                authority = context.path(f"{field}.txt")
+                authority.write_bytes(field.encode("utf-8"))
+                authority.chmod(0o600)
+                authority_paths.append(authority)
+                review[field] = str(authority)
+            config = context.path("config.json")
+            config.write_text(
+                json.dumps(
+                    {"connections": connections, "review": review},
+                    separators=(",", ":"),
+                ),
+                encoding="utf-8",
+            )
+            manifest = context.path("batch.json")
+            manifest.write_bytes(b"{}")
+            context.network = IsolatedNetworkProfile(
+                "isolated-test",
+                True,
+                True,
+                tuple(
+                    sorted(
+                        hashlib.sha256(path.read_bytes()).hexdigest()
+                        for path in (config, manifest, *authority_paths)
+                    )
+                ),
+            )
+
+            result = execute(
+                context,
+                BatchRequest("run", manifest_id="a" * 64),
+                replace(_operations(), run_batch=lambda *_args: True),
+            )
+
+            self.assertEqual(result.data["status"], "completed")
+            attempt = json.loads(
+                next(context.path("attempts").iterdir()).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(len(attempt["input_sha256"]), 37)
+
+        with self.assertRaises(ValueError):
+            IsolatedNetworkProfile(
+                "isolated-test",
+                True,
+                True,
+                tuple(f"{index:064x}" for index in range(38)),
+            )
+
     def test_documented_persistent_workspace_is_ignored(self) -> None:
         completed = subprocess.run(
             ["git", "check-ignore", "--quiet", ".workbench/report/artifacts/private"],
@@ -298,6 +689,17 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             context.store_artifact(b"{}")
             self.assertTrue(workspace.exists())
         self.assertFalse(workspace.exists())
+
+    def test_temporary_cleanup_ignores_mutated_public_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as parent:
+            unrelated = Path(parent) / "unrelated"
+            unrelated.mkdir()
+            context = WorkbenchContext.temporary()
+            original = context.workspace
+            context.workspace = unrelated
+            context.close()
+            self.assertFalse(original.exists())
+            self.assertTrue(unrelated.exists())
 
     def test_workbench_is_not_production_source(self) -> None:
         self.assertFalse((ROOT / "src" / "mechanical_librarian_workbench").exists())

@@ -49,7 +49,9 @@ with WorkbenchContext.temporary() as context:
 Every successful scenario returns `WorkbenchResult`. Its summary and canonical
 JSON contain the same scenario name, completion status, artifact identifier,
 artifact byte count, and SHA-256 digest. Large output bytes remain in the local
-artifact directory. Operation exceptions cross one redacting boundary and
+artifact directory. Operation JSON retains the valid field order emitted by its
+owning application contract; the workbench does not impose a second universal
+key-ordering rule. Operation exceptions cross one redacting boundary and
 become a closed `WorkbenchFailure`; do not print exception causes or raw provider
 data.
 
@@ -66,6 +68,11 @@ Provider and contained-reviewer calls additionally require an
 `IsolatedNetworkProfile`. Its identifier, sanitized-input assertion, and bounded
 authority assertion are validated and bound to the exact SHA-256 identities of
 the configuration, manifest, or reviewer-profile files used by the operation.
+Authority files are size-bounded before decoding. Configuration and manifest
+operations execute only from owner-private snapshots of the exact admitted
+bytes. Absolute private-file references are rebound to matching owner-private
+snapshots in the execution configuration; contained-reviewer operations receive
+the admitted bytes directly.
 Target/provider configuration additionally admits only loopback or `.invalid`
 origins and confines credential, TLS, password, and media paths to the workbench
 workspace. The production composition refuses every enabled fixed-origin
@@ -75,6 +82,13 @@ A canonical attempt record containing those input identities is
 durably created before each network operation. Use only fake or explicitly
 isolated services and sanitized inputs; never point the workbench at a
 production library or service.
+
+Persistent workspace, authority, attempt, and result-artifact directories are
+owner-only, as are their files. Unsafe pre-existing modes, owners, links, or
+conflicting digest-addressed files are refused instead of repaired. ProposalSet
+creation and review-case admission pass through the same isolated-configuration
+and durable pre-egress gate because their exact-current checks can read the
+target service and selected media.
 
 ## Qualification
 

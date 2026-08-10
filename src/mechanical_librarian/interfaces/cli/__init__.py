@@ -48,12 +48,13 @@ def main(argv: Sequence[str] | None = None, *, review_serve_runner: ReviewServeR
     errors = sys.stderr if stderr is None else stderr
     try:
         arguments = _parser().parse_args(list(sys.argv[1:] if argv is None else argv))
-        if review_serve_runner is None:
-            raise RuntimeError("runtime composition unavailable")
-        review_serve_runner(arguments.config, arguments.database, arguments.catalogue, arguments.artifacts, arguments.host, arguments.port)
     except ValueError:
         errors.write("Review server failed: invalid invocation.\n")
         return 2
+    try:
+        if review_serve_runner is None:
+            raise RuntimeError("runtime composition unavailable")
+        review_serve_runner(arguments.config, arguments.database, arguments.catalogue, arguments.artifacts, arguments.host, arguments.port)
     except ConfigurationError:
         errors.write("Review server failed: configuration unavailable.\n")
         return 3
