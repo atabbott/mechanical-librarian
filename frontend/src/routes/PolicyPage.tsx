@@ -17,7 +17,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const search = policyRoute.useSearch()
   const navigate = useNavigate({ from: '/policy' })
   useRouteReadyFocus(search.section)
-  const [draft, setDraft] = useState<PolicyDraft>(() => ({ name: 'Policy draft', options: { ...data.state.profile.options }, destinations: { ...data.state.profile.destinations } }))
+  const [draft, setDraft] = useState<PolicyDraft>(() => ({ name: data.state.profile.name, options: { ...data.state.profile.options }, destinations: { ...data.state.profile.destinations } }))
   const [draftId, setDraftId] = useState<string>()
   const [reviewedId, setReviewedId] = useState<string>()
   const [preview, setPreview] = useState<PolicyPreviewView>()

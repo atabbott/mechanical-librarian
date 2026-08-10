@@ -71,16 +71,23 @@ export interface ActivityDisplayView {
   suspensions: readonly ActivitySuspensionView[]
 }
 
-export type ActivityView = ActivityDisplayView | Readonly<Record<string, unknown>>
+export type ActivityView = ActivityDisplayView
 
 export interface PolicyDraftDisplayView { activeName: string; draftName: string; changed: boolean }
+
+const sameStringMap = (left: Record<string, string>, right: Record<string, string>) => {
+  const leftKeys = Object.keys(left)
+  const rightKeys = Object.keys(right)
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Object.hasOwn(right, key) && left[key] === right[key])
+}
 
 export const derivePolicyDraftDisplay = (active: PolicyStateView, draft: PolicyDraft): PolicyDraftDisplayView => ({
   activeName: active.profile.name,
   draftName: draft.name,
   changed: draft.name !== active.profile.name
-    || JSON.stringify(draft.options) !== JSON.stringify(active.profile.options)
-    || JSON.stringify(draft.destinations) !== JSON.stringify(active.profile.destinations),
+    || !sameStringMap(draft.options, active.profile.options)
+    || !sameStringMap(draft.destinations, active.profile.destinations),
 })
 
 export interface DecisionCommand {

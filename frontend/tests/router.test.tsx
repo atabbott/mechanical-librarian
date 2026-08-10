@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError } from '../src/api/http'
-import type { ActivityView, CaseDetailView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
+import type { ActivityDisplayView, ActivityView, CaseDetailView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
 import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
 import { activityEventKeys, activityOutcome } from '../src/activityState'
 
@@ -46,6 +46,13 @@ const detail: CaseDetailView = {
   }],
 }
 
+const activity = (value: Partial<ActivityDisplayView> = {}): ActivityView => ({
+  schema_version: 'continuous-field-activity-v1', backup_ready: true, paused: false,
+  configured_libraries: [], consented_libraries: [], enabled_libraries: [], capabilities: [],
+  events: [], counts: {}, example: null, last_failure: null,
+  prepared: { automatic: 0, human: 0, total: 0 }, suspensions: [], ...value,
+})
+
 const createHttp = (): ReviewHttp => ({
   getLibrary: vi.fn(async () => library),
   getAttention: vi.fn(async () => ({ total: 0, items: [] })),
@@ -62,7 +69,7 @@ const createHttp = (): ReviewHttp => ({
   getShadowSample: vi.fn(async (): Promise<ShadowSampleView> => ({ schema_version: 'shadow-outcome-sample-v1', authority: 'none', items: [], next_cursor: null })),
   getPolicyTransition: vi.fn(async () => null),
   policyCommand: async <T,>() => ({} as T),
-  getActivity: vi.fn(async () => ({})),
+  getActivity: vi.fn(async () => activity()),
   activityCommand: vi.fn(async () => undefined),
   logout: vi.fn(async () => undefined),
 })
@@ -405,8 +412,7 @@ describe('typed review routes', () => {
     const user = userEvent.setup()
     const http: ReviewHttp = {
       ...createHttp(),
-      getActivity: vi.fn(async () => ({
-        backup_ready: true,
+      getActivity: vi.fn(async () => activity({
         configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 1, human: 1, total: 2 } }],
         enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
         capabilities: [{
@@ -443,7 +449,7 @@ describe('typed review routes', () => {
     ['unconfirmed', false, 'The activity outcome could not be confirmed. No command was resent.'],
   ])('reconciles an ambiguous pause as %s without resending it', async (_name, paused, message) => {
     const user = userEvent.setup()
-    const initial: ActivityView = { backup_ready: true, configured_libraries: [], enabled_libraries: [{ connection: 'primary', library: 'fiction' }], capabilities: [], events: [], paused: false }
+    const initial: ActivityView = activity({ enabled_libraries: [{ connection: 'primary', library: 'fiction' }] })
     let current = initial
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current), activityCommand: vi.fn(async () => { throw new AmbiguousMutationError() }) }
     renderRoute('/activity', http)
@@ -458,7 +464,7 @@ describe('typed review routes', () => {
 
   it('reports an unresolved ambiguous pause without calling it safe or resending it', async () => {
     const user = userEvent.setup()
-    const initial: ActivityView = { backup_ready: true, configured_libraries: [], enabled_libraries: [{ connection: 'primary', library: 'fiction' }], capabilities: [], events: [], paused: false }
+    const initial: ActivityView = activity({ enabled_libraries: [{ connection: 'primary', library: 'fiction' }] })
     let available = true
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => { if (!available) throw new Error('offline'); return initial }), activityCommand: vi.fn(async () => { throw new AmbiguousMutationError() }) }
     renderRoute('/activity', http)
@@ -472,7 +478,7 @@ describe('typed review routes', () => {
 
   it('does not treat a missing requested consent destination as applied after ambiguity', async () => {
     const user = userEvent.setup()
-    const initial: ActivityView = { backup_ready: true, configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { total: 1 } }], enabled_libraries: [], capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false }] }], events: [], paused: false }
+    const initial: ActivityView = activity({ configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 0, human: 0, total: 1 } }], capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false }] }] })
     let current = initial
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current), activityCommand: vi.fn(async () => { throw new AmbiguousMutationError() }) }
     renderRoute('/activity', http)
@@ -486,13 +492,11 @@ describe('typed review routes', () => {
 
   it('prunes a selection when polling removes and later restores eligibility', async () => {
     const user = userEvent.setup()
-    const partial: ActivityView = {
-      backup_ready: true,
+    const partial: ActivityView = activity({
       configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 1, human: 0, total: 1 } }],
       enabled_libraries: [],
       capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false }] }],
-      events: [], paused: false,
-    }
+    })
     let current = partial
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current) }
     const { queryClient } = renderRoute('/activity', http)
@@ -515,8 +519,7 @@ describe('typed review routes', () => {
   it('keeps a fully connection-blocked prepared library visible but unselectable', async () => {
     const http: ReviewHttp = {
       ...createHttp(),
-      getActivity: vi.fn(async () => ({
-        backup_ready: true,
+      getActivity: vi.fn(async () => activity({
         configured_libraries: [{ connection: 'primary', library: 'blocked', prepared: { automatic: 2, human: 0, total: 2 } }],
         enabled_libraries: [],
         capabilities: [{
@@ -542,11 +545,11 @@ describe('typed review routes', () => {
     const unknown = 'unexpected_origin_' + 'x'.repeat(100)
     const http: ReviewHttp = {
       ...createHttp(),
-      getActivity: vi.fn(async () => ({
+      getActivity: vi.fn(async () => activity({
         backup_ready: true, configured_libraries: [], enabled_libraries: [], capabilities: [], paused: false,
         events: [
-          { work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', origin: 'automatic_policy' },
-          { work_id: 'book-2', library: 'fiction', destination: 'subtitle', state: 'stale', origin: unknown },
+          { work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', origin: 'automatic_policy', occurred_at: null, failure: null, work_label: 'Work details unavailable' },
+          { work_id: 'book-2', library: 'fiction', destination: 'subtitle', state: 'stale', origin: unknown, occurred_at: null, failure: null, work_label: 'Work details unavailable' },
         ],
       })),
     }
@@ -562,7 +565,7 @@ describe('typed review routes', () => {
   it('renders duplicate activity events without duplicate React keys', async () => {
     const duplicate = { work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', occurred_at: '2026-08-10T00:00:00Z' }
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => ({ backup_ready: true, configured_libraries: [], enabled_libraries: [], capabilities: [], events: [duplicate, duplicate], paused: false })) }
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({ events: [duplicate, duplicate].map((event) => ({ ...event, occurred_at: null, origin: '', failure: null, work_label: 'Work details unavailable' })) })) }
     renderRoute('/activity', http)
 
     await screen.findAllByText('Work details unavailable · verified')
