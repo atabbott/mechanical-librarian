@@ -770,13 +770,13 @@ describe('typed review routes', () => {
 
     current = { ...partial, enabled_libraries: [{ connection: 'primary', library: 'fiction' }], capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: true }] }] }
     await queryClient.invalidateQueries({ queryKey: ['activity'] })
-    await waitFor(() => expect(choice).toBeDisabled())
-    expect(choice).not.toBeChecked()
+    await waitFor(() => expect(screen.queryByRole('checkbox', { name: /fiction · 1 prepared/ })).toBeNull())
 
     current = partial
     await queryClient.invalidateQueries({ queryKey: ['activity'] })
-    await waitFor(() => expect(choice).toBeEnabled())
-    expect(choice).not.toBeChecked()
+    const restored = await screen.findByRole('checkbox', { name: /fiction · 1 prepared/ })
+    expect(restored).toBeEnabled()
+    expect(restored).not.toBeChecked()
     expect(screen.getByRole('button', { name: 'Enable guarded writes' })).toBeDisabled()
   })
 
@@ -832,9 +832,30 @@ describe('typed review routes', () => {
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({ events: [duplicate, duplicate].map((event) => ({ ...event, occurred_at: null, origin: '', failure: null, work_label: 'Work details unavailable' })) })) }
     renderRoute('/activity', http)
 
-    await screen.findAllByText('Work details unavailable · verified')
+    await screen.findAllByText('Work details unavailable')
+    await screen.findAllByText('Verified')
     expect(error).not.toHaveBeenCalledWith(expect.stringContaining('same key'), expect.anything())
     error.mockRestore()
+  })
+
+  it('groups a shared recovery once and keeps recovery authority on the persisted path', async () => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => activity({
+        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        suspensions: [
+          { connection: 'primary', destination: 'title', reason: 'unexpected_effect_behavior', scope: 'destination', updated_at: 1 },
+          { connection: 'primary', destination: 'authors', reason: 'unexpected_effect_behavior', scope: 'destination', updated_at: 1 },
+        ],
+      })),
+    }
+    renderRoute('/activity', http)
+
+    const recovery = await screen.findByRole('region', { name: 'Shared recovery' })
+    expect(recovery).toHaveTextContent('One shared condition · 2 affected destinations')
+    expect(recovery).toHaveTextContent('New work pauses automatically')
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
   })
 
   it('keeps an unknown direct entry inside a safe shell fallback', async () => {
