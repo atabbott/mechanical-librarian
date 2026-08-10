@@ -578,6 +578,103 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             self.assertEqual(artifact.stat().st_size, len(payload))
             self.assertEqual(artifact.stat().st_mode & 0o777, 0o600)
 
+    def test_authority_snapshot_write_failure_does_not_poison_retry(self) -> None:
+        payload = b"admitted authority"
+        with WorkbenchContext.temporary() as context:
+            real_write = os.write
+            writes = 0
+
+            def fail_after_prefix(descriptor: int, remaining: bytes) -> int:
+                nonlocal writes
+                writes += 1
+                if writes == 1:
+                    return real_write(descriptor, remaining[:1])
+                raise OSError("synthetic write failure")
+
+            with mock.patch(
+                "mechanical_librarian_workbench.context.os.write",
+                side_effect=fail_after_prefix,
+            ):
+                with self.assertRaises(PermissionError):
+                    context.authority_snapshot(payload)
+
+            snapshot = context.authority_snapshot(payload)
+            self.assertEqual(snapshot.read_bytes(), payload)
+            self.assertEqual(
+                tuple(context.path("authority").iterdir()),
+                (snapshot,),
+            )
+
+    def test_batch_accepts_exact_schema_maximum_authority_files(self) -> None:
+        with WorkbenchContext.temporary() as context:
+            connections: list[dict[str, str]] = []
+            authority_paths: list[Path] = []
+            for index in range(32):
+                secret = context.path(f"secret-{index}.txt")
+                secret.write_bytes(f"secret-{index}".encode("utf-8"))
+                secret.chmod(0o600)
+                authority_paths.append(secret)
+                connections.append(
+                    {
+                        "endpoint": "http://127.0.0.1:8765",
+                        "secret_file": str(secret),
+                    }
+                )
+            review: dict[str, str] = {
+                "owner_password_hash_file": "",
+                "tls_certificate_file": "",
+                "tls_private_key_file": "",
+            }
+            for field in tuple(review):
+                authority = context.path(f"{field}.txt")
+                authority.write_bytes(field.encode("utf-8"))
+                authority.chmod(0o600)
+                authority_paths.append(authority)
+                review[field] = str(authority)
+            config = context.path("config.json")
+            config.write_text(
+                json.dumps(
+                    {"connections": connections, "review": review},
+                    separators=(",", ":"),
+                ),
+                encoding="utf-8",
+            )
+            manifest = context.path("batch.json")
+            manifest.write_bytes(b"{}")
+            context.network = IsolatedNetworkProfile(
+                "isolated-test",
+                True,
+                True,
+                tuple(
+                    sorted(
+                        hashlib.sha256(path.read_bytes()).hexdigest()
+                        for path in (config, manifest, *authority_paths)
+                    )
+                ),
+            )
+
+            result = execute(
+                context,
+                BatchRequest("run", manifest_id="a" * 64),
+                replace(_operations(), run_batch=lambda *_args: True),
+            )
+
+            self.assertEqual(result.data["status"], "completed")
+            attempt = json.loads(
+                next(context.path("attempts").iterdir()).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(len(attempt["input_sha256"]), 37)
+
+        with self.assertRaises(ValueError):
+            IsolatedNetworkProfile(
+                "isolated-test",
+                True,
+                True,
+                tuple(f"{index:064x}" for index in range(38)),
+            )
+
     def test_documented_persistent_workspace_is_ignored(self) -> None:
         completed = subprocess.run(
             ["git", "check-ignore", "--quiet", ".workbench/report/artifacts/private"],

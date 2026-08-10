@@ -16,6 +16,9 @@ from urllib.parse import urlsplit
 from mechanical_librarian.adapters.private_recovery import require_private_directory
 
 MAX_AUTHORITY_BYTES = 1_048_576
+# One configuration, one batch manifest, 32 connection secrets, and the three
+# review files admitted by the isolated subset of the exact-current schema.
+MAX_NETWORK_AUTHORITY_FILES = 37
 
 
 @dataclass(frozen=True)
@@ -29,7 +32,7 @@ class IsolatedNetworkProfile:
         if (re.fullmatch(r"[a-z][a-z0-9-]{0,63}", self.profile_id) is None
                 or not self.sanitized or not self.bounded_authority
                 or not self.input_sha256
-                or len(self.input_sha256) > 32
+                or len(self.input_sha256) > MAX_NETWORK_AUTHORITY_FILES
                 or tuple(sorted(set(self.input_sha256))) != self.input_sha256
                 or any(re.fullmatch(r"[0-9a-f]{64}", value) is None
                        for value in self.input_sha256)):
@@ -138,7 +141,7 @@ class WorkbenchContext:
             raise PermissionError("an isolated network profile is required")
         if (
             not authority_files
-            or len(authority_files) > 8
+            or len(authority_files) > MAX_NETWORK_AUTHORITY_FILES
             or type(private_tail) is not int
             or not 0 <= private_tail <= len(authority_files)
         ):
@@ -254,23 +257,16 @@ class WorkbenchContext:
         if type(payload) is not bytes or not 1 <= len(payload) <= MAX_AUTHORITY_BYTES:
             raise PermissionError("network authority file is invalid")
         digest = sha256(payload).hexdigest()
-        target = self._private_directory("authority") / f"authority-{digest}"
+        authority_directory = self._private_directory("authority")
+        target = authority_directory / f"authority-{digest}"
+        descriptor = -1
+        temporary_path: Path | None = None
         try:
-            descriptor = os.open(
-                target,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
-                0o600,
+            descriptor, raw_temporary_path = tempfile.mkstemp(
+                prefix=f".authority-{digest}-",
+                dir=authority_directory,
             )
-        except FileExistsError:
-            existing_digest, existing = self._authority_payload(target, private=True)
-            if existing_digest != digest or existing != payload:
-                raise PermissionError("network authority snapshot is invalid") from None
-            return target
-        except OSError:
-            raise PermissionError("network authority snapshot is invalid") from None
-        try:
+            temporary_path = Path(raw_temporary_path)
             offset = 0
             while offset < len(payload):
                 written = os.write(descriptor, payload[offset:])
@@ -279,16 +275,42 @@ class WorkbenchContext:
                 offset += written
             os.fchmod(descriptor, 0o600)
             os.fsync(descriptor)
-        finally:
             os.close(descriptor)
-        directory = os.open(
-            target.parent,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
-        )
-        try:
-            os.fsync(directory)
+            descriptor = -1
+            try:
+                os.link(temporary_path, target, follow_symlinks=False)
+            except FileExistsError:
+                existing_digest, existing = self._authority_payload(
+                    target, private=True
+                )
+                if existing_digest != digest or existing != payload:
+                    raise PermissionError(
+                        "network authority snapshot is invalid"
+                    ) from None
+            directory = os.open(
+                authority_directory,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        except PermissionError:
+            raise
+        except OSError:
+            raise PermissionError("network authority snapshot is invalid") from None
         finally:
-            os.close(directory)
+            if descriptor >= 0:
+                os.close(descriptor)
+            if temporary_path is not None:
+                try:
+                    temporary_path.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    raise PermissionError(
+                        "network authority snapshot is invalid"
+                    ) from None
         return target
 
     def execution_configuration_snapshot(
