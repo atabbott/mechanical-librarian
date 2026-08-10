@@ -290,7 +290,9 @@ policy, background execution, migration, tag, or release publication.
 
 0.10.0 historically owned exact-current immutable review admission and an
 isolated qualification-only Codex shadow-advice path. That reviewer path is
-retired; it is not a product capability or future roadmap commitment.
+retired and is not a current product capability. Separately deferred
+[post-1.0 reviewer backends](future-reviewer-backends.md) remain unassigned
+outcomes that require explicit promotion and a new trust-boundary decision.
 
 F19 adds an explicit deterministic, provider-independent decision preview for
 one exact current case. It remains report-only, read-only, non-persisted, and

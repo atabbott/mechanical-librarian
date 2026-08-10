@@ -21,6 +21,9 @@
 - Optional bounded opening-audio transcription and spoken-credit extraction
   under the [opening-audio evidence contract](opening-audio-evidence.md).
 - Calibre-Web/Calibre-compatible service adapter.
+- Additional AI backends under the explicitly deferred
+  [post-1.0 reviewer-backend plan](future-reviewer-backends.md); none is a
+  current product capability or assigned delivery slice.
 - Embedded metadata writes with separate media backup gates.
 - Additional notification and identity providers.
 
