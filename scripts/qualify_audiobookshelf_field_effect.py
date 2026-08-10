@@ -552,6 +552,7 @@ def _qualification_hardcover_client(
             values = _mapping(variables, "installed_provider_request_invalid")
             if "isbns" in values:
                 observations["isbn"] = observations.get("isbn", 0) + 1
+                request_local_id = 1
                 raw_isbns = values.get("isbns")
                 if (type(raw_isbns) is not list or not raw_isbns
                         or type(raw_isbns[0]) is not str
@@ -566,6 +567,7 @@ def _qualification_hardcover_client(
                 contribution_authors = tuple(authors)
             else:
                 observations["title"] = observations.get("title", 0) + 1
+                request_local_id = 2
                 requested_isbn = "9780306406157"
                 requested_title = _string(
                     values.get("title"), "installed_provider_title_invalid"
@@ -622,8 +624,8 @@ def _qualification_hardcover_client(
             json={
                 "data": {
                     "editions": [{
-                        "id": 1,
-                        "book_id": 1,
+                        "id": request_local_id,
+                        "book_id": request_local_id,
                         "isbn_10": (
                             requested_isbn if len(requested_isbn) == 10 else None
                         ),
@@ -642,7 +644,7 @@ def _qualification_hardcover_client(
                         "contributions": contributions,
                     }],
                     "books": [{
-                        "id": 1,
+                        "id": request_local_id,
                         "title": title,
                         "description": "A bounded continuous guarded qualification value.",
                         "release_date": "2025-02-03",
@@ -661,6 +663,39 @@ def _qualification_hardcover_client(
         )
 
     return httpx.Client(transport=httpx.MockTransport(respond))
+
+
+def _require_installed_return_automatic_transition(
+    status_code: int, manual_hold_context: object | None
+) -> None:
+    """A return request schedules fresh lineage; it does not clear its hold."""
+    if status_code != 204 or manual_hold_context is None:
+        raise QualificationError("installed_return_automatic_failed")
+
+
+def _require_installed_return_lineage_progress(
+    progress: object, requested_scan_id: str, requested_at: int,
+    manual_hold_context: object | None,
+) -> bool:
+    """Require the requested scan to finish before its hold can disappear."""
+    scan_matches = getattr(progress, "scan_id", None) == requested_scan_id
+    state = getattr(progress, "state", None)
+    updated_at = getattr(progress, "updated_at", None)
+    requested_scan_completed = (
+        scan_matches
+        and state == "completed"
+        and getattr(progress, "rescan_requested", None) is False
+        and type(updated_at) is int
+        and updated_at >= requested_at
+    )
+    if manual_hold_context is None and not requested_scan_completed:
+        raise QualificationError("installed_return_fresh_lineage_failed")
+    if (scan_matches and state == "completed_with_failures"
+            and type(updated_at) is int and updated_at >= requested_at):
+        raise QualificationError("installed_return_fresh_lineage_failed")
+    if requested_scan_completed:
+        return True
+    return False
 
 
 def _installed_continuous_qualification(
@@ -1034,16 +1069,37 @@ def _installed_continuous_qualification(
                             case_id, automatic_destination
                         ) is None):
                     raise QualificationError("installed_manual_hold_failed")
+                return_connection = _string(
+                    target.get("connection"), "installed_preparation_invalid"
+                )
+                return_library = _string(
+                    target.get("library"), "installed_preparation_invalid"
+                )
                 returned = client.post(
                     f"/api/v1/review-cases/{case_id}/fields/"
                     f"{automatic_destination}/return-to-automatic",
                     headers=mutation_headers,
                 )
-                if (returned.status_code != 204
-                        or repository.field_effect_manual_hold_context(
-                            case_id, automatic_destination
-                        ) is not None):
-                    raise QualificationError("installed_return_automatic_failed")
+                _require_installed_return_automatic_transition(
+                    returned.status_code,
+                    repository.field_effect_manual_hold_context(
+                        case_id, automatic_destination
+                    ),
+                )
+                requested_return_progress = repository.review_pipeline_progress(
+                    return_connection, return_library
+                )
+                if requested_return_progress is None:
+                    raise QualificationError("installed_preparation_invalid")
+                requested_return_scan_id = getattr(
+                    requested_return_progress, "scan_id", None
+                )
+                requested_return_at = getattr(
+                    requested_return_progress, "updated_at", None
+                )
+                if (type(requested_return_scan_id) is not str
+                        or type(requested_return_at) is not int):
+                    raise QualificationError("installed_preparation_invalid")
                 returned_automatic = True
                 returned_destination = automatic_destination
                 returned_work_id = target.get("item")
@@ -1051,14 +1107,29 @@ def _installed_continuous_qualification(
             if not returned_automatic:
                 raise QualificationError("installed_manual_hold_unproved")
             return_deadline = time.monotonic() + 60
-            while (time.monotonic() < return_deadline
-                   and repository.field_effect_manual_hold_context(
-                       case_id, automatic_destination
-                   ) is not None):
+            return_scan_completed = False
+            while time.monotonic() < return_deadline:
+                return_progress = repository.review_pipeline_progress(
+                    return_connection, return_library
+                )
+                if return_progress is None:
+                    raise QualificationError("installed_preparation_invalid")
+                return_hold = repository.field_effect_manual_hold_context(
+                    case_id, automatic_destination
+                )
+                if not return_scan_completed:
+                    return_scan_completed = (
+                        _require_installed_return_lineage_progress(
+                            return_progress,
+                            requested_return_scan_id,
+                            requested_return_at,
+                            return_hold,
+                        )
+                    )
+                if return_scan_completed and return_hold is None:
+                    break
                 time.sleep(0.25)
-            if repository.field_effect_manual_hold_context(
-                case_id, automatic_destination
-            ) is not None:
+            else:
                 raise QualificationError("installed_return_fresh_lineage_failed")
             paused = client.post("/api/v1/field-effects/pause", headers=mutation_headers)
             activity = client.get("/api/v1/activity")
