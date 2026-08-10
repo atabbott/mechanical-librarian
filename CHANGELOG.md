@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Restore the Variant M editorial shell and complete attention-first Library.
+  Library rows now lead with readable work identity and truthful field counts,
+  while Attention groups only human-beneficial fields with bounded reason and
+  outcome context and exact-field links. Persistent routing, bounded search,
+  lenses, pagination, compact single-surface flow, light/dark themes, and
+  hostile-text safety remain intact. (#535)
+
 - Reconcile the exact 0.14.0 application contract and finite deflation
   inventory, remove duplicated retired-asset assertions, and record that the
   separate 0.14.1 interface-fidelity milestone remains the smallest follow-on

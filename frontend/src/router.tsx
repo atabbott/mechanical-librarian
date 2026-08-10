@@ -4,7 +4,7 @@ import { Suspense, useEffect, useRef, useState } from 'react'
 
 import type { createMemoryHistory } from '@tanstack/react-router'
 import { BuildMismatchError } from './api/http'
-import type { AttentionSearch, AutomaticSafetyView, DetailSearch, LibrarySearch, PolicySearch, PolicyStateView, ReviewHttp, ShadowPostureView } from './api/http'
+import type { AttentionSearch, AutomaticSafetyView, DetailSearch, LibrarySearch, LibraryWorkView, PolicySearch, PolicyStateView, ReviewHttp, ShadowPostureView } from './api/http'
 import { ChunkRecoveryError, recoverableLazy, reloadCurrentApplication } from './chunkRecovery'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
@@ -15,7 +15,7 @@ const ActivityPage = recoverableLazy(() => import('./routes/ActivityPage'))
 
 export interface RouterContext { http: ReviewHttp; queryClient: QueryClient }
 const bounded = (value: unknown) => typeof value === 'string' && value.length > 0 && value.length <= 128 ? value : undefined
-export const normalizeLibrarySearch = (search: Record<string, unknown>): LibrarySearch => { const lens = search.lens === 'all' || search.lens === 'no_attention_needed' ? search.lens : 'needs_attention'; const q = bounded(search.q); const cursor = bounded(search.cursor); const preview = bounded(search.preview); return { lens, ...(q ? { q } : {}), ...(cursor ? { cursor } : {}), ...(preview ? { preview } : {}) } }
+export const normalizeLibrarySearch = (search: Record<string, unknown>): LibrarySearch => { const lens = search.lens === 'needs_attention' || search.lens === 'no_attention_needed' ? search.lens : 'all'; const q = bounded(search.q); const cursor = bounded(search.cursor); const preview = bounded(search.preview); return { lens, ...(q ? { q } : {}), ...(cursor ? { cursor } : {}), ...(preview ? { preview } : {}) } }
 export const normalizeAttentionSearch = (search: Record<string, unknown>): AttentionSearch => { const q = bounded(search.q); const cursor = bounded(search.cursor); return { ...(q ? { q } : {}), ...(cursor ? { cursor } : {}) } }
 export const normalizeDetailSearch = (search: Record<string, unknown>): DetailSearch => { const field = bounded(search.field); const subview = search.subview === 'evidence' || search.subview === 'history' ? search.subview : 'review'; return { ...(field ? { field } : {}), subview } }
 export const normalizePolicySearch = (search: Record<string, unknown>): PolicySearch => ({ section: search.section === 'draft' || search.section === 'effects' || search.section === 'availability' ? search.section : 'identity' })
@@ -28,7 +28,7 @@ const shadowQuery = (http: ReviewHttp) => queryOptions({ queryKey: ['policy', 's
 const safetyQuery = (http: ReviewHttp) => queryOptions({ queryKey: ['policy', 'safety'] as const, queryFn: ({ signal }) => http.getAutomaticSafety(signal), staleTime: 15_000, retry: false })
 const activityQuery = (http: ReviewHttp) => queryOptions({ queryKey: ['activity'] as const, queryFn: ({ signal }) => http.getActivity(signal), staleTime: 4_000, retry: false })
 
-const routeTitle = (path: string) => path.startsWith('/review/') ? 'Review case' : path === '/library' ? 'Review library' : path === '/attention' ? 'Fields needing attention' : path === '/policy' ? 'Metadata policy' : path === '/activity' ? 'Activity' : 'Page unavailable'
+const routeTitle = (path: string) => path.startsWith('/review/') ? 'Review case' : path === '/library' ? 'Library' : path === '/attention' ? 'Attention' : path === '/policy' ? 'Policy' : path === '/activity' ? 'Activity' : 'Page unavailable'
 
 const PreparationActivity = () => {
   const { http, queryClient } = rootRoute.useRouteContext()
@@ -64,7 +64,7 @@ const ThemeControl = () => {
   const [theme, setTheme] = useState(cookie === 'dark' ? 'dark' : 'light')
   useEffect(() => { document.documentElement.dataset.theme = theme; document.documentElement.style.colorScheme = theme }, [theme])
   const toggle = () => { const next = theme === 'dark' ? 'light' : 'dark'; document.cookie = `ml_theme=${next}; Path=/; Max-Age=31536000; SameSite=Strict; Secure`; setTheme(next) }
-  return <button className="theme-toggle" type="button" aria-pressed={theme === 'dark'} onClick={toggle}>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</button>
+  return <button className="theme-toggle" type="button" aria-pressed={theme === 'dark'} aria-label={theme === 'dark' ? 'Use light mode' : 'Use dark mode'} onClick={toggle}><span aria-hidden="true">{theme === 'dark' ? '☀' : '◐'}</span><span>{theme === 'dark' ? 'Light' : 'Dark'}</span></button>
 }
 
 const Shell = () => {
@@ -88,17 +88,17 @@ const Shell = () => {
     return () => cancelAnimationFrame(frame)
   }, [navigation.status, path, title])
   const signOut = async () => { setShellError(''); try { await http.logout(); window.location.assign('/login') } catch (error) { if (!(error instanceof BuildMismatchError)) setShellError('Sign out failed. Try again.') } }
-  return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to content</a><header className="masthead"><Link to="/library" search={{ lens: 'needs_attention' }} className="brand">Mechanical Librarian</Link><nav aria-label="Review workspace"><Link to="/library" search={{ lens: 'needs_attention' }}>Library</Link><Link to="/attention">Attention</Link><Link to="/policy" search={{ section: 'identity' }}>Policy</Link><Link to="/activity">Activity</Link></nav><div className="shell-actions"><PreparationActivity/><ThemeControl/><button type="button" onClick={() => void signOut()}>Sign out</button></div></header><p className="navigation-status" role="status" aria-live="polite">{navigation.status === 'idle' ? `${title} loaded` : `Loading ${title}`}</p>{shellError ? <p role="alert">{shellError}</p> : null}{mismatch ? <section className="build-mismatch" role="alert"><strong>This page is from a different application build.</strong><span>Writes are blocked. Reload once to continue safely.</span><button onClick={() => window.location.reload()}>Reload application</button></section> : null}<main id="main-content" ref={main} tabIndex={-1} aria-busy={navigation.status !== 'idle'}><Suspense fallback={<RoutePending title={title}/>}><Outlet/></Suspense></main></div>
+  return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to content</a><header className="masthead"><Link to="/library" search={{ lens: 'all' }} className="brand" aria-label="Mechanical Librarian home"><span className="brand-mark" aria-hidden="true">ML</span><span>Mechanical Librarian</span></Link><nav aria-label="Primary workspace"><Link to="/library" search={{ lens: 'all' }} activeProps={{ 'aria-current': 'page' }}>Library</Link><Link to="/attention" activeProps={{ 'aria-current': 'page' }}>Attention</Link><Link to="/policy" search={{ section: 'identity' }} activeProps={{ 'aria-current': 'page' }}>Policy</Link><Link to="/activity" activeProps={{ 'aria-current': 'page' }}>Activity</Link></nav><div className="shell-actions"><PreparationActivity/><ThemeControl/><span className="private-session"><span aria-hidden="true">●</span> Private</span><button className="sign-out" type="button" onClick={() => void signOut()}>Sign out</button></div></header><p className="navigation-status" role="status" aria-live="polite">{navigation.status === 'idle' ? `${title} loaded` : `Loading ${title}`}</p>{shellError ? <p className="shell-error" role="alert">{shellError}</p> : null}{mismatch ? <section className="build-mismatch" role="alert"><strong>This page is from a different application build.</strong><span>Writes are blocked. Reload once to continue safely.</span><button onClick={() => window.location.reload()}>Reload application</button></section> : null}<main id="main-content" ref={main} tabIndex={-1} aria-busy={navigation.status !== 'idle'}><Suspense fallback={<RoutePending title={title}/>}><Outlet/></Suspense></main></div>
 }
 
 const RoutePending = ({ title = 'workspace' }: { title?: string }) => <section aria-busy="true" className="route-state"><p className="eyebrow">Authenticated review</p><h1>Loading {title.toLowerCase()}…</h1></section>
 const RouteFailure = ({ error, reset }: { error: Error; reset: () => void }) => error instanceof ChunkRecoveryError && error.exhausted
   ? <section className="route-state"><p className="eyebrow">Application update unavailable</p><h1>The current workspace assets could not be loaded.</h1><p role="alert">{error.message}</p><button onClick={() => reloadCurrentApplication()}>Reload the current application</button></section>
   : <section className="route-state"><p className="eyebrow">Review unavailable</p><h1>This workspace could not be loaded.</h1><p role="alert">{error.message}</p><button onClick={reset}>Try again</button></section>
-const DirectEntryFallback = () => <section className="route-state"><p className="eyebrow">Page unavailable</p><h1>This review route does not exist.</h1><Link to="/library" search={{ lens: 'needs_attention' }}>Open review library</Link></section>
+const DirectEntryFallback = () => <section className="route-state"><p className="eyebrow">Page unavailable</p><h1>This review route does not exist.</h1><Link to="/library" search={{ lens: 'all' }}>Open review library</Link></section>
 
 const rootRoute = createRootRouteWithContext<RouterContext>()({ component: Shell, pendingComponent: RoutePending, errorComponent: RouteFailure, notFoundComponent: DirectEntryFallback })
-const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: () => <Navigate to="/library" search={{ lens: 'needs_attention' }} replace/> })
+const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: () => <Navigate to="/library" search={{ lens: 'all' }} replace/> })
 const LibraryRouteComponent = () => { const initial = libraryRoute.useLoaderData(); const { http } = rootRoute.useRouteContext(); const search = libraryRoute.useSearch(); const query = useQuery({ ...libraryQuery(http, search), initialData: initial }); return <LibraryPage data={query.data}/> }
 const AttentionRouteComponent = () => { const initial = attentionRoute.useLoaderData(); const { http } = rootRoute.useRouteContext(); const search = attentionRoute.useSearch(); const query = useQuery({ ...attentionQuery(http, search), initialData: initial }); return <AttentionPage data={query.data}/> }
 const DetailRouteComponent = () => { const initial = detailRoute.useLoaderData(); const { http } = rootRoute.useRouteContext(); const { reviewCaseId } = detailRoute.useParams(); const query = useQuery({ ...detailQuery(http, reviewCaseId), initialData: initial }); return <DetailPage data={query.data}/> }
@@ -111,7 +111,8 @@ export const policyRoute = createRoute({ getParentRoute: () => rootRoute, path: 
 export const activityRoute = createRoute({ getParentRoute: () => rootRoute, path: '/activity', loader: ({ context, abortController }) => context.queryClient.ensureQueryData({ ...activityQuery(context.http), queryFn: () => context.http.getActivity(abortController.signal) }), component: () => <ActivityPage initial={activityRoute.useLoaderData()}/> })
 const routeTree = rootRoute.addChildren([indexRoute, libraryRoute, attentionRoute, detailRoute, policyRoute, activityRoute])
 
-export const ProgressiveCasePanel = ({ id }: { id: string }) => { const { http } = rootRoute.useRouteContext(); const result = useQuery(detailQuery(http, id)); if (result.isPending) return <aside aria-busy="true"><h2>Loading preview…</h2></aside>; if (result.isError) return <aside><h2>Preview unavailable</h2><button onClick={() => void result.refetch()}>Try again</button></aside>; return <aside><p className="eyebrow">Progressive detail</p><h2>{result.data.title}</h2><p>{result.data.subtitle}</p><Link to="/review/$reviewCaseId" params={{ reviewCaseId: id }} search={{ subview: 'review' }}>Open full review</Link></aside> }
+type WorkIdentity = Pick<LibraryWorkView, 'title' | 'authors' | 'library' | 'mediaKind'>
+export const ProgressiveCasePanel = ({ id, identity }: { id: string; identity?: WorkIdentity }) => { const { http } = rootRoute.useRouteContext(); const result = useQuery(detailQuery(http, id)); if (result.isPending) return <aside aria-busy="true"><h2>Loading preview…</h2></aside>; if (result.isError) return <aside><h2>Preview unavailable</h2><button onClick={() => void result.refetch()}>Try again</button></aside>; return <aside><p className="eyebrow">Progressive detail</p><h2>{identity?.title ?? 'Selected work'}</h2><p>{identity ? `${identity.authors.join(', ') || 'Author details unavailable'} · ${identity.library} · ${identity.mediaKind.replaceAll('_', ' ')}` : 'Readable work identity is not available on this Library page.'}</p><Link to="/review/$reviewCaseId" params={{ reviewCaseId: id }} search={{ subview: 'review' }}>Open full review</Link></aside> }
 export const useReviewContext = () => rootRoute.useRouteContext()
 
 export const createApplicationRouter = (http: ReviewHttp, queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }), history?: ReturnType<typeof createMemoryHistory>) => createRouter({ routeTree, context: { http, queryClient }, ...(history ? { history } : {}), defaultPreload: 'intent', defaultPreloadStaleTime: 15_000, defaultPendingMs: 140, defaultPendingMinMs: 220, scrollRestoration: true })

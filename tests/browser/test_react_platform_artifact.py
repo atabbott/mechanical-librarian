@@ -130,8 +130,8 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
             page.route("**/*", fulfill)
             routes = (
-                ("/library?lens=all", "Review library"),
-                ("/attention", "Fields needing attention"),
+                ("/library?lens=all", "Every work, with exceptions first"),
+                ("/attention", "Needs your attention"),
                 ("/review/case-1?field=title&subview=review", "Current review case"),
                 ("/policy?section=identity", "Choose how prepared metadata reaches you"),
                 ("/activity", "Ready when you are"),
@@ -165,8 +165,9 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.set_viewport_size({"width": 1440, "height": 900})
             page.goto("https://react-platform.invalid/library?lens=all")
             page.get_by_text("Automatic-only work", exact=True).wait_for()
-            page.locator(".work-row").first.get_by_text("Synthetic Author", exact=False).wait_for()
-            page.get_by_text("Synthetic library · epub · item-1", exact=True).wait_for()
+            page.locator(".library-work-row").first.get_by_text("Synthetic Author", exact=False).wait_for()
+            page.get_by_text("Synthetic library · Epub", exact=True).first.wait_for()
+            self.assertNotIn("item-1", page.locator(".library-work-row").first.inner_text())
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 1440)
             page.goto("https://react-platform.invalid/review/case-1?field=title&subview=review")
             page.get_by_text("Synthetic reviewer fact", exact=True).wait_for()
@@ -187,11 +188,26 @@ class ReactPlatformArtifactTests(unittest.TestCase):
 
             before_navigation = documents
             page.get_by_role("link", name="Library").click()
-            page.get_by_role("heading", name="Review library").wait_for()
+            page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
             page.get_by_role("link", name="Attention", exact=True).click()
-            page.get_by_role("heading", name="Fields needing attention").wait_for()
+            page.get_by_role("heading", name="Needs your attention").wait_for()
+            attention_header = page.locator(".attention-work > header").first
+            self.assertEqual(
+                attention_header.evaluate("node => getComputedStyle(node).flexDirection"),
+                "column",
+            )
+            self.assertEqual(
+                attention_header.locator(":scope > span").evaluate(
+                    "node => getComputedStyle(node).whiteSpace"
+                ),
+                "nowrap",
+            )
+            self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
+            attention_link = page.locator(".attention-field-row").first
+            self.assertIn("field=title", attention_link.get_attribute("href") or "")
+            self.assertNotIn("item-1", page.locator(".attention-groups").inner_text())
             page.go_back()
-            page.get_by_role("heading", name="Review library").wait_for()
+            page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
             self.assertEqual(documents, before_navigation)
             page.get_by_role("link", name="Policy", exact=True).click()
             page.get_by_role("button", name="Draft", exact=True).click()

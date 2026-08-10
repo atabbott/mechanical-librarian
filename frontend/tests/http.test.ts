@@ -6,6 +6,7 @@ import {
   ReviewApiClient,
   mapCaseDetail,
   mapActivity,
+  mapAttention,
   derivePolicyDraftDisplay,
   SessionExpiredError,
   mapLibrary,
@@ -67,7 +68,9 @@ describe('ReviewApiClient', () => {
       id: 'case-1',
       title: 'A Book',
       authors: ['Ada Example'],
-      subtitle: 'Books · ebook · item-1',
+      library: 'Books',
+      mediaKind: 'ebook',
+      attentionCount: 1,
       attention: 'needs_attention',
       dispositions: ['review'],
     })
@@ -76,6 +79,25 @@ describe('ReviewApiClient', () => {
       credentials: 'same-origin',
       signal: controller.signal,
     }))
+  })
+
+  it('maps field-level attention context without promoting internal target keys', () => {
+    const view = mapAttention({
+      schema_version: 'attention-v1', query: null, next_cursor: null, total: 1,
+      items: [{
+        review_case_id: 'case-1', destination: 'publication_date', title: 'A Book',
+        authors: ['Ada Example'], library: 'Books', media_kind: 'ebook', item: 'internal-item-1',
+        detail_url: '/review/case-1?field=publication_date', notices: ['The available dates disagree.'],
+        provenance: ['Selected EPUB supports a complete date.'],
+      }],
+    })
+
+    expect(view.items[0]).toEqual({
+      id: 'case-1', destination: 'publication_date', title: 'A Book', authors: ['Ada Example'],
+      library: 'Books', mediaKind: 'ebook', notices: ['The available dates disagree.'],
+      provenance: ['Selected EPUB supports a complete date.'],
+    })
+    expect(JSON.stringify(view)).not.toContain('internal-item-1')
   })
 
   it('rejects a malformed activity display projection before it reaches the workspace', () => {

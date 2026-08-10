@@ -165,7 +165,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                 ) as (origin, case_id):
                     _login(page, origin)
                     try:
-                        page.get_by_role("heading", name="Review library").wait_for(
+                        page.get_by_role("heading", name="Every work, with exceptions first").wait_for(
                             timeout=8_000
                         )
                     except PlaywrightTimeoutError:
@@ -191,7 +191,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     page.on("request", count_document)
                     initial_documents = documents
                     page.get_by_role("link", name="Attention", exact=True).click()
-                    page.get_by_role("heading", name="Fields needing attention").wait_for()
+                    page.get_by_role("heading", name="Needs your attention").wait_for()
                     page.get_by_role("link", name="Policy", exact=True).click()
                     page.get_by_role(
                         "heading", name="Choose how prepared metadata reaches you"
@@ -211,7 +211,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     page.get_by_role("heading", name="Ready when you are").wait_for()
                     self.assertGreaterEqual(activity_requests, 1)
                     page.get_by_role("link", name="Library", exact=True).click()
-                    page.get_by_role("heading", name="Review library").wait_for()
+                    page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
                     settled_activity_requests = activity_requests
                     page.wait_for_timeout(5_500)
                     self.assertEqual(activity_requests, settled_activity_requests)
@@ -229,7 +229,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertLessEqual(
                         page.evaluate("() => document.documentElement.scrollWidth"), 390
                     )
-                    page.get_by_role("button", name="Dark mode").click()
+                    page.get_by_role("button", name="Use dark mode").click()
                     self.assertEqual(
                         page.locator("html").get_attribute("data-theme"), "dark"
                     )

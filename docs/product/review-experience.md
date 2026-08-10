@@ -178,10 +178,20 @@ states.
 
 ## Queue, detail, and summary
 
-The active queue renders one row per unresolved ordinary case and one row per
-destructive group. A row identifies the target, media type, proposed change
-summary, highest applicable notice, and human-review state. It does not lead
-with filenames, source line numbers, or internal provider codes.
+The authenticated Library is the complete work surface. It opens on the `all`
+lens with server-authoritative attention counts, presents readable title,
+author, library, and media identity, and keeps works needing a human decision
+first without hiding automatic-only or resolved work. Internal connection and
+item keys do not become its primary visible identity. The supported
+needs-attention and no-attention lenses, bounded search, cursor pagination,
+selected-work preview, deep links, and browser history remain URL-owned.
+
+Attention is a separate field-level queue containing only unresolved ordinary
+fields that can benefit from an owner decision. It groups fields by readable
+work identity, shows the destination plus bounded reason and outcome context,
+and links directly to the exact field in the authoritative case. An empty queue
+does not imply an empty Library: automatic-only and resolved works remain
+discoverable there. Destructive work remains outside this ordinary queue.
 
 The queue supports cursor pagination, stable ordering, deterministic
 tie-breaking, title/author/target search, and explicit filters for:
