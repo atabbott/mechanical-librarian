@@ -80,19 +80,19 @@ describe('typed review routes', () => {
   it('fails closed while classifying every authoritative Activity command outcome', () => {
     expect(activityOutcome({}, { path: 'field-effects/pause' })).toBe('unknown')
     expect(activityOutcome({ paused: true }, { path: 'field-effects/pause' })).toBe('applied')
-    expect(activityOutcome({ paused: false }, { path: 'field-effects/pause' })).toBe('not_applied')
+    expect(activityOutcome({ paused: false }, { path: 'field-effects/pause' })).toBe('unknown')
     expect(activityOutcome({ paused: false }, { path: 'field-effects/resume' })).toBe('applied')
-    expect(activityOutcome({ paused: true }, { path: 'field-effects/resume' })).toBe('not_applied')
+    expect(activityOutcome({ paused: true }, { path: 'field-effects/resume' })).toBe('unknown')
     expect(activityOutcome({ paused: 'false' }, { path: 'field-effects/resume' })).toBe('unknown')
 
     const revoke = { path: 'activity/primary/fiction/revoke' }
     expect(activityOutcome({ enabled_libraries: [] }, revoke)).toBe('applied')
-    expect(activityOutcome({ enabled_libraries: [{ connection: 'primary', library: 'fiction' }] }, revoke)).toBe('not_applied')
+    expect(activityOutcome({ enabled_libraries: [{ connection: 'primary', library: 'fiction' }] }, revoke)).toBe('unknown')
     expect(activityOutcome({ enabled_libraries: [{}] }, revoke)).toBe('unknown')
 
     const consent = { path: 'activity/consent', body: { grants: [{ library: 'fiction', destinations: ['title'] }] } }
     expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title', consented: true }] }] }, consent)).toBe('applied')
-    expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title', consented: false }] }] }, consent)).toBe('not_applied')
+    expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title', consented: false }] }] }, consent)).toBe('unknown')
     expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title' }] }] }, consent)).toBe('unknown')
     expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title', consented: true }, { destination: 'title', consented: true }] }] }, consent)).toBe('unknown')
     expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title', consented: true }] }, { library: 'fiction', destinations: [{ destination: 'title', consented: false }] }] }, consent)).toBe('unknown')
@@ -438,7 +438,7 @@ describe('typed review routes', () => {
 
   it.each([
     ['applied', true, 'The requested activity change was applied, confirmed by the authoritative server.'],
-    ['unchanged', false, 'The requested activity change was not applied, confirmed by the authoritative server.'],
+    ['unconfirmed', false, 'The activity outcome could not be confirmed. No command was resent.'],
   ])('reconciles an ambiguous pause as %s without resending it', async (_name, paused, message) => {
     const user = userEvent.setup()
     const initial: ActivityView = { backup_ready: true, configured_libraries: [], enabled_libraries: [{ connection: 'primary', library: 'fiction' }], capabilities: [], events: [], paused: false }

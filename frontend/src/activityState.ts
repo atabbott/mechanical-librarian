@@ -20,12 +20,12 @@ export const activityEventKeys = (events: readonly Record<string, unknown>[]) =>
 
 export const activityOutcome = (data: ActivityView | undefined, command: { path: string; body?: unknown }) => {
   if (!data) return 'unknown'
-  if (command.path === 'field-effects/pause') return typeof data.paused === 'boolean' ? data.paused ? 'applied' : 'not_applied' : 'unknown'
-  if (command.path === 'field-effects/resume') return typeof data.paused === 'boolean' ? data.paused ? 'not_applied' : 'applied' : 'unknown'
+  if (command.path === 'field-effects/pause') return data.paused === true ? 'applied' : 'unknown'
+  if (command.path === 'field-effects/resume') return data.paused === false ? 'applied' : 'unknown'
   if (command.path.endsWith('/revoke')) {
     const [, connection, library] = /^activity\/([^/]+)\/([^/]+)\/revoke$/.exec(command.path) ?? []
     if (!connection || !library || !Array.isArray(data.enabled_libraries) || !data.enabled_libraries.every((item) => { const value = item as Record<string, unknown>; return record(item) && typeof value.connection === 'string' && typeof value.library === 'string' })) return 'unknown'
-    return data.enabled_libraries.some((item) => { const value = item as Record<string, unknown>; return value.connection === decodeURIComponent(connection) && value.library === decodeURIComponent(library) }) ? 'not_applied' : 'applied'
+    return data.enabled_libraries.some((item) => { const value = item as Record<string, unknown>; return value.connection === decodeURIComponent(connection) && value.library === decodeURIComponent(library) }) ? 'unknown' : 'applied'
   }
   if (command.path !== 'activity/consent' || !record(command.body) || !Array.isArray(command.body.grants) || command.body.grants.length === 0 || !Array.isArray(data.capabilities)) return 'unknown'
   for (const grant of command.body.grants) {
@@ -37,7 +37,7 @@ export const activityOutcome = (data: ActivityView | undefined, command: { path:
       const matches = capability.destinations.filter((destination) => record(destination) && destination.destination === requested)
       const match = matches[0] as Record<string, unknown> | undefined
       if (matches.length !== 1 || typeof match?.consented !== 'boolean') return 'unknown'
-      if (!match.consented) return 'not_applied'
+      if (!match.consented) return 'unknown'
     }
   }
   return 'applied'
