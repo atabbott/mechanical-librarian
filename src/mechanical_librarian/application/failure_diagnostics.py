@@ -14,99 +14,6 @@ from mechanical_librarian.domain.failure_diagnostics import (
 )
 
 
-_REVIEWER_FAILURES = {
-    "runtime": (
-        FailureCategory.SPAWN_RUNTIME,
-        FailureStage.EXECUTION,
-    ),
-    "setup": (
-        FailureCategory.SETUP_CONFIGURATION,
-        FailureStage.SETUP,
-    ),
-    "auth": (
-        FailureCategory.AUTHENTICATION,
-        FailureStage.AUTHENTICATION,
-    ),
-    "profile": (
-        FailureCategory.SETUP_CONFIGURATION,
-        FailureStage.SETUP,
-    ),
-    "timeout": (
-        FailureCategory.TIMEOUT,
-        FailureStage.EXECUTION,
-    ),
-    "cancel": (
-        FailureCategory.CANCELLATION,
-        FailureStage.EXECUTION,
-    ),
-    "schema": (
-        FailureCategory.SCHEMA_CONSTRUCTION,
-        FailureStage.SCHEMA,
-    ),
-    "response_format": (
-        FailureCategory.LIVE_SCHEMA_REJECTION,
-        FailureStage.SCHEMA,
-    ),
-    "malformed_output": (
-        FailureCategory.MALFORMED_OUTPUT,
-        FailureStage.RESPONSE,
-    ),
-    "semantic_validation": (
-        FailureCategory.CITATION_MEMBERSHIP,
-        FailureStage.VALIDATION,
-    ),
-    "identity": (
-        FailureCategory.IDENTITY,
-        FailureStage.IDENTITY,
-    ),
-    "currentness": (
-        FailureCategory.CURRENTNESS,
-        FailureStage.CURRENTNESS,
-    ),
-    "persistence": (
-        FailureCategory.PERSISTENCE,
-        FailureStage.PERSISTENCE,
-    ),
-}
-
-
-def reviewer_failure_diagnostic(code: str, *, count: int = 0) -> FailureDiagnostic:
-    """Map a process-local reviewer code to the stable application taxonomy."""
-
-    category, stage = _REVIEWER_FAILURES.get(
-        code,
-        (FailureCategory.UNKNOWN, FailureStage.EXECUTION),
-    )
-    bounded_count = (
-        max(1, min(count, MAX_DIAGNOSTIC_COUNT))
-        if type(count) is int
-        else 1
-    )
-    component = (
-        FailureComponent.PERSISTENCE
-        if category is FailureCategory.PERSISTENCE
-        else FailureComponent.REVIEWER
-    )
-    return FailureDiagnostic(
-        category,
-        component,
-        stage,
-        current=False if category is FailureCategory.CURRENTNESS else None,
-        count=bounded_count,
-    )
-
-
-def reviewer_diagnostic_is_admissible(diagnostic: object) -> bool:
-    """Accept only diagnostics produced by the closed reviewer mapping."""
-
-    if type(diagnostic) is not FailureDiagnostic:
-        return False
-    return diagnostic in {
-        reviewer_failure_diagnostic(code, count=diagnostic.count)
-        for code in (*_REVIEWER_FAILURES, "unknown")
-    }
-
-
 def provider_attempt_diagnostics(
     attempts: object,
     *,
@@ -323,6 +230,4 @@ __all__ = [
     "diagnostics_are_canonical",
     "merge_provider_diagnostics",
     "provider_attempt_diagnostics",
-    "reviewer_diagnostic_is_admissible",
-    "reviewer_failure_diagnostic",
 ]

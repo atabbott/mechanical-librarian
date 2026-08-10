@@ -112,6 +112,21 @@ def load_contained_reviewer_profile(path: Path) -> ContainedReviewerProfile:
         payload = b"".join(chunks)
         if len(payload) != information.st_size:
             raise ContainedReviewerProcessError("profile")
+        return load_contained_reviewer_profile_bytes(payload)
+    except ContainedReviewerProcessError:
+        raise
+    except (OSError, UnicodeError) as error:
+        raise ContainedReviewerProcessError("profile") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def load_contained_reviewer_profile_bytes(payload: bytes) -> ContainedReviewerProfile:
+    """Parse the exact profile bytes already admitted by the workbench authority."""
+    try:
+        if type(payload) is not bytes or not 1 <= len(payload) <= MAX_PROFILE_BYTES:
+            raise ContainedReviewerProcessError("profile")
         serialized = payload.decode("utf-8", errors="strict")
         raw = json.loads(serialized, object_pairs_hook=_unique_object)
         if (
@@ -177,9 +192,6 @@ def load_contained_reviewer_profile(path: Path) -> ContainedReviewerProfile:
         ContainedReviewerError,
     ) as error:
         raise ContainedReviewerProcessError("profile") from error
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
 
 
 class ContainedReviewerAdapter:
@@ -1559,4 +1571,5 @@ __all__ = [
     "ContainedReviewerProfile",
     "ContainedReviewerProcessError",
     "load_contained_reviewer_profile",
+    "load_contained_reviewer_profile_bytes",
 ]

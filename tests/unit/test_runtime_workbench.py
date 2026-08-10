@@ -3,11 +3,13 @@ from __future__ import annotations
 import io
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from mechanical_librarian.interfaces.cli import main
 from mechanical_librarian.bootstrap import composition
@@ -47,7 +49,9 @@ def _network_files(context: WorkbenchContext) -> tuple[str, ...]:
         '{"connections":[{"endpoint":"http://127.0.0.1:8765"}]}',
         encoding="utf-8",
     )
-    context.path("contained-reviewer-profile.json").write_text("{}", encoding="utf-8")
+    profile = context.path("contained-reviewer-profile.json")
+    profile.write_text("{}", encoding="utf-8")
+    profile.chmod(0o600)
     context.path("reviewer-instruction.txt").write_text("Summarize the input.", encoding="utf-8")
     context.path("reviewer-input.json").write_text('{"value":"synthetic"}', encoding="utf-8")
     context.path("reviewer-output-schema.json").write_text('{"$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"properties":{"summary":{"type":"string"}},"required":["summary"],"type":"object"}', encoding="utf-8")
@@ -150,6 +154,60 @@ class RuntimeWorkbenchTests(unittest.TestCase):
         })
         self.assertEqual(result.data["status"], "failed")
         self.assertIn("batch-run failed", result.summary)
+
+    def test_contained_reviewer_uses_admitted_bytes_after_durable_attempt(self) -> None:
+        request = ContainedReviewerRequest(
+            "invoke",
+            instruction="reviewer-instruction.txt",
+            input_document="reviewer-input.json",
+            output_schema="reviewer-output-schema.json",
+        )
+        with WorkbenchContext.temporary() as context:
+            context.network = IsolatedNetworkProfile(
+                "isolated-test", True, True, _network_files(context)
+            )
+            expected = tuple(
+                context.path(name).read_bytes()
+                for name in (
+                    "contained-reviewer-profile.json",
+                    "reviewer-instruction.txt",
+                    "reviewer-input.json",
+                    "reviewer-output-schema.json",
+                )
+            )
+            original_require_network = context.require_network
+            fsync_calls: list[int] = []
+            real_fsync = os.fsync
+
+            def bind_then_replace(
+                *paths: Path,
+                private_first: bool = False,
+            ) -> tuple[bytes, ...]:
+                bound = original_require_network(
+                    *paths,
+                    private_first=private_first,
+                )
+                for path in paths:
+                    path.write_bytes(b'"replaced after admission"')
+                return bound
+
+            def invoke(*payloads: object) -> str:
+                self.assertGreaterEqual(len(fsync_calls), 2)
+                self.assertEqual(
+                    (expected[0], "invoke", expected[1], expected[2], expected[3]),
+                    payloads,
+                )
+                return '{"ok":true}'
+
+            context.require_network = bind_then_replace  # type: ignore[method-assign]
+            operations = replace(_operations(), run_contained_reviewer=invoke)
+            with mock.patch(
+                "mechanical_librarian_workbench.context.os.fsync",
+                side_effect=lambda descriptor: (
+                    fsync_calls.append(descriptor), real_fsync(descriptor)
+                )[1],
+            ):
+                execute(context, request, operations)
 
     def test_result_has_equivalent_canonical_and_summary_rendering(self) -> None:
         digest = "a" * 64

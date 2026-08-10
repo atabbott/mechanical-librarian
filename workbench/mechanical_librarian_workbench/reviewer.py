@@ -4,33 +4,32 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 
 from mechanical_librarian_workbench.contained_reviewer import (
     ContainedReviewerAdapter,
-    load_contained_reviewer_profile,
+    load_contained_reviewer_profile_bytes,
 )
 from mechanical_librarian_workbench.contained_reviewer_contract import ContainedReviewRequest
 
 
 def run_contained_reviewer(
-    profile_path: Path,
+    profile_payload: bytes,
     action: str,
-    instruction_path: Path | None,
-    input_path: Path | None,
-    schema_path: Path | None,
+    instruction_payload: bytes | None,
+    input_payload: bytes | None,
+    schema_payload: bytes | None,
 ) -> str:
     """Authenticate or invoke one semantic-neutral, bounded reviewer request."""
-    reviewer = ContainedReviewerAdapter(load_contained_reviewer_profile(profile_path))
+    reviewer = ContainedReviewerAdapter(load_contained_reviewer_profile_bytes(profile_payload))
     if action in {"auth-start", "auth-status", "auth-logout"}:
         return reviewer.auth(action.removeprefix("auth-"))
-    if action != "invoke" or None in {instruction_path, input_path, schema_path}:
+    if action != "invoke" or None in {instruction_payload, input_payload, schema_payload}:
         raise ValueError("invalid contained-reviewer action")
-    assert instruction_path is not None and input_path is not None and schema_path is not None
+    assert instruction_payload is not None and input_payload is not None and schema_payload is not None
     request = ContainedReviewRequest(
-        instruction_path.read_text(encoding="utf-8"),
-        input_path.read_text(encoding="utf-8"),
-        schema_path.read_text(encoding="utf-8"),
+        instruction_payload.decode("utf-8", errors="strict"),
+        input_payload.decode("utf-8", errors="strict"),
+        schema_payload.decode("utf-8", errors="strict"),
     )
     dispatch: dict[str, object] = {}
 

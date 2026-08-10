@@ -209,8 +209,9 @@ and supersession without introducing AI, human decisions, covers, rich fields,
 multiple providers, or writes. F07a #143 and F07b #228 begin the later 0.3
 checkpoint and do not block the 0.2 preview. F08 #144, the broader #16, #46,
 #50, #68-#73, and #209 program, and F11 #147/#74-#80 were the original 1.0
-planning inputs. F08 #144 and F11 #147 remain current outcomes; the closed
-program and constituent tickets are historical context. The WP5 and WP6
+planning inputs. F08 #144 remains a current outcome; F11 #147 is a completed
+historical experiment whose provider-specific lifecycle has been retired. The
+closed program and constituent tickets are historical context. The WP5 and WP6
 contracts below describe long-term architecture, not current tickets or 0.2
 exit criteria.
 
@@ -256,8 +257,9 @@ issues are no longer a planned 1.0 lane: #205 is closed superseded. Open
 Library #210 is the completed F09l outcome in the 0.8.0 checkpoint;
 LibraryThing #211 remains a separate deferred provider outcome.
 Issue #70 now owns the required explainable proposal and policy outcome and
-requires explicit promotion. F10b #240 owns production review admission; F11
-#147 remains an independently deliverable shadow path; and F17 #153 qualifies
+requires explicit promotion. F10b #240 owns production review admission; the
+retained deterministic F11 packet and decision projection are evidence helpers,
+not an independently deliverable reviewer path; and F17 #153 qualifies
 continuous pre-release operation without CWA or release scope. F09g #238 remains
 historical characterization evidence for this boundary, not an active F10b
 dependency. These planning relationships add no production behavior to F10a.

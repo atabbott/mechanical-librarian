@@ -373,12 +373,12 @@ def _execute(
             (request.profile, request.instruction, request.input_document, request.output_schema)
             if value is not None
         )
-        context.require_network(*paths)
+        bound = context.require_network(*paths, private_first=True)
         raw = selected.run_contained_reviewer(
-            context.path(request.profile), request.action,
-            context.path(request.instruction) if request.instruction is not None else None,
-            context.path(request.input_document) if request.input_document is not None else None,
-            context.path(request.output_schema) if request.output_schema is not None else None,
+            bound[0], request.action,
+            bound[1] if request.instruction is not None else None,
+            bound[2] if request.input_document is not None else None,
+            bound[3] if request.output_schema is not None else None,
         )
     else:
         raise TypeError("unsupported workbench request")
