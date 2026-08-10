@@ -1,21 +1,47 @@
 {
   "components": {
     "schemas": {
-      "_ActivityConsentRequest": {
+      "_ActivityConsentGrant": {
         "additionalProperties": false,
         "properties": {
-          "libraries": {
+          "destinations": {
             "items": {
               "type": "string"
             },
             "maxItems": 64,
             "minItems": 1,
-            "title": "Libraries",
+            "title": "Destinations",
+            "type": "array"
+          },
+          "library": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library",
+          "destinations"
+        ],
+        "title": "_ActivityConsentGrant",
+        "type": "object"
+      },
+      "_ActivityConsentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityConsentGrant"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "title": "Grants",
             "type": "array"
           }
         },
         "required": [
-          "libraries"
+          "grants"
         ],
         "title": "_ActivityConsentRequest",
         "type": "object"

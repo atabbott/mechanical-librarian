@@ -42,14 +42,16 @@ field queue, plus one exact-version individual human decision. Library-wide
 cross-case bibliographic history, bulk and reversal remain #195.
 
 Continuous guarded application adds authenticated `GET /api/v1/activity`,
-CSRF-protected library-envelope consent and revocation, existing pause/resume,
+CSRF-protected destination-subset consent and library revocation, existing pause/resume,
 and an exact field `return-to-automatic` command. Activity exposes bounded
 counts, configured/consented library identity, bounded per-destination readiness
 for the existing 14 destinations, a value-limited representative
 example, plan events, and typed suspensions. It does not expose credentials,
 cover bytes, unrestricted paths, an arbitrary target, or a generic queue/apply
-command. Consent is restricted to configured libraries and the existing 14
-destinations; return-to-automatic requests a fresh scan and does not delete an
+command. Consent sends the exact disclosed matrix as `grants[].library` and
+`grants[].destinations`; a fresh probe must match every subset before the atomic
+replacement is accepted. Consent remains restricted to configured libraries
+and the existing 14 destinations; return-to-automatic requests a fresh scan and does not delete an
 immutable human decision. Its accepted scan identity and originating human-hold
 token are persisted before the response, so restart resumes the same conditional
 release rather than requiring the owner to repeat the command. A request made

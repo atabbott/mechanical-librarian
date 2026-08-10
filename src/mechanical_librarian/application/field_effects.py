@@ -117,6 +117,7 @@ class FieldEffectRepository(Protocol):
                                           granted_at: int) -> tuple[EffectConsent, ...]: ...
     def clear_field_effect_capability_suspension(self, *, scope: str,
                                                  connection: str, destination: str,
+                                                 reason: str,
                                                  observed_at: int) -> None: ...
 
 

@@ -319,6 +319,61 @@ describe('typed review routes', () => {
     }
   })
 
+  it('discloses the exact destination subset and offers incremental consent', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => ({
+        backup_ready: true,
+        configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 1, human: 1, total: 2 } }],
+        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        capabilities: [{
+          connection: 'primary', library: 'fiction', state: 'partially_allowed',
+          destinations: [
+            { destination: 'authors', state: 'allowed', consented: false },
+            { destination: 'subtitle', state: 'field_unavailable', consented: false },
+            { destination: 'title', state: 'allowed', consented: true },
+          ],
+        }],
+        events: [], paused: false,
+      })),
+    }
+    renderRoute('/activity', http)
+
+    const disclosure = await screen.findByRole('list', { name: 'fiction destination consent' })
+    expect(disclosure).toHaveTextContent('authors: Included · consent requested')
+    expect(disclosure).toHaveTextContent('subtitle: Excluded · field unavailable')
+    expect(disclosure).toHaveTextContent('title: Included · already consented')
+    await user.click(screen.getByRole('checkbox', { name: /fiction · 2 prepared/ }))
+    await user.click(screen.getByRole('button', { name: 'Enable selected libraries' }))
+
+    await waitFor(() => expect(http.activityCommand).toHaveBeenCalledWith(
+      'activity/consent',
+      { grants: [{ library: 'fiction', destinations: ['authors', 'title'] }] },
+    ))
+  })
+
+  it('labels qualified automatic activity and bounds unknown origins neutrally', async () => {
+    const unknown = 'unexpected_origin_' + 'x'.repeat(100)
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => ({
+        backup_ready: true, configured_libraries: [], enabled_libraries: [], capabilities: [], paused: false,
+        events: [
+          { work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', origin: 'automatic_policy' },
+          { work_id: 'book-2', library: 'fiction', destination: 'subtitle', state: 'stale', origin: unknown },
+        ],
+      })),
+    }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByText(/Qualified automatic/)).toBeVisible()
+    const neutral = screen.getByText(/Recorded source: unexpected origin/)
+    expect(neutral).toBeVisible()
+    expect(neutral.textContent).not.toContain(unknown)
+    expect(neutral.textContent).not.toContain('automatic')
+  })
+
   it('keeps an unknown direct entry inside a safe shell fallback', async () => {
     renderRoute('/not-a-review-route')
 

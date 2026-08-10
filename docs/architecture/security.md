@@ -535,7 +535,11 @@ exact `policy_ignored` proposals; the external-review packet remains unchanged.
 
 Guarded field effects add the first persisted mutation boundary. The installed
 product composes the API-key Audiobookshelf target only after authenticated,
-library-scoped consent for the complete existing destination envelope. Only exact
+library-scoped consent for the exact eligible destination subset disclosed in
+Activity. The submitted destination matrix must still equal a fresh capability
+probe before its atomic consent replacement is accepted; a changed subset fails
+closed and must be reviewed again. A partially consented library remains
+available when a newly eligible destination needs incremental consent. Only exact
 `HumanDecision(accept)` or sealed
 qualified `AutomaticDecision(candidate)` instances project authority; raw
 proposals, previews, advice, policy dispositions, and caller-supplied origin
@@ -550,7 +554,9 @@ automatic safety currentness. Capability observations have closed application-
 owned outcomes. Authentication, inactive-account, or basic library/item access
 failure durably suspends the connection; insufficient destination permission,
 an incompatible destination shape, or unexpected effect behavior durably
-suspends only that destination. The claim transaction rechecks both scopes, so
+suspends only that destination. A successful read-only capability observation
+may clear only older connection, permission, or field-shape evidence it can
+disprove; it cannot clear `unexpected_effect_behavior`. The claim transaction rechecks both scopes, so
 a suspension racing the final claim cannot be bypassed. The supported Audiobookshelf adapter has no
 target-side CAS: it makes one minimal API-key request only after its final
 authoritative pre-read, then read-backs the destination and reconciles any

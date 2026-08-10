@@ -165,11 +165,24 @@ class ContinuousGuardedApplication:
     def wake(self) -> None:
         self._wake.set()
 
-    def enable(self, libraries: tuple[str, ...]) -> dict[str, object]:
+    def enable(
+        self, grants: tuple[tuple[str, tuple[str, ...]], ...]
+    ) -> dict[str, object]:
         configured = tuple(library for _, library in self._libraries)
-        if (type(libraries) is not tuple or not libraries
-                or len(set(libraries)) != len(libraries)
-                or any(library not in configured for library in libraries)):
+        if (type(grants) is not tuple or not grants
+                or any(type(grant) is not tuple or len(grant) != 2
+                       for grant in grants)):
+            raise GuardedApplicationError("consent")
+        libraries = tuple(grant[0] for grant in grants)
+        submitted = {library: destinations for library, destinations in grants}
+        if (len(set(libraries)) != len(libraries)
+                or any(type(library) is not str or library not in configured
+                       or type(destinations) is not tuple or not destinations
+                       or len(set(destinations)) != len(destinations)
+                       or any(type(destination) is not str
+                              or destination not in SUPPORTED_DESTINATIONS
+                              for destination in destinations)
+                       for library, destinations in grants)):
             raise GuardedApplicationError("consent")
         if not self._repository.field_effect_backup_ready():
             raise GuardedApplicationError("backup")
@@ -193,10 +206,15 @@ class ContinuousGuardedApplication:
         if (any(item["state"] == "connection_unavailable" for item in readiness)
                 or any(not eligible[str(item["library"])] for item in readiness)):
             raise GuardedApplicationError("capability")
+        if any(
+            set(submitted[library]) != set(eligible[library])
+            for library in libraries
+        ):
+            raise GuardedApplicationError("capability")
         connection = self._libraries[0][0]
         self._repository.grant_field_effect_consent_matrix(
             connection,
-            tuple((library, eligible[library]) for library in libraries),
+            tuple((library, tuple(sorted(eligible[library]))) for library in libraries),
             self._clock(),
         )
         self.wake()
@@ -312,17 +330,23 @@ class ContinuousGuardedApplication:
                 self._repository.suspend_field_effect_capability(
                     scope=scope, connection=snapshot.connection,
                     destination=snapshot.destination, reason=observed.category,
-                    changed_at=self._clock(),
+                    changed_at=observed_at,
                 )
                 continue
-            self._repository.clear_field_effect_capability_suspension(
-                scope="destination", connection=snapshot.connection,
-                destination=snapshot.destination, observed_at=observed_at,
-            )
+            for reason in ("insufficient_permission", "field_unavailable"):
+                self._repository.clear_field_effect_capability_suspension(
+                    scope="destination", connection=snapshot.connection,
+                    destination=snapshot.destination, reason=reason,
+                    observed_at=observed_at,
+                )
             self._repository.clear_field_effect_capability_suspension(
                 scope="connection", connection=snapshot.connection, destination="",
-                observed_at=observed_at,
+                reason="connection_unavailable", observed_at=observed_at,
             )
+            if self._repository.field_effect_capability_suspension(
+                snapshot.connection, snapshot.destination
+            ) is not None:
+                continue
             operation = application.plan(
                 decision,
                 connection=snapshot.connection,
@@ -395,6 +419,13 @@ class ContinuousGuardedApplication:
         capabilities = self._capability_readiness(
             tuple(library for _, library in self._libraries), force=False
         )
+        for capability in capabilities:
+            connection = str(capability["connection"])
+            library = str(capability["library"])
+            for destination in capability["destinations"]:
+                destination["consented"] = self._consented(
+                    connection, library, str(destination["destination"])
+                )
         prepared = {
             "automatic": sum(value["automatic"] for value in prepared_by_library.values()),
             "human": sum(value["human"] for value in prepared_by_library.values()),
@@ -463,16 +494,47 @@ class ContinuousGuardedApplication:
                         "destination": destination, "state": observed.category,
                     })
                     if observed.category == "allowed":
+                        for reason in ("insufficient_permission", "field_unavailable"):
+                            self._repository.clear_field_effect_capability_suspension(
+                                scope="destination", connection=connection,
+                                destination=destination, reason=reason,
+                                observed_at=observed_at,
+                            )
                         self._repository.clear_field_effect_capability_suspension(
-                            scope="destination", connection=connection,
-                            destination=destination, observed_at=observed_at,
+                            scope="connection", connection=connection, destination="",
+                            reason="connection_unavailable", observed_at=observed_at,
                         )
+                        remaining = self._repository.field_effect_capability_suspension(
+                            connection, destination
+                        )
+                        if remaining is not None:
+                            destinations[-1]["state"] = remaining
                     elif observed.category == "connection_unavailable":
+                        self._repository.suspend_field_effect_capability(
+                            scope="connection", connection=connection,
+                            destination=destination, reason=observed.category,
+                            changed_at=observed_at,
+                        )
                         destinations = [
                             {"destination": name, "state": "connection_unavailable"}
                             for name in sorted(SUPPORTED_DESTINATIONS)
                         ]
                         break
+                    else:
+                        self._repository.clear_field_effect_capability_suspension(
+                            scope="connection", connection=connection, destination="",
+                            reason="connection_unavailable", observed_at=observed_at,
+                        )
+                        self._repository.suspend_field_effect_capability(
+                            scope="destination", connection=connection,
+                            destination=destination, reason=observed.category,
+                            changed_at=observed_at,
+                        )
+                        remaining = self._repository.field_effect_capability_suspension(
+                            connection, destination
+                        )
+                        if remaining is not None:
+                            destinations[-1]["state"] = remaining
                 if any(value["state"] == "connection_unavailable"
                        for value in destinations):
                     state = "connection_unavailable"
@@ -487,11 +549,6 @@ class ContinuousGuardedApplication:
                     {"destination": destination, "state": "not_ready"}
                     for destination in sorted(SUPPORTED_DESTINATIONS)
                 ]
-            if state != "connection_unavailable" and work_id is not None:
-                self._repository.clear_field_effect_capability_suspension(
-                    scope="connection", connection=connection, destination="",
-                    observed_at=now,
-                )
             cached_result = {
                 "connection": connection, "library": library, "state": state,
                 "destinations": tuple(

@@ -1920,7 +1920,9 @@ class SQLiteMetadataReportRepository:
             self._connection.execute(
                 "INSERT INTO field_effect_suspensions(scope,connection_name,destination,reason,updated_at,document) "
                 "VALUES(?,?,?,?,?,?) ON CONFLICT(scope,connection_name,destination) DO UPDATE SET "
-                "reason=excluded.reason,updated_at=excluded.updated_at,document=excluded.document",
+                "reason=excluded.reason,updated_at=excluded.updated_at,document=excluded.document "
+                "WHERE field_effect_suspensions.reason!='unexpected_effect_behavior' "
+                "OR excluded.reason='unexpected_effect_behavior'",
                 (scope, connection, stored_destination, reason, changed_at, document),
             )
             self._connection.commit()
@@ -1945,21 +1947,25 @@ class SQLiteMetadataReportRepository:
             raise FieldEffectError("persistence") from error
 
     def clear_field_effect_capability_suspension(
-        self, *, scope: str, connection: str, destination: str, observed_at: int,
+        self, *, scope: str, connection: str, destination: str, reason: str,
+        observed_at: int,
     ) -> None:
+        reasons = {"connection_unavailable", "insufficient_permission",
+                   "field_unavailable", "unexpected_effect_behavior"}
         if (scope not in {"connection", "destination"}
                 or type(connection) is not str or not connection
                 or (scope == "connection" and destination != "")
                 or (scope == "destination" and (type(destination) is not str
                                                  or not destination))
+                or reason not in reasons
                 or type(observed_at) is not int or observed_at < 0):
             raise FieldEffectError("invalid_suspension")
         try:
             self._connection.execute(
                 "DELETE FROM field_effect_suspensions "
                 "WHERE scope=? AND connection_name=? AND destination=? "
-                "AND updated_at<?",
-                (scope, connection, destination, observed_at),
+                "AND reason=? AND updated_at<?",
+                (scope, connection, destination, reason, observed_at),
             )
             self._connection.commit()
         except sqlite3.Error as error:

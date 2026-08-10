@@ -96,8 +96,13 @@ Expired credentials, inactive accounts, or loss of basic library/item access
 persist a connection suspension. A permission failure, incompatible field
 shape, or unexpected write response persists a destination suspension instead,
 leaving unrelated destinations eligible. Both remain fail-closed across restart;
-a fresh successful capability observation clears only the matching obsolete
-suspension, never a different destination or an unobserved connection failure.
+a denied readiness probe is durable and immediately removes that destination
+from Library and Attention. A fresh successful read-only capability observation
+may clear an older permission, field-shape, or connection-availability result it
+can disprove. It never clears `unexpected_effect_behavior`, a different
+destination, or an unobserved connection failure. Activity lists every included
+and excluded destination before initial or incremental subset consent, and the
+server rejects the command if a fresh probe no longer matches that visible set.
 
 ## Container restart and private recovery
 

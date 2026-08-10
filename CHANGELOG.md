@@ -48,6 +48,12 @@
   consent. Capability-disabled fields no longer inflate Library or Attention
   counts, and successful later observations restore their eligibility. (#505, #506)
 
+- Persist denied field readiness across restart, preserve unexpected-behaviour
+  suspensions during read-only probes, disclose and bind the exact destination
+  subset for initial and incremental Activity consent, and restore clear
+  qualified-automatic versus neutral event-origin labels. (#505, #506, #507,
+  #508, #510)
+
 - Keep a returned automatic field on its durable manual hold until the requested
   exact-current scan completes successfully, and bind release to the originating
   human decision so a concurrent newer hold cannot be cleared. The accepted

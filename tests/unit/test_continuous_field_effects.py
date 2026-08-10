@@ -115,6 +115,7 @@ class _RecoveryApplication:
 class _PagedRepository:
     def __init__(self, decisions) -> None:
         self.decisions = decisions
+        self.suspensions = {}
 
     def pending_field_effect_decision_documents(self, limit, after=None):
         values = self.decisions
@@ -144,8 +145,30 @@ class _PagedRepository:
     def grant_field_effect_consent_matrix(self, *arguments):
         raise AssertionError("consent must not be granted before capability proof")
 
-    def clear_field_effect_capability_suspension(self, **_):
-        pass
+    def suspend_field_effect_capability(
+        self, *, scope, connection, destination, reason, changed_at,
+    ):
+        key = (scope, connection, "" if scope == "connection" else destination)
+        current = self.suspensions.get(key)
+        if current is not None and current[0] == "unexpected_effect_behavior":
+            return
+        self.suspensions[key] = (reason, changed_at)
+
+    def clear_field_effect_capability_suspension(
+        self, *, scope, connection, destination, reason, observed_at,
+    ):
+        key = (scope, connection, destination)
+        current = self.suspensions.get(key)
+        if current is not None and current[0] == reason and current[1] < observed_at:
+            del self.suspensions[key]
+
+    def field_effect_capability_suspension(self, connection, destination):
+        connection_value = self.suspensions.get(("connection", connection, ""))
+        destination_value = self.suspensions.get(
+            ("destination", connection, destination)
+        )
+        value = connection_value or destination_value
+        return None if value is None else value[0]
 
 
 class _HoldRepository(_Repository):
@@ -432,7 +455,11 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
             (("primary", "alpha"),), lambda: 1, lambda *_: None,
         )
         with self.assertRaisesRegex(GuardedApplicationError, "capability"):
-            service.enable(("alpha",))
+            service.enable((("alpha", ("title",)),))
+        self.assertEqual(
+            set(repository.suspensions.values()),
+            {("insufficient_permission", 1)},
+        )
 
     def test_enable_grants_only_field_locally_eligible_destinations(self) -> None:
         decision = self._decisions(1)[0]
@@ -453,9 +480,94 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
             {("primary", "alpha"): _MixedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1, lambda *_: None,
         )
-        service.enable(("alpha",))
+        eligible = tuple(sorted(set(SUPPORTED_DESTINATIONS) - {"subtitle"}))
+        service.enable((("alpha", eligible),))
         self.assertIsNotNone(repository.grants)
         self.assertNotIn("subtitle", repository.grants[1][0][1])
+
+    def test_enable_rejects_a_stale_visible_destination_subset(self) -> None:
+        decision = self._decisions(1)[0]
+
+        class Repository(_PagedRepository):
+            def __init__(self):
+                super().__init__([decision])
+                self.grants = None
+
+            def grant_field_effect_consent_matrix(self, *arguments):
+                self.grants = arguments
+
+        repository = Repository()
+        service = ContinuousGuardedApplication(
+            repository, {("primary", "alpha"): _Planner()},
+            {("primary", "alpha"): _MixedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 1, lambda *_: None,
+        )
+
+        with self.assertRaisesRegex(GuardedApplicationError, "capability"):
+            service.enable((("alpha", ("title",)),))
+
+        self.assertIsNone(repository.grants)
+
+    def test_activity_exposes_incremental_consent_for_a_partially_enabled_library(
+        self,
+    ) -> None:
+        decision = self._decisions(1)[0]
+
+        class Repository(_PagedRepository):
+            def current_field_effect_consent(self, connection, library, destination):
+                if library == "alpha" and destination == "title":
+                    return object()
+                raise FieldEffectError("consent")
+
+            def field_effect_activity_data(self, _):
+                return {"events": [], "paused": False, "suspensions": []}
+
+        repository = Repository([decision])
+        service = ContinuousGuardedApplication(
+            repository, {("primary", "alpha"): _Planner()},
+            {("primary", "alpha"): _MixedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 1, lambda *_: None,
+        )
+
+        activity = service.activity()
+
+        self.assertEqual(activity["enabled_libraries"], [
+            {"connection": "primary", "library": "alpha"}
+        ])
+        capability = activity["capabilities"][0]
+        destinations = {
+            destination["destination"]: destination
+            for destination in capability["destinations"]
+        }
+        self.assertTrue(destinations["title"]["consented"])
+        self.assertFalse(destinations["authors"]["consented"])
+        self.assertEqual(destinations["subtitle"]["state"], "field_unavailable")
+
+    def test_successful_probe_preserves_unexpected_behavior_suspension(self) -> None:
+        decision = self._decisions(1)[0]
+        repository = _PagedRepository([decision])
+        repository.suspend_field_effect_capability(
+            scope="destination", connection="primary", destination="title",
+            reason="unexpected_effect_behavior", changed_at=1,
+        )
+        service = ContinuousGuardedApplication(
+            repository, {("primary", "alpha"): _Planner()},
+            {("primary", "alpha"): _AllowedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 2, lambda *_: None,
+        )
+
+        service._capability_readiness(("alpha",), force=True)
+
+        self.assertEqual(
+            repository.suspensions[("destination", "primary", "title")][0],
+            "unexpected_effect_behavior",
+        )
+        readiness = service._capability_readiness(("alpha",), force=True)[0]
+        title = next(
+            destination for destination in readiness["destinations"]
+            if destination["destination"] == "title"
+        )
+        self.assertEqual(title["state"], "unexpected_effect_behavior")
 
     def test_readiness_is_exactly_field_bounded_and_connection_fail_closed(self) -> None:
         decision = self._decisions(1)[0]

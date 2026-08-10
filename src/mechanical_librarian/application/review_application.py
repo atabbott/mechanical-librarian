@@ -510,9 +510,11 @@ class ReviewApplication:
         application = self._continuous_application()
         return self.serialized(application.activity)
 
-    def enable_activity(self, libraries: tuple[str, ...]) -> dict[str, object]:
+    def enable_activity(
+        self, grants: tuple[tuple[str, tuple[str, ...]], ...]
+    ) -> dict[str, object]:
         application = self._continuous_application()
-        return self.serialized(lambda: application.enable(libraries))
+        return self.serialized(lambda: application.enable(grants))
 
     def revoke_activity(self, connection: str, library: str) -> dict[str, object]:
         application = self._continuous_application()
