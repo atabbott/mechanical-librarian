@@ -55,8 +55,12 @@ ordinary-field human decisions and overrides; run persisted continuous review
 preparation; admit qualified deterministic decision-only automatic outcomes;
 and execute consent-gated exact field-effect plans through supported target APIs
 with backup, currentness, verification, audit, pause, revocation, and recovery
-controls. The HTTP surface consumes one pre-composed application boundary with
-bounded top-level view models.
+controls. Publishing an automatic outcome itself grants neither an effect plan
+nor target-write authority. Only a persisted qualified automatic decision may
+later enter the same consent, backup, capability, field-currentness,
+verification, audit, and reconciliation-guarded field-effect path as an
+accepted human decision. The HTTP surface consumes one pre-composed application
+boundary with bounded top-level view models.
 
 Catalogue, foreground batch, report, cover-preview, ProposalSet, ReviewCase,
 deterministic preview, and contained-reviewer operations are source-only typed

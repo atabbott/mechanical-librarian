@@ -14,9 +14,13 @@ reports, ProposalSets, and review cases in the background, presents Library,
 Attention, detail, Policy, and Activity through one packaged React shell, and
 records immutable human decisions. Qualified policy categories may produce
 deterministic decision-only automatic outcomes without model dispatch. Target
-effects require explicit consent, backup readiness, exact-current plan
-validation, optimistic concurrency, supported-service API writes, read-back
-verification, and durable audit/recovery state. Media mounts remain read-only.
+effects require explicit consent, backup readiness, field-local exact-current
+plan validation, supported-service API writes, read-back verification, and
+durable audit/recovery state. Audiobookshelf has no target-side compare-and-swap:
+a same-field update can be lost between the final authoritative pre-read and the
+write request, so read-back reconciliation handles refusal, ambiguity, drift,
+or disagreement rather than promising generic optimistic concurrency. Media
+mounts remain read-only.
 
 Contributor-only catalogue, batch, evidence, proposal, case, deterministic
 preview, and contained-reviewer scenarios remain available through the typed
