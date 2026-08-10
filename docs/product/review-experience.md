@@ -233,6 +233,9 @@ other unresolved field remains, the recorded field stays as the terminal case.
 Deliberate navigation away from that field while the refresh is pending is
 preserved rather than overwritten by automatic advancement.
 
+Recorded human decisions retain their exact selected value in the detail view.
+The deterministic disposition remains distinct from that live decision record.
+
 The post-first-release #195 outcome may add a global review summary presenting
 remaining work, conflicts, stale cases, readiness, and planned changes by
 adapter. It may also expose automatic cross-case history through separate

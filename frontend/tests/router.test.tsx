@@ -329,7 +329,7 @@ describe('typed review routes', () => {
     await waitFor(() => expect(router.state.location.search).toEqual({ field: 'series', subview: 'review' }))
   })
 
-  it('preserves navigation made while a decision is settling', async () => {
+  it('preserves masthead navigation made while a decision is settling', async () => {
     const user = userEvent.setup()
     let resolveDecision: (() => void) | undefined
     const completion = new Promise<void>((resolve) => { resolveDecision = resolve })
@@ -341,10 +341,11 @@ describe('typed review routes', () => {
     const { router } = renderRoute('/review/case-1?field=title&subview=review', http)
 
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
-    await user.click(screen.getByRole('button', { name: 'Evidence' }))
+    await user.click(screen.getByRole('link', { name: 'Library' }))
     await act(async () => { resolveDecision?.() })
 
-    await waitFor(() => expect(router.state.location.search).toEqual({ field: 'title', subview: 'evidence' }))
+    await waitFor(() => expect(router.state.location.pathname).toBe('/library'))
+    expect(router.state.location.pathname).not.toContain('undefined')
   })
 
   it('replaces opaque provenance references with distinct bounded reviewer facts', async () => {
@@ -391,6 +392,28 @@ describe('typed review routes', () => {
     expect(http.recordDecision).not.toHaveBeenCalled()
   })
 
+  it('shows the exact accepted recorded value without interpreting hostile content', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('detail fixture requires a title field')
+    const recordedValue = { kind: 'text', value: `<img src=x>${'selected '.repeat(80)}` } as const
+    const decided: CaseDetailView = {
+      ...detail,
+      fields: [{
+        ...titleField,
+        needsAttention: false,
+        humanDecision: {
+          actor: 'owner', decision_id: 'decision-accepted', destination: 'title', occurred_at: 1,
+          outcome: 'accept', proposal_id: 'proposal-1', review_case_id: 'case-1',
+          selected_value: recordedValue, target_fingerprint: 'fingerprint-1',
+        },
+      }],
+    }
+    renderRoute('/review/case-1?field=title&subview=review', { ...createHttp(), getCaseDetail: vi.fn(async () => decided) })
+
+    expect(await screen.findByText(`Human decision: accept by owner. Recorded value: ${recordedValue.value}.`)).toBeVisible()
+    expect(screen.queryByRole('img')).toBeNull()
+  })
+
   it('reconciles an ambiguous decision without retrying and routes stale cases safely', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]
@@ -418,7 +441,9 @@ describe('typed review routes', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
 
-    expect(await screen.findByText('Human decision: keep current by owner.')).toBeVisible()
+    expect(await screen.findByText('Human decision: keep current by owner. Recorded value: Old title.')).toBeVisible()
+    expect(screen.getAllByLabelText('Reviewer facts').at(0)).toHaveTextContent('Deterministic dispositionReview')
+    expect(screen.queryByText('Review state')).toBeNull()
     expect(screen.getByText('The response was lost. The current case was reloaded before any retry.')).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
     expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()

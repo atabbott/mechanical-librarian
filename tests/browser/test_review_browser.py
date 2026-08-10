@@ -245,7 +245,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     page.get_by_role("button", name="Choose current value:", exact=False).first.click()
                     page.get_by_text("Decision recorded.", exact=False).wait_for()
                     page.get_by_role("button", name="series", exact=True).click()
-                    page.get_by_text("Human decision: keep current by owner.").wait_for()
+                    page.get_by_text("Human decision: keep current by owner. Recorded value:", exact=False).wait_for()
                     self.assertEqual(
                         page.get_by_role("button", name="Choose current value:", exact=False).count(),
                         0,
