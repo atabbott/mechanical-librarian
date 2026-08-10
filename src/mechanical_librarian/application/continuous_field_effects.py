@@ -185,12 +185,22 @@ class ContinuousGuardedApplication:
         if any(library not in prepared_libraries for library in libraries):
             raise GuardedApplicationError("not_ready")
         readiness = self._capability_readiness(libraries, force=True)
-        if any(item["state"] != "allowed" for item in readiness):
+        eligible = {
+            str(item["library"]): tuple(
+                str(destination["destination"])
+                for destination in item["destinations"]
+                if destination["state"] == "allowed"
+            )
+            for item in readiness
+        }
+        if (any(item["state"] == "connection_unavailable" for item in readiness)
+                or any(not eligible[str(item["library"])] for item in readiness)):
             raise GuardedApplicationError("capability")
         connection = self._libraries[0][0]
-        destinations = tuple(sorted(SUPPORTED_DESTINATIONS))
-        self._repository.grant_field_effect_consents(
-            connection, libraries, destinations, self._clock()
+        self._repository.grant_field_effect_consent_matrix(
+            connection,
+            tuple((library, eligible[library]) for library in libraries),
+            self._clock(),
         )
         self.wake()
         return self.activity()
@@ -300,6 +310,13 @@ class ContinuousGuardedApplication:
                     changed_at=self._clock(),
                 )
                 continue
+            self._repository.clear_field_effect_capability_suspension(
+                scope="destination", connection=snapshot.connection,
+                destination=snapshot.destination,
+            )
+            self._repository.clear_field_effect_capability_suspension(
+                scope="connection", connection=snapshot.connection, destination="",
+            )
             operation = application.plan(
                 decision,
                 connection=snapshot.connection,
@@ -366,7 +383,7 @@ class ContinuousGuardedApplication:
                     pass
         enabled = []
         for connection, library in self._libraries:
-            if all(self._consented(connection, library, destination)
+            if any(self._consented(connection, library, destination)
                    for destination in SUPPORTED_DESTINATIONS):
                 enabled.append({"connection": connection, "library": library})
         capabilities = self._capability_readiness(
@@ -423,16 +440,48 @@ class ContinuousGuardedApplication:
                 results.append(dict(cached[1]))
                 continue
             work_id = representatives.get(library)
+            destinations = []
             state = "not_ready"
             if work_id is not None:
-                state = "allowed"
                 observer = self._capabilities[(connection, library)]
                 for destination in sorted(SUPPORTED_DESTINATIONS):
                     observed = observer.observe(_CapabilityProbe(work_id, destination))  # type: ignore[arg-type]
-                    if observed.category != "allowed":
-                        state = observed.category
+                    destinations.append({
+                        "destination": destination, "state": observed.category,
+                    })
+                    if observed.category == "allowed":
+                        self._repository.clear_field_effect_capability_suspension(
+                            scope="destination", connection=connection,
+                            destination=destination,
+                        )
+                    elif observed.category == "connection_unavailable":
+                        destinations = [
+                            {"destination": name, "state": "connection_unavailable"}
+                            for name in sorted(SUPPORTED_DESTINATIONS)
+                        ]
                         break
-            result = {"connection": connection, "library": library, "state": state}
+                if any(value["state"] == "connection_unavailable"
+                       for value in destinations):
+                    state = "connection_unavailable"
+                elif all(value["state"] == "allowed" for value in destinations):
+                    state = "allowed"
+                elif any(value["state"] == "allowed" for value in destinations):
+                    state = "partially_allowed"
+                else:
+                    state = "not_ready"
+            else:
+                destinations = [
+                    {"destination": destination, "state": "not_ready"}
+                    for destination in sorted(SUPPORTED_DESTINATIONS)
+                ]
+            if state != "connection_unavailable" and work_id is not None:
+                self._repository.clear_field_effect_capability_suspension(
+                    scope="connection", connection=connection, destination=""
+                )
+            result = {
+                "connection": connection, "library": library, "state": state,
+                "destinations": destinations,
+            }
             with self._capability_lock:
                 self._capability_cache[library] = (now, result)
             results.append(dict(result))

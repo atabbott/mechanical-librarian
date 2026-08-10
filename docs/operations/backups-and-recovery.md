@@ -95,7 +95,8 @@ Expired credentials, inactive accounts, or loss of basic library/item access
 persist a connection suspension. A permission failure, incompatible field
 shape, or unexpected write response persists a destination suspension instead,
 leaving unrelated destinations eligible. Both remain fail-closed across restart;
-the ordinary product exposes no implicit retry or automatic clearing path.
+a fresh successful capability observation clears only the matching obsolete
+suspension, never a different destination or an unobserved connection failure.
 
 ## Container restart and private recovery
 

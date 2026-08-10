@@ -13,9 +13,11 @@ application while making the remaining same-field race explicit and bounded.
 ## Decision
 
 Compose the guarded Audiobookshelf adapter into the installed review runtime
-only after an authenticated owner grants library-scoped consent for the complete
-existing set of 14 ebook destinations. Any new destination, action kind, or
-authority scope requires fresh consent. Consent also binds the exact resolved
+only after an authenticated owner grants library-scoped consent for the currently
+eligible subset of the existing 14 ebook destinations. Connection unavailability
+blocks consent, while an insufficient permission or incompatible field excludes
+only that destination; a library needs at least one eligible destination. Any new
+destination, action kind, or authority scope requires fresh consent. Consent also binds the exact resolved
 policy semantics and qualified automatic categories, so a semantic policy
 change invalidates it before scheduling and again at claim. Consent is not
 inferred from a decision, policy activation, configuration, or an earlier
@@ -55,7 +57,7 @@ is outside a transaction so the documented stopped-volume backup can be made;
 it is not a claim that an external backup copy exists.
 
 Add Activity as the only new permanent navigation destination. Before consent
-it presents readiness, representative before/after context, safety constraints,
+it presents bounded per-destination readiness, representative before/after context, safety constraints,
 and one enable action. Afterwards it presents a quiet summary and chronological
 ledger with pause, resume, revoke, and grouped recovery. Library, Attention,
 Policy, and Detail retain their accepted hierarchy and language. Capability

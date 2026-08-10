@@ -2933,6 +2933,29 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             self.assertEqual(len(queue), 1)
             self.assertEqual(queue[0][2], "title")
             self.assertEqual(repository.count_current_attention_fields(None), 1)
+            repository.suspend_field_effect_capability(
+                scope="destination", connection="primary", destination="title",
+                reason="field_unavailable", changed_at=1,
+            )
+            self.assertEqual(repository.count_current_review_cases(None), (2, 0))
+            self.assertEqual(repository.count_current_attention_fields(None), 0)
+            self.assertEqual(
+                repository.list_current_attention_documents(None, 10, 0), ()
+            )
+            repository.clear_field_effect_capability_suspension(
+                scope="destination", connection="primary", destination="title",
+            )
+            self.assertEqual(repository.count_current_review_cases(None), (2, 1))
+            repository.suspend_field_effect_capability(
+                scope="connection", connection="primary", destination="title",
+                reason="connection_unavailable", changed_at=2,
+            )
+            self.assertEqual(repository.count_current_review_cases(None), (2, 0))
+            self.assertEqual(repository.count_current_attention_fields(None), 0)
+            repository.clear_field_effect_capability_suspension(
+                scope="connection", connection="primary", destination="",
+            )
+            self.assertEqual(repository.count_current_review_cases(None), (2, 1))
             self.assertEqual(
                 repository.count_current_attention_fields("STRASSE"),
                 1,

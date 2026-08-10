@@ -458,7 +458,12 @@ _REVIEW_FIELD_ATTENTION_SQL = (
     "AND decision.destination=json_extract(result.value,'$.destination')) "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
-    "AND decision.destination=json_extract(result.value,'$.destination'))"
+    "AND decision.destination=json_extract(result.value,'$.destination')) "
+    "AND NOT EXISTS (SELECT 1 FROM field_effect_suspensions suspension "
+    "WHERE suspension.connection_name=c.connection_name AND ("
+    "(suspension.scope='connection' AND suspension.destination='') OR "
+    "(suspension.scope='destination' AND suspension.destination="
+    "json_extract(result.value,'$.destination'))))"
 )
 _REVIEW_ATTENTION_SQL = (
     "EXISTS (SELECT 1 FROM json_each(rc.document,'$.results') result WHERE "
@@ -1088,6 +1093,74 @@ class SQLiteMetadataReportRepository:
                         "INSERT INTO field_effect_consents(consent_id,current,updated_at,document) "
                         "VALUES(?,1,?,?)",
                         (consent.consent_id, granted_at, document),
+                    )
+                    granted.append(consent)
+            self._connection.commit()
+            return tuple(granted)
+        except (json.JSONDecodeError, KeyError, sqlite3.Error,
+                FieldEffectError, TypeError, ValueError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError):
+                raise
+            raise FieldEffectError("persistence") from error
+
+    def grant_field_effect_consent_matrix(
+        self, connection: str,
+        grants: tuple[tuple[str, tuple[str, ...]], ...], granted_at: int,
+    ) -> tuple[EffectConsent, ...]:
+        """Atomically persist only the capability-proven library destinations."""
+        if (type(grants) is not tuple or not grants
+                or any(type(library) is not str or not library
+                       or type(destinations) is not tuple or not destinations
+                       for library, destinations in grants)
+                or len({library for library, _ in grants}) != len(grants)):
+            raise FieldEffectError("invalid_consent")
+        granted: list[EffectConsent] = []
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            for library, destinations in grants:
+                envelope_identity = self.field_effect_consent_envelope_identity(library)
+                for destination in destinations:
+                    if type(destination) is not str or not destination:
+                        raise FieldEffectError("invalid_consent")
+                    row = self._connection.execute(
+                        "SELECT document FROM field_effect_consents WHERE current=1 "
+                        "AND json_extract(document,'$.consent.connection')=? "
+                        "AND json_extract(document,'$.consent.library')=? "
+                        "AND json_extract(document,'$.consent.destination')=? "
+                        "ORDER BY updated_at DESC,consent_id LIMIT 1",
+                        (connection, library, destination),
+                    ).fetchone()
+                    if row is not None:
+                        raw = json.loads(row[0])
+                        consent = EffectConsent.from_data(raw["consent"])
+                        if raw.get("current") is not True:
+                            raise FieldEffectError("invalid_consent")
+                        if consent.envelope_identity == envelope_identity:
+                            granted.append(consent)
+                            continue
+                        self._connection.execute(
+                            "UPDATE field_effect_consents SET current=0,updated_at=?,document=? "
+                            "WHERE consent_id=? AND current=1",
+                            (granted_at, canonical_effect_json({
+                                "consent": consent.to_data(), "current": False,
+                                "schema_version": "field-effect-consent-state-v1",
+                                "updated_at": granted_at,
+                            }), consent.consent_id),
+                        )
+                    consent = EffectConsent.create(
+                        connection=connection, library=library,
+                        destination=destination, envelope_identity=envelope_identity,
+                        granted_at=granted_at,
+                    )
+                    self._connection.execute(
+                        "INSERT INTO field_effect_consents(consent_id,current,updated_at,document) "
+                        "VALUES(?,1,?,?)",
+                        (consent.consent_id, granted_at, canonical_effect_json({
+                            "consent": consent.to_data(), "current": True,
+                            "schema_version": "field-effect-consent-state-v1",
+                            "updated_at": granted_at,
+                        })),
                     )
                     granted.append(consent)
             self._connection.commit()
@@ -1760,6 +1833,26 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             return None if row is None else str(row[0])
         except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    def clear_field_effect_capability_suspension(
+        self, *, scope: str, connection: str, destination: str,
+    ) -> None:
+        if (scope not in {"connection", "destination"}
+                or type(connection) is not str or not connection
+                or (scope == "connection" and destination != "")
+                or (scope == "destination" and (type(destination) is not str
+                                                 or not destination))):
+            raise FieldEffectError("invalid_suspension")
+        try:
+            self._connection.execute(
+                "DELETE FROM field_effect_suspensions "
+                "WHERE scope=? AND connection_name=? AND destination=?",
+                (scope, connection, destination),
+            )
+            self._connection.commit()
+        except sqlite3.Error as error:
+            self._connection.rollback()
             raise FieldEffectError("persistence") from error
 
     def claim_field_effect(self, plan_id: str, expected_state: str,
@@ -3996,6 +4089,9 @@ class SQLiteMetadataReportRepository:
                         ReviewCase.from_json(case_document).review_case_id
                     ),
                     self._automatic_attention_destinations(ReviewCase.from_json(case_document).review_case_id),
+                    self._field_effect_capability_suspended_destinations(
+                        ReviewCase.from_json(case_document).review_case_id
+                    ),
                 )
                 for case_document, report_document in rows
             )
@@ -4013,6 +4109,26 @@ class SQLiteMetadataReportRepository:
             "json_each(shadow.document,'$.outcomes') outcome, automatic_safety_state safety "
             "WHERE shadow.review_case_id=? AND json_extract(outcome.value,'$.policy_destination')='automatic' AND ("
             "safety.paused=1 OR safety.global_suspension IS NOT NULL OR EXISTS(SELECT 1 FROM json_each(safety.category_suspensions_document) category WHERE json_extract(category.value,'$[0]')=json_extract(outcome.value,'$.policy_category'))) ORDER BY 1",
+            (review_case_id,),
+        ).fetchall()
+        if any(type(row[0]) is not str for row in rows):
+            raise MetadataReportError("review attention is unavailable")
+        return tuple(row[0] for row in rows)
+
+    def _field_effect_capability_suspended_destinations(
+        self, review_case_id: str,
+    ) -> tuple[str, ...]:
+        rows = self._connection.execute(
+            "SELECT json_extract(result.value,'$.destination') "
+            "FROM current_review_case_lineages c JOIN review_cases rc "
+            "ON rc.review_case_id=c.review_case_id,"
+            "json_each(rc.document,'$.results') result "
+            "WHERE rc.review_case_id=? AND EXISTS(SELECT 1 "
+            "FROM field_effect_suspensions suspension "
+            "WHERE suspension.connection_name=c.connection_name AND ("
+            "(suspension.scope='connection' AND suspension.destination='') OR "
+            "(suspension.scope='destination' AND suspension.destination="
+            "json_extract(result.value,'$.destination')))) ORDER BY 1",
             (review_case_id,),
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):

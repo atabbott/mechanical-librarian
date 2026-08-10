@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Let Activity consent proceed for the currently eligible fields when another
+  field is unavailable or lacks permission, while connection outages still block
+  consent. Capability-disabled fields no longer inflate Library or Attention
+  counts, and successful later observations restore their eligibility. (#505, #506)
+
 - Keep a returned automatic field on its durable manual hold until the requested
   exact-current scan completes successfully, and bind release to the originating
   human decision so a concurrent newer hold cannot be cleared. Continuous

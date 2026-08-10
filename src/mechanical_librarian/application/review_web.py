@@ -542,8 +542,9 @@ class BrowseReviewLibrary:
             items = []
             for row in snapshot.rows[:bounded_limit]:
                 case_document, report_document, decision_documents = row[:3]
-                automatic_attention_destinations = row[3] if len(row) == 4 else ()
-                items.append(_library_item(case_document, report_document, decision_documents, automatic_attention_destinations))
+                automatic_attention_destinations = row[3] if len(row) >= 4 else ()
+                suspended_destinations = row[4] if len(row) == 5 else ()
+                items.append(_library_item(case_document, report_document, decision_documents, automatic_attention_destinations, suspended_destinations))
         except Exception as error:
             raise ReviewWebError("unavailable") from error
         return {
@@ -836,6 +837,7 @@ def _library_item(
     report_document: str,
     decision_documents: tuple[str, ...],
     automatic_attention_destinations: tuple[str, ...] = (),
+    suspended_destinations: tuple[str, ...] = (),
 ) -> dict[str, object]:
     case, report = _case_and_report(case_document, report_document)
     decisions = set()
@@ -850,7 +852,9 @@ def _library_item(
     attention = [
         value
         for value in case.proposals
-        if value["destination"] not in decisions and _needs_attention(value, automatic_attention_destinations)
+        if (value["destination"] not in decisions
+            and value["destination"] not in suspended_destinations
+            and _needs_attention(value, automatic_attention_destinations))
     ]
     outcomes = sorted(
         {

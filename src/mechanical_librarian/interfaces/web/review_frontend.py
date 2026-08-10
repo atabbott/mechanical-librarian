@@ -1074,7 +1074,7 @@ if (guardedActivityRoot) {
       const capabilityByLibrary = new Map(data.capabilities.map(item => [item.library, item.state]));
       for (const library of data.configured_libraries) {
         const label = element("label"); const choice = element("input"); choice.type = "checkbox"; choice.value = library.library;
-        const state = capabilityByLibrary.get(library.library) || "not_ready"; choice.disabled = state !== "allowed" || !library.prepared.total; choice.checked = !choice.disabled;
+        const state = capabilityByLibrary.get(library.library) || "not_ready"; choice.disabled = !["allowed", "partially_allowed"].includes(state) || !library.prepared.total; choice.checked = !choice.disabled;
         label.append(choice, document.createTextNode(` ${library.library} · ${library.prepared.total} prepared (${library.prepared.automatic} automatic, ${library.prepared.human} human)${choice.disabled ? ` · ${friendly(state)}` : ""}`)); libraries.append(label);
       }
       const actions = element("div", null, "policy-actions activity-actions");
