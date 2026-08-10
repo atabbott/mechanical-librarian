@@ -1180,11 +1180,19 @@ class SQLiteMetadataReportRepository:
         """Bind consent to the exact current automatic policy semantics."""
         if type(library) is not str or not library:
             raise FieldEffectError("invalid_consent")
+        return self._field_effect_consent_envelope_identity(
+            library, self.current_resolved_policy_id(library)
+        )
+
+    @staticmethod
+    def _field_effect_consent_envelope_identity(
+        library: str, resolved_policy_id: str,
+    ) -> str:
         document = canonical_effect_json({
             "action": "apply_field",
             "destinations": sorted(SUPPORTED_DESTINATIONS),
             "library": library,
-            "resolved_policy_id": self.current_resolved_policy_id(library),
+            "resolved_policy_id": resolved_policy_id,
             "schema_version": "field-effect-consent-envelope-v1",
         })
         return hashlib.sha256(document.encode("utf-8")).hexdigest()
@@ -1670,10 +1678,62 @@ class SQLiteMetadataReportRepository:
             raise FieldEffectError("invalid_limit")
         try:
             consent_rows = self._connection.execute(
-                "SELECT DISTINCT json_extract(document,'$.consent.connection'),"
-                "json_extract(document,'$.consent.library') "
-                "FROM field_effect_consents WHERE current=1 ORDER BY 1,2"
+                "SELECT c.consent_id,c.updated_at,c.document,s.generation,"
+                "r.resolved_policy_id,r.document,d.document "
+                "FROM field_effect_consents c JOIN metadata_policy_state s "
+                "ON s.singleton=1 JOIN metadata_policy_drafts d "
+                "ON d.policy_id=s.active_policy_id "
+                "LEFT JOIN metadata_policy_resolutions r "
+                "ON r.generation=s.generation AND r.library_name="
+                "json_extract(c.document,'$.consent.library') "
+                "WHERE c.current=1 ORDER BY "
+                "json_extract(c.document,'$.consent.connection'),"
+                "json_extract(c.document,'$.consent.library'),"
+                "json_extract(c.document,'$.consent.destination')"
             ).fetchall()
+            consented_destinations: list[tuple[str, str, str]] = []
+            profile: MetadataPolicyProfile | None = None
+            for consent_id, updated_at, document, generation, resolved_id, resolved_document, draft_document in consent_rows:
+                raw = json.loads(document)
+                if (
+                    type(raw) is not dict
+                    or set(raw) != {"consent", "current", "schema_version", "updated_at"}
+                    or raw.get("current") is not True
+                    or raw.get("schema_version") != "field-effect-consent-state-v1"
+                    or raw.get("updated_at") != updated_at
+                    or canonical_effect_json(raw) != document
+                ):
+                    raise FieldEffectError("persistence")
+                consent = EffectConsent.from_data(raw["consent"])
+                if consent.consent_id != consent_id:
+                    raise FieldEffectError("persistence")
+                if resolved_id is not None:
+                    resolved = ResolvedMetadataPolicy.from_data(
+                        json.loads(resolved_document)
+                    )
+                    if (
+                        resolved.library != consent.library
+                        or resolved.resolved_id != resolved_id
+                        or resolved.canonical_json != resolved_document
+                    ):
+                        raise FieldEffectError("persistence")
+                    current_resolved_id = resolved.resolved_id
+                elif generation == 1:
+                    if profile is None:
+                        profile = MetadataPolicyProfile.from_data(
+                            json.loads(draft_document)
+                        )
+                    current_resolved_id = resolve_policy(
+                        profile, consent.library
+                    ).resolved_id
+                else:
+                    raise FieldEffectError("persistence")
+                if consent.envelope_identity == self._field_effect_consent_envelope_identity(
+                    consent.library, current_resolved_id
+                ):
+                    consented_destinations.append((
+                        consent.connection, consent.library, consent.destination
+                    ))
             counts = {
                 state: count for state, count in self._connection.execute(
                     "SELECT state,count(*) FROM field_effects GROUP BY state"
@@ -1715,8 +1775,17 @@ class SQLiteMetadataReportRepository:
                 ).fetchall()]
             return {
                 "consented_libraries": [
-                    {"connection": row[0], "library": row[1]}
-                    for row in consent_rows
+                    {"connection": connection, "library": library}
+                    for connection, library in sorted({
+                        (connection, library)
+                        for connection, library, _ in consented_destinations
+                    })
+                ],
+                "consented_destinations": [
+                    {"connection": connection, "library": library,
+                     "destination": destination}
+                    for connection, library, destination
+                    in consented_destinations
                 ],
                 "counts": counts,
                 "cleanup": {"pending": cleanup[0], "exhausted": cleanup[1]},
@@ -1724,7 +1793,8 @@ class SQLiteMetadataReportRepository:
                 "paused": self.field_effect_paused(),
                 "suspensions": suspensions,
             }
-        except sqlite3.Error as error:
+        except (json.JSONDecodeError, MetadataPolicyError, sqlite3.Error,
+                TypeError, ValueError) as error:
             raise FieldEffectError("persistence") from error
 
     def record_field_effect(self, operation: FieldEffectOperation) -> FieldEffectOperation:

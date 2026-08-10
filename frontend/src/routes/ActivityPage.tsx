@@ -29,9 +29,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const capability = (library: string) => capabilities.find((item) => text(item.library) === library)
   const selectable = configured.filter((item) => capabilityDestinations(capability(text(item.library))).some((destination) => destination.state === 'allowed' && !destination.consented))
   const selectableNames = new Set(selectable.map((item) => text(item.library)))
-  const [selected, setSelected] = useState<Set<string>>(() => new Set())
+  const [selection, setSelection] = useState(() => ({ source: data, names: new Set<string>() }))
+  if (selection.source !== data) {
+    setSelection({ source: data, names: new Set([...selection.names].filter((name) => selectableNames.has(name))) })
+  }
+  const selected = selection.source === data ? selection.names : new Set([...selection.names].filter((name) => selectableNames.has(name)))
   const [status, setStatus] = useState('')
-  const mutation = useMutation({ mutationFn: ({ path, body }: { path: string; body?: unknown }) => http.activityCommand(path, body), retry: false, onSuccess: async () => { setStatus('Activity state refreshed from the authoritative server.'); await queryClient.invalidateQueries({ queryKey: ['activity'] }) }, onError: async () => { setStatus('The requested activity change failed safely. Try again.'); await queryClient.invalidateQueries({ queryKey: ['activity'] }) } })
+  const mutation = useMutation({ mutationFn: ({ path, body }: { path: string; body?: unknown }) => http.activityCommand(path, body), retry: false, onSuccess: async () => { setSelection({ source: data, names: new Set() }); setStatus('Activity state refreshed from the authoritative server.'); await queryClient.invalidateQueries({ queryKey: ['activity'] }) }, onError: async () => { setStatus('The requested activity change failed safely. Try again.'); await queryClient.invalidateQueries({ queryKey: ['activity'] }) } })
   const paused = data.paused === true
   const backupReady = data.backup_ready === true
   const capabilityState = (library: string) => text(capability(library)?.state, 'not_ready')
@@ -40,7 +44,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     if (!selected.has(name)) return []
     return [{ library: name, destinations: capabilityDestinations(capability(name)).filter((destination) => destination.state === 'allowed').map((destination) => destination.destination) }]
   })
-  const toggle = (library: string) => setSelected((current) => { const next = new Set(current); if (next.has(library)) next.delete(library); else next.add(library); return next })
+  const toggle = (library: string) => { const next = new Set(selected); if (next.has(library)) next.delete(library); else next.add(library); setSelection({ source: data, names: next }) }
   return <>
     <header className="page-heading" tabIndex={-1} data-route-focus><div><p className="eyebrow">Guarded application</p><h1>{enabled.length ? 'Activity' : 'Ready when you are'}</h1><p>{enabled.length ? 'A readable account of outcomes and exceptions.' : 'Review remains useful in read-only mode. Explicit consent enables supported writes.'}</p></div></header>
     <div className="activity-layout"><section className="activity-controls"><h2>{enabled.length ? paused ? 'New work paused' : 'Applying safely' : 'Enable guarded writes'}</h2>{configured.length ? <fieldset><legend>Prepared libraries</legend>{configured.map((library) => { const name = text(library.library); const state = capabilityState(name); const destinations = capabilityDestinations(capability(name)); const prepared = typeof library.prepared === 'object' && library.prepared ? count((library.prepared as Record<string, unknown>).total) : 0; const disabled = !selectableNames.has(name) || !['allowed', 'partially_allowed'].includes(state) || prepared === 0; return <div key={name}><label><input type="checkbox" value={name} disabled={disabled} checked={selected.has(name)} onChange={() => toggle(name)}/>{name} · {prepared} prepared{disabled ? ` · ${state.replaceAll('_', ' ')}` : ''}</label><ul aria-label={`${name} destination consent`}>

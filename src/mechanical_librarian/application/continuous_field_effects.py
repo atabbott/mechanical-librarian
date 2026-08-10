@@ -379,6 +379,13 @@ class ContinuousGuardedApplication:
 
     def activity(self) -> dict[str, object]:
         data = self._repository.field_effect_activity_data(50)
+        consented = {
+            (
+                str(value["connection"]), str(value["library"]),
+                str(value["destination"]),
+            )
+            for value in data.pop("consented_destinations", [])
+        }
         documents = self._repository.pending_field_effect_decision_documents(100)
         prepared_rows = self._repository.pending_field_effect_decision_counts()
         prepared_by_library: dict[str, dict[str, int]] = {
@@ -413,8 +420,10 @@ class ContinuousGuardedApplication:
                     pass
         enabled = []
         for connection, library in self._libraries:
-            if any(self._consented(connection, library, destination)
-                   for destination in SUPPORTED_DESTINATIONS):
+            if any(
+                candidate_connection == connection and candidate_library == library
+                for candidate_connection, candidate_library, _ in consented
+            ):
                 enabled.append({"connection": connection, "library": library})
         capabilities = self._capability_readiness(
             tuple(library for _, library in self._libraries), force=False
@@ -423,9 +432,9 @@ class ContinuousGuardedApplication:
             connection = str(capability["connection"])
             library = str(capability["library"])
             for destination in capability["destinations"]:
-                destination["consented"] = self._consented(
+                destination["consented"] = (
                     connection, library, str(destination["destination"])
-                )
+                ) in consented
         prepared = {
             "automatic": sum(value["automatic"] for value in prepared_by_library.values()),
             "human": sum(value["human"] for value in prepared_by_library.values()),
@@ -635,17 +644,6 @@ class ContinuousGuardedApplication:
         if application is None:
             raise GuardedApplicationError("configuration")
         return application
-
-    def _consented(self, connection: str, library: str, destination: str) -> bool:
-        try:
-            self._repository.current_field_effect_consent(
-                connection, library, destination
-            )
-            return True
-        except FieldEffectError as error:
-            if error.code == "consent":
-                return False
-            raise
 
     @staticmethod
     def _decision(document: str) -> HumanDecision | AutomaticDecision:

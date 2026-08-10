@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError } from '../src/api/http'
-import type { CaseDetailView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
+import type { ActivityView, CaseDetailView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
 import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
 
 const library: LibraryView = {
@@ -344,13 +344,44 @@ describe('typed review routes', () => {
     expect(disclosure).toHaveTextContent('authors: Included · consent requested')
     expect(disclosure).toHaveTextContent('subtitle: Excluded · field unavailable')
     expect(disclosure).toHaveTextContent('title: Included · already consented')
-    await user.click(screen.getByRole('checkbox', { name: /fiction · 2 prepared/ }))
+    const choice = screen.getByRole('checkbox', { name: /fiction · 2 prepared/ })
+    await user.click(choice)
     await user.click(screen.getByRole('button', { name: 'Enable selected libraries' }))
 
     await waitFor(() => expect(http.activityCommand).toHaveBeenCalledWith(
       'activity/consent',
       { grants: [{ library: 'fiction', destinations: ['authors', 'title'] }] },
     ))
+    await waitFor(() => expect(choice).not.toBeChecked())
+    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
+  })
+
+  it('prunes a selection when polling removes and later restores eligibility', async () => {
+    const user = userEvent.setup()
+    const partial: ActivityView = {
+      backup_ready: true,
+      configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 1, human: 0, total: 1 } }],
+      enabled_libraries: [],
+      capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false }] }],
+      events: [], paused: false,
+    }
+    let current = partial
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current) }
+    const { queryClient } = renderRoute('/activity', http)
+    const choice = await screen.findByRole('checkbox', { name: /fiction · 1 prepared/ })
+    await user.click(choice)
+    expect(choice).toBeChecked()
+
+    current = { ...partial, enabled_libraries: [{ connection: 'primary', library: 'fiction' }], capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: true }] }] }
+    await queryClient.invalidateQueries({ queryKey: ['activity'] })
+    await waitFor(() => expect(choice).toBeDisabled())
+    expect(choice).not.toBeChecked()
+
+    current = partial
+    await queryClient.invalidateQueries({ queryKey: ['activity'] })
+    await waitFor(() => expect(choice).toBeEnabled())
+    expect(choice).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Enable guarded writes' })).toBeDisabled()
   })
 
   it('keeps a fully connection-blocked prepared library visible but unselectable', async () => {

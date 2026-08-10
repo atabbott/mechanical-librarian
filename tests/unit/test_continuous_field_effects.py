@@ -515,12 +515,16 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
 
         class Repository(_PagedRepository):
             def current_field_effect_consent(self, connection, library, destination):
-                if library == "alpha" and destination == "title":
-                    return object()
-                raise FieldEffectError("consent")
+                raise AssertionError("Activity must use the bounded consent matrix")
 
             def field_effect_activity_data(self, _):
-                return {"events": [], "paused": False, "suspensions": []}
+                return {
+                    "consented_destinations": [{
+                        "connection": "primary", "library": "alpha",
+                        "destination": "title",
+                    }],
+                    "events": [], "paused": False, "suspensions": [],
+                }
 
         repository = Repository([decision])
         service = ContinuousGuardedApplication(
