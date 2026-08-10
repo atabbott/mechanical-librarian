@@ -1370,8 +1370,9 @@ class SQLiteMetadataReportRepository:
         document = canonical_effect_json({
             "active": True, "destination": destination,
             "decision_id": decision_id,
+            "pending_return": None,
             "review_case_id": review_case_id,
-            "schema_version": "field-effect-manual-hold-v1",
+            "schema_version": "field-effect-manual-hold-v2",
             "updated_at": changed_at,
         })
         self._connection.execute(
@@ -1401,7 +1402,119 @@ class SQLiteMetadataReportRepository:
             "WHERE review_case_id=? AND destination=? AND active=1",
             (review_case_id, destination),
         ).fetchone()
-        return None if row is None else row[0]
+        if row is None:
+            return None
+        try:
+            value = json.loads(row[0])
+            token = value["decision_id"]
+        except (json.JSONDecodeError, KeyError, TypeError) as error:
+            raise FieldEffectError("persistence") from error
+        return token if type(token) is str else None
+
+    def request_field_effect_manual_return(
+        self, review_case_id: str, destination: str, hold_token: str,
+        scan_id: str, requested_at: int, changed_at: int,
+    ) -> bool:
+        """Persist an accepted return request against one exact human hold."""
+        if (
+            any(type(value) is not str or not value for value in
+                (review_case_id, destination, hold_token, scan_id))
+            or type(requested_at) is not int or requested_at < 0
+            or type(changed_at) is not int or changed_at < 0
+        ):
+            raise FieldEffectError("invalid_manual_hold")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT document FROM field_effect_manual_holds "
+                "WHERE review_case_id=? AND destination=? AND active=1",
+                (review_case_id, destination),
+            ).fetchone()
+            if row is None:
+                self._connection.rollback()
+                return False
+            active_document = row[0]
+            raw = json.loads(active_document)
+            if raw.get("decision_id") != hold_token:
+                self._connection.rollback()
+                return False
+            raw["pending_return"] = {
+                "requested_at": requested_at,
+                "scan_id": scan_id,
+            }
+            raw["updated_at"] = changed_at
+            document = canonical_effect_json(raw)
+            updated = self._connection.execute(
+                "UPDATE field_effect_manual_holds SET updated_at=?,document=? "
+                "WHERE review_case_id=? AND destination=? AND active=1 AND document=?",
+                (changed_at, document, review_case_id, destination, active_document),
+            ).rowcount
+            if updated != 1:
+                self._connection.rollback()
+                return False
+            self._connection.commit()
+            return True
+        except (json.JSONDecodeError, KeyError, sqlite3.Error, TypeError) as error:
+            self._connection.rollback()
+            raise FieldEffectError("persistence") from error
+
+    def pending_field_effect_manual_returns(
+        self, limit: int, after: tuple[int, str, str] | None = None,
+    ) -> tuple[tuple[str, str, str, str, str, str, int, int], ...]:
+        if (
+            type(limit) is not int or not 1 <= limit <= 100
+            or (
+                after is not None
+                and (
+                    type(after) is not tuple
+                    or len(after) != 3
+                    or type(after[0]) is not int
+                    or after[0] < 0
+                    or any(type(value) is not str or not value for value in after[1:])
+                )
+            )
+        ):
+            raise FieldEffectError("invalid_manual_hold")
+        try:
+            cursor_clause = ""
+            parameters: tuple[object, ...] = ()
+            if after is not None:
+                cursor_clause = (
+                    "AND (hold.updated_at>? OR "
+                    "(hold.updated_at=? AND hold.review_case_id>?) OR "
+                    "(hold.updated_at=? AND hold.review_case_id=? "
+                    "AND hold.destination>?)) "
+                )
+                parameters = (
+                    after[0], after[0], after[1],
+                    after[0], after[1], after[2],
+                )
+            rows = self._connection.execute(
+                "SELECT hold.review_case_id,hold.destination,lineage.connection_name,"
+                "lineage.library_name,hold.document,hold.updated_at "
+                "FROM field_effect_manual_holds hold "
+                "JOIN current_review_case_lineages lineage "
+                "ON lineage.review_case_id=hold.review_case_id "
+                "WHERE hold.active=1 AND "
+                "json_type(hold.document,'$.pending_return')='object' "
+                + cursor_clause +
+                "ORDER BY hold.updated_at,hold.review_case_id,hold.destination LIMIT ?",
+                (*parameters, limit),
+            ).fetchall()
+            pending = []
+            for (
+                review_case_id, destination, connection, library, document, updated_at
+            ) in rows:
+                raw = json.loads(document)
+                request = raw["pending_return"]
+                pending.append((
+                    review_case_id, destination, connection, library,
+                    raw["decision_id"], request["scan_id"], request["requested_at"],
+                    updated_at,
+                ))
+            return tuple(pending)
+        except (json.JSONDecodeError, KeyError, sqlite3.Error, TypeError) as error:
+            raise FieldEffectError("persistence") from error
 
     def clear_field_effect_manual_hold(
         self, review_case_id: str, destination: str, changed_at: int,
@@ -1422,14 +1535,15 @@ class SQLiteMetadataReportRepository:
                 self._connection.rollback()
                 return None
             active_document = hold[0]
-            if expected_hold_token is not None and active_document != expected_hold_token:
+            raw = json.loads(active_document)
+            if expected_hold_token is not None and raw.get("decision_id") != expected_hold_token:
                 self._connection.rollback()
                 return None
-            raw = json.loads(active_document)
             document = canonical_effect_json({
                 "active": False, "decision_id": raw["decision_id"],
                 "destination": destination, "review_case_id": review_case_id,
-                "schema_version": "field-effect-manual-hold-v1",
+                "pending_return": None,
+                "schema_version": "field-effect-manual-hold-v2",
                 "updated_at": changed_at,
             })
             updated = self._connection.execute(
@@ -1458,7 +1572,7 @@ class SQLiteMetadataReportRepository:
                     )
             self._connection.commit()
             return context if updated == 1 else None
-        except sqlite3.Error as error:
+        except (json.JSONDecodeError, KeyError, sqlite3.Error, TypeError) as error:
             self._connection.rollback()
             raise FieldEffectError("persistence") from error
 
@@ -2463,7 +2577,7 @@ class SQLiteMetadataReportRepository:
                         raise MetadataReportError(
                             "review preparation producer changed during active work"
                         )
-                    if row[1] == "processing":
+                    if row[1] in {"discovering", "processing"}:
                         self._connection.execute(
                             "UPDATE review_preparation_scans SET rescan_requested=1,updated_at=? WHERE scan_id=?",
                             (requested_at, row[0]),
@@ -6960,9 +7074,9 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
         ):
             raw = json.loads(document)
             if (type(raw) is not dict or set(raw) != {
-                    "active", "decision_id", "destination", "review_case_id",
-                    "schema_version", "updated_at"}
-                or raw["schema_version"] != "field-effect-manual-hold-v1"
+                    "active", "decision_id", "destination", "pending_return",
+                    "review_case_id", "schema_version", "updated_at"}
+                or raw["schema_version"] != "field-effect-manual-hold-v2"
                 or type(raw["active"]) is not bool
                 or type(raw["decision_id"]) is not str
                 or not re.fullmatch(r"human_decision_[0-9a-f]{64}", raw["decision_id"])
@@ -6970,6 +7084,18 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 or (raw["review_case_id"], raw["destination"], raw["active"],
                     raw["updated_at"]) != (review_case_id, destination,
                                             bool(active), updated_at)
+                or (
+                    raw["pending_return"] is not None
+                    and (
+                        not raw["active"]
+                        or type(raw["pending_return"]) is not dict
+                        or set(raw["pending_return"]) != {"requested_at", "scan_id"}
+                        or type(raw["pending_return"]["requested_at"]) is not int
+                        or raw["pending_return"]["requested_at"] < 0
+                        or type(raw["pending_return"]["scan_id"]) is not str
+                        or not raw["pending_return"]["scan_id"]
+                    )
+                )
                 or canonical_effect_json(raw) != document):
                 raise FieldEffectError("invalid_manual_hold")
 

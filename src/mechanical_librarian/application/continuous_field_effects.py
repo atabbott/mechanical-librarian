@@ -82,12 +82,9 @@ class ContinuousGuardedApplication:
         self._last_library: str | None = None
         self._last_failure: str | None = None
         self._schedule_cursor: tuple[int, str] | None = None
+        self._manual_return_cursor: tuple[int, str, str] | None = None
         self._capability_cache: dict[str, tuple[int, dict[str, object]]] = {}
         self._capability_lock = threading.Lock()
-        self._manual_return_lock = threading.Lock()
-        self._pending_manual_returns: dict[
-            tuple[str, str], _PendingManualReturn
-        ] = {}
         self._serialize: Callable[[Callable[[], object]], object] = lambda call: call()
 
     def attach_serialization(
@@ -248,9 +245,16 @@ class ContinuousGuardedApplication:
         requested_at = getattr(progress, "updated_at", None)
         if type(scan_id) is not str or type(requested_at) is not int:
             raise GuardedApplicationError("scan")
-        pending = _PendingManualReturn(context, hold_token, scan_id, requested_at)
-        with self._manual_return_lock:
-            self._pending_manual_returns[(review_case_id, destination)] = pending
+        persisted = self._repository.request_field_effect_manual_return(
+            review_case_id,
+            destination,
+            hold_token,
+            scan_id,
+            requested_at,
+            self._clock(),
+        )
+        if not persisted:
+            raise GuardedApplicationError("manual_hold")
         self._wake.set()
 
     def status(self, plan_id: str) -> FieldEffectOperation:
@@ -525,9 +529,25 @@ class ContinuousGuardedApplication:
     def _release_completed_manual_returns(self) -> None:
         if self._scan_progress is None:
             return
-        with self._manual_return_lock:
-            pending = tuple(self._pending_manual_returns.items())
-        for key, release in pending:
+        pending = self._repository.pending_field_effect_manual_returns(
+            100, self._manual_return_cursor
+        )
+        for row in pending:
+            if (
+                type(row) is not tuple
+                or len(row) != 8
+                or any(type(value) is not str for value in row[:6])
+                or type(row[6]) is not int
+                or type(row[7]) is not int
+            ):
+                raise GuardedApplicationError("persistence")
+            (
+                review_case_id, destination, connection, library,
+                hold_token, scan_id, requested_at, updated_at,
+            ) = row
+            release = _PendingManualReturn(
+                (connection, library), hold_token, scan_id, requested_at
+            )
             try:
                 progress = self._scan_progress(*release.context)
             except Exception as error:
@@ -541,12 +561,13 @@ class ContinuousGuardedApplication:
             ):
                 continue
             cleared = self._repository.clear_field_effect_manual_hold(
-                key[0], key[1], self._clock(), release.hold_token
+                review_case_id, destination, self._clock(), release.hold_token
             )
-            with self._manual_return_lock:
-                current = self._pending_manual_returns.get(key)
-                if current == release and cleared is not None:
-                    del self._pending_manual_returns[key]
+        self._manual_return_cursor = (
+            (pending[-1][7], pending[-1][0], pending[-1][1])
+            if len(pending) == 100
+            else None
+        )
 
     def _application(self, operation: FieldEffectOperation) -> GuardedFieldApplication:
         application = self._applications.get(

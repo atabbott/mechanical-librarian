@@ -702,10 +702,10 @@ def _qualification_hardcover_client(
 
 
 def _require_installed_return_automatic_transition(
-    status_code: int, manual_hold_context: object | None
+    status_code: int,
 ) -> None:
     """A return request schedules fresh lineage; it does not clear its hold."""
-    if status_code != 204 or manual_hold_context is None:
+    if status_code != 204:
         raise QualificationError("installed_return_automatic_failed")
 
 
@@ -732,6 +732,16 @@ def _require_installed_return_lineage_progress(
     if requested_scan_completed:
         return True
     return False
+
+
+def _read_installed_return_lineage(
+    repository: object, connection: str, library: str,
+    review_case_id: str, destination: str,
+) -> tuple[object, object | None]:
+    """Read the monotonic hold before progress so a clear cannot look stale."""
+    hold = repository.field_effect_manual_hold_context(review_case_id, destination)
+    progress = repository.review_pipeline_progress(connection, library)
+    return progress, hold
 
 
 def _installed_continuous_qualification(
@@ -1122,12 +1132,12 @@ def _installed_continuous_qualification(
                 )
                 _require_installed_return_automatic_transition(
                     returned.status_code,
-                    repository.field_effect_manual_hold_context(
-                        case_id, automatic_destination
-                    ),
                 )
-                requested_return_progress = repository.review_pipeline_progress(
-                    return_connection, return_library
+                requested_return_progress, return_hold = (
+                    _read_installed_return_lineage(
+                        repository, return_connection, return_library,
+                        case_id, automatic_destination,
+                    )
                 )
                 if requested_return_progress is None:
                     raise QualificationError("installed_preparation_invalid")
@@ -1140,6 +1150,12 @@ def _installed_continuous_qualification(
                 if (type(requested_return_scan_id) is not str
                         or type(requested_return_at) is not int):
                     raise QualificationError("installed_preparation_invalid")
+                return_scan_completed = _require_installed_return_lineage_progress(
+                    requested_return_progress,
+                    requested_return_scan_id,
+                    requested_return_at,
+                    return_hold,
+                )
                 returned_automatic = True
                 returned_destination = automatic_destination
                 returned_work_id = target.get("item")
@@ -1147,16 +1163,13 @@ def _installed_continuous_qualification(
             if not returned_automatic:
                 raise QualificationError("installed_manual_hold_unproved")
             return_deadline = time.monotonic() + 60
-            return_scan_completed = False
             while time.monotonic() < return_deadline:
-                return_progress = repository.review_pipeline_progress(
-                    return_connection, return_library
+                return_progress, return_hold = _read_installed_return_lineage(
+                    repository, return_connection, return_library,
+                    case_id, automatic_destination,
                 )
                 if return_progress is None:
                     raise QualificationError("installed_preparation_invalid")
-                return_hold = repository.field_effect_manual_hold_context(
-                    case_id, automatic_destination
-                )
                 if not return_scan_completed:
                     return_scan_completed = (
                         _require_installed_return_lineage_progress(

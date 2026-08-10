@@ -473,6 +473,33 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertTrue(progress.rescan_requested)
         reopened.close()
 
+    def test_request_during_discovery_forces_a_successor_scan(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+
+        requested = repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 12
+        )
+
+        self.assertEqual(requested.state, "discovering")
+        self.assertTrue(requested.rescan_requested)
+        self.assertEqual(requested.updated_at, 12)
+        repository.complete_review_discovery(
+            discovery, 1, "a" * 64, (), 13
+        )
+        processing = repository.review_pipeline_progress("primary", "fiction")
+        assert processing is not None
+        self.assertTrue(processing.rescan_requested)
+        self.assertIsNone(repository.claim_review_pipeline_action(14))
+        queued = repository.review_pipeline_progress("primary", "fiction")
+        assert queued is not None
+        self.assertEqual(queued.state, "queued")
+        repository.close()
+
     def test_complete_empty_discovery_reaches_a_bounded_summary(self) -> None:
         repository = open_repository(self.path)
         repository.request_review_scan(

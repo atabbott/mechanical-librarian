@@ -50,7 +50,10 @@
 
 - Keep a returned automatic field on its durable manual hold until the requested
   exact-current scan completes successfully, and bind release to the originating
-  human decision so a concurrent newer hold cannot be cleared. Continuous
+  human decision so a concurrent newer hold cannot be cleared. The accepted
+  return request is persisted before success, forces a successor scan when
+  discovery is already active, resumes after restart, and is recovered through
+  bounded rotating pages without starving later requests. Continuous
   field-effect shutdown now uses the configured grace deadline and fails before
   closing the shared repository while retaining a live timed-out worker. (#503,
   #504)

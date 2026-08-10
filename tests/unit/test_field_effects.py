@@ -340,6 +340,27 @@ class FieldEffectTests(unittest.TestCase):
             case_id, proposal["destination"]
         )
         self.assertIsNotNone(stale_hold_token)
+        assert stale_hold_token is not None
+        self.assertTrue(self.repository.request_field_effect_manual_return(
+            case_id, proposal["destination"], stale_hold_token,
+            "review_scan_persisted", 11, 11,
+        ))
+        expected_pending = ((
+            case_id, proposal["destination"], "primary", "books",
+            stale_hold_token, "review_scan_persisted", 11, 11,
+        ),)
+        self.assertEqual(
+            self.repository.pending_field_effect_manual_returns(100),
+            expected_pending,
+        )
+        self.repository.close()
+        self.repository = open_repository(
+            self.database_path, create=False, cross_thread=True
+        )
+        self.assertEqual(
+            self.repository.pending_field_effect_manual_returns(100),
+            expected_pending,
+        )
 
         self.assertEqual(self.repository.get_field_effect(plan.plan_id).state, "superseded")
         self.assertEqual(
