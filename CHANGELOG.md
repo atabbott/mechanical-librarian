@@ -17,7 +17,9 @@
   and TanStack Query browser platform without switching current routes. Exact
   OpenAPI types, the handwritten HTTP boundary, hashed manifest-bound assets,
   stable recovery, layered frontend tests, and wheel/container exclusion of
-  Node and source artifacts prepare the separate authenticated cutover. (#495)
+  Node and source artifacts prepare the separate authenticated cutover. Series
+  values now retain their sequence in review display, and changing a Library
+  search clears stale preview and cursor state. (#495)
 
 - Compose authenticated browser workflows behind one application boundary with
   bounded case, Library, Attention, and preparation views. FastAPI now receives

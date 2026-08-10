@@ -94,6 +94,19 @@ describe('typed review routes', () => {
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
   })
 
+  it('clears preview and cursor when the Library search query changes', async () => {
+    const user = userEvent.setup()
+    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1')
+
+    expect(await screen.findByText('Progressive detail')).toBeVisible()
+    await user.clear(screen.getByLabelText('Search title, library, or item'))
+    await user.type(screen.getByLabelText('Search title, library, or item'), 'second')
+    await user.click(screen.getByRole('button', { name: 'Search' }))
+
+    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all', q: 'second' }))
+    expect(screen.queryByText('Progressive detail')).toBeNull()
+  })
+
   it('supports direct detail entry and focuses the settled main landmark', async () => {
     const { router } = renderRoute('/review/case-1')
 

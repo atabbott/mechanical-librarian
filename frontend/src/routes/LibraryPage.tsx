@@ -20,7 +20,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     void navigate({
       search: (current) => {
         const next = { ...current }
-        delete next.cursor
+        if (query !== (current.q ?? '')) {
+          delete next.cursor
+          delete next.preview
+        }
         if (query) next.q = query
         else delete next.q
         return next
