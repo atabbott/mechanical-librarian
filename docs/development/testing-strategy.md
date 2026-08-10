@@ -80,12 +80,12 @@ uv run python scripts/verify_playwright_browser.py
 uv run python scripts/run_test_tier.py browser
 ```
 
-For the unactivated React platform, the tier also receives a freshly built
-`ML_REACT_ASSET_DIR` and opens its real hashed shell at a synthetic direct-entry
-URL while fulfilling only bounded synthetic API data in-process. This proves
-the packaged module graph, Query loader, route search, focus, and accessible
-rendering without activating current FastAPI routes or duplicating the existing
-end-to-end product suite.
+The tier receives a freshly built `ML_REACT_ASSET_DIR` and opens the real hashed
+shell through authenticated FastAPI direct entry to all five workspace routes.
+It proves persistent no-refresh navigation, back/forward and durable URL state,
+critical and progressive queries, cancellation and polling teardown, focus,
+title and announcements, CSRF/build/currentness recovery, hostile rendering,
+desktop and 390-pixel light/dark layouts, and clean console/page-error behavior.
 
 The explicit slow tier owns scale, memory/resource ceilings, endurance,
 exhaustive aggregate corpora, and extended recovery:

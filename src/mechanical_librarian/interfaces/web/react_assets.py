@@ -12,6 +12,7 @@ from typing import Protocol
 
 
 _BUILD_IDENTITY = re.compile(r"^[0-9a-f]{64}$")
+_CSRF_TOKEN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 _ASSET_PATH = re.compile(
     r"^(?:index\.html|assets/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}\.(?:css|js))$"
 )
@@ -60,6 +61,30 @@ class ReactAssetBundle:
             raise ReactAssetError("asset_corrupt")
         return payload
 
+    def shell_html(self, csrf_token: str) -> str:
+        if _CSRF_TOKEN.fullmatch(csrf_token) is None:
+            raise ReactAssetError("shell_invalid")
+        try:
+            shell = self.read(self.entry).decode("utf-8", "strict")
+        except (OSError, UnicodeError) as error:
+            raise ReactAssetError("shell_invalid") from error
+        marker = "<body>"
+        if (
+            shell.count(marker) != 1
+            or "data-csrf-token" in shell
+            or "data-build-identity" in shell
+        ):
+            raise ReactAssetError("shell_invalid")
+        return shell.replace(
+            marker,
+            '<body data-csrf-token="'
+            + csrf_token
+            + '" data-build-identity="'
+            + self.build_identity
+            + '">',
+            1,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ReactAssetRecovery:
@@ -94,7 +119,7 @@ class ReactAssetLoader:
                 self._result = load_react_asset_bundle(
                     self._root, expected
                 )
-            except (OSError, ReactAssetError, UnicodeError, ValueError):
+            except (OSError, ReactAssetError, RecursionError, UnicodeError, ValueError):
                 self._result = ReactAssetRecovery()
         return self._result
 

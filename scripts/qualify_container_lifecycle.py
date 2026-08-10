@@ -5,15 +5,18 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.cookiejar
 import io
 import json
 import os
+import re
 import shutil
 import ssl
 import subprocess
 import tarfile
 import tempfile
 import time
+import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
@@ -123,6 +126,59 @@ def _health(port: int, route: str, deadline: float) -> bool:
         except Exception:
             time.sleep(0.2)
     return False
+
+
+def _workspace(port: int) -> bool:
+    """Exercise authenticated direct entry and one manifest-admitted asset."""
+    context = ssl._create_unverified_context()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=context),
+        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
+    )
+    common = {"Host": "review.test", "Origin": "https://review.test"}
+    try:
+        login = urllib.request.Request(
+            f"https://127.0.0.1:{port}/api/v1/session/login",
+            data=json.dumps({"password": "synthetic qualification owner"}).encode(),
+            headers={**common, "Content-Type": "application/json"},
+            method="POST",
+        )
+        with opener.open(login, timeout=3) as response:
+            if response.status != 200:
+                return False
+        page_request = urllib.request.Request(
+            f"https://127.0.0.1:{port}/library",
+            headers={"Host": "review.test"},
+        )
+        with opener.open(page_request, timeout=3) as response:
+            body = response.read(1_048_577)
+            if (
+                response.status != 200
+                or response.headers.get("Cache-Control") != "no-store, private"
+                or len(body) > 1_048_576
+            ):
+                return False
+        text = body.decode("utf-8", "strict")
+        if re.search(r'data-csrf-token="[A-Za-z0-9_-]{32,128}"', text) is None:
+            return False
+        if re.search(r'data-build-identity="[0-9a-f]{64}"', text) is None:
+            return False
+        script = re.search(r'<script[^>]+src="(/assets/review-app/[^"]+\.js)"', text)
+        if script is None:
+            return False
+        asset_request = urllib.request.Request(
+            f"https://127.0.0.1:{port}{script.group(1)}",
+            headers={"Host": "review.test"},
+        )
+        with opener.open(asset_request, timeout=3) as response:
+            payload = response.read(4_194_305)
+            return (
+                response.status == 200
+                and "javascript" in response.headers.get("Content-Type", "")
+                and 0 < len(payload) <= 4_194_304
+            )
+    except (OSError, UnicodeError, urllib.error.URLError, ValueError):
+        return False
 
 
 def _clean_stop(container: str) -> int:
@@ -321,6 +377,8 @@ def main() -> None:
             raise QualificationError("container_liveness_failed")
         if not _health(port, "/health/ready", time.monotonic() + 20):
             raise QualificationError("container_readiness_failed")
+        if not _workspace(port):
+            raise QualificationError("container_react_workspace_failed")
         inspection = json.loads(_run(["docker", "inspect", container]))[0]
         if (
             inspection["Config"]["User"] != "65532:65532"
@@ -368,6 +426,7 @@ def main() -> None:
             "read_only_root": True,
             "readiness": True,
             "react_assets_validated": True,
+            "react_workspace_activated": True,
             "schema": "container-lifecycle-evidence-v3",
             "snapshot_build": True,
             "workbench_excluded": True,

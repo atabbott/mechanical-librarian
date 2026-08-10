@@ -50,6 +50,10 @@ The installed command surface contains only the authenticated `review-serve`
 launcher. Contributor-only catalogue, evidence, proposal, case, decision, and
 contained-reviewer workflows live in a typed source-only workbench that is
 excluded from the wheel and container and refuses production targets.
+The authenticated Library, Attention, review-detail, Policy, and Activity URLs
+share one persistent packaged React workspace; FastAPI retains every session,
+currentness, policy, effect, persistence, and mutation decision, and `/login`
+remains server-rendered.
 
 See the [catalogue guide](docs/operations/catalogue.md),
 [foreground batch guide](docs/operations/ebook-evidence-batches.md),
@@ -58,12 +62,12 @@ See the [catalogue guide](docs/operations/catalogue.md),
 [contributor workbench](docs/development/contributor-workbench.md), and
 [documentation index](docs/README.md).
 
-The next authenticated-browser platform is committed under `frontend/` but is
-not yet active on any route. Its exact source checks require Node 24.19.0 and
-npm 11.17.0: run `npm ci --ignore-scripts`, `npm run generate`, `npm run
-typecheck`, `npm run lint`, `npm test`, and `npm run build` from that directory.
-Generated DTOs, compiled assets, source maps, `node_modules`, and Node itself do
-not belong in source or the runtime container.
+The active authenticated-browser source is maintained under `frontend/`. Its
+exact source checks require Node 24.19.0 and npm 11.17.0: run
+`npm ci --ignore-scripts`, `npm run generate`, `npm run typecheck`, `npm run
+lint`, `npm test`, and `npm run build` from that directory. Generated DTOs,
+compiled assets, source maps, `node_modules`, and Node itself do not belong in
+source or the runtime container.
 
 ## Product direction
 

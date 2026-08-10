@@ -33,6 +33,7 @@ from mechanical_librarian.application.field_effects import GuardedFieldApplicati
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
 from tests.unit.review_app_fixture import (
+    TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
 )
 from mechanical_librarian.domain.field_effect import (
@@ -1450,6 +1451,7 @@ class FieldEffectTests(unittest.TestCase):
             response = client.post(route, headers={
                 "Origin": "https://review.test",
                 "X-CSRF-Token": login.json()["csrf_token"],
+                "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
             })
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(response.json()["state"], "verified")
@@ -1491,6 +1493,7 @@ class FieldEffectTests(unittest.TestCase):
             headers = {
                 "Origin": "https://review.test",
                 "X-CSRF-Token": login.json()["csrf_token"],
+                "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
             }
             for action in ("pause", "resume"):
                 with self.subTest(action=action):

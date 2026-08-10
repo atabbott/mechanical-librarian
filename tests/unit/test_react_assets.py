@@ -18,7 +18,7 @@ def _write_bundle(root: Path) -> None:
     assets = root / "assets"
     assets.mkdir()
     values = {
-        "index.html": b"<!doctype html><div id=app></div>",
+        "index.html": b"<!doctype html><html><body><div id=app></div></body></html>",
         "assets/index-deadbeef.js": b"export const ready=true;",
         "assets/index-deadbeef.css": b":root{color-scheme:light}",
     }
@@ -71,6 +71,17 @@ class ReactAssetTests(unittest.TestCase):
             self.assertEqual(bundle.entry, "index.html")
             self.assertIn(b"id=app", bundle.read("index.html"))
 
+            shell = bundle.shell_html("a" * 32)
+            self.assertIn('data-csrf-token="' + "a" * 32 + '"', shell)
+            self.assertIn(
+                'data-build-identity="' + bundle.build_identity + '"', shell
+            )
+            for hostile in ('" onload="alert(1)', "short", "a" * 129):
+                with self.subTest(hostile=hostile), self.assertRaises(
+                    ReactAssetError
+                ):
+                    bundle.shell_html(hostile)
+
     def test_missing_corrupt_extra_shape_and_source_map_fail_closed(self) -> None:
         for mutation in (
             "missing",
@@ -115,6 +126,21 @@ class ReactAssetTests(unittest.TestCase):
             self.assertIsInstance(first, ReactAssetRecovery)
             self.assertFalse(first.reload)
             self.assertEqual(first.retry, "owner_requested_restart_after_rebuild")
+
+    def test_deep_manifest_recursion_is_cached_as_stable_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "review-assets-v1.json").write_text(
+                "[" * 20_000 + "]" * 20_000,
+                encoding="utf-8",
+            )
+            loader = ReactAssetLoader(root)
+
+            first = loader.load()
+            second = loader.load()
+
+            self.assertIs(first, second)
+            self.assertIsInstance(first, ReactAssetRecovery)
 
     def test_build_identity_mismatch_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

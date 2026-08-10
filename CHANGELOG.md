@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Activate Library, Attention, review detail, Policy, and Activity in one
+  persistent authenticated React shell at their existing URLs. Direct entry,
+  progressive current reads, cancellation, focus and URL ownership, CSRF and
+  build-identity mutation gates, and authoritative recovery replace the
+  authenticated embedded frontend without expanding product authority. (#496)
+
 - Establish an exactly pinned React, strict-TypeScript, Vite, TanStack Router,
   and TanStack Query browser platform without switching current routes. Exact
   OpenAPI types, the handwritten HTTP boundary, hashed manifest-bound assets,

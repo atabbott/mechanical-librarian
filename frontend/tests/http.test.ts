@@ -37,7 +37,7 @@ describe('ReviewApiClient', () => {
         }],
       }),
     )
-    const client = new ReviewApiClient({ csrf, fetch: fetchMock })
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
 
     const controller = new AbortController()
     const view = await client.getLibrary({ lens: 'all' }, controller.signal)
@@ -56,16 +56,32 @@ describe('ReviewApiClient', () => {
     }))
   })
 
-  it('renews CSRF once before retrying an unsafe request', async () => {
+  it('renews CSRF once but requires an explicit retry of an unsafe request', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ error: { code: 'csrf' } }, { status: 403 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
-    const client = new ReviewApiClient({ csrf, fetch: fetchMock })
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
 
-    await client.logout()
+    await expect(client.logout()).rejects.toMatchObject({ status: 403, code: 'csrf_renewed' })
 
     expect(csrf.renew).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledOnce()
+    csrf.current.mockReturnValueOnce(renewedToken)
+    await client.logout()
     expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('x-csrf-token')).toBe(renewedToken)
+  })
+
+  it('maps the server build-mismatch code to the controlled shell recovery', async () => {
+    const mismatch = vi.fn()
+    const client = new ReviewApiClient({
+      csrf,
+      buildIdentity: 'c'.repeat(64),
+      fetch: vi.fn(async () => Response.json({ error: { code: 'browser_build_mismatch' } }, { status: 409 })),
+      onBuildMismatch: mismatch,
+    })
+
+    await expect(client.logout()).rejects.toMatchObject({ code: 'frontend_build_mismatch' })
+    expect(mismatch).toHaveBeenCalledOnce()
   })
 
   it('reports session expiry and invokes document-navigation ownership', async () => {
@@ -88,12 +104,33 @@ describe('ReviewApiClient', () => {
     }
     const client = new ReviewApiClient({
       csrf: renewalExpired,
+      buildIdentity: 'c'.repeat(64),
       fetch: vi.fn(async () => Response.json({ error: { code: 'csrf' } }, { status: 403 })),
       onSessionExpired: expired,
     })
 
     await expect(client.logout()).rejects.toBeInstanceOf(SessionExpiredError)
     expect(expired).toHaveBeenCalledOnce()
+  })
+
+  it('blocks mutations without a current build identity before transport', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+    const mismatch = vi.fn()
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, onBuildMismatch: mismatch })
+
+    await expect(client.logout()).rejects.toMatchObject({ code: 'frontend_build_mismatch' })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(mismatch).toHaveBeenCalledOnce()
+  })
+
+  it('binds every mutation to the captured build identity', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }))
+    const buildIdentity = 'd'.repeat(64)
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity })
+
+    await client.logout()
+
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('x-ml-build-identity')).toBe(buildIdentity)
   })
 
   it('preserves structured server error codes and rejects malformed DTOs', async () => {

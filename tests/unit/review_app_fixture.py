@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import patch
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.continuous_field_effects import (
@@ -24,6 +26,63 @@ from mechanical_librarian.interfaces.web import (
     create_review_app,
     load_owner_password_verifier,
 )
+from mechanical_librarian.interfaces.web.react_assets import (
+    ReactAsset,
+    ReactAssetBundle,
+    ReactAssetLoader,
+)
+
+
+TEST_REACT_BUILD_IDENTITY = "a" * 64
+
+
+class _MemoryFile:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def read_bytes(self) -> bytes:
+        return self._payload
+
+
+class _MemoryRoot:
+    def __init__(self, values: dict[str, bytes]) -> None:
+        self._values = values
+
+    def joinpath(self, *descendants: str) -> _MemoryFile:
+        return _MemoryFile(self._values["/".join(descendants)])
+
+
+class _TestReactAssetLoader:
+    def __init__(self) -> None:
+        values = {
+            "index.html": (
+                b'<!doctype html><html><body><div id="root"></div>'
+                b'<script src="/assets/review-app/assets/index-deadbeef.js"></script>'
+                b"</body></html>"
+            ),
+            "assets/index-deadbeef.js": b"window.reviewReady=true;",
+            "assets/index-deadbeef.css": b":root{color-scheme:light}",
+        }
+        root = _MemoryRoot(values)
+        self._bundle = ReactAssetBundle(
+            TEST_REACT_BUILD_IDENTITY,
+            "index.html",
+            tuple(
+                ReactAsset(
+                    path,
+                    hashlib.sha256(payload).hexdigest(),
+                    len(payload),
+                    "shell" if path == "index.html" else (
+                        "style" if path.endswith(".css") else "script"
+                    ),
+                )
+                for path, payload in sorted(values.items())
+            ),
+            root,
+        )
+
+    def load(self) -> ReactAssetBundle:
+        return self._bundle
 
 
 def create_transport_test_app(
@@ -38,6 +97,7 @@ def create_transport_test_app(
     operational_timings: TimingRepository | None = None,
     operational_support: SupportExporter | None = None,
     operational_timer: StageTimer | None = None,
+    react_asset_loader: ReactAssetLoader | None = None,
 ):
     """Wire synthetic store capabilities before creating the HTTP adapter."""
     application = compose_review_application(
@@ -61,7 +121,11 @@ def create_transport_test_app(
         operational_support=operational_support,
         operational_timer=operational_timer,
     )
-    return create_review_app(application, configuration)
+    with patch(
+        "mechanical_librarian.interfaces.web.app.ReactAssetLoader",
+        return_value=react_asset_loader or _TestReactAssetLoader(),
+    ):
+        return create_review_app(application, configuration)
 
 
-__all__ = ["create_transport_test_app"]
+__all__ = ["TEST_REACT_BUILD_IDENTITY", "create_transport_test_app"]

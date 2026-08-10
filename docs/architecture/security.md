@@ -216,27 +216,30 @@ rotated-away token fails, and each decision still requires the exact Origin,
 session, case, proposal, target fingerprint, destination, action, selected
 value, and idempotency key. Browser success follows the typed server
 acknowledgement; a failed or ambiguous response neither advances nor displays
-success. Response loss or an invalid acknowledgement gets one automatic retry
-with the exact same payload and idempotency key. Any unsuccessful second result
-then reloads authoritative detail/history or requires sign in. A current-case
-409 reloads that state, while a stale 409 routes to the authoritative Library;
-neither re-enables obsolete controls. If another authenticated detail page
-rotated the sole session digest, the focused retry first fetches a fresh
-private/no-store detail token into memory and then resubmits; the failed attempt
-itself remains non-mutating and never advances. An expired session instead
-offers a focused sign-in link and does not retry a decision without fresh
+success. Response loss or an invalid acknowledgement reloads authoritative
+detail/history without resubmitting the mutation. A current-case 409 reloads
+that state, while a stale 409 routes to the authoritative Library; neither
+re-enables obsolete controls. If another authenticated page rotated the sole
+session digest, the client fetches a fresh private/no-store page token into
+memory, but the owner must explicitly retry the unchanged decision. An expired
+session instead crosses to sign-in and never retries a decision without fresh
 authentication.
 
-The unactivated React platform preserves this boundary. Generated OpenAPI DTOs
-grant no request authority; its handwritten same-origin client keeps CSRF only
-in page memory, retries an unsafe request once only after a private page-token
-renewal, converts a 401 into document navigation to `/login`, and passes abort
-signals through critical and progressive reads. It uses no browser storage,
-inline script, external origin, worker, blob, source map, credential, target
-client, or write adapter. The packaged loader validates bounded exact paths,
-sizes, digests, a content-derived build identity, and the independently emitted
-expected identity before activation; any failure becomes one stable owner
-recovery state with no automatic reload loop.
+The activated React workspace preserves this boundary. Generated OpenAPI DTOs
+grant no request authority; its handwritten same-origin client keeps CSRF and
+the exact build identity only in page memory, renews CSRF once after a private
+page-token challenge without resending the mutation, converts a 401 into
+document navigation to `/login`, and passes abort signals through critical and
+progressive reads. Every unsafe
+browser request carries `x-ml-build-identity`; FastAPI rejects a missing or
+mismatched value before application authority. Mutations do not retry
+automatically or claim optimistic success and reconcile ambiguous outcomes from
+authoritative state. The client uses no browser storage, inline script,
+external origin, worker, blob, source map, credential, target client, or write
+adapter. The packaged loader validates bounded exact paths, sizes, digests, a
+content-derived build identity, and the independently emitted expected identity
+before serving any authenticated shell; any failure becomes one stable
+owner-recovery state with no automatic reload loop.
 
 ## Credentials and egress
 

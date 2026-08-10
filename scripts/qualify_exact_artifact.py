@@ -462,8 +462,83 @@ def _qualify_runtime_console(
         )
         if assets.stdout or assets.stderr:
             raise QualificationFailure("installed_react_assets_invalid")
+        _qualify_installed_react_workspace(python, run_directory, environment)
     _qualify_guarded_effect_lifecycle(python, run_directory, environment)
     return output
+
+
+def _qualify_installed_react_workspace(
+    python: Path,
+    run_directory: Path,
+    environment: dict[str, str],
+) -> None:
+    """Prove the installed wheel serves one authenticated activated shell."""
+    probe = run_directory / "react-workspace-probe.py"
+    probe.write_text(
+        r'''
+import re
+import tempfile
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.review_application import compose_review_application
+from mechanical_librarian.interfaces.web import create_review_app
+
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    repository = open_repository(root / "application.sqlite3", create=True, cross_thread=True)
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda value: value == "synthetic owner",
+        clock=lambda: 1_000,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=5,
+        close_state_owner=True,
+    )
+    configuration = ReviewWebConfiguration(
+        canonical_origin="https://review.test",
+        owner_password_hash_file=str(root / "unused-owner.argon2"),
+        session_lifetime_seconds=600,
+    )
+    with TestClient(
+        create_review_app(application, configuration),
+        base_url="https://review.test",
+    ) as client:
+        login = client.post(
+            "/api/v1/session/login",
+            headers={"Origin": "https://review.test"},
+            json={"password": "synthetic owner"},
+        )
+        assert login.status_code == 200
+        page = client.get("/library")
+        assert page.status_code == 200
+        assert page.headers["cache-control"] == "no-store, private"
+        assert re.search(r'data-csrf-token="[A-Za-z0-9_-]{32,128}"', page.text)
+        identity = re.search(r'data-build-identity="([0-9a-f]{64})"', page.text)
+        script = re.search(r'<script[^>]+src="(/assets/review-app/[^"]+\.js)"', page.text)
+        assert identity and script
+        asset = client.get(script.group(1))
+        assert asset.status_code == 200
+        assert "javascript" in asset.headers["content-type"]
+''',
+        encoding="utf-8",
+    )
+    completed = _run(
+        (str(python), "-I", str(probe)),
+        cwd=run_directory,
+        env=environment,
+        reason="installed_react_workspace_invalid",
+    )
+    if completed.stdout or completed.stderr:
+        raise QualificationFailure("installed_react_workspace_invalid")
 
 
 def _runtime_help_is_closed(value: str) -> bool:
