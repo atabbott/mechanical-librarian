@@ -288,24 +288,13 @@ This checkpoint remains report/proposal-only. It adds no review admission,
 human or AI decision, apply/write authority, fuzzy discovery, configurable
 policy, background execution, migration, tag, or release publication.
 
-0.10.0 owns exact-current immutable review admission and the isolated
-qualification-only Codex shadow-advice path; shadow advice is not a decision or
-approval and normal activation remains unreachable.
+0.10.0 historically owned exact-current immutable review admission and an
+isolated qualification-only Codex shadow-advice path. That reviewer path is
+retired; it is not a product capability or future roadmap commitment.
 
 F19 adds an explicit deterministic, provider-independent decision preview for
 one exact current case. It remains report-only, read-only, non-persisted, and
-separate from both qualification-only model advice and future default or apply
-integration.
-
-## M3: AI review in shadow mode
-
-- The isolated qualification-only Codex CLI path, schema-constrained
-  recommendations, and exact prompt/policy/evidence/model tuple are delivered.
-- Keep normal activation blocked until the owner accepts the exact public draft
-  and private aggregate qualification evidence.
-- Complete at least two shadow batches covering at least fifty mixed items.
-
-Exit: no systematic unsafe decision pattern remains unexplained.
+has no model, default, or apply integration.
 
 ## M4: Production apply
 

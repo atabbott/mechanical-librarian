@@ -208,6 +208,7 @@ class ContainedReviewerAdapter:
             self._profile.sandbox_path,
             self._profile.identity.sandbox_sha256,
         ) as sandbox:
+            self._verify_sandbox(sandbox)
             with self._auth_lock():
                 with self._empty_auth_config() as empty_config:
                     self._verify_codex(codex, sandbox)
@@ -280,6 +281,7 @@ class ContainedReviewerAdapter:
                 self._profile.identity.sandbox_sha256,
             ) as sandbox,
         ):
+            self._verify_sandbox(sandbox)
             with self._auth_lock():
                 if _path_entry_exists(trust_failure_path):
                     raise ContainedReviewerProcessError("setup")
@@ -453,6 +455,27 @@ class ContainedReviewerAdapter:
             completed.returncode != 0
             or completed.stderr
             or completed.stdout.rstrip(b"\r\n") != expected
+        ):
+            raise ContainedReviewerProcessError("setup")
+
+    def _verify_sandbox(self, sandbox: "_BoundArtifact") -> None:
+        try:
+            completed = subprocess.run(
+                [sandbox.invocation_path, "--version"],
+                env={},
+                capture_output=True,
+                pass_fds=(sandbox.descriptor,),
+                timeout=min(self._profile.identity.timeout_seconds, 30),
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise ContainedReviewerProcessError("setup") from error
+        expected = self._profile.identity.sandbox_version.encode("utf-8")
+        canonical = {expected, expected + b"\n", expected + b"\r\n"}
+        if (
+            completed.returncode != 0
+            or completed.stderr
+            or completed.stdout not in canonical
         ):
             raise ContainedReviewerProcessError("setup")
 
@@ -1362,7 +1385,11 @@ def _validate_output_schema(schema: object) -> None:
         if type(value) is not dict or not value or not set(value) <= allowed:
             raise ContainedReviewerProcessError("response_format")
         if root:
-            if value.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
+            if (
+                value.get("$schema")
+                != "https://json-schema.org/draft/2020-12/schema"
+                or value.get("type") != "object"
+            ):
                 raise ContainedReviewerProcessError("response_format")
         elif "$schema" in value:
             raise ContainedReviewerProcessError("response_format")
@@ -1502,7 +1529,7 @@ def _matches_output_schema(value: object, schema: dict[str, object]) -> bool:
 
 def _exact_config(reasoning: str) -> tuple[str, ...]:
     return (
-        f'model_reasoning_effort="{reasoning}"',
+        "model_reasoning_effort=" + json.dumps(reasoning, ensure_ascii=False),
         "features.shell_tool=false",
         "features.unified_exec=false",
         "agents.enabled=false",
