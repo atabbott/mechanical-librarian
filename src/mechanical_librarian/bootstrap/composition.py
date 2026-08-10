@@ -191,11 +191,11 @@ def compose_audiobookshelf_field_effect_target(
     configuration, artifact_store_path: Path, connection_name: str, library_name: str,
     *, credentials: dict[str, str] | None = None, artifact_identity=None,
 ) -> AudiobookshelfFieldEffectTarget:
-    """Compose the canary-only ABS target from an already validated snapshot.
+    """Compose one field-local ABS target from an already validated snapshot.
 
-    This intentionally returns a field-local target rather than registering it
-    with the continuous review runtime.  A caller must still supply the F13
-    guarded application, authority, consent, backup, and capability gates.
+    The continuous runtime registers this target behind the guarded application,
+    authority, consent, backup, currentness, and capability gates. Qualification
+    callers may compose the same target independently without bypassing them.
     """
     connection, library, _mount, _providers = configuration.select(
         connection_name, library_name
@@ -299,6 +299,8 @@ def compose_continuous_guarded_application(
         configured,
         lambda: int(time.time()),
         preparation.request,
+        graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
+        scan_progress=preparation.progress,
     )
 
 

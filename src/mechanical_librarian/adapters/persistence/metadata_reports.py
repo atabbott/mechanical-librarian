@@ -1300,21 +1300,24 @@ class SQLiteMetadataReportRepository:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             rows = self._connection.execute(
-                "SELECT automatic.decision_id FROM automatic_decisions automatic "
+                "SELECT automatic.decision_id,human.decision_id FROM automatic_decisions automatic "
                 "JOIN human_decisions human ON human.review_case_id=automatic.review_case_id "
                 "AND human.destination=automatic.destination "
+                "AND human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
+                "WHERE current.review_case_id=human.review_case_id AND "
+                "current.destination=human.destination) "
                 "WHERE automatic.review_case_id=? AND automatic.destination=?",
                 (review_case_id, destination),
             ).fetchall()
             if rows:
                 self._set_field_effect_manual_hold(
-                    review_case_id, destination, changed_at
+                    review_case_id, destination, changed_at, rows[0][1]
                 )
             superseded = sum(
                 self._revoke_field_effect_authority_in_transaction(
                     decision_id, changed_at, required=False
                 )
-                for (decision_id,) in rows
+                for decision_id, _ in rows
             )
             self._connection.commit()
             return superseded
@@ -1326,9 +1329,11 @@ class SQLiteMetadataReportRepository:
 
     def _set_field_effect_manual_hold(
         self, review_case_id: str, destination: str, changed_at: int,
+        decision_id: str,
     ) -> None:
         document = canonical_effect_json({
             "active": True, "destination": destination,
+            "decision_id": decision_id,
             "review_case_id": review_case_id,
             "schema_version": "field-effect-manual-hold-v1",
             "updated_at": changed_at,
@@ -1352,25 +1357,49 @@ class SQLiteMetadataReportRepository:
         ).fetchone()
         return None if row is None else (row[0], row[1])
 
+    def field_effect_manual_hold_token(
+        self, review_case_id: str, destination: str,
+    ) -> str | None:
+        row = self._connection.execute(
+            "SELECT document FROM field_effect_manual_holds "
+            "WHERE review_case_id=? AND destination=? AND active=1",
+            (review_case_id, destination),
+        ).fetchone()
+        return None if row is None else row[0]
+
     def clear_field_effect_manual_hold(
         self, review_case_id: str, destination: str, changed_at: int,
+        expected_hold_token: str | None = None,
     ) -> tuple[str, str] | None:
         """Atomically clear an active hold and return its rescan lineage."""
         context = self.field_effect_manual_hold_context(review_case_id, destination)
         if context is None:
             return None
-        document = canonical_effect_json({
-            "active": False, "destination": destination,
-            "review_case_id": review_case_id,
-            "schema_version": "field-effect-manual-hold-v1",
-            "updated_at": changed_at,
-        })
         try:
             self._connection.execute("BEGIN IMMEDIATE")
+            hold = self._connection.execute(
+                "SELECT document FROM field_effect_manual_holds "
+                "WHERE review_case_id=? AND destination=? AND active=1",
+                (review_case_id, destination),
+            ).fetchone()
+            if hold is None:
+                self._connection.rollback()
+                return None
+            active_document = hold[0]
+            if expected_hold_token is not None and active_document != expected_hold_token:
+                self._connection.rollback()
+                return None
+            raw = json.loads(active_document)
+            document = canonical_effect_json({
+                "active": False, "decision_id": raw["decision_id"],
+                "destination": destination, "review_case_id": review_case_id,
+                "schema_version": "field-effect-manual-hold-v1",
+                "updated_at": changed_at,
+            })
             updated = self._connection.execute(
                 "UPDATE field_effect_manual_holds SET active=0,updated_at=?,document=? "
-                "WHERE review_case_id=? AND destination=? AND active=1",
-                (changed_at, document, review_case_id, destination),
+                "WHERE review_case_id=? AND destination=? AND active=1 AND document=?",
+                (changed_at, document, review_case_id, destination, active_document),
             ).rowcount
             automatic = self._connection.execute(
                 "SELECT decision_id FROM automatic_decisions "
@@ -5616,6 +5645,7 @@ class SQLiteMetadataReportRepository:
                     decision.review_case_id,
                     decision.destination,
                     decision.occurred_at,
+                    decision.decision_id,
                 )
             if self._binding is not None:
                 self._binding.require_current()
@@ -7436,15 +7466,17 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
         ):
             raw = json.loads(document)
             if (type(raw) is not dict or set(raw) != {
-                    "active", "destination", "review_case_id", "schema_version",
-                    "updated_at"}
-                    or raw["schema_version"] != "field-effect-manual-hold-v1"
-                    or type(raw["active"]) is not bool
-                    or type(raw["updated_at"]) is not int or raw["updated_at"] < 0
-                    or (raw["review_case_id"], raw["destination"], raw["active"],
-                        raw["updated_at"]) != (review_case_id, destination,
-                                                bool(active), updated_at)
-                    or canonical_effect_json(raw) != document):
+                    "active", "decision_id", "destination", "review_case_id",
+                    "schema_version", "updated_at"}
+                or raw["schema_version"] != "field-effect-manual-hold-v1"
+                or type(raw["active"]) is not bool
+                or type(raw["decision_id"]) is not str
+                or not re.fullmatch(r"human_decision_[0-9a-f]{64}", raw["decision_id"])
+                or type(raw["updated_at"]) is not int or raw["updated_at"] < 0
+                or (raw["review_case_id"], raw["destination"], raw["active"],
+                    raw["updated_at"]) != (review_case_id, destination,
+                                            bool(active), updated_at)
+                or canonical_effect_json(raw) != document):
                 raise FieldEffectError("invalid_manual_hold")
 
         operations: dict[str, FieldEffectOperation] = {}

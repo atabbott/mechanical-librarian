@@ -676,12 +676,38 @@ def create_review_app(
         try:
             yield
         finally:
-            if operational_status is not None:
-                operational_status.begin_drain()
-            if field_application is not None:
-                field_application.begin_drain()
+            deadline = time.monotonic() + configuration.graceful_shutdown_seconds
+            shutdown_errors: list[Exception] = []
+            if isinstance(field_application, ContinuousGuardedApplication):
+                try:
+                    field_application.close_admission()
+                except Exception as error:
+                    shutdown_errors.append(error)
             if review_preparation is not None:
-                review_preparation.stop()
+                try:
+                    review_preparation.begin_drain()
+                except Exception as error:
+                    shutdown_errors.append(error)
+            if operational_status is not None:
+                try:
+                    operational_status.begin_drain()
+                except Exception as error:
+                    shutdown_errors.append(error)
+            if field_application is not None:
+                try:
+                    if isinstance(field_application, ContinuousGuardedApplication):
+                        field_application.wait_for_drain(deadline)
+                    else:
+                        field_application.begin_drain()
+                except Exception as error:
+                    shutdown_errors.append(error)
+            if review_preparation is not None:
+                try:
+                    review_preparation.stop(deadline)
+                except Exception as error:
+                    shutdown_errors.append(error)
+            if shutdown_errors:
+                raise shutdown_errors[0]
             if close_repository:
                 repository.close()  # type: ignore[attr-defined]
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from dataclasses import dataclass
 from typing import Callable
 
@@ -30,6 +31,14 @@ class _CapabilityProbe:
     destination: str
 
 
+@dataclass(frozen=True, slots=True)
+class _PendingManualReturn:
+    context: tuple[str, str]
+    hold_token: str
+    scan_id: str
+    requested_at: int
+
+
 class ContinuousGuardedApplication:
     """Compose persisted decisions into one instance-scoped mutation slot."""
 
@@ -44,10 +53,14 @@ class ContinuousGuardedApplication:
         request_scan: Callable[[str, str], object],
         *,
         polling_seconds: float = 2.0,
+        graceful_shutdown_seconds: int = 30,
+        scan_progress: Callable[[str, str], object] | None = None,
     ) -> None:
         if (not applications or set(applications) != set(configured_libraries)
                 or set(capabilities) != set(configured_libraries)
-                or not 0.1 <= polling_seconds <= 60.0):
+                or not 0.1 <= polling_seconds <= 60.0
+                or type(graceful_shutdown_seconds) is not int
+                or not 1 <= graceful_shutdown_seconds <= 300):
             raise GuardedApplicationError("configuration")
         connections = {connection for connection, _ in configured_libraries}
         if len(connections) != 1:
@@ -60,6 +73,8 @@ class ContinuousGuardedApplication:
         self._clock = clock
         self._request_scan = request_scan
         self._polling_seconds = polling_seconds
+        self._graceful_shutdown_seconds = graceful_shutdown_seconds
+        self._scan_progress = scan_progress
         self._slot = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -69,6 +84,10 @@ class ContinuousGuardedApplication:
         self._schedule_cursor: tuple[int, str] | None = None
         self._capability_cache: dict[str, tuple[int, dict[str, object]]] = {}
         self._capability_lock = threading.Lock()
+        self._manual_return_lock = threading.Lock()
+        self._pending_manual_returns: dict[
+            tuple[str, str], _PendingManualReturn
+        ] = {}
         self._serialize: Callable[[Callable[[], object]], object] = lambda call: call()
 
     def attach_serialization(
@@ -120,15 +139,31 @@ class ContinuousGuardedApplication:
         self._wake.set()
         return recovered, actions, cleanups
 
-    def begin_drain(self) -> None:
+    def close_admission(self) -> None:
+        """Stop new claims without waiting for the active worker."""
         self._stop.set()
         self._wake.set()
         for application in self._applications.values():
             application.begin_drain()
+
+    def wait_for_drain(self, deadline: float | None = None) -> None:
+        """Wait for the active worker within one caller-owned deadline."""
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=5.0)
+            timeout = (
+                self._graceful_shutdown_seconds
+                if deadline is None
+                else max(deadline - time.monotonic(), 0.0)
+            )
+            thread.join(timeout=timeout)
+        if thread is not None and thread.is_alive():
+            self._thread = thread
+            raise GuardedApplicationError("shutdown_timeout")
         self._thread = None
+
+    def begin_drain(self, deadline: float | None = None) -> None:
+        self.close_admission()
+        self.wait_for_drain(deadline)
 
     def wake(self) -> None:
         self._wake.set()
@@ -190,11 +225,22 @@ class ContinuousGuardedApplication:
         )
         if context is None:
             raise GuardedApplicationError("manual_hold")
-        self._request_scan(*context)
-        if self._repository.clear_field_effect_manual_hold(
-            review_case_id, destination, self._clock()
-        ) is None:
+        hold_token = self._repository.field_effect_manual_hold_token(
+            review_case_id, destination
+        )
+        if hold_token is None:
             raise GuardedApplicationError("manual_hold")
+        try:
+            progress = self._request_scan(*context)
+        except Exception as error:
+            raise GuardedApplicationError("scan") from error
+        scan_id = getattr(progress, "scan_id", None)
+        requested_at = getattr(progress, "updated_at", None)
+        if type(scan_id) is not str or type(requested_at) is not int:
+            raise GuardedApplicationError("scan")
+        pending = _PendingManualReturn(context, hold_token, scan_id, requested_at)
+        with self._manual_return_lock:
+            self._pending_manual_returns[(review_case_id, destination)] = pending
         self._wake.set()
 
     def status(self, plan_id: str) -> FieldEffectOperation:
@@ -213,6 +259,7 @@ class ContinuousGuardedApplication:
             return application.reconcile(plan_id)
 
     def schedule(self, limit: int = 100) -> int:
+        self._release_completed_manual_returns()
         documents = self._repository.pending_field_effect_decision_documents(
             limit, self._schedule_cursor
         )
@@ -405,6 +452,32 @@ class ContinuousGuardedApplication:
         next(iter(self._applications.values())).run_pending_cleanups(limit=100)
         while not self._stop.is_set() and self.run_cycle():
             pass
+
+    def _release_completed_manual_returns(self) -> None:
+        if self._scan_progress is None:
+            return
+        with self._manual_return_lock:
+            pending = tuple(self._pending_manual_returns.items())
+        for key, release in pending:
+            try:
+                progress = self._scan_progress(*release.context)
+            except Exception as error:
+                raise GuardedApplicationError("scan") from error
+            if (
+                getattr(progress, "scan_id", None) != release.scan_id
+                or getattr(progress, "state", None) != "completed"
+                or getattr(progress, "rescan_requested", None) is not False
+                or type(getattr(progress, "updated_at", None)) is not int
+                or progress.updated_at < release.requested_at
+            ):
+                continue
+            cleared = self._repository.clear_field_effect_manual_hold(
+                key[0], key[1], self._clock(), release.hold_token
+            )
+            with self._manual_return_lock:
+                current = self._pending_manual_returns.get(key)
+                if current == release and cleared is not None:
+                    del self._pending_manual_returns[key]
 
     def _application(self, operation: FieldEffectOperation) -> GuardedFieldApplication:
         application = self._applications.get(

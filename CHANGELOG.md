@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Keep a returned automatic field on its durable manual hold until the requested
+  exact-current scan completes successfully, and bind release to the originating
+  human decision so a concurrent newer hold cannot be cleared. Continuous
+  field-effect shutdown now uses the configured grace deadline and fails before
+  closing the shared repository while retaining a live timed-out worker. (#503,
+  #504)
+
+- Bind the exact-container checkpoint probe to current persisted synthetic
+  consent, and correct the deployment contract for the composed guarded
+  Audiobookshelf target and its write gates. (#509, #510)
+
 - Add continuous guarded application for explicitly consented Audiobookshelf
   libraries. Current human and sealed qualified automatic decisions share the
   same 14-destination kernel, exact-field value guards, one fair instance-wide

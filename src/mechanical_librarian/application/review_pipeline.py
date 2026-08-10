@@ -612,13 +612,18 @@ class ReviewPreparationSupervisor:
             thread.start()
         self._wake.set()
 
-    def stop(self) -> None:
+    def begin_drain(self) -> None:
+        """Close claim admission and wake workers without waiting."""
         drain = getattr(self._pipeline, "begin_drain", None)
         if drain is not None:
             drain()
         self._stop.set()
         self._wake.set()
-        deadline = time.monotonic() + self._graceful_shutdown_seconds
+
+    def stop(self, deadline: float | None = None) -> None:
+        self.begin_drain()
+        if deadline is None:
+            deadline = time.monotonic() + self._graceful_shutdown_seconds
         for thread in self._threads:
             thread.join(timeout=max(deadline - time.monotonic(), 0))
         active = tuple(thread for thread in self._threads if thread.is_alive())

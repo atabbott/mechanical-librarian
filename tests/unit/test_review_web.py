@@ -26,6 +26,8 @@ from mechanical_librarian.application.configuration import ReviewWebConfiguratio
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
+from mechanical_librarian.application.field_effects import GuardedApplicationError
+from mechanical_librarian.application.review_pipeline import ReviewPipelineError
 from mechanical_librarian.application.review_web import (
     CurrentReviewCaseSnapshot,
     InspectCurrentReviewCase,
@@ -454,6 +456,12 @@ class _ActivityApplication(ContinuousGuardedApplication):
     def begin_drain(self) -> None:
         return None
 
+    def close_admission(self) -> None:
+        return None
+
+    def wait_for_drain(self, deadline=None) -> None:
+        return None
+
     def activity(self):
         return {
             "backup_ready": True,
@@ -520,6 +528,106 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
+
+    def test_shutdown_timeout_preserves_shared_repository_for_live_worker(self) -> None:
+        closed = []
+
+        class _DrainingApplication:
+            started = False
+
+            def attach_timing(self, timing) -> None:
+                return None
+
+            def start(self) -> None:
+                self.started = True
+
+            def begin_drain(self) -> None:
+                raise GuardedApplicationError("shutdown_timeout")
+
+        application = _DrainingApplication()
+        self.repository.close = lambda: closed.append(True)
+        configuration = ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(self.hash_path),
+            session_lifetime_seconds=600,
+        )
+        app = create_review_app(
+            self.repository, configuration, close_repository=True,
+            field_application=application,
+        )
+        with self.assertRaisesRegex(GuardedApplicationError, "shutdown_timeout"):
+            with TestClient(app, base_url="https://review.test"):
+                pass
+        self.assertTrue(application.started)
+        self.assertEqual(closed, [])
+
+    def test_shutdown_closes_both_admissions_before_one_shared_deadline(self) -> None:
+        configuration = ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(self.hash_path),
+            session_lifetime_seconds=600,
+            graceful_shutdown_seconds=1,
+        )
+        for failing_worker in ("field", "preparation"):
+            with self.subTest(failing_worker=failing_worker):
+                calls = []
+                closed = []
+
+                class _FieldApplication(_ActivityApplication):
+                    def start(self):
+                        calls.append("field-start")
+                        return (0, 0, 0)
+
+                    def close_admission(self) -> None:
+                        calls.append("field-close")
+
+                    def wait_for_drain(self, deadline=None) -> None:
+                        calls.append(("field-wait", deadline))
+                        if failing_worker == "field":
+                            raise GuardedApplicationError("shutdown_timeout")
+
+                class _Preparation:
+                    def start(self) -> None:
+                        calls.append("preparation-start")
+
+                    def begin_drain(self) -> None:
+                        calls.append("preparation-close")
+
+                    def stop(self, deadline=None) -> None:
+                        calls.append(("preparation-wait", deadline))
+                        if failing_worker == "preparation":
+                            raise ReviewPipelineError("shutdown_timeout")
+
+                self.repository.close = lambda: closed.append(True)
+                app = create_review_app(
+                    self.repository, configuration, close_repository=True,
+                    field_application=_FieldApplication(),
+                    review_preparation=_Preparation(),
+                )
+                with self.assertRaisesRegex(Exception, "shutdown_timeout"):
+                    with TestClient(app, base_url="https://review.test"):
+                        pass
+                field_close = calls.index("field-close")
+                preparation_close = calls.index("preparation-close")
+                field_wait = next(
+                    index for index, value in enumerate(calls)
+                    if isinstance(value, tuple) and value[0] == "field-wait"
+                )
+                preparation_wait = next(
+                    index for index, value in enumerate(calls)
+                    if isinstance(value, tuple) and value[0] == "preparation-wait"
+                )
+                self.assertLess(field_close, field_wait)
+                self.assertLess(preparation_close, field_wait)
+                self.assertLess(field_close, preparation_wait)
+                self.assertLess(preparation_close, preparation_wait)
+                deadlines = [
+                    value[1] for value in calls
+                    if isinstance(value, tuple) and value[0].endswith("wait")
+                ]
+                self.assertEqual(len(deadlines), 2)
+                self.assertEqual(deadlines[0], deadlines[1])
+                self.assertEqual(closed, [])
 
     def test_activity_is_permanent_and_consent_is_csrf_bound(self) -> None:
         application = _ActivityApplication()
