@@ -506,24 +506,28 @@ and combinations; ambiguity and unsupported state abstain to manual. The
 canonical output is operator-visible data, not approval or an apply token.
 
 Policy Preview composes that same provider-independent decision policy into the
-existing persisted projection stage without adding a network client, provider
-call, scheduler, or queue. The owner-session/CSRF command changes only the
-closed `review | preview` posture and always reports authority `none`. Outcome
-publication revalidates exact case, report, proposal, target fingerprint,
-policy generation/resolution, source decision set, catalogue, action, evidence,
-and rule identity in one immediate transaction. Stale work publishes no
-outcome and reuses the current pipeline row. Outcome/history reads validate the
-whole append-only document before returning anything and cap the requested
-sample at 50 and the encoded projection at one MiB. They never construct target
-or apply clients. Leave-Preview is impact-only and has no confirmation command.
+existing persisted projection stage without adding a network client or
+provider call. The owner-session/CSRF commands move through the closed
+`review | preview | automatic` posture. Review and Preview report authority
+`none`; explicit confirmation revalidates the exact preview before reporting
+the qualified `decision_only` authority. Outcome publication revalidates exact
+case, report, proposal, target fingerprint, policy generation/resolution,
+source decision set, catalogue, action, evidence, and rule identity in one
+immediate transaction. Stale work publishes no outcome and reuses the current
+pipeline row. Outcome/history reads validate the whole append-only document
+before returning anything and cap the requested sample at 50 and the encoded
+projection at one MiB. They never construct target or apply clients.
+Leave-Preview remains impact-only; the separate confirmation command is
+CSRF-protected and fails closed when the preview is unavailable.
 
 Automatic policy intent is accepted only after the authenticated owner enters
 Preview, and both draft persistence and activation recheck that stored posture
 inside their transactions. Human admission substitutes Ask only for Automatic
-categories; it preserves explicit Ask, Ignore, and Unsupported choices. The
-qualified Automatic set is empty and all persisted outcomes declare authority
-`none`. Only the deterministic F19 projection includes exact `policy_ignored`
-proposals; the external-review packet remains unchanged.
+categories; it preserves explicit Ask, Ignore, and Unsupported choices. Only
+the closed qualified category/option matrix may reach decision-only Automatic;
+all other automatic intent is rejected, and no automatic outcome itself grants
+effect or target-write authority. The deterministic F19 projection includes
+exact `policy_ignored` proposals; the external-review packet remains unchanged.
 
 Guarded field effects add the first persisted mutation boundary. The installed
 product composes the API-key Audiobookshelf target only after authenticated,

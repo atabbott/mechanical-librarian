@@ -2,54 +2,33 @@
 
 Mechanical Librarian is a self-hosted, evidence-first metadata curator for
 ebook and audiobook libraries. The project is pre-release; there is no
-production image, supported release, or write-capable runtime yet.
+published production image or supported release. Target writes remain disabled
+until an owner explicitly grants library-scoped consent and every guarded
+effect gate passes.
 
 ## Current checkpoint
 
-The current 0.10 development checkpoint installs a bounded, evidence-first ebook
-evidence workflow. An operator can:
+The 0.14.0 release-candidate checkpoint runs one authenticated owner workspace.
+It discovers configured Audiobookshelf ebook libraries, prepares exact-current
+reports, ProposalSets, and review cases in the background, presents Library,
+Attention, detail, Policy, and Activity through one packaged React shell, and
+records immutable human decisions. Qualified policy categories may produce
+deterministic decision-only automatic outcomes without model dispatch. Target
+effects require explicit consent, backup readiness, exact-current plan
+validation, optimistic concurrency, supported-service API writes, read-back
+verification, and durable audit/recovery state. Media mounts remain read-only.
 
-- refresh and inspect a current catalogue across configured Audiobookshelf book
-  libraries;
-- create and inspect an immutable manifest for explicit selections or all
-  eligible EPUBs;
-- run that frozen batch serially in the foreground;
-- generate or reopen one complete source-attributed EPUB metadata-and-cover
-  evidence report; and
-- create or reopen one immutable fixed-policy ProposalSet from an exact current
-  report; and
-- admit one exact current actionable ProposalSet as an immutable undecided
-  review case, with typed no-case retirement for non-actionable sets; and
-- compute one canonical provider-independent deterministic decision preview for
-  an exact current case without model/provider calls, persistence, or write
-  authority.
-
-The report combines all 16 current Audiobookshelf metadata destinations,
-bounded structured EPUB evidence, independent configured Hardcover and Open
-Library observations, and validated cover artifacts. Every distinct
-checksum-valid ISBN-10/13 family from bounded package, front, or rear evidence
-gets its own exact discovery lane, while one complete title-plus-author work
-lane runs alongside it when available. Same-provider lane convergence remains
-one correlated source, conflicts stay unresolved, and work evidence never
-becomes edition evidence. The provider gallery retains at
-most eight sources and four per provider with safe provenance and explicit
-truncation. The report remains neutral. A separate deterministic evaluator
-produces exactly one explainable result for each destination without contacting
-providers, configurable ranking, or write authority. Catalogue and batch
-operations retain the same read-only boundary. Review admission records no
-decision, apply, target write, media write, background execution, automatic
-retry, model advice, or supported release. A minimal contained reviewer remains
-reachable only through the source workbench for bounded, sanitized experiments
-and has no product workflow or persistence.
+Contributor-only catalogue, batch, evidence, proposal, case, deterministic
+preview, and contained-reviewer scenarios remain available through the typed
+source workbench against disposable or explicitly approved private test state.
+They are not installed runtime commands and cannot bridge to production targets.
 
 Only absent or exact-current pre-release state is supported. Earlier
 development databases, manifests, configuration schemas, and retired commands
 are intentionally rejected rather than migrated or interpreted.
 
 The installed command surface contains only the authenticated `review-serve`
-launcher. Contributor-only catalogue, evidence, proposal, case, decision, and
-contained-reviewer workflows live in a typed source-only workbench that is
-excluded from the wheel and container and refuses production targets.
+launcher. The source-only workbench is excluded from the wheel and container.
 The authenticated Library, Attention, review-detail, Policy, and Activity URLs
 share one persistent packaged React workspace; FastAPI retains every session,
 currentness, policy, effect, persistence, and mutation decision, and `/login`

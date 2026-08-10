@@ -69,7 +69,7 @@ An ordinary `ReviewCase` contains only the decision surface for one target:
 - independently selectable field proposals;
 - typed cover and series choice groups;
 - evidence and notice references;
-- AI recommendations and deterministic policy disposition;
+- evidence-derived recommendations and deterministic policy disposition;
 - the current applicable human decision, if any; and
 - apply eligibility and stale-state information.
 
@@ -102,8 +102,8 @@ Every proposed field change distinguishes:
 - explicit keep-current or no-change behavior;
 - source consensus;
 - supporting and contradicting evidence IDs;
-- AI recommendation and reason;
-- the required AI `problems` list containing only bounded adverse or unresolved
+- deterministic recommendation and reason;
+- the bounded `problems` list containing only adverse or unresolved
   facts, with positive support shown through the cited evidence and reason;
   the list may be empty when there is no adverse fact, including a manual
   recommendation that is fail-closed for insufficient or conflicting support;
@@ -145,19 +145,20 @@ they create a genuine metadata choice.
 The product represents these facts separately:
 
 1. Candidate and evidence facts.
-2. AI recommendation.
+2. Evidence-derived deterministic recommendation.
 3. Deterministic policy disposition.
 4. Human decision, when required.
 5. Apply-plan authorization and readiness.
 6. Apply, verification, and rollback outcomes.
 
-AI approval is never itself production authority. An `auto_apply` disposition
-requires a separate immutable automatic-policy qualification bound to the exact
+A recommendation is never itself production authority. A qualified Automatic
+decision requires separate immutable policy qualification bound to the exact
 review case, policy version, and deterministic rule codes; disposition alone is
-never authority. A qualified deterministic policy may authorize without a human
-decision. An admitted case requires an applicable human decision before an
-apply plan can be built. Destructive work always requires typed explicit
-authorization.
+never authority. That decision-only outcome still requires the ordinary exact
+effect authority, consent, backup, currentness, and verification gates before a
+plan may write. An admitted Ask case requires an applicable human decision
+before an apply plan can be built. Destructive work always requires typed
+explicit authorization.
 
 Delivered F10b admission requires a complete target-shaped ProposalSet
 and preserves it as one immutable undecided case; it does not introduce a

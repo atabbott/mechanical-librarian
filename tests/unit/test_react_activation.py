@@ -151,7 +151,8 @@ class ReactActivationTests(unittest.TestCase):
         self.assertTrue(script.headers["content-type"].startswith("text/javascript"))
         self.assertEqual(self.client.get("/assets/review-app/index.html").status_code, 404)
         self.assertEqual(self.client.get("/assets/review-app/assets/other.js").status_code, 404)
-        self.assertEqual(self.client.get("/assets/review.js").status_code, 404)
+        for retired in ("activity.js", "policy.js", "review.js"):
+            self.assertEqual(self.client.get(f"/assets/{retired}").status_code, 404)
 
     def test_build_identity_fails_closed_before_logout_authority(self) -> None:
         self._login()

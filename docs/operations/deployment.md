@@ -66,10 +66,12 @@ advice, or reviewer persistence. The repository-only contained-reviewer
 workbench may use explicitly provisioned private test artifacts, but those are
 not deployment prerequisites and never enter the wheel or container.
 
-The process needs no HTTP port, queue, scheduler, worker, external database, or
-writable media mount. Do not mount the Docker socket or grant host networking,
-elevated capabilities, or write access to media. Keep the root filesystem
-read-only where packaging permits.
+The process exposes one configured HTTPS port and runs its persisted preparation
+and guarded-effect workers in the same Python process. It needs no external
+queue, scheduler, database, Node runtime, or writable media mount. Do not mount
+the Docker socket, grant elevated capabilities, or write-enable media. Allow
+only the network paths required for the configured owner access, target service,
+and enabled metadata providers; keep the root filesystem read-only.
 
 ## Backup and recovery
 

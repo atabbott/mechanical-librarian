@@ -29,22 +29,24 @@ historical evidence, or start clean and regenerate reports for supported current
 operation; clean regeneration does not preserve history.
 
 The separate catalogue database and immutable batch manifests are regenerable
-from current configuration and supported catalogue/batch operations; preserve
-them only when an operator needs their historical state. Configuration,
-qualification profiles, executable paths, and reviewer/target/provider auth
-stores follow the host's encrypted secret-backup policy and must not be
-embedded in the application database.
+from current configuration and source-only contributor operations; preserve
+them only when an operator needs their historical state. Runtime configuration
+and target/provider authentication stores follow the host's encrypted
+secret-backup policy and must not be embedded in the application database.
+Contained-reviewer profiles, executable paths, and authentication belong only
+to explicitly retained private workbench state, never runtime backups.
 
-Backups expose bounded target metadata, cited evidence, sanitized shadow
-packets, validated advice, and execution facts to anyone who can read them.
+Backups expose bounded target metadata, cited evidence, sanitized deterministic
+packets, decisions/outcomes, and execution facts to anyone who can read them.
 Use owner-scoped access and encrypted-at-rest storage, define an operator
 retention period for complete backups, and destroy expired complete copies
 through the storage system.
 
-There is no 0.10 per-record purge, repair, import, selective restore, migration,
-pruning, or purge command. If the application database or paired artifact store
-is corrupt, missing, or not exact-current, stop and restore a verified matching
-pair or start with a new absent database path and empty artifact store, then
+There is no current per-record purge, repair, import, selective restore,
+migration, pruning, or purge command. If the application database or paired
+artifact store is corrupt, missing, or not exact-current, stop and restore a
+verified matching pair or start with a new absent database path and empty
+artifact store, then
 regenerate supported reports. Never edit rows, pointers, or artifact files
 directly to force recovery.
 

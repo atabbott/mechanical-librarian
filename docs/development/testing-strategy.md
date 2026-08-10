@@ -442,13 +442,13 @@ linkage typing, exact declared-versus-inferred source precision, no precision
 invention, destination-exact manifestation date/year projection,
 non-selectability of unresolved publication text, explicit conflict choices,
 and reviewer citation coverage without exporting real-library values.
-Reviewer replay cases reject missing or opaque-only linkage, identifier
+Packet replay cases reject missing or opaque-only linkage, identifier
 fact/reference disagreement, forged kind/value/applicability/scope/raw-order
 or provider/candidate membership, invalid ISBN/ASIN syntax, private or
 credential-shaped context, missing rich-date-evidence linkage, malformed
 identifier and format shapes, duplicate/reordered facts, and context beyond
-either 16-fact bound. Request-v9 replay exercises the same packet-v5 validator
-and recompiles the exact packet-only action catalogue. Tests cross positive
+either 16-fact bound. Packet-v5 replay recompiles the exact packet-only action
+catalogue. Tests cross positive
 candidate actions into destinations that previously produced only manual
 outcomes and negative actions into historically feasible destinations, then
 vary evidence scope, manifestation binding, support, citation closure,
@@ -457,11 +457,12 @@ obligations fail closed; action and exclusion identities remain stable when an
 opaque review-case digest changes.
 Three independently correlated complete 16-author representations retain all
 48 role facts under the correlation-derived aggregate bound, while an
-over-bound forged role array still fails closed. Persistence records and
-revalidates the exact request-v9 discriminator; a prior request-v8 table is
-rejected without changing its database bytes. Reviewer adapter tests
-accept insignificant raw-result JSON formatting while retaining strict UTF-8,
-duplicate-key, shape, identity, citation and semantic failures. Synthetic
+over-bound forged role array still fails closed. Product persistence records
+only deterministic shadow decisions/outcomes and revalidates their exact
+current discriminators; no reviewer request/result lifecycle remains. The
+source-only contained-reviewer tests separately retain strict UTF-8,
+duplicate-key, shape, identity, output-schema, process, and trust-boundary
+failures without adding product semantics. Synthetic
 two-combination tests prove that every compiled action remains schema-reachable
 but mutually incompatible bibliographic actions never share a recommendation
 branch.

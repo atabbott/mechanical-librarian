@@ -34,8 +34,10 @@ asin, language, explicit, tags, and cover. Each result is one of
 An active metadata profile is replayed from its exact persisted per-library
 resolution. Ask leaves conservative results available for human review, while
 Ignore converts the category to typed non-actionable `policy_ignored` before
-bibliographic combinations are formed. Automatic is not qualified for
-activation.
+bibliographic combinations are formed. Automatic is qualified only for the
+closed decision-only categories admitted by the active policy and safety
+posture; it creates no field-effect plan or target/media write. Unqualified
+categories remain human-only.
 The canonical document does not serialize its content-addressed ProposalSet ID;
 the ID is derived from those canonical bytes and remains the exact-get input.
 

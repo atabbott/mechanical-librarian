@@ -30,8 +30,9 @@ fixed stage and failure codes. One bounded current work ledger per discovered
 eligible item is reconciled in place; run history does not accumulate.
 
 
-0.10 minimizes retained data to one neutral evidence document per distinct
-observation. It retains the configured logical connection/library names,
+The current pre-release application minimizes retained data to one neutral
+evidence document per distinct observation. It retains the configured logical
+connection/library names,
 target item identifier, current title, opaque file identity and digest, bounded
 local field claims and results, fact-local opening excerpts of at most 280
 characters, bounded source/DOM occurrence and rear-spine provenance, and
@@ -99,8 +100,9 @@ purge, retention, or selective export command.
 The complete application SQLite database—including deterministic packets and
 outcomes—is exposed to whoever can read a backup. Store it and its backups as private
 application state with owner-scoped access and encrypted-at-rest backup
-controls. Version 0.10 has no per-record purge, pruning, selective export, or
-retention command; recovery and deletion operate on the complete database.
+controls. The current application has no per-record purge, pruning, selective
+export, or retention command; recovery and deletion operate on the complete
+database.
 
 Prior and intermediate development databases are never imported, migrated, or
 rewritten. Operators may retain them offline, subject to the same data-handling

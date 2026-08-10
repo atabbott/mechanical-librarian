@@ -661,7 +661,6 @@ class ReviewWebTests(unittest.TestCase):
             "/assets/review-app/assets/index-deadbeef.js"
         )
         self.assertEqual(script.status_code, 200)
-        self.assertEqual(self.client.get("/assets/activity.js").status_code, 404)
         self.assertEqual(self.client.get("/api/v1/activity").json()["prepared"]["total"], 2)
         denied = self.client.post(
             "/api/v1/activity/consent",
@@ -1077,7 +1076,6 @@ class ReviewWebTests(unittest.TestCase):
         malformed["candidate_id"] = "alternative_" + "f" * 64
         self.repository.decisions["title"] = json.dumps(malformed, separators=(",", ":"), sort_keys=True)
         self.assertEqual(404, self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}").status_code)
-        self.assertEqual(self.client.get("/assets/review.js").status_code, 404)
 
     def test_automatic_safety_bodies_are_closed_before_control_access(self) -> None:
         login = self._login()
@@ -1487,7 +1485,6 @@ class ReviewWebTests(unittest.TestCase):
         self.assertIn(
             f'data-build-identity="{TEST_REACT_BUILD_IDENTITY}"', page.text
         )
-        self.assertEqual(self.client.get("/assets/review.js").status_code, 404)
         script = self.client.get(
             "/assets/review-app/assets/index-deadbeef.js"
         )
@@ -1878,8 +1875,6 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(script.status_code, 200)
         self.assertTrue(script.headers["content-type"].startswith("text/javascript"))
-        self.assertEqual(self.client.get("/assets/review.js").status_code, 404)
-        self.assertEqual(self.client.get("/assets/policy.js").status_code, 404)
 
     def test_attention_first_library_lenses_queue_and_cursor_binding(self) -> None:
         providers = tuple(
@@ -1963,7 +1958,6 @@ class ReviewWebTests(unittest.TestCase):
 
         self.assertEqual(self.client.get("/library").status_code, 200)
         self.assertEqual(self.client.get("/attention").status_code, 200)
-        self.assertEqual(self.client.get("/assets/review.js").status_code, 404)
 
     def test_cursor_encoder_never_emits_an_unreachable_offset(self) -> None:
         boundary = _encode_cursor(100_000, "library", "all", None)

@@ -6,7 +6,7 @@ An external model is an untrusted source-only experiment. It does not discover
 production credentials, select production inputs, change policy, construct
 service requests, persist product advice, or execute writes.
 
-The deterministic `shadow-decision-preview` and qualified automatic-decision
+The deterministic decision-preview and qualified automatic-decision
 paths are outside the AI boundary. They consume the retained exact,
 source-validated `shadow-review-packet-v5` and trusted compiled action
 catalogue without model/provider dispatch. Their packet, rule identity,
