@@ -1727,7 +1727,7 @@ class SQLiteMetadataReportRepository:
                         profile, consent.library
                     ).resolved_id
                 else:
-                    raise FieldEffectError("persistence")
+                    continue
                 if consent.envelope_identity == self._field_effect_consent_envelope_identity(
                     consent.library, current_resolved_id
                 ):
