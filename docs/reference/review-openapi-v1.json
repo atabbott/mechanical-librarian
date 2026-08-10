@@ -2215,6 +2215,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -2327,6 +2337,16 @@
             "required": true,
             "schema": {
               "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
               "type": "string"
             }
           }
@@ -2526,6 +2546,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2551,6 +2581,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
           },
           "422": {
             "content": {
@@ -2593,6 +2633,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2618,6 +2668,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
           },
           "422": {
             "content": {
@@ -2745,6 +2805,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2848,6 +2918,16 @@
             "required": true,
             "schema": {
               "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
               "type": "string"
             }
           }
@@ -3068,6 +3148,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -3195,6 +3285,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -3237,6 +3337,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
           },
           "413": {
             "content": {
@@ -3289,6 +3399,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -3331,6 +3451,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
           },
           "413": {
             "content": {
@@ -3383,6 +3513,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -3425,6 +3565,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
           },
           "413": {
             "content": {
@@ -3477,6 +3627,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -3519,6 +3679,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
           },
           "413": {
             "content": {
@@ -3645,6 +3815,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -3687,6 +3867,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
           },
           "413": {
             "content": {
@@ -3782,6 +3972,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3814,6 +4014,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
           },
           "422": {
             "content": {
@@ -3856,6 +4066,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3888,6 +4108,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
           },
           "422": {
             "content": {
@@ -4143,6 +4373,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4236,6 +4476,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4320,6 +4570,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -4362,6 +4622,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
           },
           "413": {
             "content": {
@@ -4457,6 +4727,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4487,6 +4767,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
           },
           "422": {
             "content": {
@@ -4674,6 +4964,16 @@
               "maxLength": 128,
               "minLength": 16,
               "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
               "type": "string"
             }
           }
@@ -4931,6 +5231,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5145,6 +5455,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5177,6 +5497,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
           },
           "422": {
             "content": {
@@ -5219,6 +5549,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5251,6 +5591,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
           },
           "422": {
             "content": {
@@ -5309,6 +5659,16 @@
             "required": true,
             "schema": {
               "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
               "type": "string"
             }
           }
@@ -5421,6 +5781,16 @@
             "required": true,
             "schema": {
               "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
               "type": "string"
             }
           }
@@ -5625,6 +5995,16 @@
               "title": "X-Csrf-Token",
               "type": "string"
             }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5660,6 +6040,16 @@
               }
             },
             "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
           },
           "422": {
             "content": {

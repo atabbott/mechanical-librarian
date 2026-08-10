@@ -3,6 +3,7 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import type { SyntheticEvent } from 'react'
 
 import type { LibraryView } from '../api/http'
+import { useRouteReadyFocus } from '../focus'
 import { libraryRoute, ProgressiveCasePanel } from '../router'
 
 const friendly = (value: string) => value.replaceAll('_', ' ')
@@ -10,6 +11,7 @@ const friendly = (value: string) => value.replaceAll('_', ' ')
 export default function LibraryPage({ data }: { data: LibraryView }) {
   const search = libraryRoute.useSearch()
   const navigate = useNavigate({ from: '/library' })
+  useRouteReadyFocus(`${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.preview ?? ''}`)
 
   const submit = (event: SyntheticEvent<HTMLFormElement, SubmitEvent>) => {
     event.preventDefault()
@@ -28,7 +30,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
 
   return (
     <>
-      <header className="page-heading">
+      <header className="page-heading" tabIndex={-1} data-route-focus>
         <div>
           <p className="eyebrow">Authenticated review</p>
           <h1>Review library</h1>
@@ -57,7 +59,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
           {data.works.map((work) => (
             <article key={work.id} className="work-row">
               <div>
-                <h2><Link to="/review/$reviewCaseId" params={{ reviewCaseId: work.id }} preload="intent">{work.title}</Link></h2>
+                <h2><Link to="/review/$reviewCaseId" params={{ reviewCaseId: work.id }} search={{ subview: 'review' }} preload="intent">{work.title}</Link></h2>
                 <p>{work.subtitle}</p>
               </div>
               <span>{friendly(work.attention)}</span>

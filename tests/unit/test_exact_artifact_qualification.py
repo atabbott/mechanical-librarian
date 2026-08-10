@@ -37,6 +37,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
             subprocess.CompletedProcess(("console", "--help"), 0, help_output, b""),
             subprocess.CompletedProcess(("python", "-I"), 0, b"", b""),
             subprocess.CompletedProcess(("python", "-I"), 0, b"", b""),
+            subprocess.CompletedProcess(("python", "-I"), 0, b"", b""),
         )
         with tempfile.TemporaryDirectory() as directory, patch.object(
             qualifier_module, "_run", side_effect=completed
@@ -48,7 +49,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                 require_react_assets=True,
             )
 
-        self.assertEqual(run.call_count, 3)
+        self.assertEqual(run.call_count, 4)
 
     def test_runtime_probe_decodes_help_and_requires_workbench_absence(self) -> None:
         help_output = (

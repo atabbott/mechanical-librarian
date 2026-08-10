@@ -28,9 +28,9 @@ The image build has an exact pinned Node 24.19.0/npm 11.17.0 stage that
 regenerates browser DTOs from the committed OpenAPI document and emits the
 validated React asset bundle. The Python build admits only that bundle, and the
 final image contains neither Node/npm nor frontend source, generated DTOs,
-`node_modules`, Vite metadata, or source maps. The new shell remains unactivated
-until the separately reviewed route cutover; current routes continue to serve
-the established frontend.
+`node_modules`, Vite metadata, or source maps. Library, Attention, review detail,
+Policy, and Activity use that one persistent shell; `/login` remains the small
+server-rendered authentication page.
 
 The normal container composes the supported Audiobookshelf guarded target, but
 remains report-only until the owner completes the authenticated, library-scoped

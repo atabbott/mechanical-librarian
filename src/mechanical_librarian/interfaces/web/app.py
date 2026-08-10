@@ -42,6 +42,11 @@ from mechanical_librarian.application.review_application import ReviewApplicatio
 from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyError
 from mechanical_librarian.interfaces.web import review_frontend
+from mechanical_librarian.interfaces.web.react_assets import (
+    ReactAssetError,
+    ReactAssetLoader,
+    ReactAssetRecovery,
+)
 
 
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
@@ -576,6 +581,7 @@ def create_review_app(
 ) -> FastAPI:
     sessions = application
     origin = urlsplit(configuration.canonical_origin)
+    assets = ReactAssetLoader()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -600,10 +606,21 @@ def create_review_app(
     )
 
     def authenticated_session_cookie(
+        request: Request,
         ml_session: str | None = Security(session_cookie),
     ) -> str:
         _require_session(sessions, ml_session)
         assert ml_session is not None
+        if (
+            request.url.path.startswith("/api/v1/")
+            and request.method not in {"GET", "HEAD", "OPTIONS"}
+            and request.url.path != "/api/v1/session/login"
+        ):
+            bundle = assets.load()
+            if isinstance(bundle, ReactAssetRecovery):
+                raise HTTPException(503, detail={"code": bundle.code})
+            if request.headers.get("x-ml-build-identity") != bundle.build_identity:
+                raise HTTPException(409, detail={"code": "browser_build_mismatch"})
         return ml_session
 
     def browser_csrf(session_token: str) -> str:
@@ -655,7 +672,7 @@ def create_review_app(
         app, application, session_cookie, authenticated_session_cookie
     )
     _register_html_routes(
-        app, application, session_cookie, browser_csrf
+        app, application, session_cookie, browser_csrf, assets
     )
 
     @app.exception_handler(HTTPException)
@@ -672,7 +689,70 @@ def create_review_app(
             return _error(422, "policy_validation")
         return _error(422, "invalid")
 
+    _document_build_identity_header(app)
     return app
+
+
+def _document_build_identity_header(app: FastAPI) -> None:
+    """Expose the runtime build gate on every authenticated unsafe operation."""
+    generate = app.openapi
+
+    def openapi() -> dict[str, object]:
+        schema = generate()
+        paths = schema.get("paths")
+        if not isinstance(paths, dict):
+            return schema
+        for path, path_item in paths.items():
+            if (
+                not isinstance(path, str)
+                or not path.startswith("/api/v1/")
+                or path == "/api/v1/session/login"
+                or not isinstance(path_item, dict)
+            ):
+                continue
+            for method in ("post", "put", "patch", "delete"):
+                operation = path_item.get(method)
+                if not isinstance(operation, dict):
+                    continue
+                parameters = operation.setdefault("parameters", [])
+                if isinstance(parameters, list) and not any(
+                    isinstance(parameter, dict)
+                    and parameter.get("name") == "x-ml-build-identity"
+                    for parameter in parameters
+                ):
+                    parameters.append(
+                        {
+                            "description": (
+                                "Exact identity of the installed authenticated "
+                                "browser build."
+                            ),
+                            "in": "header",
+                            "name": "x-ml-build-identity",
+                            "required": True,
+                            "schema": {
+                                "pattern": "^[0-9a-f]{64}$",
+                                "type": "string",
+                            },
+                        }
+                    )
+                responses = operation.setdefault("responses", {})
+                if isinstance(responses, dict):
+                    responses.setdefault(
+                        "409",
+                        {
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "$ref": "#/components/schemas/_ErrorResponse"
+                                    }
+                                }
+                            },
+                            "description": "Browser build mismatch",
+                        },
+                    )
+        return schema
+
+    app.openapi = openapi  # type: ignore[method-assign]
 
 
 def _register_session_and_operations_routes(
@@ -732,6 +812,14 @@ def _register_session_and_operations_routes(
     @app.get("/login", include_in_schema=False)
     def login_page() -> HTMLResponse:
         return HTMLResponse(review_frontend.login_html())
+
+    @app.get("/assets/login.css", include_in_schema=False)
+    def login_css() -> Response:
+        return Response(review_frontend.LOGIN_CSS, media_type="text/css")
+
+    @app.get("/assets/login.js", include_in_schema=False)
+    def login_js() -> Response:
+        return Response(review_frontend.LOGIN_JS, media_type="text/javascript")
 
     @app.post(
         "/api/v1/session/login",
@@ -1406,8 +1494,20 @@ def _register_html_routes(
     application: ReviewApplication,
     session_cookie: APIKeyCookie,
     browser_csrf: Callable[[str], str],
+    asset_loader: ReactAssetLoader,
 ) -> None:
     sessions = application
+
+    def shell_response(ml_session: str | None) -> HTMLResponse:
+        _require_session(sessions, ml_session)
+        assert ml_session is not None
+        bundle = asset_loader.load()
+        if isinstance(bundle, ReactAssetRecovery):
+            return _react_asset_recovery_response()
+        try:
+            return HTMLResponse(bundle.shell_html(browser_csrf(ml_session)))
+        except (OSError, ReactAssetError):
+            return _react_asset_recovery_response()
 
     @app.get("/review/{review_case_id}", include_in_schema=False)
     def review_page(
@@ -1415,69 +1515,59 @@ def _register_html_routes(
         ml_session: str | None = Cookie(default=None),
     ) -> HTMLResponse:
         _require_case_id(review_case_id)
-        _require_session(sessions, ml_session)
-        assert ml_session is not None
-        return HTMLResponse(
-            review_frontend.review_html(review_case_id, browser_csrf(ml_session))
-        )
+        return shell_response(ml_session)
 
     @app.get("/library", include_in_schema=False)
     def library_page(
         ml_session: str | None = Cookie(default=None),
     ) -> HTMLResponse:
-        _require_session(sessions, ml_session)
-        assert ml_session is not None
-        return HTMLResponse(
-            review_frontend.library_html(
-                browser_csrf(ml_session), application.preparation_available
-            )
-        )
+        return shell_response(ml_session)
 
     @app.get("/attention", include_in_schema=False)
     def attention_page(
         ml_session: str | None = Cookie(default=None),
     ) -> HTMLResponse:
-        _require_session(sessions, ml_session)
-        assert ml_session is not None
-        return HTMLResponse(review_frontend.attention_html(browser_csrf(ml_session)))
+        return shell_response(ml_session)
 
     @app.get("/policy", include_in_schema=False)
     def policy_page(
         ml_session: str | None = Cookie(default=None),
     ) -> HTMLResponse:
-        _require_session(sessions, ml_session)
-        assert ml_session is not None
-        return HTMLResponse(review_frontend.policy_html(browser_csrf(ml_session)))
+        return shell_response(ml_session)
 
     @app.get("/activity", include_in_schema=False)
     def activity_page(
         ml_session: str | None = Cookie(default=None),
     ) -> HTMLResponse:
-        _require_session(sessions, ml_session)
-        assert ml_session is not None
-        return HTMLResponse(review_frontend.activity_html(browser_csrf(ml_session)))
+        return shell_response(ml_session)
 
-    @app.get("/assets/review.css", include_in_schema=False)
-    def review_css() -> Response:
-        return Response(review_frontend.REVIEW_CSS, media_type="text/css")
-
-    @app.get("/assets/review.js", include_in_schema=False)
-    def review_js() -> Response:
-        return Response(review_frontend.REVIEW_JS, media_type="text/javascript")
-
-    @app.get("/assets/activity.js", include_in_schema=False)
-    def activity_js() -> Response:
-        return Response(review_frontend.ACTIVITY_JS, media_type="text/javascript")
-
-    @app.get("/assets/policy.js", include_in_schema=False)
-    def policy_js() -> Response:
-        return Response(review_frontend.POLICY_JS, media_type="text/javascript")
-
-    @app.get("/assets/shadow-policy.js", include_in_schema=False)
-    def shadow_policy_js() -> Response:
-        return Response(
-            review_frontend.SHADOW_POLICY_JS, media_type="text/javascript"
+    @app.get("/assets/review-app/{asset_path:path}", include_in_schema=False)
+    def react_asset(asset_path: str) -> Response:
+        bundle = asset_loader.load()
+        if isinstance(bundle, ReactAssetRecovery):
+            return _react_asset_recovery_response()
+        selected = next(
+            (asset for asset in bundle.assets if asset.path == asset_path), None
         )
+        if selected is None or selected.kind == "shell":
+            raise HTTPException(404, detail={"code": "asset_not_found"})
+        try:
+            payload = bundle.read(asset_path)
+        except (OSError, ReactAssetError):
+            return _react_asset_recovery_response()
+        media_type = "text/css" if selected.kind == "style" else "text/javascript"
+        return Response(payload, media_type=media_type)
+
+
+def _react_asset_recovery_response() -> HTMLResponse:
+    return HTMLResponse(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<title>Review workspace unavailable</title></head><body>"
+        "<main><h1>Review workspace unavailable</h1>"
+        "<p>Ask the owner to restart after rebuilding the installed assets.</p>"
+        "</main></body></html>",
+        status_code=503,
+    )
 
 
 def load_owner_password_verifier(path: Path) -> Callable[[str], bool]:

@@ -57,6 +57,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecisionError,
 )
 from tests.unit.review_app_fixture import (
+    TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
 )
 from mechanical_librarian.application.metadata_policy import PolicyTransition
@@ -532,6 +533,7 @@ class ReviewWebTests(unittest.TestCase):
             json={"password": "correct horse"},
         )
         self.assertEqual(response.status_code, 200, response.text)
+        self.client.headers["x-ml-build-identity"] = TEST_REACT_BUILD_IDENTITY
         return response.json()
 
     def test_shutdown_timeout_preserves_shared_repository_for_live_worker(self) -> None:
@@ -652,17 +654,14 @@ class ReviewWebTests(unittest.TestCase):
         login = self._login()
         page = self.client.get("/activity")
         self.assertEqual(page.status_code, 200)
-        self.assertIn('href="/activity" aria-current="page"', page.text)
-        self.assertIn('/assets/activity.js', page.text)
-        stylesheet = self.client.get("/assets/review.css").text
-        self.assertIn(".activity-page:focus-visible { outline: none; }", stylesheet)
-        self.assertIn(".policy-paper, .policy-summary {", stylesheet)
-        self.assertIn(".activity-libraries { display: grid;", stylesheet)
-        activity_script = self.client.get("/assets/activity.js").text
-        self.assertIn('libraries.querySelectorAll("input:checked")', activity_script)
-        self.assertIn("!library.prepared.total", activity_script)
-        self.assertIn('origin === "automatic_policy"', activity_script)
-        self.assertIn('return "recorded origin"', activity_script)
+        self.assertIn(
+            f'data-build-identity="{TEST_REACT_BUILD_IDENTITY}"', page.text
+        )
+        script = self.client.get(
+            "/assets/review-app/assets/index-deadbeef.js"
+        )
+        self.assertEqual(script.status_code, 200)
+        self.assertEqual(self.client.get("/assets/activity.js").status_code, 404)
         self.assertEqual(self.client.get("/api/v1/activity").json()["prepared"]["total"], 2)
         denied = self.client.post(
             "/api/v1/activity/consent",
@@ -1078,7 +1077,7 @@ class ReviewWebTests(unittest.TestCase):
         malformed["candidate_id"] = "alternative_" + "f" * 64
         self.repository.decisions["title"] = json.dumps(malformed, separators=(",", ":"), sort_keys=True)
         self.assertEqual(404, self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}").status_code)
-        self.assertIn("automaticCandidate", self.client.get("/assets/review.js").text)
+        self.assertEqual(self.client.get("/assets/review.js").status_code, 404)
 
     def test_automatic_safety_bodies_are_closed_before_control_access(self) -> None:
         login = self._login()
@@ -1485,33 +1484,14 @@ class ReviewWebTests(unittest.TestCase):
         assert match is not None
         browser_csrf = match.group(1)
         self.assertNotEqual(browser_csrf, login["csrf_token"])
-        script = self.client.get("/assets/review.js").text
-        self.assertIn("removeAttribute('data-csrf-token')", script)
-        self.assertIn("No attention needed", script)
-        self.assertIn("activityProjection", script)
-        self.assertIn("retry.disabled = data.paused", script)
-        self.assertIn("activityPopover.contains(document.activeElement)", script)
-        self.assertIn('.workspace-tab[aria-current="page"][href]', script)
-        self.assertIn(".workspace-tab[href]", script)
-        self.assertIn('new Event("review-preparation-change")', script)
-        self.assertIn("libraryRefreshGeneration", script)
-        self.assertIn("generation !== libraryRefreshGeneration", script)
-        self.assertIn("refreshedList.replaceChildren", script)
-        self.assertIn("replacement.focus({preventScroll: true})", script)
-        self.assertNotIn("Automatically handled", script)
-        self.assertNotIn("localStorage", script)
-        self.assertNotIn("sessionStorage", script)
-        self.assertNotIn("policy-draft", script)
-        self.assertLess(len(script.encode()), 40_000)
-        policy_script = self.client.get("/assets/policy.js")
-        self.assertEqual(200, policy_script.status_code)
-        self.assertIn("policy-draft", policy_script.text)
-        self.assertLess(len(policy_script.content), 8_000)
-        shadow_script = self.client.get("/assets/shadow-policy.js")
-        self.assertEqual(200, shadow_script.status_code)
-        self.assertIn("Non-authoritative", shadow_script.text)
-        self.assertNotIn("localStorage", shadow_script.text)
-        self.assertLess(len(shadow_script.content), 5_500)
+        self.assertIn(
+            f'data-build-identity="{TEST_REACT_BUILD_IDENTITY}"', page.text
+        )
+        self.assertEqual(self.client.get("/assets/review.js").status_code, 404)
+        script = self.client.get(
+            "/assets/review-app/assets/index-deadbeef.js"
+        )
+        self.assertEqual(script.status_code, 200)
         field = self.client.get(
             f"/api/v1/review-cases/{self.case.review_case_id}"
         ).json()["fields"][0]
@@ -1657,6 +1637,22 @@ class ReviewWebTests(unittest.TestCase):
             "413",
             expected["paths"]["/api/v1/metadata-policy/activate"]["post"]["responses"],
         )
+        for path, path_item in expected["paths"].items():
+            if path == "/api/v1/session/login":
+                continue
+            for method in ("post", "put", "patch", "delete"):
+                operation = path_item.get(method)
+                if operation is None:
+                    continue
+                build_parameters = [
+                    parameter
+                    for parameter in operation.get("parameters", [])
+                    if parameter.get("name") == "x-ml-build-identity"
+                ]
+                self.assertEqual(len(build_parameters), 1, (path, method))
+                self.assertTrue(build_parameters[0]["required"])
+                self.assertEqual(build_parameters[0]["in"], "header")
+                self.assertIn("409", operation["responses"])
         schemas = expected["components"]["schemas"]
         self.assertNotIn("HTTPValidationError", schemas)
         self.assertTrue(
@@ -1764,7 +1760,7 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(
             response_statuses[("post", "/api/v1/session/logout")],
-            {"204", "400", "401", "403", "422", "503"},
+            {"204", "400", "401", "403", "409", "422", "503"},
         )
         self.assertEqual(
             response_statuses[
@@ -1808,7 +1804,7 @@ class ReviewWebTests(unittest.TestCase):
         ):
             self.assertEqual(
                 response_statuses[("post", path)],
-                {"204", "401", "403", "422", "503"},
+                {"204", "401", "403", "409", "422", "503"},
             )
         self.assertEqual(
             response_statuses[
@@ -1821,11 +1817,11 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(
             response_statuses[("post", "/api/v1/review-preparation/pause")],
-            {"200", "401", "403", "422", "503"},
+            {"200", "401", "403", "409", "422", "503"},
         )
         self.assertEqual(
             response_statuses[("post", "/api/v1/review-preparation/resume")],
-            {"200", "401", "403", "422", "503"},
+            {"200", "401", "403", "409", "422", "503"},
         )
         self.assertEqual(
             response_statuses[("post", "/api/v1/review-preparation/{connection}/{library_name}/retry")],
@@ -1877,23 +1873,13 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(self.repository.failures, [])
 
     def test_browser_asset_loads_all_read_models_without_html_injection(self) -> None:
-        script = self.client.get("/assets/review.js").text
-        self.assertIn("/evidence", script)
-        self.assertIn("Load more evidence", script)
-        self.assertIn("encodeURIComponent(cursor)", script)
-        self.assertIn("/history", script)
-        self.assertIn("textContent", script)
-        self.assertNotIn("innerHTML", script)
-        self.assertIn("item.kind==='human_decision_recorded'", script)
-        self.assertIn("${item.destination}: ${item.outcome} by ${item.actor}", script)
-        library_preview_copy = (
-            "Human and automatic decisions are immutable and origin-labelled. "
-            "This workspace never writes to your target library."
+        script = self.client.get(
+            "/assets/review-app/assets/index-deadbeef.js"
         )
-        self.assertEqual(script.count(library_preview_copy), 2)
-        self.assertNotIn(
-            "Each decision is recorded as an immutable human outcome.", script
-        )
+        self.assertEqual(script.status_code, 200)
+        self.assertTrue(script.headers["content-type"].startswith("text/javascript"))
+        self.assertEqual(self.client.get("/assets/review.js").status_code, 404)
+        self.assertEqual(self.client.get("/assets/policy.js").status_code, 404)
 
     def test_attention_first_library_lenses_queue_and_cursor_binding(self) -> None:
         providers = tuple(
@@ -1977,16 +1963,7 @@ class ReviewWebTests(unittest.TestCase):
 
         self.assertEqual(self.client.get("/library").status_code, 200)
         self.assertEqual(self.client.get("/attention").status_code, 200)
-        script = self.client.get("/assets/review.js").text
-        for required in (
-            "needs_attention",
-            "no_attention_needed",
-            "CSS.escape",
-            "details",
-            "location.search",
-            "location.assign('/library')",
-        ):
-            self.assertIn(required, script)
+        self.assertEqual(self.client.get("/assets/review.js").status_code, 404)
 
     def test_cursor_encoder_never_emits_an_unreachable_offset(self) -> None:
         boundary = _encode_cursor(100_000, "library", "all", None)
@@ -2432,6 +2409,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                         headers={
                             "Origin": "https://review.test",
                             "X-CSRF-Token": login["csrf_token"],
+                            "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
                             "Idempotency-Key": key,
                         },
                         json={**base_payload, "outcome": outcome},
