@@ -171,6 +171,11 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 "heading", name="The current workspace assets could not be loaded."
             ).wait_for()
             self.assertEqual(documents, before_navigation)
+            page.get_by_role("button", name="Reload the current application").click()
+            page.get_by_role(
+                "heading", name="The current workspace assets could not be loaded."
+            ).wait_for()
+            self.assertEqual(documents, before_navigation + 1)
             expected_chunk_errors = [
                 error
                 for error in errors

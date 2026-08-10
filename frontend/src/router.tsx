@@ -5,7 +5,7 @@ import { Suspense, useEffect, useRef, useState } from 'react'
 import type { createMemoryHistory } from '@tanstack/react-router'
 import { BuildMismatchError } from './api/http'
 import type { AttentionSearch, AutomaticSafetyView, DetailSearch, LibrarySearch, PolicySearch, PolicyStateView, ReviewHttp, ShadowPostureView } from './api/http'
-import { ChunkRecoveryError, recoverableLazy } from './chunkRecovery'
+import { ChunkRecoveryError, recoverableLazy, reloadCurrentApplication } from './chunkRecovery'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
 const AttentionPage = recoverableLazy(() => import('./routes/AttentionPage'))
@@ -33,6 +33,7 @@ const routeTitle = (path: string) => path.startsWith('/review/') ? 'Review case'
 const PreparationActivity = () => {
   const { http, queryClient } = rootRoute.useRouteContext()
   const [open, setOpen] = useState(false)
+  const trigger = useRef<HTMLButtonElement>(null)
   const previousSnapshot = useRef<string | null>(null)
   const query = useQuery({ queryKey: ['review-preparation'], queryFn: ({ signal }) => http.getPreparation(signal), staleTime: 1_000, retry: false, refetchInterval: (result) => { const value = result.state.data; return value?.active || value?.actionable || value?.paused ? 1_500 : 15_000 } })
   const action = useMutation({ mutationFn: (path: string) => http.preparationAction(path), retry: false, onSettled: async () => { await queryClient.invalidateQueries({ queryKey: ['review-preparation'] }); await Promise.all([queryClient.invalidateQueries({ queryKey: ['library'] }), queryClient.invalidateQueries({ queryKey: ['attention'] })]) } })
@@ -48,8 +49,14 @@ const PreparationActivity = () => {
       queryClient.invalidateQueries({ queryKey: ['attention'] }),
     ])
   }, [queryClient, snapshot])
-  if (!data || (!data.active && !data.actionable && !data.paused)) return null
-  return <div className="preparation"><button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{data.paused ? 'Preparation paused' : data.actionable ? 'Preparation needs attention' : 'Preparing libraries'}</button>{open ? <section aria-label="Background activity"><h2>Background activity</h2>{data.libraries.map((item) => <article key={`${item.connection}:${item.library}`}><strong>{item.library}</strong><span>{item.state} · {item.checked}/{item.total}</span><button disabled={action.isPending || data.paused || item.state === 'queued' || item.state === 'discovering'} onClick={() => action.mutate(`${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/scan`)}>Scan now</button>{item.state === 'completed_with_failures' ? <button disabled={action.isPending || data.paused} onClick={() => action.mutate(`${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/retry`)}>Retry</button> : null}</article>)}<button disabled={action.isPending} onClick={() => action.mutate(data.paused ? 'resume' : 'pause')}>{data.paused ? 'Resume' : 'Pause'}</button><button onClick={() => setOpen(false)}>Close</button>{action.isError ? <p role="alert">Preparation control failed safely. Try again.</p> : null}</section> : null}</div>
+  const unavailable = !data || (!data.active && !data.actionable && !data.paused)
+  useEffect(() => {
+    if (!open || !unavailable) return
+    requestAnimationFrame(() => { document.getElementById('main-content')?.focus({ preventScroll: true }); setOpen(false) })
+  }, [open, unavailable])
+  if (unavailable && !open) return null
+  const close = () => { trigger.current?.focus(); setOpen(false) }
+  return <div className="preparation"><button ref={trigger} type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{data?.paused ? 'Preparation paused' : data?.actionable ? 'Preparation needs attention' : 'Preparing libraries'}</button>{open && data ? <section aria-label="Background activity"><h2>Background activity</h2>{data.libraries.map((item) => <article key={`${item.connection}:${item.library}`}><strong>{item.library}</strong><span>{item.state} · {item.checked}/{item.total}</span><button disabled={action.isPending || data.paused || item.state === 'queued' || item.state === 'discovering'} onClick={() => action.mutate(`${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/scan`)}>Scan now</button>{item.state === 'completed_with_failures' ? <button disabled={action.isPending || data.paused} onClick={() => action.mutate(`${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/retry`)}>Retry</button> : null}</article>)}<button disabled={action.isPending} onClick={() => action.mutate(data.paused ? 'resume' : 'pause')}>{data.paused ? 'Resume' : 'Pause'}</button><button onClick={close}>Close</button>{action.isError ? <p role="alert">Preparation control failed safely. Try again.</p> : null}</section> : null}</div>
 }
 
 const ThemeControl = () => {
@@ -86,7 +93,7 @@ const Shell = () => {
 
 const RoutePending = ({ title = 'workspace' }: { title?: string }) => <section aria-busy="true" className="route-state"><p className="eyebrow">Authenticated review</p><h1>Loading {title.toLowerCase()}…</h1></section>
 const RouteFailure = ({ error, reset }: { error: Error; reset: () => void }) => error instanceof ChunkRecoveryError && error.exhausted
-  ? <section className="route-state"><p className="eyebrow">Application update unavailable</p><h1>The current workspace assets could not be loaded.</h1><p role="alert">{error.message}</p><button onClick={reset}>Try the current assets again</button></section>
+  ? <section className="route-state"><p className="eyebrow">Application update unavailable</p><h1>The current workspace assets could not be loaded.</h1><p role="alert">{error.message}</p><button onClick={() => reloadCurrentApplication()}>Reload the current application</button></section>
   : <section className="route-state"><p className="eyebrow">Review unavailable</p><h1>This workspace could not be loaded.</h1><p role="alert">{error.message}</p><button onClick={reset}>Try again</button></section>
 const DirectEntryFallback = () => <section className="route-state"><p className="eyebrow">Page unavailable</p><h1>This review route does not exist.</h1><Link to="/library" search={{ lens: 'needs_attention' }}>Open review library</Link></section>
 

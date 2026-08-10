@@ -1,7 +1,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 
+import { AmbiguousMutationError } from '../api/http'
 import type { ActivityView } from '../api/http'
+import { activityEventKeys, activityOutcome } from '../activityState'
 import { useRouteReadyFocus } from '../focus'
 import { useReviewContext } from '../router'
 
@@ -17,7 +19,6 @@ const originLabel = (origin: unknown) => {
   const neutral = value.replaceAll('_', ' ').trim().slice(0, 64)
   return neutral ? `Recorded source: ${neutral}` : 'Recorded source'
 }
-
 export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const { http, queryClient } = useReviewContext()
   useRouteReadyFocus('activity')
@@ -35,7 +36,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   }
   const selected = selection.source === data ? selection.names : new Set([...selection.names].filter((name) => selectableNames.has(name)))
   const [status, setStatus] = useState('')
-  const mutation = useMutation({ mutationFn: ({ path, body }: { path: string; body?: unknown }) => http.activityCommand(path, body), retry: false, onSuccess: async () => { setSelection({ source: data, names: new Set() }); setStatus('Activity state refreshed from the authoritative server.'); await queryClient.invalidateQueries({ queryKey: ['activity'] }) }, onError: async () => { setStatus('The requested activity change failed safely. Try again.'); await queryClient.invalidateQueries({ queryKey: ['activity'] }) } })
+  const mutation = useMutation({ mutationFn: ({ path, body }: { path: string; body?: unknown }) => http.activityCommand(path, body), retry: false, onSuccess: async () => { setSelection({ source: data, names: new Set() }); setStatus('Activity state refreshed from the authoritative server.'); await queryClient.invalidateQueries({ queryKey: ['activity'] }) }, onError: async (error, command) => { if (error instanceof AmbiguousMutationError) { try { const refreshed = await query.refetch(); const outcome = refreshed.isError ? 'unknown' : activityOutcome(refreshed.data, command); setStatus(outcome === 'applied' ? 'The requested activity change was applied, confirmed by the authoritative server.' : outcome === 'not_applied' ? 'The requested activity change was not applied, confirmed by the authoritative server.' : 'The activity outcome could not be confirmed. No command was resent.') } catch { setStatus('The activity outcome could not be confirmed. No command was resent.') }; return } setStatus('The requested activity change failed safely. Try again.'); await queryClient.invalidateQueries({ queryKey: ['activity'] }) } })
   const paused = data.paused === true
   const backupReady = data.backup_ready === true
   const capabilityState = (library: string) => text(capability(library)?.state, 'not_ready')
@@ -45,10 +46,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     return [{ library: name, destinations: capabilityDestinations(capability(name)).filter((destination) => destination.state === 'allowed').map((destination) => destination.destination) }]
   })
   const toggle = (library: string) => { const next = new Set(selected); if (next.has(library)) next.delete(library); else next.add(library); setSelection({ source: data, names: next }) }
+  const eventKeys = activityEventKeys(records(data.events))
   return <>
     <header className="page-heading" tabIndex={-1} data-route-focus><div><p className="eyebrow">Guarded application</p><h1>{enabled.length ? 'Activity' : 'Ready when you are'}</h1><p>{enabled.length ? 'A readable account of outcomes and exceptions.' : 'Review remains useful in read-only mode. Explicit consent enables supported writes.'}</p></div></header>
     <div className="activity-layout"><section className="activity-controls"><h2>{enabled.length ? paused ? 'New work paused' : 'Applying safely' : 'Enable guarded writes'}</h2>{configured.length ? <fieldset><legend>Prepared libraries</legend>{configured.map((library) => { const name = text(library.library); const state = capabilityState(name); const destinations = capabilityDestinations(capability(name)); const prepared = typeof library.prepared === 'object' && library.prepared ? count((library.prepared as Record<string, unknown>).total) : 0; const disabled = !selectableNames.has(name) || !['allowed', 'partially_allowed'].includes(state) || prepared === 0; return <div key={name}><label><input type="checkbox" value={name} disabled={disabled} checked={selected.has(name)} onChange={() => toggle(name)}/>{name} · {prepared} prepared{disabled ? ` · ${state.replaceAll('_', ' ')}` : ''}</label><ul aria-label={`${name} destination consent`}>
       {destinations.map((destination) => <li key={destination.destination}><span>{destinationLabel(destination.destination)}</span>: {destination.state === 'allowed' ? `Included${destination.consented ? ' · already consented' : ' · consent requested'}` : `Excluded · ${destination.state.replaceAll('_', ' ')}`}</li>)}
-    </ul></div> })}</fieldset> : null}<button disabled={mutation.isPending || !backupReady || selectedGrants.length === 0} onClick={() => mutation.mutate({ path: 'activity/consent', body: { grants: selectedGrants } })}>{enabled.length ? 'Enable selected libraries' : 'Enable guarded writes'}</button>{enabled.length ? <button disabled={mutation.isPending} onClick={() => mutation.mutate({ path: `field-effects/${paused ? 'resume' : 'pause'}` })}>{paused ? 'Resume new work' : 'Pause new work'}</button> : null}{enabled.map((library) => <button key={`${text(library.connection)}:${text(library.library)}`} disabled={mutation.isPending} onClick={() => mutation.mutate({ path: `activity/${encodeURIComponent(text(library.connection))}/${encodeURIComponent(text(library.library))}/revoke` })}>Remove write permission for {text(library.library)}</button>)}<p role={mutation.isError ? 'alert' : 'status'}>{status}</p></section><section className="activity-ledger"><h2>What Mechanical Librarian is doing</h2>{records(data.events).map((event, index) => <article key={text(event.work_id, String(index))}><strong>{text(event.work_id, 'Work')} · {text(event.state, 'recorded').replaceAll('_', ' ')}</strong><p>{text(event.library)} · {text(event.destination).replaceAll('_', ' ')} · {originLabel(event.origin)}</p></article>)}{records(data.events).length === 0 ? <p>No application outcomes have been recorded yet.</p> : null}</section></div>
+    </ul></div> })}</fieldset> : null}<button disabled={mutation.isPending || !backupReady || selectedGrants.length === 0} onClick={() => mutation.mutate({ path: 'activity/consent', body: { grants: selectedGrants } })}>{enabled.length ? 'Enable selected libraries' : 'Enable guarded writes'}</button>{enabled.length ? <button disabled={mutation.isPending} onClick={() => mutation.mutate({ path: `field-effects/${paused ? 'resume' : 'pause'}` })}>{paused ? 'Resume new work' : 'Pause new work'}</button> : null}{enabled.map((library) => <button key={`${text(library.connection)}:${text(library.library)}`} disabled={mutation.isPending} onClick={() => mutation.mutate({ path: `activity/${encodeURIComponent(text(library.connection))}/${encodeURIComponent(text(library.library))}/revoke` })}>Remove write permission for {text(library.library)}</button>)}<p role={mutation.isError ? 'alert' : 'status'}>{status}</p></section><section className="activity-ledger"><h2>What Mechanical Librarian is doing</h2>{records(data.events).map((event, index) => <article key={eventKeys[index]}><strong>{text(event.work_id, 'Work')} · {text(event.state, 'recorded').replaceAll('_', ' ')}</strong><p>{text(event.library)} · {text(event.destination).replaceAll('_', ' ')} · {originLabel(event.origin)}</p></article>)}{records(data.events).length === 0 ? <p>No application outcomes have been recorded yet.</p> : null}</section></div>
   </>
 }
