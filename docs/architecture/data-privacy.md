@@ -8,8 +8,13 @@ the default. It rejects production workspaces and targets and offers no force
 bypass. Results expose only bounded status, artifact identifiers, byte counts,
 and SHA-256 digests; operation exceptions are replaced with closed diagnostics.
 Network experiments require a named isolated profile whose sanitization and
-bounded authority are recorded before every attempt. Workbench code and state
-are absent from the wheel and production container.
+bounded authority bind the exact input-file digests and are recorded before
+every attempt. Service configuration admits only loopback or `.invalid` origins
+and workspace-confined private paths; fixed-origin production metadata providers
+remain disabled unless a focused fake operation replaces the composition seam.
+Persistent `.workbench/` state is ignored
+by version control. Workbench code and state are absent from the wheel and
+production container.
 
 ## Review preparation progress
 

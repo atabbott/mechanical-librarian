@@ -64,16 +64,24 @@ write-safety contracts.
 
 Provider and contained-reviewer calls additionally require an
 `IsolatedNetworkProfile`. Its identifier, sanitized-input assertion, and bounded
-authority assertion are validated. A canonical attempt record is durably
-created in the disposable workspace before each network operation. Use only
-fake or explicitly isolated services and sanitized inputs; never point the
-workbench at a production library or service.
+authority assertion are validated and bound to the exact SHA-256 identities of
+the configuration, manifest, or reviewer-profile files used by the operation.
+Target/provider configuration additionally admits only loopback or `.invalid`
+origins and confines credential, TLS, password, and media paths to the workbench
+workspace. The production composition refuses every enabled fixed-origin
+metadata provider because those origins cannot be rebound to an isolated fake;
+provider experiments must inject the focused fake operation used by their test.
+A canonical attempt record containing those input identities is
+durably created before each network operation. Use only fake or explicitly
+isolated services and sanitized inputs; never point the workbench at a
+production library or service.
 
 ## Qualification
 
 Focused tests prove the full catalogue reaches the shared application
 operations, action-specific inputs fail closed, private inputs require approval,
 network attempts are recorded, temporary state is removed, and diagnostics are
-redacted. Exact-artifact qualification additionally builds the wheel and
+redacted. The documented persistent `.workbench/` root is repository-ignored;
+never relocate private outputs into a tracked path. Exact-artifact qualification additionally builds the wheel and
 container, invokes installed help from outside the checkout, and proves the
 workbench package cannot be imported or executed there.

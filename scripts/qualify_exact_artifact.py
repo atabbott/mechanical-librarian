@@ -426,11 +426,7 @@ def _qualify_runtime_console(
         encoding="utf-8",
         reason="installed_console_failed",
     )
-    retired = (
-        "metadata-report", "proposal-set", "review-case", "catalogue", "batch",
-        "shadow-review", "reviewer-auth",
-    )
-    if help_text.count("review-serve") != 3 or any(name in help_text for name in retired):
+    if not _runtime_help_is_closed(help_text):
         raise QualificationFailure("installed_console_surface_invalid")
     python = console.parent / ("python.exe" if os.name == "nt" else "python")
     unavailable = _run(
@@ -447,6 +443,12 @@ def _qualify_runtime_console(
         raise QualificationFailure("installed_workbench_probe_invalid")
     _qualify_guarded_effect_lifecycle(python, run_directory, environment)
     return output
+
+
+def _runtime_help_is_closed(value: str) -> bool:
+    choices = re.findall(r"\{([^}\r\n]+)\}", value)
+    commands = re.findall(r"^    ([a-z][a-z0-9-]*)  ", value, re.MULTILINE)
+    return choices == ["review-serve", "review-serve"] and commands == ["review-serve"]
 
 
 def _qualify_guarded_effect_lifecycle(

@@ -257,7 +257,14 @@ class WorkbenchOperations:
         })
 
 
-def _complete(context: WorkbenchContext, name: str, raw: object) -> WorkbenchResult:
+def _complete(
+    context: WorkbenchContext,
+    name: str,
+    raw: object,
+    *,
+    status: str = "completed",
+) -> WorkbenchResult:
+    _member(status, {"completed", "failed"}, "result status")
     if type(raw) is bytes:
         payload = raw
     elif type(raw) is str:
@@ -274,10 +281,10 @@ def _complete(context: WorkbenchContext, name: str, raw: object) -> WorkbenchRes
     facts = {
         "artifact_bytes": str(len(payload)),
         "artifact_sha256": digest,
-        "status": "completed",
+        "status": status,
     }
     summary = (
-        f"{name} completed; artifact={artifact_id}; sha256={digest}; "
+        f"{name} {status}; artifact={artifact_id}; sha256={digest}; "
         f"bytes={len(payload)}"
     )
     return WorkbenchResult(name, summary, facts, (artifact_id,))
@@ -290,12 +297,15 @@ def _execute(
 ) -> WorkbenchResult:
     """Execute one closed typed scenario; no arbitrary command or plugin dispatch."""
     selected = operations or WorkbenchOperations.production_operations()
+    result_status = "completed"
     context.require_write()
     if isinstance(request, ReportRequest):
         if request.action == "observe":
-            context.require_network()
+            config = context.path(request.config)
+            private = context.require_isolated_configuration(config)
+            context.require_network(config, *private)
             raw = selected.run_metadata_report(
-                context.path(request.config), context.path(request.database),
+                config, context.path(request.database),
                 context.path(request.artifacts), request.connection, request.library,
                 request.item, request.file_index,
             )
@@ -329,9 +339,13 @@ def _execute(
         ))
     elif isinstance(request, CatalogueRequest):
         if request.action == "refresh":
-            context.require_network()
+            config = context.path(request.config)
+            private = context.require_isolated_configuration(config)
+            context.require_network(config, *private)
+        else:
+            config = context.path(request.config)
         raw = selected.run_catalogue(
-            context.path(request.config), context.path(request.database), request.action,
+            config, context.path(request.database), request.action,
             request.connection, request.library, request.library_id, request.selector,
             request.limit,
         )
@@ -344,21 +358,31 @@ def _execute(
         elif request.action == "inspect":
             raw = selected.inspect_batch(context.path(request.manifest))
         else:
-            context.require_network()
+            config = context.path(request.config)
+            manifest = context.path(request.manifest)
+            private = context.require_isolated_configuration(config)
+            context.require_network(config, manifest, *private)
             events: list[dict[str, object]] = []
-            raw = selected.run_batch(
-                context.path(request.config), context.path(request.catalogue),
-                context.path(request.manifest), request.manifest_id,
+            completed = selected.run_batch(
+                config, context.path(request.catalogue), manifest, request.manifest_id,
                 context.path(request.database), context.path(request.artifacts),
                 events.append,
             )
+            if type(completed) is not bool:
+                raise ValueError("batch operation returned an invalid completion state")
+            raw = json.dumps(
+                {"completed": completed, "events": events},
+                ensure_ascii=False, separators=(",", ":"), sort_keys=True,
+            )
+            if not completed:
+                result_status = "failed"
     elif isinstance(request, DecisionPreviewRequest):
         raw = selected.preview_shadow_decision_case(
             context.path(request.database), request.review_case_id
         )
     elif isinstance(request, ReviewerRequest):
         if request.action in {"request", "reevaluate"}:
-            context.require_network()
+            context.require_network(context.path(request.profile))
         operation = {
             "packet-preview": selected.preview_shadow_review_case,
             "request": selected.request_shadow_review,
@@ -369,11 +393,11 @@ def _execute(
             context.path(request.database), request.identity, context.path(request.profile)
         )
     elif isinstance(request, ReviewerAuthRequest):
-        context.require_network()
+        context.require_network(context.path(request.profile))
         raw = selected.run_reviewer_auth(context.path(request.profile), request.action)
     else:
         raise TypeError("unsupported workbench request")
-    return _complete(context, request.name, raw)
+    return _complete(context, request.name, raw, status=result_status)
 
 
 def execute(

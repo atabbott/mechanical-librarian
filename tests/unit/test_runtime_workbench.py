@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
+import subprocess
 import sys
 import unittest
 from dataclasses import replace
@@ -40,6 +42,20 @@ def _operations() -> WorkbenchOperations:
     return WorkbenchOperations(*(_operation for _ in WorkbenchOperations.__dataclass_fields__))
 
 
+def _network_files(context: WorkbenchContext) -> tuple[str, ...]:
+    config = context.path("config.json")
+    config.write_text(
+        '{"connections":[{"endpoint":"http://127.0.0.1:8765"}]}',
+        encoding="utf-8",
+    )
+    context.path("qualification-profile.json").write_text("{}", encoding="utf-8")
+    context.path("batch.json").write_text("{}", encoding="utf-8")
+    return tuple(sorted({
+        hashlib.sha256(context.path(name).read_bytes()).hexdigest()
+        for name in ("config.json", "qualification-profile.json", "batch.json")
+    }))
+
+
 class RuntimeWorkbenchTests(unittest.TestCase):
     def test_runtime_exposes_only_review_server(self) -> None:
         errors = io.StringIO()
@@ -73,10 +89,58 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             ReviewerRequest("reevaluate", "request"), ReviewerAuthRequest("status"),
         )
         with WorkbenchContext.temporary() as context:
-            context.network = IsolatedNetworkProfile("isolated-test", True, True)
-            results = tuple(execute(context, request, _operations()) for request in requests)
+            context.network = IsolatedNetworkProfile(
+                "isolated-test", True, True, _network_files(context)
+            )
+
+            def batch(*arguments: object) -> bool:
+                emit = arguments[-1]
+                assert callable(emit)
+                emit({"kind": "item", "status": "completed"})
+                emit({"kind": "summary", "status": "completed"})
+                return True
+
+            operations = replace(_operations(), run_batch=batch)
+            results = tuple(execute(context, request, operations) for request in requests)
             self.assertEqual([item.name for item in results], [item.name for item in CAPABILITIES])
             self.assertEqual(len(tuple(context.path("attempts").iterdir())), 6)
+            batch_artifact = context.path("artifacts/" + results[11].artifacts[0])
+            self.assertEqual(
+                json.loads(batch_artifact.read_text(encoding="utf-8")),
+                {
+                    "completed": True,
+                    "events": [
+                        {"kind": "item", "status": "completed"},
+                        {"kind": "summary", "status": "completed"},
+                    ],
+                },
+            )
+
+    def test_batch_failed_completion_and_events_are_preserved(self) -> None:
+        def batch(*arguments: object) -> bool:
+            emit = arguments[-1]
+            assert callable(emit)
+            emit({"kind": "summary", "status": "failed"})
+            return False
+
+        with WorkbenchContext.temporary() as context:
+            context.network = IsolatedNetworkProfile(
+                "isolated-test", True, True, _network_files(context)
+            )
+            result = execute(
+                context,
+                BatchRequest("run", manifest_id="a" * 64),
+                replace(_operations(), run_batch=batch),
+            )
+            payload = json.loads(
+                context.path("artifacts/" + result.artifacts[0]).read_text(encoding="utf-8")
+            )
+        self.assertEqual(payload, {
+            "completed": False,
+            "events": [{"kind": "summary", "status": "failed"}],
+        })
+        self.assertEqual(result.data["status"], "failed")
+        self.assertIn("batch-run failed", result.summary)
 
     def test_result_has_equivalent_canonical_and_summary_rendering(self) -> None:
         digest = "a" * 64
@@ -126,6 +190,40 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkbenchFailure, "scenario failed") as caught:
                 execute(context, ReportRequest("inspect", report_id="report"), operations)
         self.assertNotIn("private", str(caught.exception))
+
+    def test_network_profile_rejects_production_shaped_configuration(self) -> None:
+        documents = (
+            '{"connections":[{"endpoint":"https://library.example.com"}]}',
+            '{"connections":[{"endpoint":"http://127.0.0.1:8765",'
+            '"secret_file":"/run/secrets/production"}]}',
+            '{"connections":[{"endpoint":"http://127.0.0.1:8765"}],'
+            '"providers":[{"enabled":true}]}',
+        )
+        for document in documents:
+            with self.subTest(document=document), WorkbenchContext.temporary() as context:
+                config = context.path("config.json")
+                config.write_text(document, encoding="utf-8")
+                digest = hashlib.sha256(config.read_bytes()).hexdigest()
+                context.network = IsolatedNetworkProfile(
+                    "isolated-test", True, True, (digest,)
+                )
+                with self.assertRaises(WorkbenchFailure) as caught:
+                    execute(
+                        context,
+                        ReportRequest(
+                            "observe", connection="primary", library="books", item="item"
+                        ),
+                        _operations(),
+                    )
+                self.assertEqual(caught.exception.category, "refused")
+
+    def test_documented_persistent_workspace_is_ignored(self) -> None:
+        completed = subprocess.run(
+            ["git", "check-ignore", "--quiet", ".workbench/report/artifacts/private"],
+            cwd=ROOT,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0)
 
     def test_temporary_workspace_is_removed(self) -> None:
         with WorkbenchContext.temporary() as context:

@@ -33,7 +33,11 @@ synthetic fixtures, test workspaces, or approved private-corpus input; confine
 paths beneath that workspace; and reject production workspaces and targets with
 no force bypass. Network scenarios require a validated isolated profile with
 sanitized inputs and bounded authority. Each attempt is durably recorded before
-egress. Large outputs remain local digest-addressed artifacts, and operation
+egress and binds the exact configuration/profile inputs; configured service
+origins are loopback or `.invalid`, and private paths remain workspace-confined.
+Fixed-origin metadata providers are refused by production composition and may be
+exercised only through a focused injected fake operation.
+Large outputs remain local digest-addressed artifacts under an ignored workspace, and operation
 exceptions cross a redacting closed failure boundary.
 
 The workbench reuses bootstrap composition only as an explicit source-mode

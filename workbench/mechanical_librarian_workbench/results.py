@@ -21,7 +21,7 @@ class WorkbenchResult:
                 or not self.summary or len(self.summary) > 512):
             raise ValueError("invalid workbench result")
         if (set(self.data) - {"artifact_bytes", "artifact_sha256", "status"}
-                or self.data.get("status") != "completed"
+                or self.data.get("status") not in {"completed", "failed"}
                 or re.fullmatch(r"[0-9]+", self.data.get("artifact_bytes", "")) is None
                 or re.fullmatch(r"[0-9a-f]{64}", self.data.get("artifact_sha256", "")) is None
                 or any(re.fullmatch(r"workbench_artifact_[0-9a-f]{64}", value) is None

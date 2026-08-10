@@ -22,6 +22,7 @@ secrets/
 /cache/
 /reports/
 /state/
+/.workbench/
 *.sqlite
 *.sqlite3
 *.db

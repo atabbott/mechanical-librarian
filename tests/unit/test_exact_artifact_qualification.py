@@ -19,6 +19,7 @@ from scripts.qualify_exact_artifact import (
     _decode_stdout,
     _qualification_environment,
     _qualify_runtime_console,
+    _runtime_help_is_closed,
     _run,
     _validate_wheel,
     _verify_installed_payload,
@@ -30,7 +31,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
     def test_runtime_probe_decodes_help_and_requires_workbench_absence(self) -> None:
         help_output = (
             b"usage: mechanical-librarian {review-serve}\n"
-            b"{review-serve}\nreview-serve service\n"
+            b"{review-serve}\n    review-serve  service\n"
         )
         completed = (
             subprocess.CompletedProcess(("console", "--help"), 0, help_output, b""),
@@ -45,6 +46,9 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                 {},
             )
         self.assertEqual(result, help_output)
+        self.assertFalse(_runtime_help_is_closed(
+            help_output.decode() + "    maintenance  unsupported extra command\n"
+        ))
 
     def test_runtime_probe_runs_from_owner_only_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
