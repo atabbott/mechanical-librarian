@@ -61,27 +61,30 @@ scope and returns `202` only after the configured-library request is persisted.
 Unknown libraries return `404`; unavailable persistence returns `503`.
 Preparation creates no field decision and has no apply or target-write route.
 
-Metadata-policy Preview adds four owner-authenticated operations:
+Metadata-policy Preview and activation add owner-authenticated operations:
 
-- `GET /api/v1/metadata-policy/shadow` returns the closed `review | preview`
-  posture and literal authority `none`;
+- `GET /api/v1/metadata-policy/shadow` returns the closed
+  `review | preview | automatic` posture and authority `none | decision_only`;
 - CSRF-protected `POST /api/v1/metadata-policy/shadow/enter` accepts no body and
   enters Preview without changing human work;
 - `GET /api/v1/metadata-policy/shadow/leave-preview` returns per-library impact
-  with `can_confirm: false`; and
+  and whether the exact preview may be confirmed;
+- CSRF-protected `POST /api/v1/metadata-policy/shadow/confirm-automatic`
+  activates only the qualified decision-only authority after revalidation; and
 - `GET /api/v1/metadata-policy/shadow/outcomes?limit=1..50` returns a bounded,
   one-MiB maximum sample of closed identity-rich outcome documents.
 
-While posture is `preview`, the existing policy validate, draft-create,
-preview, and activate operations accept Automatic as non-authoritative intent.
-In `review`, the first three reject it with `422
-policy_automatic_unqualified`; persistence also rechecks posture atomically.
-Automatic remains absent from qualified authority.
+While posture is `preview`, policy validation, draft creation, preview, and
+activation accept Automatic only as non-authoritative intent. Confirmation
+rechecks the exact preview and grants the closed `decision_only` authority;
+automatic outcomes still create no effect plan or target/media write. Separate
+automatic-safety pause, suspension, and recovery operations fail closed.
+Shadow history events remain distinct from human decision events. Malformed
+persistence fails the complete request with a value-free unavailable response.
 
-There is no leave commit, cursor, automatic-decision, queue, apply, target, or
-write operation. Shadow history events are a separate typed variant from human
-decision events. Malformed persistence fails the complete
-request with a value-free unavailable response.
+Field-effect apply and reconciliation routes are exact plan-specific guarded
+operations owned by the Activity workflow. They are not generic target or queue
+authority, and bulk, reversal, destructive, and media-write routes remain absent.
 
 The bundled browser obtains a freshly rotated per-page CSRF token from its
 authenticated private detail document, removes it from the DOM at startup, and
@@ -145,9 +148,9 @@ call, raw credential, unrestricted source dump, or library-wide evidence
 browser. The bundled detail page loads additional pages only on an explicit
 “Load more evidence” action and renders every value as text.
 
-Representations expose AI recommendation, deterministic disposition, human
-decision, stale state, and apply readiness as separate fields. An omitted
-human decision must not be inferred from an AI or source recommendation.
+Representations expose deterministic disposition, human or qualified automatic
+decision, stale state, and apply readiness as separate fields. An omitted human
+decision must not be inferred from source evidence or deterministic proposals.
 
 ## Review mutations
 
@@ -177,16 +180,11 @@ The server validates selections, target applicability, stale state, capability,
 and the permitted state transition. Clients post an action, not an arbitrary
 desired lifecycle state.
 
-Bulk review uses separate preview and commit operations. Preview returns an
-opaque preview identity, exact case/proposal versions, eligible counts, adapter
-and field totals, and every exclusion reason. Commit supplies that preview
-identity and an idempotency key; any changed case fails safely instead of
-widening the batch. A committed batch creates individual decisions and one
-batch audit record.
-
-Reversing an unapplied human decision creates a compensating decision event.
-Once apply begins, recovery uses apply-plan cancellation, verification, and
-rollback resources rather than a review-interface undo operation.
+Bulk review and decision reversal are not current interfaces. A human decision
+may instead be superseded only through the exact current per-field operations
+the API exposes, including an explicit human override of an automatic outcome.
+Once apply begins, recovery uses the plan-specific cancellation, verification,
+and recovery resources rather than a review-interface undo operation.
 
 ## Mutation guards
 
@@ -202,17 +200,18 @@ Mutating endpoints require the narrowest applicable combination of:
 
 A client cannot force an invalid transition by posting a desired state name.
 
-The guarded fake-effect service adds authenticated status plus CSRF-protected
-apply, reconcile, pause, and resume operations under `/api/v1/field-effects`.
-Ambiguity already schedules a persisted targeted read; the reconcile route
-only resumes that same idempotent action after interruption and does not create
-an independent or blind retry.
+The composed guarded Audiobookshelf field-effect application adds authenticated
+status plus CSRF-protected apply, reconcile, pause, and resume operations under
+`/api/v1/field-effects`. It exists only for configured libraries with the exact
+current target capability, authority, consent, and backup evidence. Ambiguity
+already schedules a persisted targeted read; the reconcile route only resumes
+that same idempotent action after interruption and does not create an
+independent or blind retry.
 Callers supply only an existing deterministic plan identity; they cannot post
 authority, a desired transition, target credentials, cover bytes, or an
 arbitrary destination. Responses are the bounded canonical operation
-projection. The routes return unavailable until the fake-effect application
-service is composed; when composed, they call that same service used by
-application callers.
+projection. If no eligible configured library composes the application, the
+routes fail unavailable without constructing a target client or write.
 
 ## Errors
 

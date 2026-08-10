@@ -1,6 +1,6 @@
 # Documentation
 
-## Current 0.10 development runtime
+## Current pre-release application
 
 - [Current book catalogue](operations/catalogue.md)
 - [Foreground ebook evidence batches](operations/ebook-evidence-batches.md)
@@ -32,6 +32,7 @@
 - [Documentation standards](development/documentation-standards.md)
 - [Recoverability qualification](development/recoverability-qualification.md)
 - [Testing strategy](development/testing-strategy.md)
+- [0.14.0 release-candidate reconciliation](development/0-14-release-candidate.md)
 - [Repository structure](development/repository-structure.md)
 - [Functional slice delivery](development/slice-delivery.md)
 - [Exact-head merging](development/exact-head-merging.md)
@@ -61,6 +62,6 @@ listed above.
 - [Security reporting](../SECURITY.md)
 - [Support](../SUPPORT.md)
 
-Historical product and architecture documents describe future direction, not
-installed 0.10 development authority. Current operations and compatibility are
-defined only by the first section above.
+Historical product and architecture documents describe their own delivery
+context, not current installed authority. Current operations and compatibility
+are defined only by the first section above.

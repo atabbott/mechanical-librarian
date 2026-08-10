@@ -48,32 +48,31 @@ earlier manifest shapes, retired inventory selectors, pre-0.9 proposal/review st
 preview fixtures, retry/work state, and all retired CLI commands are
 unsupported. They are rejected rather than migrated, imported, or interpreted.
 
-The installed runtime supports current catalogue refresh/list/get, immutable
-foreground batch preview/inspect/run, single-item metadata report generation,
-exact/current report reopen, report-bound cover-preview reopen, exact-current
-ProposalSet create, offline exact ProposalSet reopen, review-case admission,
-offline exact ReviewCase reopen, authenticated exact-current ReviewCase inspection, and
-one individual immutable ordinary-field human decision through the bundled
-`review-serve` API and browser round trip in pinned Playwright Chromium.
-The HTTP surface consumes a pre-composed application boundary with bounded
-top-level view models; this changes no route, DTO, schema discriminator, or
-persistence compatibility contract.
-It does not support
-durable batch attempts, resume, automatic retry, workers, schedulers, parallel
-execution, model advice, reviewer activation, automatic decisions, bulk or reversal,
-or apply.
+The installed runtime exposes only `review-serve`. Its authenticated browser and
+API inspect exact-current Library, Attention, case, evidence, history, policy,
+preparation, operation, and Activity projections; record individual immutable
+ordinary-field human decisions and overrides; run persisted continuous review
+preparation; admit qualified deterministic decision-only automatic outcomes;
+and execute consent-gated exact field-effect plans through supported target APIs
+with backup, currentness, verification, audit, pause, revocation, and recovery
+controls. The HTTP surface consumes one pre-composed application boundary with
+bounded top-level view models.
 
-The source-only workbench retains one `contained-reviewer` scenario for
-sanitized, bounded JSON/text experiments. It is not an installed runtime or
-database compatibility contract.
+Catalogue, foreground batch, report, cover-preview, ProposalSet, ReviewCase,
+deterministic preview, and contained-reviewer operations are source-only typed
+workbench scenarios against disposable or explicitly approved private test
+state. They are not installed commands, container entrypoints, or database
+compatibility promises. The contained reviewer accepts only sanitized bounded
+JSON/text experiments and has no product persistence or production-target
+bridge. Deterministic preview performs no network or provider/model dispatch
+and persists nothing.
 
-`shadow-decision-preview` supports one exact current ReviewCase from an existing
-regular report database on the platform where its read-only/no-create
-filesystem contract passes. It performs no network or provider/model dispatch
-and persists nothing. Audiobookshelf ebook detail responses may express
-`ebookFile.metadata.relPath` relative to the top-level item `relPath` when the
-absolute service path proves the same final library-relative file; disagreement,
-noncanonical paths, and traversal fail closed.
+The runtime does not support model advice, reviewer activation, bulk or reversal
+effects, destructive operations, media writes, arbitrary target requests, or a
+generic plugin/provider interface. Audiobookshelf ebook detail responses may
+express `ebookFile.metadata.relPath` relative to the top-level item `relPath`
+when the absolute service path proves the same final library-relative file;
+disagreement, noncanonical paths, and traversal fail closed.
 
 Audiobookshelf `publishedDate` target reads remain exact ISO calendar days.
 Shared `YYYY-MM` proposal candidates are qualification-only and report-only;

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Reconcile the exact 0.14.0 application contract and finite deflation
+  inventory, remove duplicated retired-asset assertions, and record that the
+  separate 0.14.1 interface-fidelity milestone remains the smallest follow-on
+  before a first-release decision. (#497, #498)
+
 - Activate Library, Attention, review detail, Policy, and Activity in one
   persistent authenticated React shell at their existing URLs. Direct entry,
   progressive current reads, cancellation, focus and URL ownership, CSRF and

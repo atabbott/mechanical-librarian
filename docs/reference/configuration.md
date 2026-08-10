@@ -91,8 +91,9 @@ declare a read-only, sparse `policy_override` with only the named `options` and
 `destinations` it differs on. Both maps use the closed policy catalogue; unknown
 or removed fields fail configuration loading rather than silently becoming Ask
 me or Ignore. The application never rewrites this configuration. `automatic`
-is accepted as stated intent but remains unavailable until a separately
-qualified policy can consume it; `explicit` is always `unsupported`.
+is accepted only for the closed qualified category/option matrix and produces
+decision-only authority after the owner explicitly confirms an exact Preview;
+all other automatic intent is rejected. `explicit` is always `unsupported`.
 
 Activation resolves every configured library override against the exact
 immutable draft and persists that canonical resolved document with the new
