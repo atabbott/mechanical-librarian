@@ -23,6 +23,7 @@ from mechanical_librarian.domain.field_effect import (
     project_decision_value,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,6 +380,40 @@ class ContinuousGuardedApplication:
 
     def activity(self) -> dict[str, object]:
         data = self._repository.field_effect_activity_data(50)
+        events = data.get("events", [])
+        if type(events) is not list:
+            raise GuardedApplicationError("activity")
+        for event in events:
+            if type(event) is not dict:
+                raise GuardedApplicationError("activity")
+            # The persistence projection carries these two private join values
+            # only long enough to derive a closed, readable Activity display.
+            # Keeping old in-memory test projections value-free is intentional:
+            # they are already a public-shaped activity record, not a report
+            # lineage assertion.
+            connection = event.pop("connection", None)
+            report_document = event.pop("report_document", None)
+            event["work_label"] = "Recorded work"
+            event["author_label"] = "Author details are not recorded"
+            if connection is None and report_document is None:
+                continue
+            if type(connection) is not str or type(report_document) is not str:
+                raise GuardedApplicationError("activity")
+            try:
+                report = MetadataReport.from_json(report_document)
+            except Exception as error:
+                raise GuardedApplicationError("activity") from error
+            if (report.target.connection != connection
+                    or report.target.library != event.get("library")
+                    or report.target.item != event.get("work_id")):
+                raise GuardedApplicationError("activity")
+            event["work_label"] = report.target.current_title or "Untitled"
+            authors = next((field.value for field in report.target.fields if field.destination is TargetDestination.AUTHORS), ())
+            if type(authors) is tuple and all(type(author) is str for author in authors):
+                joined = ", ".join(authors)
+                event["author_label"] = (
+                    joined if len(joined) <= 512 else joined[:511].rstrip() + "…"
+                ) or "Author details are not recorded"
         cleanup = data.pop("cleanup", None)
         if cleanup is not None and (
             type(cleanup) is not dict

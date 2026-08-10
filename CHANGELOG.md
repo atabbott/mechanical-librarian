@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Restore Activity as the calm, readable guarded-work ledger: explicit
+  consent/readiness with backup explanation, readable current-report work and
+  author identity, continued history during partial consent, scoped pause and
+  revoke controls, and exact grouped recovery without queue, retry, or invented
+  progress authority. (#533)
+
 - Restore Policy as the refined semantic notebook with Identity, Publication,
   Curation, and Unsupported content chapters; synchronized sticky and compact
   navigation; readable posture, representation, qualification, impact, and

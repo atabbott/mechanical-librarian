@@ -140,7 +140,7 @@ describe('ReviewApiClient', () => {
     expect(activity.configured_libraries[0]?.library).toBe('Fiction')
     expect(activity.capabilities[0]?.destinations[0]).toMatchObject({ destination: 'title', consented: true })
     expect(activity.events[0]).toMatchObject({ library: 'Fiction', state: 'verified', origin: 'human' })
-    expect(activity.events[0]).toMatchObject({ work_label: 'Work details unavailable' })
+    expect(activity.events[0]).toMatchObject({ work_label: 'Recorded work' })
     expect(activity.suspensions[0]).toMatchObject({ scope: 'library', destination: null })
     expect(() => mapActivity({ ...activity, suspensions: [{ connection: 'primary', destination: null, reason: 'recovery', scope: 'library', updated_at: 'later' }] })).toThrow(ApiError)
     expect(() => mapActivity({ ...activity, example: { after: 'After' } })).toThrow(ApiError)

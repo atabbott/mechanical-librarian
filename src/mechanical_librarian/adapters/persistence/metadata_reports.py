@@ -1764,20 +1764,24 @@ class SQLiteMetadataReportRepository:
                 "FROM field_effect_cleanups WHERE state='pending'"
             ).fetchone()
             events = [{
+                "connection": connection,
                 "destination": destination,
                 "failure": failure,
                 "library": library,
                 "occurred_at": occurred_at,
                 "origin": origin,
+                "report_document": report_document,
                 "state": state,
                 "work_id": work_id,
-            } for destination, failure, library, occurred_at, origin, state, work_id
+            } for connection, destination, failure, library, occurred_at, origin, report_document, state, work_id
                 in self._connection.execute(
-                    "SELECT effect.destination,json_extract(event.document,'$.failure'),"
+                    "SELECT effect.connection_name,effect.destination,json_extract(event.document,'$.failure'),"
                     "effect.library_name,event.occurred_at,"
-                    "json_extract(event.document,'$.origin'),event.kind,effect.work_id "
+                    "json_extract(event.document,'$.origin'),report.document,event.kind,effect.work_id "
                     "FROM field_effect_events event JOIN field_effects effect "
-                    "ON effect.plan_id=event.plan_id ORDER BY event.occurred_at DESC,"
+                    "ON effect.plan_id=event.plan_id LEFT JOIN current_metadata_report_lineages lineage "
+                    "ON lineage.connection_name=effect.connection_name AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id "
+                    "LEFT JOIN metadata_reports report ON report.report_id=lineage.report_id ORDER BY event.occurred_at DESC,"
                     "event.event_id DESC LIMIT ?", (limit,),
                 ).fetchall()]
             suspensions = [{

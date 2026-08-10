@@ -221,7 +221,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .activity-consent-library li { display:flex; justify-content:space-between; gap:.6rem; padding:.45rem .55rem; border-radius:.45rem; background:var(--surface-muted); }
 .activity-consent-library li small, .activity-safety, .activity-state-card p, .activity-ledger header > p:last-child, .activity-ledger article p, .activity-ledger article small { color:var(--ink-soft); }
 .primary-action { justify-self:start; }
-.activity-ledger-layout { display:grid; grid-template-columns:minmax(17rem,.8fr) minmax(0,1.7fr); gap:1rem; align-items:start; }
+.activity-ledger-layout { display:grid; grid-template-columns:minmax(17rem,.8fr) minmax(0,1.7fr); gap:1rem; align-items:start; margin-top:1rem; }
 .activity-state-card { display:grid; gap:.8rem; position:sticky; top:1rem; }
 .activity-state-card dl { display:grid; gap:.5rem; margin:0; }
 .activity-state-card dl div { display:flex; justify-content:space-between; gap:1rem; padding-top:.5rem; border-top:1px solid var(--line); }
@@ -233,7 +233,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .activity-ledger article p, .activity-ledger article small { display:block; margin:.25rem 0 0; }
 .activity-event-current { border-left:3px solid var(--accent); padding-left:.8rem !important; }
 .activity-recovery { margin:0 0 1rem; padding:1rem; border:1px solid var(--notice); border-radius:.6rem; background:var(--notice-soft); }
-.activity-recovery h3 { margin:.2rem 0 .45rem; }.activity-recovery p { margin:.25rem 0; }.activity-recovery progress { width:100%; margin:.8rem 0 .3rem; }
+.activity-recovery h3 { margin:.2rem 0 .45rem; }.activity-recovery p { margin:.25rem 0; }.activity-recovery small, .activity-resolved, .activity-backup-note { color:var(--ink-soft); line-height:1.5; }.activity-resolved { margin:0 0 1rem; padding:.75rem 0; border-bottom:1px solid var(--line); }
 .activity-empty { padding:1rem 0; color:var(--ink-soft); }
 .decision-recorded { padding:.75rem; border:1px solid var(--accent); background:color-mix(in srgb,var(--accent) 15%,var(--surface)); }
 

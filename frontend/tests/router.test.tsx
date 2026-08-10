@@ -693,9 +693,9 @@ describe('typed review routes', () => {
     renderRoute('/activity', http)
 
     const disclosure = await screen.findByRole('list', { name: 'fiction destination consent' })
-    expect(disclosure).toHaveTextContent('authors: Included · consent requested')
-    expect(disclosure).toHaveTextContent('subtitle: Excluded · field unavailable')
-    expect(disclosure).toHaveTextContent('title: Included · already consented')
+    expect(disclosure).toHaveTextContent('Authors: Included · consent requested')
+    expect(disclosure).toHaveTextContent('Subtitle: Excluded · A field is unavailable')
+    expect(disclosure).toHaveTextContent('Title: Included · already consented')
     const choice = screen.getByRole('checkbox', { name: /fiction · 2 prepared/ })
     await user.click(choice)
     await user.click(screen.getByRole('button', { name: 'Enable selected libraries' }))
@@ -799,8 +799,8 @@ describe('typed review routes', () => {
     renderRoute('/activity', http)
 
     const disclosure = await screen.findByRole('list', { name: 'blocked destination consent' })
-    expect(disclosure).toHaveTextContent('authors: Excluded · connection unavailable')
-    expect(disclosure).toHaveTextContent('title: Excluded · connection unavailable')
+    expect(disclosure).toHaveTextContent('Authors: Excluded · Connection needs checking')
+    expect(disclosure).toHaveTextContent('Title: Excluded · Connection needs checking')
     expect(screen.getByRole('checkbox', { name: /blocked · 2 prepared/ })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Enable guarded writes' })).toBeDisabled()
   })
@@ -820,7 +820,8 @@ describe('typed review routes', () => {
     renderRoute('/activity', http)
 
     expect(await screen.findByText(/Qualified automatic/)).toBeVisible()
-    const neutral = screen.getByText(/Recorded source: unexpected origin/)
+    expect(screen.getByText(/No recovery condition is active/)).toBeVisible()
+    const neutral = screen.getByText(/Recorded decision/)
     expect(neutral).toBeVisible()
     expect(neutral.textContent).not.toContain(unknown)
     expect(neutral.textContent).not.toContain('automatic')
@@ -856,6 +857,53 @@ describe('typed review routes', () => {
     expect(recovery).toHaveTextContent('New work pauses automatically')
     expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
     expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
+  })
+
+  it('keeps distinct recovery causes separate and never invents a completion estimate', async () => {
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
+      enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+      suspensions: [
+        { connection: 'primary', destination: 'title', reason: 'unexpected_effect_behavior', scope: 'destination', updated_at: 1 },
+        { connection: 'primary', destination: 'subtitle', reason: 'field_unavailable', scope: 'destination', updated_at: 1 },
+        { connection: 'secondary', destination: null, reason: 'connection_unavailable', scope: 'connection', updated_at: 1 },
+      ],
+    })) }
+    renderRoute('/activity', http)
+
+    expect(await screen.findAllByRole('region', { name: 'Shared recovery' })).toHaveLength(3)
+    expect(screen.getByText('The service response needs reconciliation')).toBeVisible()
+    expect(screen.getByText('A supported field is unavailable')).toBeVisible()
+    expect(screen.getByText('The service connection needs checking')).toBeVisible()
+    expect(screen.getByText(/1 affected connection/)).toBeVisible()
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+
+  it('explains why backup readiness disables consent while retaining existing history', async () => {
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
+      backup_ready: false,
+      configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 1, human: 0, total: 1 } }],
+      capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false }] }],
+      events: [{ work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', origin: 'human', occurred_at: null, failure: null, work_label: 'Recorded work' }],
+    })) }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByText(/A verified backup is required/)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Enable guarded writes' })).toBeDisabled()
+    expect(screen.getByText('Recorded work')).toBeVisible()
+  })
+
+  it('returns a revoked library with history to consent readiness instead of a false pause control', async () => {
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
+      configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 0, human: 0, total: 0 } }],
+      capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false }] }],
+      events: [{ work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', origin: 'human', occurred_at: null, failure: null, work_label: 'Recorded work' }],
+    })) }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
+    expect(screen.getByText('Recorded work')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Ready when you are' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: /pause new work|resume new work/i })).toBeNull()
   })
 
   it('keeps an unknown direct entry inside a safe shell fallback', async () => {
