@@ -178,6 +178,15 @@ private storage/cache and CSP, bounded DOM/assets, keyboard/focus, interaction
 latency, restart, and a fresh authenticated browser context. Browser downloads
 and test artifacts are not packaged or published.
 
+Authenticated review qualification is split at the application boundary.
+Application-operation tests exercise bounded case, Library, Attention,
+preparation, session, decision, policy, Activity, effect, and support outcomes
+without HTTP. Transport-contract tests then prove route DTOs, authentication,
+CSRF, Host/Origin checks, private caching, currentness, idempotency, and typed
+failure mapping against the same composed application. Architecture checks
+reject handler-facing repository contracts or workflow construction, while
+SQLite restart and concurrency tests remain the authority for atomicity.
+
 The suite covers:
 
 - metadata-policy Preview default/entry and exact canonical replay; closed

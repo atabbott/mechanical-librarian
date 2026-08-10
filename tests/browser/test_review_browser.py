@@ -30,7 +30,9 @@ from mechanical_librarian.domain.field_effect import (
 )
 from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope
 from mechanical_librarian.domain.proposal_set import evaluate_report
-from mechanical_librarian.interfaces.web import create_review_app
+from tests.unit.review_app_fixture import (
+    create_transport_test_app,
+)
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source as _bibliographic_source,
@@ -237,7 +239,7 @@ def _server(
     if field_application is _BrowserActivityApplication:
         field_application = field_application(repository)
     origin = f"https://127.0.0.1:{port}"
-    app = create_review_app(
+    app = create_transport_test_app(
         repository,
         ReviewWebConfiguration(
             canonical_origin=origin,

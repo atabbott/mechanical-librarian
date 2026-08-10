@@ -166,6 +166,13 @@ high-entropy session and CSRF tokens. Expired session rows are removed during
 login, logout records revocation, and failed logins use a durable five-attempt
 per five-minute global throttle without retaining client addresses.
 
+The server receives a composed application boundary rather than a database or
+broad repository. Authentication, currentness, decisions, policy, preparation,
+Activity, guarded effects, recovery, and support execute as named application
+operations behind one serialization gate; SQLite remains the sole transaction
+owner. FastAPI retains only request bounds, exact Host/Origin enforcement,
+session/CSRF dependencies, response translation, and lifecycle delegation.
+
 The generated API contract declares that opaque owner session as an API-key
 cookie on every protected operation and marks mutation CSRF and idempotency
 headers as required. Runtime failures retain separate, value-free meanings:

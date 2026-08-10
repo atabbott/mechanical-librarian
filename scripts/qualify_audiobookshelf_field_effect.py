@@ -56,6 +56,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.review_application import (
+    compose_review_application,
+)
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority, EffectConsent, FieldEffectError, FieldEffectOperation,
@@ -68,7 +71,10 @@ from mechanical_librarian.bootstrap.composition import (
     compose_continuous_guarded_application,
     create_review_pipeline,
 )
-from mechanical_librarian.interfaces.web.app import create_review_app
+from mechanical_librarian.interfaces.web.app import (
+    create_review_app,
+    load_owner_password_verifier,
+)
 
 
 IMAGES = {
@@ -80,6 +86,36 @@ OWNERSHIP_LABEL = "org.mechanical-librarian.qualification-run"
 
 class QualificationError(RuntimeError):
     """A fixed, secret-free qualification failure."""
+
+
+def _compose_review_client(
+    repository: object,
+    review: object,
+    preparation: object,
+    continuous: object,
+    policy_libraries: tuple[tuple[str, dict[str, object] | None], ...],
+) -> TestClient:
+    application = compose_review_application(
+        state_owner=repository,  # type: ignore[arg-type]
+        session_store=repository,  # type: ignore[arg-type]
+        case_store=repository,  # type: ignore[arg-type]
+        decision_store=repository,  # type: ignore[arg-type]
+        library_store=repository,  # type: ignore[arg-type]
+        policy_store=repository,  # type: ignore[arg-type]
+        verify_password=load_owner_password_verifier(
+            Path(review.owner_password_hash_file)  # type: ignore[attr-defined]
+        ),
+        clock=lambda: int(time.time()),
+        session_lifetime_seconds=review.session_lifetime_seconds,  # type: ignore[attr-defined]
+        graceful_shutdown_seconds=review.graceful_shutdown_seconds,  # type: ignore[attr-defined]
+        preparation=preparation,  # type: ignore[arg-type]
+        policy_libraries=policy_libraries,
+        field_application=continuous,  # type: ignore[arg-type]
+    )
+    return TestClient(
+        create_review_app(application, review),  # type: ignore[arg-type]
+        base_url="https://review.test",
+    )
 
 
 def _require_installed_full_chain_coverage(
@@ -789,13 +825,17 @@ def _installed_continuous_qualification(
         continuous = compose_continuous_guarded_application(
             configuration, bound_repository, database, artifacts, preparation
         )
-        app = create_review_app(
-            bound_repository, configuration.review, review_preparation=preparation,
-            policy_libraries=tuple((item.name, item.policy_override)
-                                   for item in configuration.libraries),
-            field_application=continuous,
+        client = _compose_review_client(
+            bound_repository,
+            configuration.review,
+            preparation,
+            continuous,
+            tuple(
+                (item.name, item.policy_override)
+                for item in configuration.libraries
+            ),
         )
-        return TestClient(app, base_url="https://review.test"), continuous
+        return client, continuous
 
     origin = {"Origin": "https://review.test"}
     provider_observations: dict[str, int] = {}

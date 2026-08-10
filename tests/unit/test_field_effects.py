@@ -32,7 +32,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
-from mechanical_librarian.interfaces.web.app import create_review_app
+from tests.unit.review_app_fixture import (
+    create_transport_test_app,
+)
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
@@ -1427,7 +1429,7 @@ class FieldEffectTests(unittest.TestCase):
         password = root / "owner.hash"
         password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
         os.chmod(password, 0o600)
-        app = create_review_app(
+        app = create_transport_test_app(
             self.repository,
             ReviewWebConfiguration(
                 canonical_origin="https://review.test",
@@ -1470,7 +1472,7 @@ class FieldEffectTests(unittest.TestCase):
         password = root / "failing-control-owner.hash"
         password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
         os.chmod(password, 0o600)
-        app = create_review_app(
+        app = create_transport_test_app(
             failing,
             ReviewWebConfiguration(
                 canonical_origin="https://review.test",
@@ -1528,7 +1530,7 @@ class FieldEffectTests(unittest.TestCase):
         password = root / "serialized-owner.hash"
         password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
         os.chmod(password, 0o600)
-        app = create_review_app(
+        app = create_transport_test_app(
             blocking,
             ReviewWebConfiguration(
                 canonical_origin="https://review.test",

@@ -12,6 +12,9 @@ from pathlib import Path
 from argon2 import PasswordHasher
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.review_application import (
+    compose_review_application,
+)
 from mechanical_librarian.interfaces.web import create_review_app
 
 
@@ -28,13 +31,24 @@ def generate() -> str:
             encoding="utf-8",
         )
         os.chmod(password_hash, 0o600)
-        app = create_review_app(
-            _SchemaRepository(),  # type: ignore[arg-type]
-            ReviewWebConfiguration(
-                canonical_origin="https://review.invalid",
-                owner_password_hash_file=str(password_hash),
-            ),
+        repository = _SchemaRepository()
+        configuration = ReviewWebConfiguration(
+            canonical_origin="https://review.invalid",
+            owner_password_hash_file=str(password_hash),
         )
+        application = compose_review_application(
+            state_owner=repository,  # type: ignore[arg-type]
+            session_store=repository,  # type: ignore[arg-type]
+            case_store=repository,  # type: ignore[arg-type]
+            decision_store=repository,  # type: ignore[arg-type]
+            library_store=repository,  # type: ignore[arg-type]
+            policy_store=repository,  # type: ignore[arg-type]
+            verify_password=lambda _: False,
+            clock=lambda: 0,
+            session_lifetime_seconds=configuration.session_lifetime_seconds,
+            graceful_shutdown_seconds=configuration.graceful_shutdown_seconds,
+        )
+        app = create_review_app(application, configuration)
         return (
             json.dumps(
                 app.openapi(),

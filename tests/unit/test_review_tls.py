@@ -394,6 +394,14 @@ class ReviewServerTLSCompositionTests(unittest.TestCase):
                     return_value=object(),
                 ),
                 patch(
+                    "mechanical_librarian.bootstrap.composition.compose_review_application",
+                    return_value=object(),
+                ),
+                patch(
+                    "mechanical_librarian.bootstrap.composition.load_owner_password_verifier",
+                    return_value=lambda _: False,
+                ),
+                patch(
                     "mechanical_librarian.bootstrap.composition.create_review_pipeline",
                     return_value=Mock(),
                 ),

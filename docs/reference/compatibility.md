@@ -55,6 +55,9 @@ ProposalSet create, offline exact ProposalSet reopen, review-case admission,
 offline exact ReviewCase reopen, authenticated exact-current ReviewCase inspection, and
 one individual immutable ordinary-field human decision through the bundled
 `review-serve` API and browser round trip in pinned Playwright Chromium.
+The HTTP surface consumes a pre-composed application boundary with bounded
+top-level view models; this changes no route, DTO, schema discriminator, or
+persistence compatibility contract.
 It does not support
 durable batch attempts, resume, automatic retry, workers, schedulers, parallel
 execution, model advice, reviewer activation, automatic decisions, bulk or reversal,

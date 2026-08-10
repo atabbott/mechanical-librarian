@@ -87,6 +87,24 @@ class ImportBoundaryTests(unittest.TestCase):
         )
         self.assertEqual([value for value in absent if (PACKAGE_ROOT / value).exists()], [])
 
+    def test_http_interface_receives_only_composed_review_application(self) -> None:
+        interface = (PACKAGE_ROOT / "interfaces" / "web" / "app.py").read_text(
+            encoding="utf-8"
+        )
+        application = (
+            PACKAGE_ROOT / "application" / "review_application.py"
+        ).read_text(encoding="utf-8")
+        review_services = (
+            PACKAGE_ROOT / "application" / "review_web.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("ReviewWebRepository", interface)
+        self.assertNotIn("_SerializedReviewRepository", interface)
+        self.assertNotIn("repository.", interface)
+        self.assertIn("application: ReviewApplication", interface)
+        self.assertIn("class ReviewApplication", application)
+        self.assertNotIn("class ReviewWebRepository", review_services)
+
     def test_runtime_has_one_cli_command_and_no_write_authority(self) -> None:
         cli = (PACKAGE_ROOT / "interfaces" / "cli" / "__init__.py").read_text(encoding="utf-8")
         self.assertEqual(cli.count('add_parser("review-serve"'), 1)
