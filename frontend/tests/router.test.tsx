@@ -829,6 +829,35 @@ describe('typed review routes', () => {
     expect(neutral.textContent).not.toContain('automatic')
   })
 
+  it.each([
+    ['prepared work after consent', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], prepared: { automatic: 1, human: 0, total: 1 } }, 'Ready work is waiting safely'],
+    ['an idle enabled library', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }] }, 'Ready for new work'],
+    ['a retryable outcome', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_id: 'book-1', library: 'fiction', destination: 'title', state: 'retryable', origin: 'human', occurred_at: null, failure: 'readback', work_label: 'Recorded work' }] }, 'A later safe check is needed'],
+    ['a stopped outcome', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_id: 'book-1', library: 'fiction', destination: 'title', state: 'abandoned', origin: 'human', occurred_at: null, failure: 'owner_abandoned', work_label: 'Recorded work' }] }, 'No work is active'],
+    ['a verified outcome', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', origin: 'human', occurred_at: null, failure: null, work_label: 'Recorded work' }] }, 'Completed work is up to date'],
+  ])('derives the state summary from %s', async (_name, current, summary) => {
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity(current)) }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByRole('heading', { name: summary })).toBeVisible()
+  })
+
+  it('maps persisted failure codes to readable bounded explanations', async () => {
+    const failures = ['target_changed', 'target_failure', 'backup', 'authority_superseded', 'readback', 'retry_exhausted']
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
+      events: failures.map((failure, index) => ({ work_id: `book-${String(index)}`, library: 'fiction', destination: 'title', state: 'abandoned', origin: 'human', occurred_at: null, failure, work_label: `Work ${String(index)}` })),
+    })) }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByText('The current value changed before completion.')).toBeVisible()
+    expect(screen.getByText('The destination could not be reached safely.')).toBeVisible()
+    expect(screen.getByText('Backup or recovery readiness prevented completion.')).toBeVisible()
+    expect(screen.getByText('The recorded authority is no longer current.')).toBeVisible()
+    expect(screen.getByText('The result is being checked before anything continues.')).toBeVisible()
+    expect(screen.getByText('Automatic recovery stopped safely for owner review.')).toBeVisible()
+    for (const failure of failures) expect(screen.queryByText(failure)).toBeNull()
+  })
+
   it('renders duplicate activity events without duplicate React keys', async () => {
     const duplicate = { work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', occurred_at: '2026-08-10T00:00:00Z' }
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -856,7 +885,9 @@ describe('typed review routes', () => {
 
     const recovery = await screen.findByRole('region', { name: 'Shared recovery' })
     expect(recovery).toHaveTextContent('One shared condition · 2 affected destinations')
-    expect(recovery).toHaveTextContent('New work pauses automatically')
+    expect(recovery).toHaveTextContent('Affected new work pauses automatically')
+    expect(recovery).toHaveTextContent('Affected destinations: Authors, Title')
+    expect(recovery).toHaveTextContent('unrelated eligible destinations may continue')
     expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
     expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
   })
@@ -877,6 +908,7 @@ describe('typed review routes', () => {
     expect(screen.getByText('A supported field is unavailable')).toBeVisible()
     expect(screen.getByText('The service connection needs checking')).toBeVisible()
     expect(screen.getByText(/1 affected connection/)).toBeVisible()
+    expect(screen.getByText('Affected libraries: Connected service')).toBeVisible()
     expect(screen.queryByRole('progressbar')).toBeNull()
   })
 
@@ -904,7 +936,7 @@ describe('typed review routes', () => {
 
     expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
     expect(screen.getByText('Recorded work')).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'Ready when you are' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Completed work is up to date' })).toBeVisible()
     expect(screen.queryByRole('button', { name: /pause new work|resume new work/i })).toBeNull()
   })
 

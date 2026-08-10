@@ -381,28 +381,44 @@ class ContinuousGuardedApplication:
     def activity(self) -> dict[str, object]:
         data = self._repository.field_effect_activity_data(50)
         events = data.get("events", [])
-        if type(events) is not list:
+        report_documents = data.pop("report_documents", {})
+        if (
+            type(events) is not list
+            or type(report_documents) is not dict
+            or len(report_documents) > 50
+            or any(type(key) is not str or type(value) is not str
+                   for key, value in report_documents.items())
+        ):
             raise GuardedApplicationError("activity")
+        reports: dict[str, MetadataReport] = {}
         for event in events:
             if type(event) is not dict:
                 raise GuardedApplicationError("activity")
-            # The persistence projection carries these two private join values
+            # The persistence projection carries these private join values
             # only long enough to derive a closed, readable Activity display.
             # Keeping old in-memory test projections value-free is intentional:
             # they are already a public-shaped activity record, not a report
             # lineage assertion.
             connection = event.pop("connection", None)
-            report_document = event.pop("report_document", None)
+            report_id = event.pop("report_id", None)
             event["work_label"] = "Recorded work"
             event["author_label"] = "Author details are not recorded"
-            if connection is None and report_document is None:
+            if connection is None and report_id is None:
                 continue
-            if type(connection) is not str or type(report_document) is not str:
+            if type(connection) is not str or type(report_id) is not str:
                 raise GuardedApplicationError("activity")
-            try:
-                report = MetadataReport.from_json(report_document)
-            except Exception as error:
-                raise GuardedApplicationError("activity") from error
+            report = reports.get(report_id)
+            if report is None:
+                report_document = report_documents.get(report_id)
+                if type(report_document) is not str:
+                    raise GuardedApplicationError("activity")
+                try:
+                    report = MetadataReport.from_json(report_document)
+                except Exception as error:
+                    raise GuardedApplicationError("activity") from error
+                if report.report_id != report_id:
+                    raise GuardedApplicationError("activity")
+                reports[report_id] = report
             if (report.target.connection != connection
                     or report.target.library != event.get("library")
                     or report.target.item != event.get("work_id")):
