@@ -13,12 +13,33 @@ from hashlib import sha256
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from mechanical_librarian.adapters.private_recovery import require_private_directory
-
 MAX_AUTHORITY_BYTES = 1_048_576
 # One configuration, one batch manifest, 32 connection secrets, and the three
 # review files admitted by the isolated subset of the exact-current schema.
 MAX_NETWORK_AUTHORITY_FILES = 37
+
+
+def _require_private_directory(root: Path, error: str) -> None:
+    """Create or validate one owner-only workbench directory."""
+    try:
+        information = root.lstat()
+    except FileNotFoundError:
+        root.mkdir(parents=True, mode=0o700)
+        os.chmod(root, 0o700)
+        information = root.lstat()
+    if (
+        not stat.S_ISDIR(information.st_mode)
+        or stat.S_IMODE(information.st_mode) != 0o700
+        or information.st_uid != os.geteuid()
+    ):
+        raise ValueError(error)
+    descriptor = os.open(
+        root,
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    os.close(descriptor)
 
 
 @dataclass(frozen=True)
@@ -75,7 +96,7 @@ class WorkbenchContext:
         if self.workspace == Path("/") or self.workspace.is_relative_to(Path("/data")):
             raise PermissionError("production workspaces are refused")
         try:
-            require_private_directory(
+            _require_private_directory(
                 self.workspace, "workbench private directory is invalid"
             )
             information = self.workspace.lstat()
@@ -456,7 +477,7 @@ class WorkbenchContext:
     def _private_directory(self, relative: str) -> Path:
         target = self.path(relative)
         try:
-            require_private_directory(
+            _require_private_directory(
                 target, "workbench private directory is invalid"
             )
         except (OSError, ValueError):
