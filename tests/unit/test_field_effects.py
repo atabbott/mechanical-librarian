@@ -268,6 +268,10 @@ class FieldEffectTests(unittest.TestCase):
         automatic_operation = FieldEffectOperation(plan, updated_at=9)
         self.repository.record_field_effect(automatic_operation)
         self.repository.record_human_decision(human)
+        stale_hold_token = self.repository.field_effect_manual_hold_token(
+            case_id, proposal["destination"]
+        )
+        self.assertIsNotNone(stale_hold_token)
 
         self.assertEqual(self.repository.get_field_effect(plan.plan_id).state, "superseded")
         self.assertEqual(
@@ -297,6 +301,23 @@ class FieldEffectTests(unittest.TestCase):
             ("planned", "superseded", "planned"),
         )
 
+        release_old_scan = threading.Event()
+        old_scan_waiting = threading.Event()
+        stale_release_result = []
+
+        def complete_old_scan() -> None:
+            old_scan_waiting.set()
+            self.assertTrue(release_old_scan.wait(2))
+            stale_release_result.append(
+                self.repository.clear_field_effect_manual_hold(
+                    case_id, proposal["destination"], 13, stale_hold_token
+                )
+            )
+
+        old_scan = threading.Thread(target=complete_old_scan)
+        old_scan.start()
+        self.assertTrue(old_scan_waiting.wait(1))
+
         later_human = HumanDecision.create(
             case, proposal_id=proposal["proposal_id"],
             target_fingerprint=case.target_fingerprint,
@@ -308,6 +329,31 @@ class FieldEffectTests(unittest.TestCase):
         self.assertEqual(self.repository.get_field_effect(plan.plan_id).state, "superseded")
         self.assertEqual(
             self.repository.field_effect_manual_hold_context(case_id, proposal["destination"]),
+            ("primary", "books"),
+        )
+        current_hold_token = self.repository.field_effect_manual_hold_token(
+            case_id, proposal["destination"]
+        )
+        self.assertIsNotNone(current_hold_token)
+        self.assertNotEqual(stale_hold_token, current_hold_token)
+        release_old_scan.set()
+        old_scan.join(2)
+        self.assertFalse(old_scan.is_alive())
+        self.assertEqual(stale_release_result, [None])
+        self.repository.close()
+        self.repository = open_repository(
+            self.database_path, create=False, cross_thread=True
+        )
+        self.assertEqual(
+            self.repository.field_effect_manual_hold_token(
+                case_id, proposal["destination"]
+            ),
+            current_hold_token,
+        )
+        self.assertEqual(
+            self.repository.field_effect_manual_hold_context(
+                case_id, proposal["destination"]
+            ),
             ("primary", "books"),
         )
 

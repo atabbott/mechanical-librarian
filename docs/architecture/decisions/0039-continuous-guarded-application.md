@@ -37,8 +37,11 @@ kernel. One instance-scoped mutation slot serializes every library and origin;
 durable selection alternates away from the last library when another is ready.
 Siblings remain independent. A manual decision supersedes only unclaimed
 automatic authority for that field and records an explicit active manual hold.
-Returning to automatic first requests a fresh exact-current scan, then releases
-the hold for revalidated automatic scheduling. A superseded unclaimed plan may
+Returning to automatic first requests a fresh exact-current scan and retains the
+hold until that named scan completes successfully. The release compares the
+durable hold token, so a later manual decision cannot be released by an older
+scan; incomplete, failed, or interrupted scans leave automatic scheduling off.
+A superseded unclaimed plan may
 be planned again only after current authority, target, dependency, consent, and
 capability checks; its complete event history remains intact. A policy
 demotion or generation change prevents unclaimed automatic work from becoming

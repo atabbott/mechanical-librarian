@@ -167,8 +167,10 @@ private-key contents, raw session token, or CSRF token is stored in
 configuration or the application database.
 
 `graceful_shutdown_seconds` is 1–300 seconds. Shutdown closes claim admission
-before waiting up to this deadline for active workers. An over-deadline worker
-remains tracked and its last durable checkpoint is recovered on restart.
+before waiting up to this deadline for active review-preparation and guarded
+field-effect workers. An over-deadline worker remains tracked, causes a typed
+shutdown failure before the shared repository closes, and its last durable
+checkpoint is recovered on restart.
 
 `diagnostic_timings_enabled` is false by default. When explicitly enabled, the
 container retains at most 256 local stage-duration and wait-class records in

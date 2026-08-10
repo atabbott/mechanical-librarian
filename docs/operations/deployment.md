@@ -24,12 +24,15 @@ Stop with `docker compose down`; do not add `-v` unless intentionally deleting
 the complete local application state. Image publication remains a separate
 release authority and is not part of this support contract.
 
-Shutdown first closes preparation and guarded-effect claim admission. Active
-preparation workers receive the configured bounded graceful-shutdown window;
-their durable checkpoint remains restart authority. Guarded-effect restart is
-an injectable lifecycle seam and remains unavailable in the normal container
-until a real target adapter is supplied—no fake or product write activation is
-composed by this milestone.
+The normal container composes the supported Audiobookshelf guarded target, but
+remains report-only until the owner completes the authenticated, library-scoped
+Activity consent flow and every backup, currentness, capability and claim gate
+passes. Shutdown closes both preparation and guarded-effect claim admission
+before either worker waits. They share one configured graceful-shutdown
+deadline; an over-deadline worker remains tracked, raises a typed shutdown
+failure before the shared repository closes, and resumes from its durable
+checkpoint on restart. No fake target, direct database write or writable media
+path is composed.
 
 The command-line development runtime remains unreleased.
 It supports current catalogue, report, ProposalSet, ReviewCase, and

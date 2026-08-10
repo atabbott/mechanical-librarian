@@ -25,6 +25,12 @@ class _Repository:
     def pending_field_effect_decision_documents(self, limit, after=None):
         return ()
 
+    def pending_field_effect_plan_ids(self, limit):
+        return ()
+
+    def pending_field_effect_action_plan_ids(self, limit):
+        return ()
+
     def next_field_effect_plan_id(self, last_library):
         if not self.ready:
             return None
@@ -46,11 +52,20 @@ class _Application:
             self.shared["active"] += 1
             self.shared["maximum"] = max(self.shared["maximum"], self.shared["active"])
             self.shared["started"].set()
-        self.shared["release"].wait(1)
+        self.shared["release"].wait(self.shared.get("wait", 1))
         with self.shared["guard"]:
             self.shared["active"] -= 1
         self.applied.append(plan_id)
         return self.shared["repository"].operations[plan_id]
+
+    def resume_admission(self):
+        pass
+
+    def begin_drain(self):
+        self.shared["drained"].set()
+
+    def run_pending_cleanups(self, limit):
+        return 0
 
 
 class _RecoveryRepository(_Repository):
@@ -134,11 +149,17 @@ class _HoldRepository(_Repository):
     def __init__(self) -> None:
         super().__init__()
         self.hold = ("primary", "alpha")
+        self.token = "first-hold"
 
     def field_effect_manual_hold_context(self, review_case_id, destination):
         return self.hold
 
-    def clear_field_effect_manual_hold(self, review_case_id, destination, changed_at):
+    def field_effect_manual_hold_token(self, review_case_id, destination):
+        return self.token if self.hold is not None else None
+
+    def clear_field_effect_manual_hold(self, review_case_id, destination, changed_at, token=None):
+        if token != self.token:
+            return None
         context = self.hold
         self.hold = None
         return context
@@ -177,18 +198,111 @@ class _DeniedCapability:
 
 
 class ContinuousGuardedApplicationTests(unittest.TestCase):
-    def test_return_to_automatic_requests_scan_before_clearing_hold(self) -> None:
+    def test_return_to_automatic_releases_only_after_current_scan_completes(self) -> None:
         repository = _HoldRepository()
         scans = []
+        progress = SimpleNamespace(
+            scan_id="review_scan", state="processing", rescan_requested=False,
+            updated_at=10,
+        )
         service = ContinuousGuardedApplication(
             repository, {("primary", "alpha"): _Planner()},
             {("primary", "alpha"): _AllowedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1,
-            lambda *context: scans.append(context),
+            lambda *context: (scans.append(context) or progress),
+            scan_progress=lambda *_: progress,
         )
         service.return_to_automatic("review_case", "title")
-        self.assertIsNone(repository.hold)
+        self.assertIsNotNone(repository.hold)
         self.assertEqual(scans, [("primary", "alpha")])
+        service.schedule()
+        self.assertIsNotNone(repository.hold)
+        progress.state = "completed"
+        progress.updated_at = 11
+        service.schedule()
+        self.assertIsNone(repository.hold)
+
+    def test_failed_or_superseded_scan_never_releases_manual_hold(self) -> None:
+        repository = _HoldRepository()
+        progress = SimpleNamespace(
+            scan_id="review_scan", state="completed_with_failures",
+            rescan_requested=False, updated_at=10,
+        )
+        service = ContinuousGuardedApplication(
+            repository, {("primary", "alpha"): _Planner()},
+            {("primary", "alpha"): _AllowedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 1, lambda *_: progress,
+            scan_progress=lambda *_: progress,
+        )
+        service.return_to_automatic("review_case", "title")
+        service.schedule()
+        self.assertIsNotNone(repository.hold)
+        progress.state = "completed"
+        progress.rescan_requested = True
+        progress.updated_at = 11
+        service.schedule()
+        self.assertIsNotNone(repository.hold)
+
+    def test_later_manual_hold_cannot_be_released_by_older_scan(self) -> None:
+        repository = _HoldRepository()
+        progress = SimpleNamespace(
+            scan_id="review_scan", state="processing", rescan_requested=False,
+            updated_at=10,
+        )
+        service = ContinuousGuardedApplication(
+            repository, {("primary", "alpha"): _Planner()},
+            {("primary", "alpha"): _AllowedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 1, lambda *_: progress,
+            scan_progress=lambda *_: progress,
+        )
+        service.return_to_automatic("review_case", "title")
+        repository.token = "later-hold"
+        progress.state = "completed"
+        progress.updated_at = 11
+        service.schedule()
+        self.assertIsNotNone(repository.hold)
+
+    def test_scan_callback_failures_are_bounded_and_leave_the_hold_active(self) -> None:
+        repository = _HoldRepository()
+
+        def failed_request(*_):
+            raise RuntimeError("private failure")
+
+        service = ContinuousGuardedApplication(
+            repository, {("primary", "alpha"): _Planner()},
+            {("primary", "alpha"): _AllowedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 1, failed_request,
+        )
+        with self.assertRaisesRegex(GuardedApplicationError, "scan"):
+            service.return_to_automatic("review_case", "title")
+        self.assertIsNotNone(repository.hold)
+
+        progress = SimpleNamespace(
+            scan_id="review_scan", state="processing", rescan_requested=False,
+            updated_at=10,
+        )
+        failing = [True]
+
+        def read_progress(*_):
+            if failing[0]:
+                raise RuntimeError("private failure")
+            return progress
+
+        service = ContinuousGuardedApplication(
+            repository, {("primary", "alpha"): _Planner()},
+            {("primary", "alpha"): _AllowedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 1, lambda *_: progress,
+            scan_progress=read_progress,
+        )
+        service.return_to_automatic("review_case", "title")
+        with self.assertRaisesRegex(GuardedApplicationError, "scan"):
+            service.schedule()
+        self.assertIsNotNone(repository.hold)
+        failing[0] = False
+        progress.state = "completed"
+        progress.updated_at = 11
+        service.schedule()
+        self.assertIsNone(repository.hold)
 
     def test_enable_refuses_read_only_capability_before_granting_consent(self) -> None:
         decision = self._decisions(1)[0]
@@ -265,7 +379,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         shared = {
             "active": 0, "maximum": 0, "guard": threading.Lock(),
             "release": threading.Event(), "started": threading.Event(),
-            "repository": repository,
+            "repository": repository, "drained": threading.Event(),
         }
         applications = {
             ("primary", "alpha"): _Application(shared),
@@ -290,6 +404,52 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         shared["release"].set()
         first.join(); second.join()
         self.assertEqual(shared["maximum"], 1)
+
+    def test_shutdown_waits_for_a_claimed_operation_within_configured_grace(self) -> None:
+        repository = _Repository()
+        shared = {
+            "active": 0, "maximum": 0, "guard": threading.Lock(),
+            "release": threading.Event(), "started": threading.Event(),
+            "repository": repository, "drained": threading.Event(),
+        }
+        application = _Application(shared)
+        service = ContinuousGuardedApplication(
+            repository, {("primary", "alpha"): application},
+            {("primary", "alpha"): _AllowedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 1, lambda *_: None,
+            graceful_shutdown_seconds=1,
+        )
+        service.start()
+        self.assertTrue(shared["started"].wait(1))
+        shared["release"].set()
+        service.begin_drain()
+        self.assertTrue(shared["drained"].is_set())
+        self.assertIsNone(service._thread)
+
+    def test_shutdown_timeout_retains_live_claimed_worker(self) -> None:
+        repository = _Repository()
+        shared = {
+            "active": 0, "maximum": 0, "guard": threading.Lock(),
+            "release": threading.Event(), "started": threading.Event(),
+            "repository": repository, "drained": threading.Event(), "wait": 5,
+        }
+        application = _Application(shared)
+        service = ContinuousGuardedApplication(
+            repository, {("primary", "alpha"): application},
+            {("primary", "alpha"): _AllowedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 1, lambda *_: None,
+            graceful_shutdown_seconds=1,
+        )
+        service.start()
+        self.assertTrue(shared["started"].wait(1))
+        with self.assertRaisesRegex(GuardedApplicationError, "shutdown_timeout"):
+            service.begin_drain()
+        self.assertTrue(shared["drained"].is_set())
+        self.assertIsNotNone(service._thread)
+        assert service._thread is not None
+        self.assertTrue(service._thread.is_alive())
+        shared["release"].set()
+        service.begin_drain()
 
 
 if __name__ == "__main__":

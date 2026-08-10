@@ -60,6 +60,13 @@ provider pacers serialize their mutation of global generation and pacing state
 across the two lanes. A stale catalogue baseline is rebuilt progressively per
 successfully observed library, isolating unavailable connections; later work
 validates its exact item and revision against the latest generation. The
+return-to-automatic control retains its durable manual hold until its requested
+scan is successfully complete. Release compares the hold's human-decision token,
+so a concurrent later manual decision remains held; failed or incomplete scans
+cannot make stale automatic authority schedulable. Shutdown closes claim
+admission before the configured deadline applies to both review-preparation and
+guarded field-effect workers. A live over-deadline worker remains identified and
+causes typed shutdown failure before the shared repository closes.
 authenticated activity projection reads all library progress and pause state
 from one validated repository snapshot. Only one worker lane evaluates automatic
 scan admission, using that aggregate snapshot and a retained next deadline rather

@@ -22,7 +22,6 @@ from mechanical_librarian.application.field_effects import (
 )
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
-    EffectConsent,
     FieldEffectOperation,
     FieldEffectPlan,
 )
@@ -55,12 +54,8 @@ def _plan(repository, clock, destination, suffix, pre="old", desired="new"):
         None,
         None,
     )
-    consent = EffectConsent.create(
-        connection="primary",
-        library="books",
-        destination=destination,
-        envelope_identity="a" * 64,
-        granted_at=1,
+    consent = repository.current_field_effect_consent(
+        "primary", "books", destination
     )
     value = FieldEffectPlan.create(
         connection="primary",
@@ -118,6 +113,15 @@ def main() -> None:
             recovery_root, lambda value: b"synthetic-cover"
         )
         service = _service(repository, target, store, clock)
+        repository.grant_field_effect_consents(
+            "primary",
+            ("books",),
+            (
+                "authors", "cover", "description", "genres", "isbn",
+                "language", "publisher", "subtitle", "title",
+            ),
+            1,
+        )
 
         ready = _plan(repository, clock, "title", "0")
         claimed = _plan(repository, clock, "subtitle", "1")
