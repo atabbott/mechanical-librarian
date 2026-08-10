@@ -6,6 +6,7 @@ import {
   ReviewApiClient,
   mapCaseDetail,
   mapActivity,
+  derivePolicyDraftDisplay,
   SessionExpiredError,
   mapLibrary,
 } from '../src/api/http'
@@ -22,7 +23,7 @@ describe('ReviewApiClient', () => {
   it('preserves present and absent series sequences in the mapped review value', () => {
     const detail = (series: readonly Record<string, unknown>[]) => mapCaseDetail({
       schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true,
-      target: { item: 'A Book', library: 'Books', connection: 'primary' },
+      target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
       fields: [{
         destination: 'series', deterministic_disposition: 'review', effect_capability: 'manual',
         needs_attention: true, manual_hold: false, current: { value: series },
@@ -46,7 +47,9 @@ describe('ReviewApiClient', () => {
         items: [{
           review_case_id: 'case-1',
           title: 'A Book',
+          authors: ['Ada Example'],
           library: 'Books',
+          media_kind: 'ebook',
           item: 'item-1',
           attention_count: 1,
           attention_state: 'needs_attention',
@@ -63,7 +66,8 @@ describe('ReviewApiClient', () => {
     expect(view.works[0]).toEqual({
       id: 'case-1',
       title: 'A Book',
-      subtitle: 'Books · item-1',
+      authors: ['Ada Example'],
+      subtitle: 'Books · ebook · item-1',
       attention: 'needs_attention',
       dispositions: ['review'],
     })
@@ -91,9 +95,16 @@ describe('ReviewApiClient', () => {
     expect(activity.configured_libraries[0]?.library).toBe('Fiction')
     expect(activity.capabilities[0]?.destinations[0]).toMatchObject({ destination: 'title', consented: true })
     expect(activity.events[0]).toMatchObject({ library: 'Fiction', state: 'verified', origin: 'human' })
+    expect(activity.events[0]).toMatchObject({ work_label: 'Work details unavailable' })
     expect(activity.suspensions[0]).toMatchObject({ scope: 'library', destination: null })
     expect(() => mapActivity({ ...activity, suspensions: [{ connection: 'primary', destination: null, reason: 'recovery', scope: 'library', updated_at: 'later' }] })).toThrow(ApiError)
     expect(() => mapActivity({ ...activity, example: { after: 'After' } })).toThrow(ApiError)
+  })
+
+  it('distinguishes matching active policy values from a changed local draft', () => {
+    const active = { schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v1', name: 'Active', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } } } as never
+    expect(derivePolicyDraftDisplay(active, { name: 'Active', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } })).toMatchObject({ changed: false, activeName: 'Active' })
+    expect(derivePolicyDraftDisplay(active, { name: 'Draft', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } })).toMatchObject({ changed: true, draftName: 'Draft' })
   })
 
   it('renews CSRF once but requires an explicit retry of an unsafe request', async () => {

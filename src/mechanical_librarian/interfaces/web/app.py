@@ -143,9 +143,11 @@ class _ReviewField(_ClosedModel):
 
 
 class _TargetIdentity(_ClosedModel):
+    authors: list[str]
     connection: str
     item: str
     library: str
+    media_kind: str
 
 
 class _CaseDetailResponse(_ClosedModel):
@@ -243,12 +245,14 @@ class _ReviewCounts(_ClosedModel):
 
 
 class _LibraryWork(_ClosedModel):
+    authors: list[str]
     attention_count: int
     attention_state: str
     detail_url: str
     dispositions: list[str]
     item: str
     library: str
+    media_kind: str
     review_case_id: str
     title: str
 
@@ -263,10 +267,12 @@ class _LibraryResponse(_ClosedModel):
 
 
 class _AttentionItem(_ClosedModel):
+    authors: list[str]
     destination: str
     detail_url: str
     item: str
     library: str
+    media_kind: str
     notices: list[str]
     provenance: list[str]
     review_case_id: str

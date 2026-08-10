@@ -395,6 +395,13 @@
       "_AttentionItem": {
         "additionalProperties": false,
         "properties": {
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
           "destination": {
             "title": "Destination",
             "type": "string"
@@ -409,6 +416,10 @@
           },
           "library": {
             "title": "Library",
+            "type": "string"
+          },
+          "media_kind": {
+            "title": "Media Kind",
             "type": "string"
           },
           "notices": {
@@ -435,10 +446,12 @@
           }
         },
         "required": [
+          "authors",
           "destination",
           "detail_url",
           "item",
           "library",
+          "media_kind",
           "notices",
           "provenance",
           "review_case_id",
@@ -1316,6 +1329,13 @@
             "title": "Attention State",
             "type": "string"
           },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
           "detail_url": {
             "title": "Detail Url",
             "type": "string"
@@ -1335,6 +1355,10 @@
             "title": "Library",
             "type": "string"
           },
+          "media_kind": {
+            "title": "Media Kind",
+            "type": "string"
+          },
           "review_case_id": {
             "title": "Review Case Id",
             "type": "string"
@@ -1345,12 +1369,14 @@
           }
         },
         "required": [
+          "authors",
           "attention_count",
           "attention_state",
           "detail_url",
           "dispositions",
           "item",
           "library",
+          "media_kind",
           "review_case_id",
           "title"
         ],
@@ -2494,6 +2520,13 @@
       "_TargetIdentity": {
         "additionalProperties": false,
         "properties": {
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
           "connection": {
             "title": "Connection",
             "type": "string"
@@ -2505,12 +2538,18 @@
           "library": {
             "title": "Library",
             "type": "string"
+          },
+          "media_kind": {
+            "title": "Media Kind",
+            "type": "string"
           }
         },
         "required": [
+          "authors",
           "connection",
           "item",
-          "library"
+          "library",
+          "media_kind"
         ],
         "title": "_TargetIdentity",
         "type": "object"

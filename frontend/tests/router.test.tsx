@@ -15,6 +15,7 @@ const library: LibraryView = {
   works: [{
     id: 'case-1',
     title: 'A Book',
+    authors: [],
     subtitle: 'Books · item-1',
     attention: 'needs_attention',
     dispositions: ['review'],
@@ -25,6 +26,7 @@ const detail: CaseDetailView = {
   id: 'case-1',
   current: true,
   title: 'A Book',
+  authors: [],
   subtitle: 'Books · local',
   fields: [{
     destination: 'title',
@@ -563,7 +565,7 @@ describe('typed review routes', () => {
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => ({ backup_ready: true, configured_libraries: [], enabled_libraries: [], capabilities: [], events: [duplicate, duplicate], paused: false })) }
     renderRoute('/activity', http)
 
-    await screen.findAllByText('book-1 · verified')
+    await screen.findAllByText('Work details unavailable · verified')
     expect(error).not.toHaveBeenCalledWith(expect.stringContaining('same key'), expect.anything())
     error.mockRestore()
   })
