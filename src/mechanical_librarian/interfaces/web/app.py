@@ -248,13 +248,14 @@ class _LibraryWork(_ClosedModel):
     authors: list[str]
     attention_count: int
     attention_state: str
-    detail_url: str
+    detail_url: str | None
     dispositions: list[str]
     item: str
     library: str
     media_kind: str
-    review_case_id: str
+    review_case_id: str | None
     title: str
+    work_id: str
 
 
 class _LibraryResponse(_ClosedModel):
@@ -277,6 +278,7 @@ class _AttentionItem(_ClosedModel):
     provenance: list[str]
     review_case_id: str
     title: str
+    work_attention_count: int
 
 
 class _AttentionResponse(_ClosedModel):

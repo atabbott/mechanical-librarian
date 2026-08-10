@@ -9,7 +9,7 @@ const destinationLabel = (value: string) => value.replaceAll('_', ' ').replace(/
 const reasonLabel = (item: AttentionItemView) => item.notices[0]
   ? destinationLabel(item.notices[0]).replace(/\.$/u, '')
   : 'The current evidence requires a human choice'
-const outcomePreview = (item: AttentionItemView) => `Compare the current value with every eligible proposed ${destinationLabel(item.destination).toLowerCase()} value${item.provenance.length ? ` · ${String(item.provenance.length)} evidence ${item.provenance.length === 1 ? 'source' : 'sources'} available` : ''}.`
+const outcomePreview = (item: AttentionItemView) => `Inspect the current value and available ${destinationLabel(item.destination).toLowerCase()} choices${item.provenance.length ? ` · ${String(item.provenance.length)} evidence ${item.provenance.length === 1 ? 'record' : 'records'} available` : ''}.`
 const authors = (item: AttentionItemView) => item.authors.length ? item.authors.join(', ') : 'Author details unavailable'
 const groupItems = (items: readonly AttentionItemView[]) => {
   const groups = new Map<string, AttentionItemView[]>()
@@ -39,7 +39,7 @@ export default function AttentionPage({ data }: { data: AttentionView }) {
         const work = group[0]
         if (!work) return null
         return <article className="attention-work" key={work.id}>
-          <header><div><p className="eyebrow">{work.library} · {destinationLabel(work.mediaKind)}</p><h2>{work.title}</h2><p>{authors(work)}</p></div><span>{group.length} {group.length === 1 ? 'field' : 'fields'}</span></header>
+          <header><div><p className="eyebrow">{work.library} · {destinationLabel(work.mediaKind)}</p><h2>{work.title}</h2><p>{authors(work)}</p></div><span>{work.workAttentionCount} {work.workAttentionCount === 1 ? 'field' : 'fields'}</span></header>
           <div className="attention-field-list">{group.map((item) => <Link className="attention-field-row" key={`${item.id}:${item.destination}`} to="/review/$reviewCaseId" params={{ reviewCaseId: item.id }} search={{ field: item.destination, subview: 'review' }}>
             <span className="attention-field-name"><strong>{destinationLabel(item.destination)}</strong><small>Open exact field</small></span>
             <span><small>Why it needs you</small><strong>{reasonLabel(item)}</strong></span>

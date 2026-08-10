@@ -181,17 +181,26 @@ states.
 The authenticated Library is the complete work surface. It opens on the `all`
 lens with server-authoritative attention counts, presents readable title,
 author, library, and media identity, and keeps works needing a human decision
-first without hiding automatic-only or resolved work. Internal connection and
-item keys do not become its primary visible identity. The supported
-needs-attention and no-attention lenses, bounded search, cursor pagination,
-selected-work preview, deep links, and browser history remain URL-owned.
+first without hiding automatic-only, resolved, current no-case, or retired
+work. A current work without a review case remains readable and searchable but
+does not offer a false detail or preview action. Internal connection and item
+keys do not become its primary visible identity. Search covers bounded title,
+author, library, item, and media values with literal wildcard handling. The
+supported needs-attention and no-attention lenses, bounded search, cursor
+pagination, selected-work preview, deep links, and browser history remain
+URL-owned.
 
 Attention is a separate field-level queue containing only unresolved ordinary
 fields that can benefit from an owner decision. It groups fields by readable
 work identity, shows the destination plus bounded reason and outcome context,
-and links directly to the exact field in the authoritative case. An empty queue
-does not imply an empty Library: automatic-only and resolved works remain
-discoverable there. Destructive work remains outside this ordinary queue.
+and links directly to the exact field in the authoritative case. Its work-level
+field count remains complete even when field cursor pagination splits a work,
+and evidence context counts bounded records rather than claiming distinct
+providers. Decision preview copy promises only the current value and available
+choices until the exact case supplies its eligible direct-value choices. An
+empty queue does not imply an empty Library: automatic-only and resolved works
+remain discoverable there. Destructive work remains outside this ordinary
+queue.
 
 The queue supports cursor pagination, stable ordering, deterministic
 tie-breaking, title/author/target search, and explicit filters for:

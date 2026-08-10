@@ -48,7 +48,10 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     FileFacts,
     MetadataReport,
+    TargetDestination,
     TargetFacts,
+    TargetField,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.field_effect import FieldEffectError
@@ -80,6 +83,7 @@ class _Repository:
         self.case = case
         self.report = report
         self.browse_cases = [(case, report)]
+        self.browse_without_cases = []
         self.advice: dict[str, object] = {
             "results": [],
             "state": "not_requested",
@@ -283,10 +287,27 @@ class _Repository:
         )
 
     @staticmethod
+    def _field_attention(
+        case: ReviewCase, proposal: dict[str, object]
+    ) -> bool:
+        result = proposal["result"]
+        assert isinstance(result, dict)
+        return (
+            result["outcome"] == "unresolved_choice"
+            or (
+                proposal["destination"] in {"title", "subtitle", "series"}
+                and any(
+                    sibling["result"]["reasons"]
+                    == ["no_safe_bibliographic_combination"]
+                    for sibling in case.proposals
+                )
+            )
+        )
+
+    @staticmethod
     def _attention(case: ReviewCase) -> bool:
         return any(
-            proposal["result"]["outcome"] == "unresolved_choice"
-            or proposal["manual_required"] is True
+            _Repository._field_attention(case, proposal)
             for proposal in case.proposals
         )
 
@@ -301,8 +322,16 @@ class _Repository:
             in " ".join(
                 (
                     report.target.current_title or "",
+                    " ".join(
+                        value
+                        for field in report.target.fields
+                        if field.destination is TargetDestination.AUTHORS
+                        and type(field.value) is tuple
+                        for value in field.value
+                    ),
                     report.target.library,
                     report.target.item,
+                    report.file.format,
                 )
             ).casefold()
         ]
@@ -313,29 +342,56 @@ class _Repository:
         limit: int,
         offset: int,
         attention: bool | None,
-    ) -> tuple[tuple[str, str], ...]:
+    ) -> tuple[tuple[str | None, str], ...]:
         rows = [
             (case, report)
             for case, report in self._searched(search)
             if attention is None or self._attention(case) is attention
         ]
+        if attention is not True:
+            query = None if search is None else search.casefold()
+            rows.extend(
+                (None, report)
+                for report in self.browse_without_cases
+                if query is None
+                or query
+                in " ".join(
+                    (
+                        report.target.current_title or "",
+                        " ".join(
+                            value
+                            for field in report.target.fields
+                            if field.destination is TargetDestination.AUTHORS
+                            and type(field.value) is tuple
+                            for value in field.value
+                        ),
+                        report.target.library,
+                        report.target.item,
+                        report.file.format,
+                    )
+                ).casefold()
+            )
         rows.sort(
             key=lambda value: (
-                not self._attention(value[0]),
+                value[0] is None or not self._attention(value[0]),
                 (value[1].target.current_title or "").casefold(),
-                value[0].review_case_id,
+                "" if value[0] is None else value[0].review_case_id,
             )
         )
         return tuple(
-            (case.to_json(), report.to_json())
+            (None if case is None else case.to_json(), report.to_json())
             for case, report in rows[offset : offset + limit]
         )
 
     def count_current_review_cases(
         self, search: str | None
     ) -> tuple[int, int]:
-        rows = self._searched(search)
-        return len(rows), sum(self._attention(case) for case, _ in rows)
+        rows = self.list_current_review_case_documents(search, 100_000, 0, None)
+        return len(rows), sum(
+            case_document is not None
+            and self._attention(ReviewCase.from_json(case_document))
+            for case_document, _ in rows
+        )
 
     def read_review_library(
         self,
@@ -353,9 +409,15 @@ class _Repository:
                 (
                     case_document,
                     report_document,
-                    self.get_review_case_decisions(
-                        ReviewCase.from_json(case_document).review_case_id
+                    (
+                        ()
+                        if case_document is None
+                        else self.get_review_case_decisions(
+                            ReviewCase.from_json(case_document).review_case_id
+                        )
                     ),
+                    (),
+                    (),
                 )
                 for case_document, report_document in rows
             ),
@@ -365,13 +427,20 @@ class _Repository:
 
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[tuple[str, str, str], ...]:
+    ) -> tuple[tuple[str, str, str, int], ...]:
         rows = [
-            (case.to_json(), report.to_json(), proposal["destination"])
+            (
+                case.to_json(),
+                report.to_json(),
+                proposal["destination"],
+                sum(
+                    self._field_attention(case, other)
+                    for other in case.proposals
+                ),
+            )
             for case, report in self._searched(search)
             for proposal in case.proposals
-            if proposal["result"]["outcome"] == "unresolved_choice"
-            or proposal["manual_required"] is True
+            if self._field_attention(case, proposal)
         ]
         return tuple(rows[offset : offset + limit])
 
@@ -380,8 +449,7 @@ class _Repository:
             1
             for case, _ in self._searched(search)
             for proposal in case.proposals
-            if proposal["result"]["outcome"] == "unresolved_choice"
-            or proposal["manual_required"] is True
+            if self._field_attention(case, proposal)
         )
 
     def read_review_attention(
@@ -2000,6 +2068,7 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(queue.json()["total"], 1)
         self.assertEqual(len(queue.json()["items"]), 1)
         self.assertEqual(queue.json()["items"][0]["destination"], "title")
+        self.assertEqual(queue.json()["items"][0]["work_attention_count"], 1)
         self.assertIn("?field=title", queue.json()["items"][0]["detail_url"])
         self.assertNotIn(
             automatic_case.review_case_id,
@@ -2008,6 +2077,55 @@ class ReviewWebTests(unittest.TestCase):
 
         self.assertEqual(self.client.get("/library").status_code, 200)
         self.assertEqual(self.client.get("/attention").status_code, 200)
+
+    def test_complete_library_includes_current_work_without_a_review_case(self) -> None:
+        current = _report(title="Catalogue-only work", actionable=False)
+        self.repository.browse_without_cases.append(current)
+        self._login()
+
+        response = self.client.get(
+            "/api/v1/library?lens=all&q=Catalogue-only"
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["counts"], {
+            "all": 1,
+            "needs_attention": 0,
+            "no_attention_needed": 1,
+        })
+        item = response.json()["items"][0]
+        self.assertIsNone(item["review_case_id"])
+        self.assertIsNone(item["detail_url"])
+        self.assertTrue(item["work_id"].startswith("library_work_"))
+        self.assertEqual(item["attention_state"], "no_attention_needed")
+        self.assertEqual(item["dispositions"], [])
+
+    def test_attention_cursor_keeps_the_complete_work_field_count(self) -> None:
+        report = _bibliographic_report(
+            current_title="Mistborn Secret History",
+            providers=(
+                _bibliographic_source(
+                    "catalogue",
+                    "edition-1",
+                    titles=(),
+                    series="Mistborn",
+                ),
+            ),
+        )
+        case = ReviewCase.create(evaluate_report(report), report)
+        self.repository.browse_cases = [(case, report)]
+        self._login()
+
+        first = self.client.get("/api/v1/attention?limit=1")
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["items"][0]["work_attention_count"], 3)
+        cursor = first.json()["next_cursor"]
+        self.assertIsNotNone(cursor)
+        second = self.client.get(
+            f"/api/v1/attention?limit=1&cursor={cursor}"
+        )
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(second.json()["items"][0]["work_attention_count"], 3)
 
     def test_cursor_encoder_never_emits_an_unreachable_offset(self) -> None:
         boundary = _encode_cursor(100_000, "library", "all", None)
@@ -2823,7 +2941,29 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "application.sqlite3"
             repository = open_repository(database)
-            unresolved_report = _report(title="Straße ÅNGSTRÖM")
+            source_report = _report(title="Straße ÅNGSTRÖM")
+            unresolved_report = MetadataReport.create(
+                target=TargetFacts(
+                    source_report.target.connection,
+                    source_report.target.library,
+                    source_report.target.item,
+                    tuple(
+                        TargetField(
+                            TargetDestination.AUTHORS,
+                            TargetFieldState.VALUE,
+                            ("Ada Hostile Search",),
+                        )
+                        if field.destination is TargetDestination.AUTHORS
+                        else field
+                        for field in source_report.target.fields
+                    ),
+                ),
+                file=source_report.file,
+                local_claims=source_report.local_claims,
+                local_reasons=source_report.local_reasons,
+                providers=source_report.providers,
+                cover_sources=source_report.cover_sources,
+            )
             repository.publish(unresolved_report, lambda: True)
             unresolved_proposal = evaluate_report(unresolved_report)
             repository.publish_proposal(unresolved_proposal)
@@ -2883,6 +3023,8 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             self.assertEqual(repository.count_current_review_cases("ångström"), (1, 1))
             self.assertEqual(repository.count_current_review_cases("STRASSE"), (1, 1))
             self.assertEqual(repository.count_current_review_cases("NOVELS"), (1, 0))
+            self.assertEqual(repository.count_current_review_cases("ada hostile"), (1, 1))
+            self.assertEqual(repository.count_current_review_cases("EPUB"), (2, 1))
             self.assertEqual(repository.count_current_review_cases("%"), (0, 0))
             self.assertEqual(repository.count_current_review_cases("_"), (0, 0))
             self.assertEqual(repository.count_current_review_cases("\\"), (0, 0))
@@ -2960,7 +3102,12 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             proposal = evaluate_report(report)
             repository.publish_proposal(proposal)
             repository.admit_review_case(proposal)
-
+            first = repository.list_current_attention_documents(None, 1, 0)
+            second = repository.list_current_attention_documents(None, 1, 1)
+            self.assertEqual(len(first), 1)
+            self.assertEqual(len(second), 1)
+            self.assertGreater(first[0][3], 1)
+            self.assertEqual(first[0][3], second[0][3])
             rows = repository.list_current_attention_documents(None, 10, 0)
             self.assertEqual(
                 [row[2] for row in rows],
@@ -2980,6 +3127,67 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             repository.clear_field_effect_capability_suspension(
                 scope="destination", connection="primary", destination="series",
                 reason="field_unavailable", observed_at=2,
+            )
+            repository.close()
+
+    def test_sqlite_complete_library_keeps_current_no_case_and_retired_work(self) -> None:
+        def for_item(source: MetadataReport, item: str) -> MetadataReport:
+            return MetadataReport.create(
+                target=TargetFacts(
+                    source.target.connection,
+                    source.target.library,
+                    item,
+                    source.target.fields,
+                ),
+                file=source.file,
+                local_claims=source.local_claims,
+                local_reasons=source.local_reasons,
+                providers=source.providers,
+                cover_sources=source.cover_sources,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "application.sqlite3")
+            no_case = for_item(
+                _report("No-case work", "1", "2", actionable=False),
+                "no-case-item",
+            )
+            repository.publish(no_case, lambda: True)
+            no_case_proposal = evaluate_report(no_case)
+            repository.publish_proposal(no_case_proposal)
+            self.assertEqual(
+                json.loads(repository.admit_review_case(no_case_proposal))["status"],
+                "no_case",
+            )
+
+            actionable = for_item(
+                _report("Former case", "3", "4"), "retired-item"
+            )
+            repository.publish(actionable, lambda: True)
+            actionable_proposal = evaluate_report(actionable)
+            repository.publish_proposal(actionable_proposal)
+            repository.admit_review_case(actionable_proposal)
+            retired = for_item(
+                _report("Retired work", "5", "6", actionable=False),
+                "retired-item",
+            )
+            repository.publish(retired, lambda: True)
+            retired_proposal = evaluate_report(retired)
+            repository.publish_proposal(retired_proposal)
+            self.assertEqual(
+                json.loads(repository.admit_review_case(retired_proposal))["status"],
+                "retired",
+            )
+
+            self.assertEqual(repository.count_current_review_cases(None), (2, 0))
+            self.assertEqual(repository.count_current_review_cases("No-case"), (1, 0))
+            rows = repository.list_current_review_case_documents(
+                None, 10, 0, False
+            )
+            self.assertEqual(len(rows), 2)
+            self.assertTrue(all(case_document is None for case_document, _ in rows))
+            self.assertEqual(
+                repository.list_current_attention_documents(None, 10, 0), ()
             )
             repository.close()
 

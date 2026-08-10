@@ -71,15 +71,14 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
               return <article key={work.id} className={`library-work-row${selected ? ' active' : ''}`}>
                 <span className="library-book-mark" aria-hidden="true">{initials(work.title)}</span>
                 <div className="library-work-copy">
-                  <h3><Link to="/review/$reviewCaseId" params={{ reviewCaseId: work.id }} search={{ subview: 'review' }} preload="intent">{work.title}</Link></h3>
+                  <h3>{work.reviewCaseId ? <Link to="/review/$reviewCaseId" params={{ reviewCaseId: work.reviewCaseId }} search={{ subview: 'review' }} preload="intent">{work.title}</Link> : work.title}</h3>
                   <p>{authorLine(work)}</p>
                   <p>{work.library} · {friendly(work.mediaKind)}</p>
                   <div className="library-work-status">
                     <span className={needsAttention ? 'needs-attention' : 'handled'}>{needsAttention ? `${String(work.attentionCount)} ${work.attentionCount === 1 ? 'field needs' : 'fields need'} attention` : 'No attention needed'}</span>
-                    {work.dispositions.includes('automatic') ? <span>Automatic decisions available</span> : null}
                   </div>
                 </div>
-                <button className="preview-button" type="button" aria-pressed={selected} onClick={() => void navigate({ search: (current) => ({ ...current, preview: work.id }) })}>Preview</button>
+                {work.reviewCaseId ? <button className="preview-button" type="button" aria-pressed={selected} onClick={() => void navigate({ search: (current) => ({ ...current, preview: work.id }) })}>Preview</button> : null}
               </article>
             })}
           </div>

@@ -14,13 +14,13 @@ const library: LibraryView = {
   counts: { attention: 1, all: 1, clear: 0 },
   works: [{
     id: 'case-1',
+    reviewCaseId: 'case-1',
     title: 'A Book',
     authors: [],
     library: 'Books',
     mediaKind: 'ebook',
     attentionCount: 1,
     attention: 'needs_attention',
-    dispositions: ['review'],
   }],
 }
 
@@ -134,6 +134,15 @@ describe('typed review routes', () => {
     expect(normalizeLibrarySearch({ lens: 'hostile', q: 'x'.repeat(129) })).toEqual({ lens: 'all' })
   })
 
+  it.each(['needs_attention', 'no_attention_needed'] as const)(
+    'keeps primary Library navigation active for the %s lens',
+    async (lens) => {
+      renderRoute(`/library?lens=${lens}`)
+      expect(await screen.findByRole('heading', { name: 'Every work, with exceptions first' })).toBeVisible()
+      expect(screen.getByRole('link', { name: 'Library' })).toHaveAttribute('aria-current', 'page')
+    },
+  )
+
   it('loads the critical library query and progressively reveals detail', async () => {
     const user = userEvent.setup()
     const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, title: 'item-1', subtitle: 'internal identity' })) }
@@ -182,17 +191,19 @@ describe('typed review routes', () => {
     const attention: AttentionView = {
       total: 2,
       items: [
-        { id: 'case-1', destination: 'title', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', notices: ['conflicting_evidence'], provenance: ['opaque-source-1'] },
-        { id: 'case-1', destination: 'authors', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', notices: [], provenance: [] },
+        { id: 'case-1', destination: 'title', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', notices: ['conflicting_evidence'], provenance: ['opaque-source-1'], workAttentionCount: 3 },
+        { id: 'case-1', destination: 'authors', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', notices: [], provenance: [], workAttentionCount: 3 },
       ],
     }
     const http: ReviewHttp = { ...createHttp(), getAttention: vi.fn(async () => attention) }
     renderRoute('/attention', http)
 
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
-    expect(screen.getByText('2 fields')).toBeVisible()
+    expect(screen.getByText('3 fields')).toBeVisible()
     expect(screen.getByText('Conflicting evidence')).toBeVisible()
     expect(screen.queryByText('opaque-source-1')).toBeNull()
+    expect(screen.getByText(/1 evidence record available/u)).toBeVisible()
+    expect(screen.getByText(/Inspect the current value and available authors choices/u)).toBeVisible()
     expect(screen.getByRole('link', { name: /Title/u })).toHaveAttribute('href', '/review/case-1?field=title&subview=review')
     expect(screen.getByRole('link', { name: /Authors/u })).toHaveAttribute('href', '/review/case-1?field=authors&subview=review')
   })
