@@ -552,6 +552,7 @@ def _qualification_hardcover_client(
             values = _mapping(variables, "installed_provider_request_invalid")
             if "isbns" in values:
                 observations["isbn"] = observations.get("isbn", 0) + 1
+                request_local_id = 1
                 raw_isbns = values.get("isbns")
                 if (type(raw_isbns) is not list or not raw_isbns
                         or type(raw_isbns[0]) is not str
@@ -566,6 +567,7 @@ def _qualification_hardcover_client(
                 contribution_authors = tuple(authors)
             else:
                 observations["title"] = observations.get("title", 0) + 1
+                request_local_id = 2
                 requested_isbn = "9780306406157"
                 requested_title = _string(
                     values.get("title"), "installed_provider_title_invalid"
@@ -622,8 +624,8 @@ def _qualification_hardcover_client(
             json={
                 "data": {
                     "editions": [{
-                        "id": 1,
-                        "book_id": 1,
+                        "id": request_local_id,
+                        "book_id": request_local_id,
                         "isbn_10": (
                             requested_isbn if len(requested_isbn) == 10 else None
                         ),
@@ -642,7 +644,7 @@ def _qualification_hardcover_client(
                         "contributions": contributions,
                     }],
                     "books": [{
-                        "id": 1,
+                        "id": request_local_id,
                         "title": title,
                         "description": "A bounded continuous guarded qualification value.",
                         "release_date": "2025-02-03",

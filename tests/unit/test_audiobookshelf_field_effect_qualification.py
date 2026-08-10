@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -9,12 +10,43 @@ from pathlib import Path
 from scripts.qualify_audiobookshelf_field_effect import (
     QualificationError,
     _epub,
+    _qualification_hardcover_client,
     _operator_epub,
     _require_installed_full_chain_coverage,
 )
 
 
 class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
+    def test_hardcover_fixture_uses_distinct_candidate_identities_per_discovery_lane(self) -> None:
+        client = _qualification_hardcover_client(
+            {}, "synthetic-provider-token-a", {}, {}, {}
+        )
+        try:
+            isbn_response = client.post(
+                "https://qualification.invalid/graphql",
+                json={"variables": {"isbns": ["9780306406157"]}},
+            )
+            work_response = client.post(
+                "https://qualification.invalid/graphql",
+                json={
+                    "variables": {
+                        "title": "Guarded qualification title",
+                        "authors": ["Synthetic Author"],
+                    }
+                },
+            )
+        finally:
+            client.close()
+
+        isbn_data = json.loads(isbn_response.content)["data"]
+        work_data = json.loads(work_response.content)["data"]
+        self.assertNotEqual(
+            isbn_data["editions"][0]["id"], work_data["editions"][0]["id"]
+        )
+        self.assertNotEqual(
+            isbn_data["books"][0]["id"], work_data["books"][0]["id"]
+        )
+
     def test_missing_installed_destination_fails_full_chain_qualification(self) -> None:
         expected = {"title": "automatic_policy", "cover": "human"}
         with self.assertRaisesRegex(
