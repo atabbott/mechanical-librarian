@@ -54,6 +54,10 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.automatic_decision import (
@@ -178,6 +182,28 @@ class FieldEffectTests(unittest.TestCase):
             )[0]
             self.assertNotEqual(first.consent_id, second.consent_id)
 
+    def test_activity_ignores_consent_orphaned_by_policy_activation(self) -> None:
+        self.repository.grant_field_effect_consents(
+            "primary", ("removed",), ("title",), 1
+        )
+        builtin = MetadataPolicyProfile.builtin()
+        replacement = MetadataPolicyProfile.create(
+            "Replacement", dict(builtin.options), dict(builtin.destinations)
+        )
+        self.repository.create_metadata_policy_draft(replacement.canonical_json)
+        remaining = resolve_policy(replacement, "remaining")
+        self.repository.activate_metadata_policy(
+            replacement.policy_id,
+            builtin.policy_id,
+            (("remaining", remaining.resolved_id, remaining.canonical_json),),
+            2,
+        )
+
+        activity = self.repository.field_effect_activity_data(50)
+
+        self.assertEqual(activity["consented_libraries"], [])
+        self.assertEqual(activity["consented_destinations"], [])
+
     def test_unused_continuous_consent_survives_exact_schema_validation(self) -> None:
         consent = self.repository.grant_field_effect_consents(
             "primary", ("books",), ("title",), 1
@@ -241,18 +267,40 @@ class FieldEffectTests(unittest.TestCase):
             reason="field_unavailable", changed_at=10,
         )
         self.repository.clear_field_effect_capability_suspension(
-            scope="destination", connection="primary", destination="title", observed_at=9,
+            scope="destination", connection="primary", destination="title",
+            reason="field_unavailable", observed_at=9,
         )
         self.assertEqual(
             self.repository.field_effect_capability_suspension("primary", "title"),
             "field_unavailable",
         )
         self.repository.clear_field_effect_capability_suspension(
-            scope="destination", connection="primary", destination="title", observed_at=10,
+            scope="destination", connection="primary", destination="title",
+            reason="field_unavailable", observed_at=10,
         )
         self.assertEqual(
             self.repository.field_effect_capability_suspension("primary", "title"),
             "field_unavailable",
+        )
+        self.repository.suspend_field_effect_capability(
+            scope="destination", connection="primary", destination="title",
+            reason="unexpected_effect_behavior", changed_at=11,
+        )
+        self.repository.clear_field_effect_capability_suspension(
+            scope="destination", connection="primary", destination="title",
+            reason="field_unavailable", observed_at=12,
+        )
+        self.assertEqual(
+            self.repository.field_effect_capability_suspension("primary", "title"),
+            "unexpected_effect_behavior",
+        )
+        self.repository.suspend_field_effect_capability(
+            scope="destination", connection="primary", destination="title",
+            reason="insufficient_permission", changed_at=12,
+        )
+        self.assertEqual(
+            self.repository.field_effect_capability_suspension("primary", "title"),
+            "unexpected_effect_behavior",
         )
 
     def test_manual_hold_requires_explicit_return_and_later_human_wins(self) -> None:

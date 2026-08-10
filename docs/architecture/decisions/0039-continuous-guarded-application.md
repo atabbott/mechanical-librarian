@@ -21,7 +21,10 @@ destination, action kind, or authority scope requires fresh consent. Consent als
 policy semantics and qualified automatic categories, so a semantic policy
 change invalidates it before scheduling and again at claim. Consent is not
 inferred from a decision, policy activation, configuration, or an earlier
-canary.
+canary. Activity discloses every included and excluded destination before the
+owner submits the exact subset. The command accepts only an identical fresh
+probe result, and partially consented libraries remain available for later
+incremental consent.
 
 Use the normalized value of the exact destination as the target version. A
 change to another Audiobookshelf item field therefore does not invalidate an
@@ -63,9 +66,11 @@ ledger with pause, resume, revoke, and grouped recovery. Library, Attention,
 Policy, and Detail retain their accepted hierarchy and language. Capability
 failure removes only the affected field from actionable Library and Attention
 projections while Detail retains its visible read-only evidence and explanation;
-it does not create a queue console or dashboard. A successful observation clears
-only a suspension no newer than the observation timestamp, preserving a later
-failure even when serialized application work resumes after an observation.
+it does not create a queue console or dashboard. Denied observations are
+persisted. A successful read-only observation clears only an older permission,
+field-shape, or connection-availability suspension it can disprove; it never
+clears `unexpected_effect_behavior` and preserves a later failure even when
+serialized application work resumes after an observation.
 
 ## Consequences
 

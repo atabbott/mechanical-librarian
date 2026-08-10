@@ -115,8 +115,13 @@ class _AutomaticSuspendRequest(_ClosedModel):
     reason: StrictStr = Field(min_length=1, max_length=256)
 
 
+class _ActivityConsentGrant(_ClosedModel):
+    library: StrictStr = Field(min_length=1, max_length=128)
+    destinations: list[StrictStr] = Field(min_length=1, max_length=64)
+
+
 class _ActivityConsentRequest(_ClosedModel):
-    libraries: list[StrictStr] = Field(min_length=1, max_length=64)
+    grants: list[_ActivityConsentGrant] = Field(min_length=1, max_length=64)
 
 
 class _ReviewField(_ClosedModel):
@@ -1188,7 +1193,10 @@ def _register_case_and_effect_routes(
     ) -> dict[str, object]:
         _require_session(sessions, ml_session, x_csrf_token)
         return field_effect_call(
-            lambda: application.enable_activity(tuple(payload.libraries))
+            lambda: application.enable_activity(tuple(
+                (grant.library, tuple(grant.destinations))
+                for grant in payload.grants
+            ))
         )
 
     @app.post("/api/v1/activity/{connection}/{library}/revoke",

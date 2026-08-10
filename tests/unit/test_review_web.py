@@ -470,8 +470,12 @@ class _ActivityApplication(ContinuousGuardedApplication):
             ],
             "consented_libraries": [{"connection": "primary", "library": library} for library in sorted(self.enabled_libraries)],
             "capabilities": [
-                {"library": "fiction", "state": "allowed"},
-                {"library": "history", "state": "allowed"},
+                {"connection": "primary", "library": "fiction", "state": "allowed",
+                 "destinations": [{"destination": "title", "state": "allowed",
+                                   "consented": "fiction" in self.enabled_libraries}]},
+                {"connection": "primary", "library": "history", "state": "allowed",
+                 "destinations": [{"destination": "title", "state": "allowed",
+                                   "consented": "history" in self.enabled_libraries}]},
             ],
             "counts": {}, "enabled_libraries": [{"connection": "primary", "library": library} for library in sorted(self.enabled_libraries)],
             "events": [{"destination": "title", "failure": None, "library": "fiction", "occurred_at": 1, "origin": "automatic_policy", "state": "verified", "work_id": "book-1"}], "example": {"after": "After", "before": "Before", "destination": "title", "library": "fiction", "work_id": "book-1"},
@@ -480,8 +484,8 @@ class _ActivityApplication(ContinuousGuardedApplication):
             "schema_version": "continuous-field-activity-v1", "suspensions": [],
         }
 
-    def enable(self, libraries):
-        self.enabled_libraries.update(libraries)
+    def enable(self, grants):
+        self.enabled_libraries.update(library for library, _ in grants)
         return self.activity()
 
     def revoke(self, connection, library):
@@ -665,21 +669,21 @@ class ReviewWebTests(unittest.TestCase):
         denied = self.client.post(
             "/api/v1/activity/consent",
             headers={**self.origin, "X-CSRF-Token": "invalid"},
-            json={"libraries": ["fiction"]},
+            json={"grants": [{"library": "fiction", "destinations": ["title"]}]},
         )
         self.assertEqual(denied.status_code, 403)
         login = self._login()
         enabled = self.client.post(
             "/api/v1/activity/consent",
             headers={**self.origin, "X-CSRF-Token": login["csrf_token"]},
-            json={"libraries": ["fiction"]},
+            json={"grants": [{"library": "fiction", "destinations": ["title"]}]},
         )
         self.assertEqual(enabled.status_code, 200)
         self.assertEqual(enabled.json()["enabled_libraries"][0]["library"], "fiction")
         later = self.client.post(
             "/api/v1/activity/consent",
             headers={**self.origin, "X-CSRF-Token": login["csrf_token"]},
-            json={"libraries": ["history"]},
+            json={"grants": [{"library": "history", "destinations": ["title"]}]},
         )
         self.assertEqual(later.status_code, 200)
         self.assertEqual(
@@ -2852,7 +2856,8 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 repository.list_current_attention_documents(None, 10, 0), ()
             )
             repository.clear_field_effect_capability_suspension(
-                scope="destination", connection="primary", destination="title", observed_at=2,
+                scope="destination", connection="primary", destination="title",
+                reason="field_unavailable", observed_at=2,
             )
             self.assertEqual(repository.count_current_review_cases(None), (2, 1))
             repository.suspend_field_effect_capability(
@@ -2862,7 +2867,8 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             self.assertEqual(repository.count_current_review_cases(None), (2, 0))
             self.assertEqual(repository.count_current_attention_fields(None), 0)
             repository.clear_field_effect_capability_suspension(
-                scope="connection", connection="primary", destination="", observed_at=3,
+                scope="connection", connection="primary", destination="",
+                reason="connection_unavailable", observed_at=3,
             )
             self.assertEqual(repository.count_current_review_cases(None), (2, 1))
             self.assertEqual(
@@ -2873,10 +2879,18 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 len(repository.list_current_attention_documents("ångström", 10, 0)),
                 1,
             )
+            repository.suspend_field_effect_capability(
+                scope="destination", connection="primary", destination="title",
+                reason="insufficient_permission", changed_at=4,
+            )
             repository.close()
             reopened = open_repository(database, create=False)
-            self.assertEqual(reopened.count_current_review_cases("ångström"), (1, 1))
-            self.assertEqual(reopened.count_current_review_cases("STRASSE"), (1, 1))
+            self.assertEqual(
+                reopened.field_effect_capability_suspension("primary", "title"),
+                "insufficient_permission",
+            )
+            self.assertEqual(reopened.count_current_review_cases("ångström"), (1, 0))
+            self.assertEqual(reopened.count_current_review_cases("STRASSE"), (1, 0))
             self.assertEqual(reopened.count_current_review_cases("NOVELS"), (1, 0))
             reopened.close()
 
@@ -2918,7 +2932,8 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             )
             self.assertEqual(repository.count_current_attention_fields(None), 2)
             repository.clear_field_effect_capability_suspension(
-                scope="destination", connection="primary", destination="series", observed_at=2,
+                scope="destination", connection="primary", destination="series",
+                reason="field_unavailable", observed_at=2,
             )
             repository.close()
 

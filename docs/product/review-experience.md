@@ -318,12 +318,16 @@ theme is non-authoritative presentation state and cannot affect review data or
 decision authority.
 
 Activity preserves the Library, Attention and Policy hierarchy. Before consent
-it shows prepared human/automatic counts, the 14-field envelope, one mutation
-slot, a representative before/after example, backup/capability readiness and one
-enable action. Afterwards it shows a compact running summary and chronological
-ledger, with pause/resume/revoke as the only prominent controls and grouped
-recovery for scoped failures. It does not expose internal jobs or rates, add a
-badge, or turn operational failure into a metadata decision.
+it shows prepared human/automatic counts, all 14 destinations with exact
+included/excluded readiness, one mutation slot, a representative before/after
+example, backup readiness and one enable action. A partially consented library
+returns to that same disclosure when a newly eligible destination can be added;
+the action binds the exact visible subset and fails safely if it changes.
+Afterwards it shows a compact running summary and chronological ledger, with
+qualified automatic outcomes named clearly, unknown origins shown as neutral
+bounded text, and pause/resume/revoke as the only prominent controls. It does
+not expose internal jobs or rates, add a badge, or turn operational failure into
+a metadata decision.
 
 The delivered F16a detail page uses a bounded horizontally scrollable field
 attention-only strip inside a non-overflowing document. Each genuinely

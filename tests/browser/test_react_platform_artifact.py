@@ -42,7 +42,25 @@ def _payload(path: str) -> object:
     if path == "/api/v1/metadata-policy/transition":
         return None
     if path == "/api/v1/activity":
-        return {"schema_version": "continuous-field-activity-v1", "backup_ready": True, "paused": False, "configured_libraries": [], "enabled_libraries": [], "capabilities": [], "events": [], "counts": {}}
+        return {
+            "schema_version": "continuous-field-activity-v1", "backup_ready": True,
+            "paused": False,
+            "configured_libraries": [{"connection": "primary", "library": "fiction", "prepared": {"automatic": 1, "human": 1, "total": 2}}],
+            "enabled_libraries": [],
+            "capabilities": [{
+                "connection": "primary", "library": "fiction", "state": "partially_allowed",
+                "destinations": [
+                    {"destination": "authors", "state": "allowed", "consented": False},
+                    {"destination": "subtitle", "state": "field_unavailable", "consented": False},
+                    {"destination": "title", "state": "allowed", "consented": True},
+                ],
+            }],
+            "events": [
+                {"work_id": "book-1", "library": "fiction", "destination": "title", "state": "verified", "origin": "automatic_policy"},
+                {"work_id": "book-2", "library": "fiction", "destination": "subtitle", "state": "stale", "origin": "unrecognised_origin"},
+            ],
+            "counts": {},
+        }
     raise AssertionError(f"unexpected API path: {path}")
 
 
@@ -57,6 +75,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
         fail_activity_once = False
         activity_failures = 0
         fail_policy_persistently = False
+        consent_payloads: list[object] = []
 
         def fulfill(route: Route) -> None:
             nonlocal activity_failures, documents
@@ -65,6 +84,10 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             if path.startswith("/api/v1/"):
                 if path == "/api/v1/session/logout":
                     route.fulfill(status=204, headers={"x-ml-build-identity": "c" * 64}, body="")
+                    return
+                if path == "/api/v1/activity/consent" and route.request.method == "POST":
+                    consent_payloads.append(route.request.post_data_json)
+                    route.fulfill(status=200, content_type="application/json", body=json.dumps(_payload("/api/v1/activity")))
                     return
                 route.fulfill(status=200, content_type="application/json", body=json.dumps(_payload(path)))
                 return
@@ -111,12 +134,26 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
                 self.assertEqual(page.locator("img, script:not([src])").count(), 0)
                 self.assertIsNone(page.evaluate("() => window.__metadataExecuted"))
+                if path == "/activity":
+                    page.get_by_label("fiction destination consent").get_by_text(
+                        "subtitle: Excluded · field unavailable"
+                    ).wait_for()
+                    page.get_by_text("Qualified automatic", exact=False).wait_for()
+                    page.get_by_text("Recorded source: unrecognised origin", exact=False).wait_for()
+                    page.get_by_role("checkbox", name="fiction · 2 prepared").check()
+                    page.get_by_role("button", name="Enable guarded writes").click()
+                    page.get_by_text(
+                        "Activity state refreshed from the authoritative server."
+                    ).wait_for()
                 self.assertEqual(
                     documents,
                     before_entry + (2 if path == "/activity" else 1),
                 )
 
             self.assertEqual(activity_failures, 1)
+            self.assertEqual(consent_payloads, [{
+                "grants": [{"library": "fiction", "destinations": ["authors", "title"]}]
+            }])
 
             before_navigation = documents
             page.get_by_role("link", name="Library").click()
