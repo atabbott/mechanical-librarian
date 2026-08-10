@@ -430,7 +430,7 @@ def _qualify_runtime_console(
         "metadata-report", "proposal-set", "review-case", "catalogue", "batch",
         "shadow-review", "reviewer-auth",
     )
-    if help_text.count("review-serve") != 2 or any(name in help_text for name in retired):
+    if help_text.count("review-serve") != 3 or any(name in help_text for name in retired):
         raise QualificationFailure("installed_console_surface_invalid")
     python = console.parent / ("python.exe" if os.name == "nt" else "python")
     unavailable = _run(

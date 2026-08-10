@@ -28,7 +28,10 @@ from scripts.qualify_exact_artifact import (
 
 class ExactArtifactQualificationTests(unittest.TestCase):
     def test_runtime_probe_decodes_help_and_requires_workbench_absence(self) -> None:
-        help_output = b"usage: mechanical-librarian {review-serve}\nreview-serve service\n"
+        help_output = (
+            b"usage: mechanical-librarian {review-serve}\n"
+            b"{review-serve}\nreview-serve service\n"
+        )
         completed = (
             subprocess.CompletedProcess(("console", "--help"), 0, help_output, b""),
             subprocess.CompletedProcess(("python", "-I"), 0, b"", b""),
