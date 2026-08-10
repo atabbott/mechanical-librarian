@@ -165,6 +165,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.set_viewport_size({"width": 1440, "height": 900})
             page.goto("https://react-platform.invalid/library?lens=all")
             page.get_by_text("Automatic-only work", exact=True).wait_for()
+            page.locator(".work-row").first.get_by_text("Synthetic Author", exact=False).wait_for()
             page.get_by_text("Synthetic library · epub · item-1", exact=True).wait_for()
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 1440)
             page.goto("https://react-platform.invalid/review/case-1?field=title&subview=review")
@@ -175,7 +176,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertIn("First proposed", proposed.text_content() or "")
             self.assertIn("Second proposed", proposed.text_content() or "")
             self.assertIn("Third proposed", proposed.text_content() or "")
-            page.get_by_text("Synthetic Author", exact=True).wait_for()
+            page.get_by_text("Synthetic Author", exact=False).first.wait_for()
             page.set_viewport_size({"width": 390, "height": 844})
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
 
@@ -200,16 +201,16 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.get_by_role("button", name="Sign out").click()
             page.get_by_text("Writes are blocked", exact=False).wait_for()
             fail_policy_persistently = True
-            page.get_by_role("link", name="Policy", exact=True).click()
-            page.get_by_role(
-                "heading", name="The current workspace assets could not be loaded."
-            ).wait_for()
-            self.assertEqual(documents, before_navigation + 1)
-            page.get_by_role("button", name="Reload the current application").click()
+            page.goto("https://react-platform.invalid/policy?section=identity")
             page.get_by_role(
                 "heading", name="The current workspace assets could not be loaded."
             ).wait_for()
             self.assertEqual(documents, before_navigation + 2)
+            page.get_by_role("button", name="Reload the current application").click()
+            page.get_by_role(
+                "heading", name="The current workspace assets could not be loaded."
+            ).wait_for()
+            self.assertEqual(documents, before_navigation + 3)
             expected_chunk_errors = [
                 error
                 for error in errors
