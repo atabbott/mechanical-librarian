@@ -218,6 +218,15 @@ def main() -> None:
         if not _owned("image", image, run_id):
             raise QualificationError("image_ownership_failed")
         image_id = _run(["docker", "image", "inspect", image, "--format", "{{.Id}}"])
+        _run([
+            "docker", "run", "--rm", "--user", "65532:65532", "--read-only",
+            "--network", "none", "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true",
+            "--entrypoint", "/opt/mechanical-librarian/bin/python", image,
+            "-I", "-c",
+            "import importlib.util; raise SystemExit(0 if "
+            "importlib.util.find_spec('mechanical_librarian_workbench') is None else 1)",
+        ])
         _run(["docker", "volume", "create", "--label",
               f"{OWNERSHIP_LABEL}={run_id}", volume])
         if not _owned("volume", volume, run_id):
@@ -331,8 +340,9 @@ def main() -> None:
             "non_root": True,
             "read_only_root": True,
             "readiness": True,
-            "schema": "container-lifecycle-evidence-v1",
+            "schema": "container-lifecycle-evidence-v2",
             "snapshot_build": True,
+            "workbench_excluded": True,
             "single_data_volume": True,
             "source_sha": source_sha,
             "status": "passed",
