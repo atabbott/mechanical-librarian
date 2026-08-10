@@ -1469,7 +1469,7 @@ class SQLiteMetadataReportRepository:
                     "UPDATE review_preparation_scans SET state='queued',"
                     "requested_at=?,updated_at=MAX(?,?),"
                     "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
-                    "rescan_requested=0 WHERE scan_id=? "
+                    "refresh_count=0,rescan_requested=0 WHERE scan_id=? "
                     "AND state='completed_with_failures'",
                     (requested_at, requested_at, changed_at, scan_id),
                 ).rowcount
@@ -2966,10 +2966,16 @@ class SQLiteMetadataReportRepository:
                     (scan_id,),
                 ).fetchone()[0]
                 if rescan_requested and pending_manual_return:
+                    if failures or stale:
+                        self._connection.execute(
+                            "DELETE FROM review_preparation_absences WHERE scan_id=?",
+                            (scan_id,),
+                        )
                     self._connection.execute(
                         "UPDATE review_preparation_scans SET state='queued',"
                         "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
-                        "rescan_requested=0,updated_at=? WHERE scan_id=?",
+                        "refresh_count=0,rescan_requested=0,updated_at=? "
+                        "WHERE scan_id=?",
                         (claimed_at, scan_id),
                     )
                 elif failures:
@@ -3568,9 +3574,14 @@ class SQLiteMetadataReportRepository:
                     "UPDATE review_preparation_scans SET state="
                     "CASE WHEN rescan_requested=1 AND ? THEN 'queued' "
                     "ELSE 'completed_with_failures' END,"
+                    "refresh_count=CASE WHEN rescan_requested=1 AND ? "
+                    "THEN 0 ELSE refresh_count END,"
                     "rescan_requested=0,updated_at=? "
                     "WHERE scan_id=? AND state='discovering'",
-                    (pending_manual_return, completed_at, action.scan_id),
+                    (
+                        pending_manual_return, pending_manual_return,
+                        completed_at, action.scan_id,
+                    ),
                 ).rowcount
                 if updated != 1:
                     raise MetadataReportError("review preparation state changed")

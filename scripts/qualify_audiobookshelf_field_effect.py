@@ -702,10 +702,21 @@ def _qualification_hardcover_client(
 
 
 def _require_installed_return_automatic_transition(
-    status_code: int,
+    status_code: int, before: object, after: object,
 ) -> None:
     """A return request schedules fresh lineage; it does not clear its hold."""
-    if status_code != 204:
+    before_scan_id = getattr(before, "scan_id", None)
+    after_scan_id = getattr(after, "scan_id", None)
+    before_updated_at = getattr(before, "updated_at", None)
+    after_updated_at = getattr(after, "updated_at", None)
+    if (
+        status_code != 204
+        or type(before_scan_id) is not str
+        or after_scan_id != before_scan_id
+        or type(before_updated_at) is not int
+        or type(after_updated_at) is not int
+        or after_updated_at <= before_updated_at
+    ):
         raise QualificationError("installed_return_automatic_failed")
 
 
@@ -1125,13 +1136,25 @@ def _installed_continuous_qualification(
                 return_library = _string(
                     target.get("library"), "installed_preparation_invalid"
                 )
+                before_return_progress = repository.review_pipeline_progress(
+                    return_connection, return_library
+                )
+                if before_return_progress is None:
+                    raise QualificationError("installed_preparation_invalid")
+                before_return_at = getattr(
+                    before_return_progress, "updated_at", None
+                )
+                if type(before_return_at) is not int:
+                    raise QualificationError("installed_preparation_invalid")
+                clock_deadline = time.monotonic() + 2
+                while int(time.time()) <= before_return_at:
+                    if time.monotonic() >= clock_deadline:
+                        raise QualificationError("installed_preparation_invalid")
+                    time.sleep(0.05)
                 returned = client.post(
                     f"/api/v1/review-cases/{case_id}/fields/"
                     f"{automatic_destination}/return-to-automatic",
                     headers=mutation_headers,
-                )
-                _require_installed_return_automatic_transition(
-                    returned.status_code,
                 )
                 requested_return_progress, return_hold = (
                     _read_installed_return_lineage(
@@ -1141,6 +1164,11 @@ def _installed_continuous_qualification(
                 )
                 if requested_return_progress is None:
                     raise QualificationError("installed_preparation_invalid")
+                _require_installed_return_automatic_transition(
+                    returned.status_code,
+                    before_return_progress,
+                    requested_return_progress,
+                )
                 requested_return_scan_id = getattr(
                     requested_return_progress, "scan_id", None
                 )

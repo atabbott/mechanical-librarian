@@ -66,12 +66,22 @@ class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
         create.assert_called_once_with(application, review)
 
     def test_return_to_automatic_retains_manual_hold_until_fresh_lineage(self) -> None:
-        _require_installed_return_automatic_transition(204)
+        before = SimpleNamespace(scan_id="review_scan", updated_at=10)
+        after = SimpleNamespace(scan_id="review_scan", updated_at=11)
+        _require_installed_return_automatic_transition(204, before, after)
 
-        with self.assertRaisesRegex(
-            QualificationError, "installed_return_automatic_failed"
+        for status, candidate in (
+            (202, after),
+            (204, before),
+            (204, SimpleNamespace(scan_id="other", updated_at=11)),
         ):
-            _require_installed_return_automatic_transition(202)
+            with self.subTest(status=status, candidate=candidate):
+                with self.assertRaisesRegex(
+                    QualificationError, "installed_return_automatic_failed"
+                ):
+                    _require_installed_return_automatic_transition(
+                        status, before, candidate
+                    )
 
     def test_return_to_automatic_requires_requested_scan_before_hold_clear(self) -> None:
         requested_scan_id = "scan-library"

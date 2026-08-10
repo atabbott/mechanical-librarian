@@ -346,7 +346,7 @@ class FieldEffectTests(unittest.TestCase):
         )
         self.repository._connection.execute(
             "UPDATE review_preparation_scans SET state='completed_with_failures',"
-            "updated_at=11 WHERE scan_id=?",
+            "refresh_count=3,updated_at=11 WHERE scan_id=?",
             (return_scan.scan_id,),
         )
         self.repository._connection.commit()
@@ -365,6 +365,11 @@ class FieldEffectTests(unittest.TestCase):
         requeued = self.repository.review_pipeline_progress("primary", "books")
         assert requeued is not None
         self.assertEqual(requeued.state, "queued")
+        refresh_count = self.repository._connection.execute(
+            "SELECT refresh_count FROM review_preparation_scans WHERE scan_id=?",
+            (return_scan.scan_id,),
+        ).fetchone()
+        self.assertEqual(refresh_count, (0,))
         self.repository.close()
         self.repository = open_repository(
             self.database_path, create=False, cross_thread=True
