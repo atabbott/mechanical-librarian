@@ -179,7 +179,7 @@ const stringValue = (value: unknown, field: string) => { if (typeof value !== 's
 const integerValue = (value: unknown, field: string) => { if (!Number.isSafeInteger(value) || (value as number) < 0) throw new ApiError(502, `invalid_${field}`); return value as number }
 const optionalString = (value: unknown, field: string) => value === null || value === undefined ? undefined : stringValue(value, field)
 const stringArray = (value: unknown, field: string) => { if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) throw new ApiError(502, `invalid_${field}`); return value }
-export const displayValue = (value: unknown): string => value === null ? 'Not set' : typeof value === 'string' || typeof value === 'boolean' ? String(value) : Array.isArray(value) ? value.map(displayValue).join(' · ') : record(value) && typeof value.name === 'string' ? value.name : 'Unavailable'
+export const displayValue = (value: unknown): string => value === null ? 'Not set' : typeof value === 'string' || typeof value === 'boolean' ? String(value) : Array.isArray(value) ? value.map(displayValue).join(' · ') : record(value) && typeof value.name === 'string' ? `${value.name}${typeof value.sequence === 'string' ? ` · ${value.sequence}` : ''}` : 'Unavailable'
 
 const validateObject = (value: unknown, name: string): Record<string, unknown> => { if (!record(value) || typeof value.schema_version !== 'string') throw new ApiError(502, `invalid_${name}_response`); return value }
 const mapActivity = (value: unknown): ActivityView => { if (!record(value)) throw new ApiError(502, 'invalid_activity_response'); return value }

@@ -4,6 +4,7 @@ import {
   ApiError,
   PageCsrfTokenStore,
   ReviewApiClient,
+  mapCaseDetail,
   SessionExpiredError,
   mapLibrary,
 } from '../src/api/http'
@@ -17,6 +18,22 @@ const csrf = {
 }
 
 describe('ReviewApiClient', () => {
+  it('preserves present and absent series sequences in the mapped review value', () => {
+    const detail = (series: readonly Record<string, unknown>[]) => mapCaseDetail({
+      schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true,
+      target: { item: 'A Book', library: 'Books', connection: 'primary' },
+      fields: [{
+        destination: 'series', deterministic_disposition: 'review', effect_capability: 'manual',
+        needs_attention: true, manual_hold: false, current: { value: series },
+        proposed_values: [], proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',
+        human_decision: null, automatic_decision: null, notices: [], provenance: [],
+      }],
+    })
+
+    expect(detail([{ name: 'Archive', sequence: '2.5' }]).fields[0]?.currentValue).toBe('Archive · 2.5')
+    expect(detail([{ name: 'Standalone' }]).fields[0]?.currentValue).toBe('Standalone')
+  })
+
   it('maps exact library DTOs into presentation-safe view models', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
       Response.json({
