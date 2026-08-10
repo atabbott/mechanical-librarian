@@ -473,6 +473,27 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertTrue(progress.rescan_requested)
         reopened.close()
 
+    def test_repeated_queued_request_advances_its_freshness_anchor(self) -> None:
+        repository = open_repository(self.path)
+        first = repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+
+        repeated = repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 11
+        )
+
+        self.assertEqual(repeated.scan_id, first.scan_id)
+        self.assertEqual(repeated.state, "queued")
+        self.assertEqual(repeated.updated_at, 11)
+        timing = repository._connection.execute(
+            "SELECT requested_at,updated_at FROM review_preparation_scans "
+            "WHERE scan_id=?",
+            (first.scan_id,),
+        ).fetchone()
+        repository.close()
+        self.assertEqual(timing, (11, 11))
+
     def test_request_during_discovery_forces_a_successor_scan(self) -> None:
         repository = open_repository(self.path)
         repository.request_review_scan(

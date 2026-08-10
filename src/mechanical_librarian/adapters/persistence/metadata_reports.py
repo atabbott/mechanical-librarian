@@ -2609,7 +2609,13 @@ class SQLiteMetadataReportRepository:
                         raise MetadataReportError(
                             "review preparation producer changed during active work"
                         )
-                    if row[1] in {"discovering", "processing"}:
+                    if row[1] == "queued":
+                        self._connection.execute(
+                            "UPDATE review_preparation_scans SET requested_at=?,"
+                            "updated_at=? WHERE scan_id=?",
+                            (requested_at, requested_at, row[0]),
+                        )
+                    else:
                         self._connection.execute(
                             "UPDATE review_preparation_scans SET rescan_requested=1,updated_at=? WHERE scan_id=?",
                             (requested_at, row[0]),
