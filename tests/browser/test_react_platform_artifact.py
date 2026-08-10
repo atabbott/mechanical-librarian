@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from playwright.sync_api import Route, sync_playwright
+from playwright.sync_api import Route, expect, sync_playwright
 
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetBundle,
@@ -134,6 +134,9 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 ("/attention", "Needs your attention"),
                 ("/review/case-1?field=title&subview=review", "Current review case"),
                 ("/policy?section=identity", "Choose meaning before automation."),
+                ("/policy?section=publication", "Choose meaning before automation."),
+                ("/policy?section=curation", "Choose meaning before automation."),
+                ("/policy?section=unsupported", "Choose meaning before automation."),
                 ("/activity", "Ready when you are"),
             )
             for path, heading in routes:
@@ -143,6 +146,14 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertIsNotNone(response)
                 self.assertEqual(response.status, 200)
                 page.get_by_role("heading", name=heading).wait_for()
+                if path.startswith("/policy"):
+                    section = path.rsplit("=", 1)[-1]
+                    expect(page.locator(f"#policy-{section}")).to_be_focused()
+                    self.assertEqual(
+                        page.get_by_role("combobox", name="Policy chapter").input_value(),
+                        section,
+                    )
+                    self.assertTrue(page.url.endswith(path), f"{path} restored as {page.url}")
                 self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
                 self.assertEqual(page.locator("img, script:not([src])").count(), 0)
                 self.assertIsNone(page.evaluate("() => window.__metadataExecuted"))

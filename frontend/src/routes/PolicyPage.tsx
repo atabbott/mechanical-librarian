@@ -47,7 +47,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const { http, queryClient } = useReviewContext()
   const search = policyRoute.useSearch()
   const navigate = useNavigate({ from: '/policy' })
-  const initialChapterHandled = useRef(false)
+  const initialChapter = useRef(search.section)
+  const chapterInteracted = useRef(false)
+  const chapterRestored = useRef(false)
   const activationTrigger = useRef<HTMLButtonElement>(null)
   const [activeChapter, setActiveChapter] = useState<PolicySection>(search.section)
   const [draft, setDraft] = useState<PolicyDraft>(() => ({ name: data.state.profile.name, options: { ...data.state.profile.options }, destinations: { ...data.state.profile.destinations } }))
@@ -70,15 +72,42 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   }, retry: false, onSettled: refresh })
 
   useEffect(() => {
-    if (initialChapterHandled.current) return
-    initialChapterHandled.current = true
-    requestAnimationFrame(() => document.getElementById(`policy-${search.section}`)?.scrollIntoView({ block: 'start' }))
-  }, [search.section])
+    chapterRestored.current = false
+    const restoreChapter = () => {
+      if (chapterInteracted.current) return
+      chapterRestored.current = false
+      const section = initialChapter.current
+      const target = document.getElementById(`policy-${section}`)
+      target?.scrollIntoView({ block: 'start' })
+      target?.focus({ preventScroll: true })
+      setActiveChapter(section)
+    }
+    if (document.getElementById('main-content')?.dataset.restoredPath === '/policy') restoreChapter()
+    else addEventListener('ml:route-restored', restoreChapter, { once: true })
+    return () => removeEventListener('ml:route-restored', restoreChapter)
+  }, [])
+  useEffect(() => {
+    const enableTracking = () => { chapterRestored.current = true }
+    const enableKeyboardTracking = (event: globalThis.KeyboardEvent) => {
+      if (['ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp', ' '].includes(event.key)) enableTracking()
+    }
+    addEventListener('wheel', enableTracking, { passive: true })
+    addEventListener('pointerdown', enableTracking, { passive: true })
+    addEventListener('touchstart', enableTracking, { passive: true })
+    addEventListener('keydown', enableKeyboardTracking)
+    return () => {
+      removeEventListener('wheel', enableTracking)
+      removeEventListener('pointerdown', enableTracking)
+      removeEventListener('touchstart', enableTracking)
+      removeEventListener('keydown', enableKeyboardTracking)
+    }
+  }, [])
   useEffect(() => {
     let frame = 0
     const trackChapter = () => {
       cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
+        if (!chapterRestored.current) return
         const threshold = innerWidth <= 760 ? 190 : Math.min(180, innerHeight * .28)
         let current = chapters[0]?.key ?? 'identity'
         for (const chapter of chapters) if ((document.getElementById(`policy-${chapter.key}`)?.getBoundingClientRect().top ?? Infinity) <= threshold) current = chapter.key
@@ -147,6 +176,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     }
   }
   const openChapter = async (section: PolicySection) => {
+    chapterInteracted.current = true
+    chapterRestored.current = false
     setActiveChapter(section)
     await navigate({ search: { section }, replace: true })
     requestAnimationFrame(() => {

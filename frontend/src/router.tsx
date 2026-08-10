@@ -84,7 +84,7 @@ const Shell = () => {
     document.title = `${title} · Mechanical Librarian`
     const changed = previousPath.current !== path
     previousPath.current = path
-    const frame = requestAnimationFrame(() => { const target = main.current?.querySelector<HTMLElement>('[data-route-focus]') ?? main.current; target?.focus({ preventScroll: true }); if (changed && !popNavigation.current) window.scrollTo({ top: 0 }); popNavigation.current = false })
+    const frame = requestAnimationFrame(() => { const target = main.current?.querySelector<HTMLElement>('[data-route-focus]') ?? main.current; target?.focus({ preventScroll: true }); if (changed && !popNavigation.current) window.scrollTo({ top: 0 }); popNavigation.current = false; main.current?.setAttribute('data-restored-path', path); dispatchEvent(new Event('ml:route-restored')) })
     return () => cancelAnimationFrame(frame)
   }, [navigation.status, path, title])
   const signOut = async () => { setShellError(''); try { await http.logout(); window.location.assign('/login') } catch (error) { if (!(error instanceof BuildMismatchError)) setShellError('Sign out failed. Try again.') } }
