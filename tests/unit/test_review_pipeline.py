@@ -473,6 +473,112 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertTrue(progress.rescan_requested)
         reopened.close()
 
+    def test_repeated_queued_request_advances_its_freshness_anchor(self) -> None:
+        repository = open_repository(self.path)
+        first = repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+
+        repeated = repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 11
+        )
+
+        self.assertEqual(repeated.scan_id, first.scan_id)
+        self.assertEqual(repeated.state, "queued")
+        self.assertEqual(repeated.updated_at, 11)
+        timing = repository._connection.execute(
+            "SELECT requested_at,updated_at FROM review_preparation_scans "
+            "WHERE scan_id=?",
+            (first.scan_id,),
+        ).fetchone()
+        repository.close()
+        self.assertEqual(timing, (11, 11))
+
+    def test_request_during_discovery_forces_a_successor_scan(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+
+        requested = repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 12
+        )
+
+        self.assertEqual(requested.state, "discovering")
+        self.assertTrue(requested.rescan_requested)
+        self.assertEqual(requested.updated_at, 12)
+        repository.complete_review_discovery(
+            discovery, 1, "a" * 64, (), 13
+        )
+        processing = repository.review_pipeline_progress("primary", "fiction")
+        assert processing is not None
+        self.assertTrue(processing.rescan_requested)
+        self.assertIsNone(repository.claim_review_pipeline_action(14))
+        queued = repository.review_pipeline_progress("primary", "fiction")
+        assert queued is not None
+        self.assertEqual(queued.state, "queued")
+        repository.close()
+
+    def test_failed_discovery_preserves_the_requested_successor(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 12
+        )
+
+        with patch.object(
+            repository, "_has_pending_field_effect_manual_return",
+            return_value=True,
+        ):
+            repository.fail_review_pipeline_action(
+                discovery, "failed", False, 13
+            )
+
+        progress = repository.review_pipeline_progress("primary", "fiction")
+        assert progress is not None
+        self.assertEqual(progress.state, "queued")
+        self.assertFalse(progress.rescan_requested)
+        successor = repository.claim_review_pipeline_action(14)
+        assert successor is not None
+        self.assertEqual(successor.stage, "discovery")
+        repository.close()
+
+    def test_failed_processing_preserves_the_requested_successor(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery, 1, "a" * 64, (_entry("item-1", "1" * 64),), 12
+        )
+        work = repository.claim_review_pipeline_action(13)
+        assert work is not None
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 14
+        )
+        repository.fail_review_pipeline_action(work, "failed", False, 15)
+
+        with patch.object(
+            repository, "_has_pending_field_effect_manual_return",
+            return_value=True,
+        ):
+            self.assertIsNone(repository.claim_review_pipeline_action(16))
+        progress = repository.review_pipeline_progress("primary", "fiction")
+        assert progress is not None
+        self.assertEqual(progress.state, "queued")
+        successor = repository.claim_review_pipeline_action(17)
+        assert successor is not None
+        self.assertEqual(successor.stage, "discovery")
+        repository.close()
+
     def test_complete_empty_discovery_reaches_a_bounded_summary(self) -> None:
         repository = open_repository(self.path)
         repository.request_review_scan(
@@ -879,6 +985,66 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertEqual(pointer, (admitted["review_case_id"], "admitted"))
         self.assertEqual(staged, (0,))
         self.assertEqual(progress.state, "completed_with_failures")
+
+    def test_manual_return_successor_discards_failed_scan_absence_candidates(self) -> None:
+        repository = open_repository(self.path)
+        report = _report()
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        admitted = json.loads(repository.admit_review_case(proposal))
+        repository.request_review_scan(
+            report.target.connection, report.target.library,
+            "lib-1", _PRODUCER, 10,
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "d" * 64,
+            (
+                replace(
+                    _entry(report.target.item, report.file.identity),
+                    library=report.target.library,
+                    classification="singular-unmounted",
+                    mount=None,
+                ),
+                replace(
+                    _entry("later-failure", "9" * 64),
+                    library=report.target.library,
+                ),
+            ),
+            12,
+        )
+        work = repository.claim_review_pipeline_action(13)
+        assert work is not None
+        repository.request_review_scan(
+            report.target.connection, report.target.library,
+            "lib-1", _PRODUCER, 14,
+        )
+        repository.fail_review_pipeline_action(work, "failed", False, 15)
+
+        with patch.object(
+            repository, "_has_pending_field_effect_manual_return",
+            return_value=True,
+        ):
+            self.assertIsNone(repository.claim_review_pipeline_action(16))
+
+        pointer = repository._connection.execute(
+            "SELECT review_case_id,outcome FROM current_review_case_lineages"
+        ).fetchone()
+        staged = repository._connection.execute(
+            "SELECT COUNT(*) FROM review_preparation_absences"
+        ).fetchone()
+        progress = repository.review_pipeline_progress(
+            report.target.connection, report.target.library
+        )
+        repository.close()
+        assert progress is not None
+        self.assertEqual(pointer, (admitted["review_case_id"], "admitted"))
+        self.assertEqual(staged, (0,))
+        self.assertEqual(progress.state, "queued")
 
     def test_one_work_progresses_through_every_persisted_stage(self) -> None:
         report = _report()

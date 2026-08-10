@@ -63,7 +63,11 @@ validates its exact item and revision against the latest generation. The
 return-to-automatic control retains its durable manual hold until its requested
 scan is successfully complete. Release compares the hold's human-decision token,
 so a concurrent later manual decision remains held; failed or incomplete scans
-cannot make stale automatic authority schedulable. Shutdown closes claim
+cannot make stale automatic authority schedulable. The accepted pending release
+is durable before the command succeeds and is recovered from the exact-current
+hold document after restart. Active discovery is marked for a successor scan,
+and bounded recovery pages rotate so incomplete older requests cannot starve a
+later completed release. Shutdown closes claim
 admission before the configured deadline applies to both review-preparation and
 guarded field-effect workers. A live over-deadline worker remains identified and
 causes typed shutdown failure before the shared repository closes.

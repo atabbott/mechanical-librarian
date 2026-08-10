@@ -153,6 +153,7 @@ class _HoldRepository(_Repository):
         super().__init__()
         self.hold = ("primary", "alpha")
         self.token = "first-hold"
+        self.pending = None
 
     def field_effect_manual_hold_context(self, review_case_id, destination):
         return self.hold
@@ -160,11 +161,26 @@ class _HoldRepository(_Repository):
     def field_effect_manual_hold_token(self, review_case_id, destination):
         return self.token if self.hold is not None else None
 
+    def request_field_effect_manual_return(
+        self, review_case_id, destination, token, scan_id, requested_at, changed_at,
+    ):
+        if self.hold is None or token != self.token:
+            return False
+        self.pending = (
+            review_case_id, destination, *self.hold, token, scan_id, requested_at,
+            changed_at,
+        )
+        return True
+
+    def pending_field_effect_manual_returns(self, limit, after=None):
+        return () if self.pending is None else (self.pending,)
+
     def clear_field_effect_manual_hold(self, review_case_id, destination, changed_at, token=None):
         if token != self.token:
             return None
         context = self.hold
         self.hold = None
+        self.pending = None
         return context
 
 
@@ -235,6 +251,95 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         progress.updated_at = 11
         service.schedule()
         self.assertIsNone(repository.hold)
+
+    def test_return_to_automatic_recovers_the_persisted_request_after_restart(self) -> None:
+        repository = _HoldRepository()
+        progress = SimpleNamespace(
+            scan_id="review_scan", state="processing", rescan_requested=False,
+            updated_at=10,
+        )
+        configured = (("primary", "alpha"),)
+        first = ContinuousGuardedApplication(
+            repository, {configured[0]: _Planner()},
+            {configured[0]: _AllowedCapability()}, _Authority(), configured,
+            lambda: 1, lambda *_: progress, scan_progress=lambda *_: progress,
+        )
+        first.return_to_automatic("review_case", "title")
+        progress.state = "completed"
+        progress.updated_at = 11
+        restarted = ContinuousGuardedApplication(
+            repository, {configured[0]: _Planner()},
+            {configured[0]: _AllowedCapability()}, _Authority(), configured,
+            lambda: 2, lambda *_: progress, scan_progress=lambda *_: progress,
+        )
+
+        restarted.schedule()
+
+        self.assertIsNone(repository.hold)
+
+    def test_pending_return_paging_reaches_completed_request_after_first_hundred(self) -> None:
+        repository = _HoldRepository()
+        repository.pending = None
+        rows = tuple(
+            (
+                f"review_case_{index:03d}", "title", "primary", "alpha",
+                f"hold-{index:03d}", "review_scan", 10, index,
+            )
+            for index in range(101)
+        )
+        cleared = []
+
+        def pending(limit, after=None):
+            selected = rows
+            if after is not None:
+                selected = tuple(
+                    row for row in rows
+                    if (row[7], row[0], row[1]) > after
+                )
+            return selected[:limit]
+
+        repository.pending_field_effect_manual_returns = pending
+        repository.clear_field_effect_manual_hold = (
+            lambda review_case_id, destination, changed_at, token=None:
+            cleared.append(review_case_id) or ("primary", "alpha")
+        )
+        progress = SimpleNamespace(
+            scan_id="review_scan", state="processing", rescan_requested=False,
+            updated_at=10,
+        )
+        service = ContinuousGuardedApplication(
+            repository, {("primary", "alpha"): _Planner()},
+            {("primary", "alpha"): _AllowedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 200, lambda *_: progress,
+            scan_progress=lambda *_: progress,
+        )
+
+        service.schedule()
+        progress.state = "completed"
+        progress.updated_at = 11
+        service.schedule()
+
+        self.assertEqual(cleared, ["review_case_100"])
+
+    def test_pending_return_for_removed_library_does_not_block_scheduler(self) -> None:
+        repository = _HoldRepository()
+        repository.pending = (
+            "review_case", "title", "primary", "removed", "first-hold",
+            "review_scan", 10, 10,
+        )
+        reads = []
+        service = ContinuousGuardedApplication(
+            repository, {("primary", "alpha"): _Planner()},
+            {("primary", "alpha"): _AllowedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 20,
+            lambda *_: SimpleNamespace(),
+            scan_progress=lambda *context: reads.append(context),
+        )
+
+        service.schedule()
+
+        self.assertEqual(reads, [])
+        self.assertIsNotNone(repository.hold)
 
     def test_failed_or_superseded_scan_never_releases_manual_hold(self) -> None:
         repository = _HoldRepository()
