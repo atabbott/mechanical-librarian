@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Restore Policy as the refined semantic notebook with Identity, Publication,
+  Curation, and Unsupported content chapters; synchronized sticky and compact
+  navigation; readable posture, representation, qualification, impact, and
+  active-versus-draft state; and an explicit activation review over the existing
+  guarded currentness-bound operation, with contained and returning keyboard
+  focus. (#536)
+
 - Restore Variant M review detail: direct current-or-specific-proposed value
   controls record the existing exact-field decision without generic outcome
   controls or a submit step. Readable reviewer facts and secondary,

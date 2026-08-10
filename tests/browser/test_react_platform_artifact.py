@@ -133,7 +133,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 ("/library?lens=all", "Every work, with exceptions first"),
                 ("/attention", "Needs your attention"),
                 ("/review/case-1?field=title&subview=review", "Current review case"),
-                ("/policy?section=identity", "Choose how prepared metadata reaches you"),
+                ("/policy?section=identity", "Choose meaning before automation."),
                 ("/activity", "Ready when you are"),
             )
             for path, heading in routes:
@@ -220,10 +220,14 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
             self.assertEqual(documents, before_navigation)
             page.get_by_role("link", name="Policy", exact=True).click()
-            page.get_by_role("button", name="Draft", exact=True).click()
-            page.get_by_text("Draft matches the active policy.", exact=True).wait_for()
-            page.get_by_label("Draft name").fill("Edited synthetic policy")
-            page.get_by_text("Draft has changes from the active policy.", exact=True).wait_for()
+            page.get_by_role(
+                "heading", name="Choose meaning before automation."
+            ).wait_for()
+            page.locator(".policy-impact").get_by_text(
+                "Draft matches active policy", exact=True
+            ).wait_for()
+            page.get_by_label("Policy name").fill("Edited synthetic policy")
+            page.get_by_text("Draft differs from active policy", exact=True).wait_for()
             page.get_by_role("button", name="Sign out").click()
             page.get_by_text("Writes are blocked", exact=False).wait_for()
             fail_policy_persistently = True
