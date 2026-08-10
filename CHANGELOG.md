@@ -23,7 +23,9 @@
   bounded case, Library, Attention, and preparation views. FastAPI now receives
   named operations instead of a broad repository, while SQLite remains the sole
   transaction owner and all existing security, currentness, idempotency, and
-  API contracts remain unchanged. (#494)
+  API contracts remain unchanged. Unconfigured scan, retry, pause, and resume
+  controls preserve the typed `unavailable` response instead of reporting a
+  persistence or library failure. (#494)
 
 - Remove the retired qualification-only shadow-review product workflow,
   request/attempt/dispatch/result persistence, browser model-advice projection,

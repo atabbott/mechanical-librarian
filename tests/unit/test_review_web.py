@@ -770,6 +770,52 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(failed.status_code, 503)
         self.assertEqual(failed.json()["error"]["code"], "persistence")
 
+    def test_unconfigured_review_preparation_controls_remain_unavailable(self) -> None:
+        session = self._login()
+        headers = {**self.origin, "x-csrf-token": session["csrf_token"]}
+        for path in (
+            "/api/v1/review-preparation/primary/fiction/scan",
+            "/api/v1/review-preparation/primary/fiction/retry",
+            "/api/v1/review-preparation/pause",
+            "/api/v1/review-preparation/resume",
+        ):
+            with self.subTest(path=path):
+                response = self.client.post(path, headers=headers)
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json()["error"]["code"], "unavailable")
+
+    def test_review_preparation_control_runtime_failures_remain_persistence(self) -> None:
+        configuration = ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(self.hash_path),
+            session_lifetime_seconds=600,
+        )
+        preparation = _Preparation()
+        self.client = TestClient(
+            create_transport_test_app(
+                self.repository,
+                configuration,
+                clock=lambda: self.now,
+                review_preparation=preparation,
+            ),
+            base_url="https://review.test",
+        )
+        session = self._login()
+        headers = {**self.origin, "x-csrf-token": session["csrf_token"]}
+        controls = (
+            ("/api/v1/review-preparation/primary/fiction/scan", "request"),
+            ("/api/v1/review-preparation/primary/fiction/retry", "retry"),
+            ("/api/v1/review-preparation/pause", "set_paused"),
+            ("/api/v1/review-preparation/resume", "set_paused"),
+        )
+        for path, method in controls:
+            with self.subTest(path=path), patch.object(
+                preparation, method, side_effect=RuntimeError
+            ):
+                response = self.client.post(path, headers=headers)
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(response.json()["error"]["code"], "persistence")
+
     def test_only_liveness_and_login_are_anonymous(self) -> None:
         live = self.client.get("/health/live")
         self.assertEqual(live.status_code, 200)
