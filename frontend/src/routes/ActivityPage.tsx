@@ -37,8 +37,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const selected = selection.source === data ? selection.names : new Set([...selection.names].filter((name) => selectableNames.has(name)))
   const [status, setStatus] = useState('')
   const mutation = useMutation({ mutationFn: ({ path, body }: { path: string; body?: unknown }) => http.activityCommand(path, body), retry: false, onSuccess: async () => { setSelection({ source: data, names: new Set() }); setStatus('Activity state refreshed from the authoritative server.'); await queryClient.invalidateQueries({ queryKey: ['activity'] }) }, onError: async (error, command) => { if (error instanceof AmbiguousMutationError) { try { const refreshed = await query.refetch(); const outcome = refreshed.isError ? 'unknown' : activityOutcome(refreshed.data, command); setStatus(outcome === 'applied' ? 'The requested activity change was applied, confirmed by the authoritative server.' : 'The activity outcome could not be confirmed. No command was resent.') } catch { setStatus('The activity outcome could not be confirmed. No command was resent.') }; return } setStatus('The requested activity change failed safely. Try again.'); await queryClient.invalidateQueries({ queryKey: ['activity'] }) } })
-  const paused = data.paused === true
-  const backupReady = data.backup_ready === true
+  const paused = data.paused
+  const backupReady = data.backup_ready
   const capabilityState = (library: string) => text(capability(library)?.state, 'not_ready')
   const selectedGrants = selectable.flatMap((library) => {
     const name = text(library.library)

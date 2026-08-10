@@ -32,7 +32,7 @@ export const activityOutcome = (data: unknown, command: { path: string; body?: u
   for (const grant of command.body.grants) {
     if (!record(grant) || typeof grant.library !== 'string' || !Array.isArray(grant.destinations) || grant.destinations.length === 0 || !grant.destinations.every((destination) => typeof destination === 'string')) return 'unknown'
     if (!Array.isArray(data.capabilities)) return 'unknown'
-    const capabilities = data.capabilities.filter((item) => record(item) && item.library === grant.library)
+    const capabilities = data.capabilities.filter(record).filter((item) => item.library === grant.library)
     const capability = capabilities[0]
     if (capabilities.length !== 1 || !record(capability) || !Array.isArray(capability.destinations)) return 'unknown'
     for (const requested of grant.destinations) {
