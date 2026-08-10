@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Label persisted qualified-automatic Activity events accurately, leave
+  unrecognised origins neutral, and keep eligible prepared libraries available
+  for authenticated, CSRF-bound later consent after another library is already
+  enabled. Library revocation remains scoped to that library. (#507, #508)
+
 - Let Activity consent proceed for the currently eligible fields when another
   field is unavailable or lacks permission, while connection outages still block
   consent. Capability-disabled fields no longer inflate Library or Attention
