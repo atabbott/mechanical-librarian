@@ -57,6 +57,15 @@ Contained-reviewer authentication actions are adapter-owned and establish no
 product lifecycle. The workbench is source-only, disposable by default,
 excluded from the wheel and container, and has no production-target bridge.
 
+The wheel also contains one validated, currently unactivated React shell built
+from the exact OpenAPI document. React owns ephemeral presentation state,
+TanStack Router owns typed route/search state, TanStack Query owns cancellable
+server reads, and one handwritten HTTP boundary maps transport DTOs and owns
+CSRF renewal and document-level authentication expiry. FastAPI remains the only
+server and authority boundary. Node and npm exist only in exact build stages;
+the runtime contains the canonical shell manifest and its reachable hashed
+JavaScript/CSS members, not frontend source or build tools.
+
 Dependency direction remains:
 
 ```text

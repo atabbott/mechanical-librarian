@@ -28,6 +28,28 @@ from scripts.qualify_exact_artifact import (
 
 
 class ExactArtifactQualificationTests(unittest.TestCase):
+    def test_runtime_probe_requires_packaged_react_assets_for_product(self) -> None:
+        help_output = (
+            b"usage: mechanical-librarian {review-serve}\n"
+            b"{review-serve}\n    review-serve  service\n"
+        )
+        completed = (
+            subprocess.CompletedProcess(("console", "--help"), 0, help_output, b""),
+            subprocess.CompletedProcess(("python", "-I"), 0, b"", b""),
+            subprocess.CompletedProcess(("python", "-I"), 0, b"", b""),
+        )
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            qualifier_module, "_run", side_effect=completed
+        ) as run, patch.object(qualifier_module, "_qualify_guarded_effect_lifecycle"):
+            _qualify_runtime_console(
+                Path(directory) / "bin" / "mechanical-librarian",
+                Path(directory),
+                {},
+                require_react_assets=True,
+            )
+
+        self.assertEqual(run.call_count, 3)
+
     def test_runtime_probe_decodes_help_and_requires_workbench_absence(self) -> None:
         help_output = (
             b"usage: mechanical-librarian {review-serve}\n"
@@ -61,8 +83,10 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                 console: Path,
                 run_directory: Path,
                 environment: dict[str, str],
+                *,
+                require_react_assets: bool = False,
             ) -> bytes:
-                del console, environment
+                del console, environment, require_react_assets
                 observed_modes.append(stat.S_IMODE(run_directory.stat().st_mode))
                 return b"review-probe\n"
 
@@ -204,6 +228,8 @@ class ExactArtifactQualificationTests(unittest.TestCase):
 
     def test_qualification_environment_discards_inherited_uv_controls(self) -> None:
         inherited = {
+            "ML_FRONTEND_PREBUILT_DIR": "/tmp/stale-assets",
+            "ML_OPENAPI_PATH": "/tmp/stale-openapi.json",
             "UV_CONFIG_FILE": "/tmp/untrusted-uv.toml",
             "UV_NO_BUILD_ISOLATION": "1",
             "UV_NO_VERIFY_HASHES": "1",

@@ -366,6 +366,9 @@ def qualify_exact_artifact(
                 console,
                 run_directory,
                 runtime_environment,
+                require_react_assets=(
+                    _canonical_distribution(distribution) == "mechanical-librarian"
+                ),
             )
         else:
             console_output = _run(
@@ -412,6 +415,8 @@ def _qualify_runtime_console(
     console: Path,
     run_directory: Path,
     environment: dict[str, str],
+    *,
+    require_react_assets: bool = False,
 ) -> bytes:
     """Prove the installed command surface and source-workbench exclusion."""
     completed = _run(
@@ -441,6 +446,22 @@ def _qualify_runtime_console(
     )
     if unavailable.stdout or unavailable.stderr:
         raise QualificationFailure("installed_workbench_probe_invalid")
+    if require_react_assets:
+        assets = _run(
+            (
+                str(python),
+                "-I",
+                "-c",
+                "from mechanical_librarian.interfaces.web.react_assets import "
+                "ReactAssetBundle,ReactAssetLoader; raise SystemExit(0 if "
+                "isinstance(ReactAssetLoader().load(),ReactAssetBundle) else 1)",
+            ),
+            cwd=run_directory,
+            env=environment,
+            reason="installed_react_assets_invalid",
+        )
+        if assets.stdout or assets.stderr:
+            raise QualificationFailure("installed_react_assets_invalid")
     _qualify_guarded_effect_lifecycle(python, run_directory, environment)
     return output
 
@@ -589,7 +610,16 @@ def _qualification_environment() -> dict[str, str]:
     environment = {
         key: value
         for key, value in os.environ.items()
-        if key not in {"PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"}
+        if key
+        not in {
+            "ML_FRONTEND_PREBUILT_DIR",
+            "ML_FRONTEND_OUT_DIR",
+            "ML_GENERATED_DTO_PATH",
+            "ML_OPENAPI_PATH",
+            "PYTHONHOME",
+            "PYTHONPATH",
+            "VIRTUAL_ENV",
+        }
         and not key.startswith("UV_")
     }
     launcher_bin = Path(sys.executable).parent.resolve()
@@ -848,6 +878,8 @@ def _validate_wheel(wheel: Path, distribution: str) -> _WheelManifest:
             )
             if set(record_rows) != {entry.filename for entry in files}:
                 raise QualificationFailure("wheel_record_invalid")
+            if _canonical_distribution(distribution) == "mechanical-librarian":
+                _validate_react_wheel_surface(archive, files)
 
             manifest_members: list[_WheelMember] = []
             for member in sorted(files, key=lambda value: value.filename):
@@ -905,6 +937,38 @@ def _validate_wheel(wheel: Path, distribution: str) -> _WheelManifest:
         members=tuple(manifest_members),
         payload_sha256=payload_digest.hexdigest(),
     )
+
+
+def _validate_react_wheel_surface(
+    archive: ZipFile, files: tuple[ZipInfo, ...]
+) -> None:
+    prefix = "mechanical_librarian/interfaces/web/"
+    asset_prefix = f"{prefix}react_assets/"
+    names = {member.filename for member in files}
+    forbidden = ("node_modules", "/frontend/", "/generated/", ".map")
+    if any(any(token in f"/{name}" for token in forbidden) for name in names):
+        raise QualificationFailure("react_wheel_surface_invalid")
+    identity_name = f"{prefix}react_asset_identity.py"
+    manifest_name = f"{asset_prefix}review-assets-v1.json"
+    if identity_name not in names or manifest_name not in names:
+        raise QualificationFailure("react_wheel_surface_invalid")
+    manifest_member = next(member for member in files if member.filename == manifest_name)
+    try:
+        manifest = json.loads(_read_archive_member(archive, manifest_member).decode("utf-8"))
+        relative_assets = {
+            item["path"] for item in manifest["assets"] if type(item) is dict
+        }
+    except (KeyError, TypeError, UnicodeError, json.JSONDecodeError):
+        raise QualificationFailure("react_wheel_surface_invalid") from None
+    expected = {f"{asset_prefix}{path}" for path in relative_assets}
+    observed = {name for name in names if name.startswith(asset_prefix)}
+    if (
+        manifest.get("entry") != "index.html"
+        or not any(path.endswith(".js") for path in relative_assets)
+        or not any(path.endswith(".css") for path in relative_assets)
+        or observed != expected | {manifest_name}
+    ):
+        raise QualificationFailure("react_wheel_surface_invalid")
 
 
 def _verify_installed_payload(

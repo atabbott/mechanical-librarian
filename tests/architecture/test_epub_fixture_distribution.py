@@ -45,6 +45,22 @@ class EpubFixtureDistributionTests(unittest.TestCase):
             self.assertNotIn("tests/support/epub_packages.py", serialized)
             self.assertNotIn("materialize_epub_fixtures.py", serialized)
             self.assertFalse(any(name.casefold().endswith(".epub") for name in names))
+        self.assertTrue(any(name.endswith("/frontend/package.json") for name in sdist_names))
+        self.assertTrue(
+            any(name.endswith("/scripts/build_frontend.py") for name in sdist_names)
+        )
+        self.assertTrue(
+            any(
+                name.endswith("/docs/reference/review-openapi-v1.json")
+                for name in sdist_names
+            )
+        )
+        self.assertFalse(any("frontend/src/generated" in name for name in sdist_names))
+        self.assertFalse(any("frontend/node_modules" in name for name in sdist_names))
+        self.assertFalse(any(name.endswith(".map") for name in wheel_names + sdist_names))
+        self.assertTrue(
+            any("interfaces/web/react_assets/assets/" in name for name in wheel_names)
+        )
 
 
 if __name__ == "__main__":

@@ -24,6 +24,14 @@ Stop with `docker compose down`; do not add `-v` unless intentionally deleting
 the complete local application state. Image publication remains a separate
 release authority and is not part of this support contract.
 
+The image build has an exact pinned Node 24.19.0/npm 11.17.0 stage that
+regenerates browser DTOs from the committed OpenAPI document and emits the
+validated React asset bundle. The Python build admits only that bundle, and the
+final image contains neither Node/npm nor frontend source, generated DTOs,
+`node_modules`, Vite metadata, or source maps. The new shell remains unactivated
+until the separately reviewed route cutover; current routes continue to serve
+the established frontend.
+
 The normal container composes the supported Audiobookshelf guarded target, but
 remains report-only until the owner completes the authenticated, library-scoped
 Activity consent flow and every backup, currentness, capability and claim gate

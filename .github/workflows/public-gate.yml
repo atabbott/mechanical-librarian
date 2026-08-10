@@ -29,6 +29,13 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Install the exact frontend toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24.19.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
@@ -40,6 +47,26 @@ jobs:
 
       - name: Install locked development dependencies
         run: uv sync --locked --all-groups
+
+      - name: Qualify the frontend source
+        working-directory: frontend
+        run: |
+          test "$(node --version)" = "v24.19.0"
+          test "$(npm --version)" = "11.17.0"
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run generate -- --output "$RUNNER_TEMP/review-api-a.d.ts"
+          npm run generate -- --output "$RUNNER_TEMP/review-api-b.d.ts"
+          cmp "$RUNNER_TEMP/review-api-a.d.ts" "$RUNNER_TEMP/review-api-b.d.ts"
+          npm run generate
+          npm run typecheck
+          npm run lint
+          npm run licenses
+          npm test
+          npm audit --audit-level=low
+          ML_FRONTEND_OUT_DIR="$RUNNER_TEMP/frontend-build-a" npm run build
+          ML_FRONTEND_OUT_DIR="$RUNNER_TEMP/frontend-build-b" npm run build
+          diff -r "$RUNNER_TEMP/frontend-build-a" "$RUNNER_TEMP/frontend-build-b"
+          git diff --exit-code
 
       - name: Run the fast source tier
         run: uv run python scripts/run_test_tier.py fast
@@ -57,6 +84,13 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
+
+      - name: Install the exact frontend toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24.19.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
@@ -88,6 +122,13 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Install the exact frontend toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24.19.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
@@ -106,7 +147,18 @@ jobs:
       - name: Verify the exact Chromium qualification payload
         run: uv run python scripts/verify_playwright_browser.py
 
+      - name: Build the exact React browser artifact
+        working-directory: frontend
+        run: |
+          test "$(node --version)" = "v24.19.0"
+          test "$(npm --version)" = "11.17.0"
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run generate
+          ML_FRONTEND_OUT_DIR="$RUNNER_TEMP/react-assets" npm run build
+
       - name: Run the protected browser tier
+        env:
+          ML_REACT_ASSET_DIR: ${{ runner.temp }}/react-assets
         run: uv run python scripts/run_test_tier.py browser
 
   public-gate:

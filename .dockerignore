@@ -6,4 +6,11 @@
 __pycache__
 *.pyc
 tests
-docs
+frontend/node_modules
+frontend/dist
+frontend/src/generated
+frontend/**/*.map
+docs/*
+!docs/reference/
+docs/reference/*
+!docs/reference/review-openapi-v1.json

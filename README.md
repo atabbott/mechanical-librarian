@@ -58,6 +58,13 @@ See the [catalogue guide](docs/operations/catalogue.md),
 [contributor workbench](docs/development/contributor-workbench.md), and
 [documentation index](docs/README.md).
 
+The next authenticated-browser platform is committed under `frontend/` but is
+not yet active on any route. Its exact source checks require Node 24.19.0 and
+npm 11.17.0: run `npm ci --ignore-scripts`, `npm run generate`, `npm run
+typecheck`, `npm run lint`, `npm test`, and `npm run build` from that directory.
+Generated DTOs, compiled assets, source maps, `node_modules`, and Node itself do
+not belong in source or the runtime container.
+
 ## Product direction
 
 The intended product remains one self-contained container beside a media

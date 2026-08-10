@@ -227,6 +227,32 @@ def main() -> None:
             "import importlib.util; raise SystemExit(0 if "
             "importlib.util.find_spec('mechanical_librarian_workbench') is None else 1)",
         ])
+        _run([
+            "docker", "run", "--rm", "--user", "65532:65532", "--read-only",
+            "--network", "none", "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true",
+            "--entrypoint", "/opt/mechanical-librarian/bin/python", image,
+            "-I", "-c",
+            "from mechanical_librarian.interfaces.web.react_assets import "
+            "ReactAssetBundle,ReactAssetLoader; value=ReactAssetLoader().load(); "
+            "raise SystemExit(0 if isinstance(value,ReactAssetBundle) and "
+            "value.entry == 'index.html' and any(a.kind == 'script' for a in value.assets) "
+            "and any(a.kind == 'style' for a in value.assets) else 1)",
+        ])
+        _run([
+            "docker", "run", "--rm", "--user", "65532:65532", "--read-only",
+            "--network", "none", "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true",
+            "--entrypoint", "/bin/sh", image, "-eu", "-c",
+            "test -z \"$(command -v node || true)\"; "
+            "test -z \"$(command -v npm || true)\"; "
+            "test -z \"$(find /opt/mechanical-librarian -type d "
+            "\\( -name node_modules -o -name frontend -o -name generated -o -name .vite \\) "
+            "-print -quit)\"; "
+            "test -z \"$(find /opt/mechanical-librarian -type f "
+            "\\( -name '*.map' -o -name package.json -o -name package-lock.json \\) "
+            "-print -quit)\"",
+        ])
         _run(["docker", "volume", "create", "--label",
               f"{OWNERSHIP_LABEL}={run_id}", volume])
         if not _owned("volume", volume, run_id):
@@ -335,12 +361,14 @@ def main() -> None:
             "graceful_shutdown_seconds": GRACEFUL_SHUTDOWN_SECONDS,
             "graceful_terminal_state": True,
             "guarded_checkpoint_restart": True,
+            "frontend_build_tools_excluded": True,
             "image_id": image_id,
             "liveness": True,
             "non_root": True,
             "read_only_root": True,
             "readiness": True,
-            "schema": "container-lifecycle-evidence-v2",
+            "react_assets_validated": True,
+            "schema": "container-lifecycle-evidence-v3",
             "snapshot_build": True,
             "workbench_excluded": True,
             "single_data_volume": True,

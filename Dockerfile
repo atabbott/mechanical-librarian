@@ -1,9 +1,26 @@
+FROM node:24.19.0-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS frontend-build
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN cd frontend && npm ci --ignore-scripts --no-audit --no-fund
+COPY frontend ./frontend
+COPY docs/reference/review-openapi-v1.json ./docs/reference/review-openapi-v1.json
+RUN cd frontend \
+    && test "$(node --version)" = "v24.19.0" \
+    && test "$(npm --version)" = "11.17.0" \
+    && npm run generate \
+    && npm run typecheck \
+    && npm run build
+
 FROM python:3.13.14-slim-bookworm@sha256:67a1e1f215ccda113cfc024e8639049257e88f273898f595b61476d128d387e8 AS build
 COPY --from=ghcr.io/astral-sh/uv:0.11.28@sha256:0f36cb9361a3346885ca3677e3767016687b5a170c1a6b88465ec14aefec90aa /uv /usr/local/bin/uv
 WORKDIR /build
-COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY pyproject.toml setup.py uv.lock README.md LICENSE ./
+COPY scripts/build_frontend.py ./scripts/build_frontend.py
 COPY src ./src
-RUN UV_PROJECT_ENVIRONMENT=/opt/mechanical-librarian uv sync --frozen --no-dev --no-editable
+COPY --from=frontend-build /build/frontend/dist /frontend-dist
+RUN ML_FRONTEND_PREBUILT_DIR=/frontend-dist \
+    UV_PROJECT_ENVIRONMENT=/opt/mechanical-librarian \
+    uv sync --frozen --no-dev --no-editable
 
 FROM python:3.13.14-slim-bookworm@sha256:67a1e1f215ccda113cfc024e8639049257e88f273898f595b61476d128d387e8
 RUN groupadd --system --gid 65532 librarian \
