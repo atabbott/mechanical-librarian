@@ -6,6 +6,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TypeAlias
 
 from .context import WorkbenchContext
@@ -132,12 +133,20 @@ class CatalogueRequest:
     limit: int = 100
 
     def __post_init__(self) -> None:
-        _member(self.action, {"refresh", "list"}, "catalogue action")
+        _member(self.action, {"refresh", "list", "get"}, "catalogue action")
         for value, label in ((self.connection, "connection"), (self.library, "library"),
                              (self.library_id, "library id"), (self.selector, "selector")):
             _identifier(value, label)
         if self.action == "refresh":
             _required(self.connection, "connection")
+        elif self.action == "get":
+            for value, label in (
+                (self.connection, "connection"),
+                (self.library, "library"),
+                (self.library_id, "library id"),
+                (self.selector, "selector"),
+            ):
+                _required(value, label)
         if type(self.limit) is not int or not 1 <= self.limit <= 500:
             raise ValueError("invalid catalogue limit")
 
@@ -255,10 +264,7 @@ def _complete(
     if type(raw) is bytes:
         payload = raw
     elif type(raw) is str:
-        parsed = json.loads(raw)
-        canonical = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-        if canonical != raw:
-            raise ValueError("workbench operation returned noncanonical JSON")
+        json.loads(raw)
         payload = raw.encode("utf-8")
     elif type(raw) is bool:
         payload = json.dumps({"completed": raw}, separators=(",", ":"), sort_keys=True).encode()
@@ -277,6 +283,36 @@ def _complete(
     return WorkbenchResult(name, summary, facts, (artifact_id,))
 
 
+def _admit_configuration(
+    context: WorkbenchContext,
+    relative: str,
+    *additional_authority: Path,
+) -> tuple[Path, tuple[Path, ...]]:
+    config = context.path(relative)
+    config_payload, private = context.require_isolated_configuration(config)
+    bound = context.require_network(
+        config,
+        *additional_authority,
+        *private,
+        private_tail=len(private),
+        first_payload=config_payload,
+    )
+    private_offset = 1 + len(additional_authority)
+    private_snapshots = tuple(
+        context.authority_snapshot(payload)
+        for payload in bound[private_offset:]
+    )
+    return (
+        context.execution_configuration_snapshot(
+            bound[0], private, private_snapshots
+        ),
+        tuple(
+            context.authority_snapshot(payload)
+            for payload in bound[1:1 + len(additional_authority)]
+        ),
+    )
+
+
 def _execute(
     context: WorkbenchContext,
     request: ScenarioRequest,
@@ -288,11 +324,9 @@ def _execute(
     context.require_write()
     if isinstance(request, ReportRequest):
         if request.action == "observe":
-            config = context.path(request.config)
-            private = context.require_isolated_configuration(config)
-            context.require_network(config, *private)
+            admitted_config, _ = _admit_configuration(context, request.config)
             raw = selected.run_metadata_report(
-                config, context.path(request.database),
+                admitted_config, context.path(request.database),
                 context.path(request.artifacts), request.connection, request.library,
                 request.item, request.file_index,
             )
@@ -311,24 +345,32 @@ def _execute(
                 request.report_id, request.artifact_id, request.preview_variant,
             )
     elif isinstance(request, ProposalRequest):
-        raw = (selected.create_proposal_set(
-            context.path(request.config), context.path(request.database),
-            context.path(request.artifacts), request.identity,
-        ) if request.action == "create" else selected.reopen_proposal_set(
-            context.path(request.database), request.identity
-        ))
+        if request.action == "create":
+            admitted_config, _ = _admit_configuration(context, request.config)
+            raw = selected.create_proposal_set(
+                admitted_config,
+                context.path(request.database),
+                context.path(request.artifacts), request.identity,
+            )
+        else:
+            raw = selected.reopen_proposal_set(
+                context.path(request.database), request.identity
+            )
     elif isinstance(request, ReviewCaseRequest):
-        raw = (selected.admit_review_case(
-            context.path(request.config), context.path(request.database),
-            context.path(request.artifacts), request.identity,
-        ) if request.action == "admit" else selected.reopen_review_case(
-            context.path(request.database), request.identity
-        ))
+        if request.action == "admit":
+            admitted_config, _ = _admit_configuration(context, request.config)
+            raw = selected.admit_review_case(
+                admitted_config,
+                context.path(request.database),
+                context.path(request.artifacts), request.identity,
+            )
+        else:
+            raw = selected.reopen_review_case(
+                context.path(request.database), request.identity
+            )
     elif isinstance(request, CatalogueRequest):
         if request.action == "refresh":
-            config = context.path(request.config)
-            private = context.require_isolated_configuration(config)
-            context.require_network(config, *private)
+            config, _ = _admit_configuration(context, request.config)
         else:
             config = context.path(request.config)
         raw = selected.run_catalogue(
@@ -345,13 +387,15 @@ def _execute(
         elif request.action == "inspect":
             raw = selected.inspect_batch(context.path(request.manifest))
         else:
-            config = context.path(request.config)
             manifest = context.path(request.manifest)
-            private = context.require_isolated_configuration(config)
-            context.require_network(config, manifest, *private)
+            admitted_config, admitted_additional = _admit_configuration(
+                context, request.config, manifest
+            )
+            admitted_manifest = admitted_additional[0]
             events: list[dict[str, object]] = []
             completed = selected.run_batch(
-                config, context.path(request.catalogue), manifest, request.manifest_id,
+                admitted_config, context.path(request.catalogue), admitted_manifest,
+                request.manifest_id,
                 context.path(request.database), context.path(request.artifacts),
                 events.append,
             )

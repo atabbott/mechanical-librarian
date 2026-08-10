@@ -35,7 +35,10 @@
   launcher. Catalogue, report, batch, proposal, case, deterministic decision,
   and contained-reviewer experiments now live in a typed source-only contributor
   workbench with disposable state, production-target refusal, isolated-network
-  attempt evidence, bounded redacted results, and wheel/container exclusion.
+  attempt evidence, exact admitted authority snapshots, owner-private persistent
+  state, exact catalogue inspection, bounded redacted results, and
+  wheel/container exclusion. The runtime launcher preserves typed configuration
+  failure reporting.
   (#492)
 
 - Label persisted qualified-automatic Activity events accurately, leave

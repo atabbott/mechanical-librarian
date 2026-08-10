@@ -31,14 +31,23 @@ execution, plugins, aliases for retired commands, or generic workflow graph.
 Workbench state is disposable by default. Explicit contexts admit only
 synthetic fixtures, test workspaces, or approved private-corpus input; confine
 paths beneath that workspace; and reject production workspaces and targets with
-no force bypass. Network scenarios require a validated isolated profile with
-sanitized inputs and bounded authority. Each attempt is durably recorded before
-egress and binds the exact configuration/profile inputs; configured service
-origins are loopback or `.invalid`, and private paths remain workspace-confined.
+no force bypass. Persistent workspace, attempt, admitted-authority, and output
+storage is owner-only and unsafe pre-existing paths are refused. Temporary
+cleanup remains bound to the exact private directory created by the context,
+even if its public workspace view is later changed. Network scenarios require a
+validated isolated profile with sanitized inputs and bounded authority. Each
+attempt is durably recorded before egress and binds the exact size-bounded
+configuration/profile/manifest bytes. Operations consume an owner-private
+snapshot or the exact already admitted bytes. Execution configurations rebind
+absolute private-file references to their matching snapshots, so no validated
+authority path is reopened after the gate. Configured service origins are loopback or
+`.invalid`, and private paths remain workspace-confined.
 Fixed-origin metadata providers are refused by production composition and may be
 exercised only through a focused injected fake operation.
-Large outputs remain local digest-addressed artifacts under an ignored workspace, and operation
-exceptions cross a redacting closed failure boundary.
+Large outputs remain local digest-addressed artifacts under an ignored
+workspace, and operation exceptions cross a redacting closed failure boundary.
+Application operations retain their own valid JSON field order; the workbench
+does not impose a universal sort-key contract.
 
 The workbench reuses bootstrap composition only as an explicit source-mode
 binding to the same application services used by the HTTP/runtime surfaces.
