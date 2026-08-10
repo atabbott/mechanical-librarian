@@ -137,7 +137,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 ("/policy?section=publication", "Choose meaning before automation."),
                 ("/policy?section=curation", "Choose meaning before automation."),
                 ("/policy?section=unsupported", "Choose meaning before automation."),
-                ("/activity", "Ready when you are"),
+                ("/activity", "Activity"),
             )
             for path, heading in routes:
                 fail_activity_once = path == "/activity"
@@ -159,10 +159,14 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertIsNone(page.evaluate("() => window.__metadataExecuted"))
                 if path == "/activity":
                     page.get_by_label("fiction destination consent").get_by_text(
-                        "subtitle: Excluded · field unavailable"
+                        "Subtitle: Excluded · A field is unavailable"
                     ).wait_for()
-                    page.get_by_text("Qualified automatic", exact=False).wait_for()
-                    page.get_by_text("Recorded source: unrecognised origin", exact=False).wait_for()
+                    page.get_by_text("Qualified automatic decision", exact=False).wait_for()
+                    page.get_by_text("Recorded decision", exact=False).wait_for()
+                    self.assertNotIn(
+                        "unrecognised_origin",
+                        page.locator(".activity-ledger").inner_text(),
+                    )
                     page.get_by_role("checkbox", name="fiction · 2 prepared").check()
                     page.get_by_role("button", name="Enable guarded writes").click()
                     page.get_by_text(

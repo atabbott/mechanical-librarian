@@ -5,6 +5,7 @@ import json
 import threading
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
@@ -576,6 +577,51 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         self.assertNotIn("cleanup", service({"pending": 0, "exhausted": 0}).activity())
         with self.assertRaisesRegex(GuardedApplicationError, "activity"):
             service({"pending": "zero", "exhausted": 0}).activity()
+
+    def test_activity_parses_each_distinct_private_report_once(self) -> None:
+        decision = self._decisions(1)[0]
+
+        class Repository(_PagedRepository):
+            def field_effect_activity_data(self, limit):
+                event = {
+                    "connection": "primary", "destination": "title",
+                    "failure": None, "library": "alpha", "occurred_at": 1,
+                    "origin": "human", "report_id": "report-1",
+                    "state": "verified", "work_id": "work",
+                }
+                return {
+                    "consented_destinations": [], "consented_libraries": [],
+                    "counts": {}, "events": [dict(event), dict(event)],
+                    "paused": False, "report_documents": {"report-1": "{}"},
+                    "suspensions": [],
+                }
+
+        service = ContinuousGuardedApplication(
+            Repository([decision]), {("primary", "alpha"): _Planner()},
+            {("primary", "alpha"): _AllowedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 1, lambda *_: None,
+        )
+        report = SimpleNamespace(
+            report_id="report-1",
+            target=SimpleNamespace(
+                connection="primary", library="alpha", item="work",
+                current_title="Readable work", fields=(),
+            ),
+        )
+
+        with patch(
+            "mechanical_librarian.application.continuous_field_effects.MetadataReport.from_json",
+            return_value=report,
+        ) as parse:
+            activity = service.activity()
+
+        parse.assert_called_once_with("{}")
+        self.assertEqual(
+            [event["work_label"] for event in activity["events"]],
+            ["Readable work", "Readable work"],
+        )
+        self.assertNotIn("report_documents", activity)
+        self.assertTrue(all("report_id" not in event for event in activity["events"]))
 
     def test_successful_probe_preserves_unexpected_behavior_suspension(self) -> None:
         decision = self._decisions(1)[0]

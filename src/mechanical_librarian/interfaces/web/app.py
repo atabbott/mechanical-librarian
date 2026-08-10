@@ -315,12 +315,14 @@ class _ActivityCapability(_ClosedModel):
 
 
 class _ActivityEvent(_ClosedModel):
+    author_label: str = Field(default="Author details are not recorded", max_length=512)
     destination: str
     failure: str | None = None
     library: str
     occurred_at: int | None = None
     origin: str
     state: str
+    work_label: str = Field(default="Recorded work", max_length=512)
     work_id: str
 
 

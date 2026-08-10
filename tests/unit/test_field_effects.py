@@ -204,6 +204,24 @@ class FieldEffectTests(unittest.TestCase):
         self.assertEqual(activity["consented_libraries"], [])
         self.assertEqual(activity["consented_destinations"], [])
 
+    def test_activity_fetches_one_current_report_document_for_repeated_events(self) -> None:
+        report = metadata_report("Readable work", "a", "b", item_id="book-1")
+        self.repository.publish(report, lambda: True)
+        self.plan(suffix="a")
+        self.plan(suffix="b")
+
+        activity = self.repository.field_effect_activity_data(50)
+
+        self.assertEqual(activity["report_documents"], {
+            report.report_id: report.to_json(),
+        })
+        self.assertGreaterEqual(len(activity["events"]), 2)
+        self.assertEqual(
+            {event["report_id"] for event in activity["events"]},
+            {report.report_id},
+        )
+        self.assertTrue(all("report_document" not in event for event in activity["events"]))
+
     def test_unused_continuous_consent_survives_exact_schema_validation(self) -> None:
         consent = self.repository.grant_field_effect_consents(
             "primary", ("books",), ("title",), 1

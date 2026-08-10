@@ -1763,23 +1763,33 @@ class SQLiteMetadataReportRepository:
                 "coalesce(sum(CASE WHEN attempt>=3 THEN 1 ELSE 0 END),0) "
                 "FROM field_effect_cleanups WHERE state='pending'"
             ).fetchone()
+            event_rows = self._connection.execute(
+                "SELECT effect.connection_name,effect.destination,json_extract(event.document,'$.failure'),"
+                "effect.library_name,event.occurred_at,"
+                "json_extract(event.document,'$.origin'),lineage.report_id,event.kind,effect.work_id "
+                "FROM field_effect_events event JOIN field_effects effect "
+                "ON effect.plan_id=event.plan_id LEFT JOIN current_metadata_report_lineages lineage "
+                "ON lineage.connection_name=effect.connection_name AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id "
+                "ORDER BY event.occurred_at DESC,event.event_id DESC LIMIT ?", (limit,),
+            ).fetchall()
+            report_ids = sorted({row[6] for row in event_rows if row[6] is not None})
+            report_documents = {} if not report_ids else dict(self._connection.execute(
+                "SELECT report_id,document FROM metadata_reports WHERE report_id IN ("
+                + ",".join("?" for _ in report_ids) + ")",
+                report_ids,
+            ).fetchall())
             events = [{
+                "connection": connection,
                 "destination": destination,
                 "failure": failure,
                 "library": library,
                 "occurred_at": occurred_at,
                 "origin": origin,
+                "report_id": report_id,
                 "state": state,
                 "work_id": work_id,
-            } for destination, failure, library, occurred_at, origin, state, work_id
-                in self._connection.execute(
-                    "SELECT effect.destination,json_extract(event.document,'$.failure'),"
-                    "effect.library_name,event.occurred_at,"
-                    "json_extract(event.document,'$.origin'),event.kind,effect.work_id "
-                    "FROM field_effect_events event JOIN field_effects effect "
-                    "ON effect.plan_id=event.plan_id ORDER BY event.occurred_at DESC,"
-                    "event.event_id DESC LIMIT ?", (limit,),
-                ).fetchall()]
+            } for connection, destination, failure, library, occurred_at, origin, report_id, state, work_id
+                in event_rows]
             suspensions = [{
                 "connection": connection,
                 "destination": destination or None,
@@ -1809,6 +1819,7 @@ class SQLiteMetadataReportRepository:
                 "counts": counts,
                 "cleanup": {"pending": cleanup[0], "exhausted": cleanup[1]},
                 "events": events,
+                "report_documents": report_documents,
                 "paused": self.field_effect_paused(),
                 "suspensions": suspensions,
             }

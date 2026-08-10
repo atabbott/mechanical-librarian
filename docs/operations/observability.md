@@ -21,6 +21,15 @@ prepared origin counts, aggregate plan states, a bounded chronological ledger,
 pause, and scoped capability suspensions. It is not audit authority; canonical
 field-effect events remain the durable proof. Activity never exposes credentials,
 cover bytes, evidence excerpts, unrestricted paths, or a general queue console.
+The authenticated Activity page presents those facts as a calm state and outcome
+ledger: consent is explicit, pause prevents new claims while existing safe
+checkpoints can finish, and removing a library's permission prevents new work
+there. It derives bounded readable title and author labels from the exact current
+report lineage without exposing report documents, work IDs, or connection IDs as
+display identity. A common suspension is grouped only when its persisted reason,
+connection, and scope match; Activity reports affected destinations and an honest
+indeterminate reconciliation state rather than an invented completion estimate.
+It does not add a retry command or duplicate the human decision queue in Attention.
 
 Timing is disabled by default. Set the documented
 `review.diagnostic_timings_enabled` configuration field to retain at most 256

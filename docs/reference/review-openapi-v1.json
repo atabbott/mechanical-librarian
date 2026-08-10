@@ -105,6 +105,12 @@
       "_ActivityEvent": {
         "additionalProperties": false,
         "properties": {
+          "author_label": {
+            "default": "Author details are not recorded",
+            "maxLength": 512,
+            "title": "Author Label",
+            "type": "string"
+          },
           "destination": {
             "title": "Destination",
             "type": "string"
@@ -145,6 +151,12 @@
           },
           "work_id": {
             "title": "Work Id",
+            "type": "string"
+          },
+          "work_label": {
+            "default": "Recorded work",
+            "maxLength": 512,
+            "title": "Work Label",
             "type": "string"
           }
         },
