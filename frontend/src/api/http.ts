@@ -49,6 +49,27 @@ export type PolicyDraft = Schema<'_PolicyDraftRequest'>
 export type PolicyPreviewView = Schema<'_PolicyPreviewResponse'>
 export type PolicyActivationView = Schema<'_PolicyActivationResponse'>
 export type ActivityView = Readonly<Record<string, unknown>>
+export interface ActivityPreparedView { automatic: number; human: number; total: number }
+export interface ActivityLibraryView { connection: string; library: string; prepared?: ActivityPreparedView | null }
+export interface ActivityDestinationView { consented: boolean; destination: string; state: string }
+export interface ActivityCapabilityView { connection: string; destinations: readonly ActivityDestinationView[]; library: string; state: string }
+export interface ActivityEventView { destination: string; failure: string | null; library: string; occurred_at: number | null; origin: string; state: string; work_id: string }
+export interface ActivityDisplayView {
+  readonly [key: string]: unknown
+  backup_ready: boolean
+  capabilities: readonly ActivityCapabilityView[]
+  configured_libraries: readonly ActivityLibraryView[]
+  consented_libraries: readonly ActivityLibraryView[]
+  counts: Readonly<Record<string, number>>
+  enabled_libraries: readonly ActivityLibraryView[]
+  events: readonly ActivityEventView[]
+  example: Readonly<Record<string, unknown>> | null
+  last_failure: string | null
+  paused: boolean
+  prepared: ActivityPreparedView
+  schema_version: 'continuous-field-activity-v1'
+  suspensions: readonly Readonly<Record<string, unknown>>[]
+}
 
 export interface DecisionCommand {
   destination: string
@@ -142,10 +163,10 @@ export class ReviewApiClient implements ReviewHttp {
   async returnToAutomatic(id: string, destination: string, signal?: AbortSignal) { await this.mutate(`/api/v1/review-cases/${encodeURIComponent(id)}/fields/${encodeURIComponent(destination)}/return-to-automatic`, undefined, signal) }
   async getPolicyState(signal?: AbortSignal) { return validateObject(await this.read('/api/v1/metadata-policy/state', signal), 'policy_state') as unknown as PolicyStateView }
   async getShadowPosture(signal?: AbortSignal) { return validateObject(await this.read('/api/v1/metadata-policy/shadow', signal), 'shadow_posture') as unknown as ShadowPostureView }
-  async getAutomaticSafety(signal?: AbortSignal) { return mapActivity(await this.read('/api/v1/metadata-policy/automatic-safety', signal)) as AutomaticSafetyView }
+  async getAutomaticSafety(signal?: AbortSignal) { const value = await this.read('/api/v1/metadata-policy/automatic-safety', signal); if (!record(value)) throw new ApiError(502, 'invalid_automatic_safety_response'); return value as AutomaticSafetyView }
   async getShadowSample(signal?: AbortSignal) { return validateObject(await this.read('/api/v1/metadata-policy/shadow/outcomes?limit=10', signal), 'shadow_sample') as unknown as ShadowSampleView }
   async getPolicyTransition(signal?: AbortSignal) { const value = await this.read('/api/v1/metadata-policy/transition', signal); return value === null ? null : validateObject(value, 'policy_transition') as unknown as PolicyTransitionView }
-  async policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal) { return mapActivity(await this.mutate(`/api/v1/metadata-policy/${path}`, body, signal)) as T }
+  async policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal) { const value = await this.mutate(`/api/v1/metadata-policy/${path}`, body, signal); if (!record(value)) throw new ApiError(502, 'invalid_policy_response'); return value as T }
   async getActivity(signal?: AbortSignal) { return mapActivity(await this.read('/api/v1/activity', signal)) }
   async activityCommand(path: string, body?: unknown, signal?: AbortSignal) { const value = await this.mutate(`/api/v1/${path}`, body, signal); return value === undefined ? undefined : mapActivity(value) }
   async logout(signal?: AbortSignal) { await this.mutate('/api/v1/session/logout', undefined, signal) }
@@ -194,7 +215,27 @@ const preparationProgress = (value: unknown): PreparationProgress => {
   if (typeof value.rescan_requested !== 'boolean') throw new ApiError(502, 'invalid_preparation_rescan_requested')
   return value as unknown as PreparationProgress
 }
-const mapActivity = (value: unknown): ActivityView => { if (!record(value)) throw new ApiError(502, 'invalid_activity_response'); return value }
+const activityPrepared = (value: unknown, field: string): ActivityPreparedView => {
+  if (!record(value)) throw new ApiError(502, `invalid_${field}`)
+  return { automatic: integerValue(value.automatic, `${field}_automatic`), human: integerValue(value.human, `${field}_human`), total: integerValue(value.total, `${field}_total`) }
+}
+export const mapActivity = (value: unknown): ActivityDisplayView => {
+  if (!record(value) || value.schema_version !== 'continuous-field-activity-v1') throw new ApiError(502, 'invalid_activity_response')
+  const libraries = (raw: unknown, field: string): ActivityLibraryView[] => {
+    if (!Array.isArray(raw)) throw new ApiError(502, `invalid_${field}`)
+    return raw.map((item, index) => { if (!record(item)) throw new ApiError(502, `invalid_${field}_${String(index)}`); return { connection: stringValue(item.connection, `${field}_connection`), library: stringValue(item.library, `${field}_library`), ...(item.prepared === undefined ? {} : { prepared: item.prepared === null ? null : activityPrepared(item.prepared, `${field}_prepared`) }) } })
+  }
+  const capabilities = value.capabilities
+  const events = value.events
+  if (!Array.isArray(capabilities) || !Array.isArray(events) || !record(value.counts)) throw new ApiError(502, 'invalid_activity_response')
+  const counts: Record<string, number> = {}
+  for (const [key, count] of Object.entries(value.counts)) counts[stringValue(key, 'activity_count_name')] = integerValue(count, 'activity_count')
+  return {
+    backup_ready: typeof value.backup_ready === 'boolean' ? value.backup_ready : (() => { throw new ApiError(502, 'invalid_activity_backup_ready') })(), capabilities: capabilities.map((item, index) => { if (!record(item) || !Array.isArray(item.destinations)) throw new ApiError(502, `invalid_activity_capability_${String(index)}`); return { connection: stringValue(item.connection, 'activity_connection'), library: stringValue(item.library, 'activity_library'), state: stringValue(item.state, 'activity_state'), destinations: item.destinations.map((destination, destinationIndex) => { if (!record(destination) || typeof destination.consented !== 'boolean') throw new ApiError(502, `invalid_activity_destination_${String(destinationIndex)}`); return { destination: stringValue(destination.destination, 'activity_destination'), state: stringValue(destination.state, 'activity_destination_state'), consented: destination.consented } }) } }),
+    configured_libraries: libraries(value.configured_libraries, 'activity_configured_libraries'), consented_libraries: libraries(value.consented_libraries, 'activity_consented_libraries'), counts, enabled_libraries: libraries(value.enabled_libraries, 'activity_enabled_libraries'), events: events.map((event, index) => { if (!record(event)) throw new ApiError(502, `invalid_activity_event_${String(index)}`); const occurred_at = event.occurred_at === undefined || event.occurred_at === null ? null : integerValue(event.occurred_at, 'activity_occurred_at'); const failure = event.failure === undefined || event.failure === null ? null : stringValue(event.failure, 'activity_failure'); return { destination: stringValue(event.destination, 'activity_event_destination'), library: stringValue(event.library, 'activity_event_library'), origin: stringValue(event.origin, 'activity_event_origin'), state: stringValue(event.state, 'activity_event_state'), work_id: stringValue(event.work_id, 'activity_work_id'), occurred_at, failure } }),
+    example: value.example === null ? null : record(value.example) ? value.example : (() => { throw new ApiError(502, 'invalid_activity_example') })(), last_failure: value.last_failure === null ? null : stringValue(value.last_failure, 'activity_last_failure'), paused: typeof value.paused === 'boolean' ? value.paused : (() => { throw new ApiError(502, 'invalid_activity_paused') })(), prepared: activityPrepared(value.prepared, 'activity_prepared'), schema_version: 'continuous-field-activity-v1', suspensions: Array.isArray(value.suspensions) && value.suspensions.every(record) ? value.suspensions : (() => { throw new ApiError(502, 'invalid_activity_suspensions') })(),
+  }
+}
 
 export const mapLibrary = (value: unknown): LibraryView => {
   if (!record(value) || !record(value.counts) || !Array.isArray(value.items)) throw new ApiError(502, 'invalid_library_response')

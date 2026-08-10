@@ -46,6 +46,7 @@ def _payload(path: str) -> object:
             "schema_version": "continuous-field-activity-v1", "backup_ready": True,
             "paused": False,
             "configured_libraries": [{"connection": "primary", "library": "fiction", "prepared": {"automatic": 1, "human": 1, "total": 2}}],
+            "consented_libraries": [],
             "enabled_libraries": [],
             "capabilities": [{
                 "connection": "primary", "library": "fiction", "state": "partially_allowed",
@@ -60,6 +61,10 @@ def _payload(path: str) -> object:
                 {"work_id": "book-2", "library": "fiction", "destination": "subtitle", "state": "stale", "origin": "unrecognised_origin"},
             ],
             "counts": {},
+            "example": None,
+            "last_failure": None,
+            "prepared": {"automatic": 1, "human": 1, "total": 2},
+            "suspensions": [],
         }
     raise AssertionError(f"unexpected API path: {path}")
 

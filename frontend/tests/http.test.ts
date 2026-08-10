@@ -5,6 +5,7 @@ import {
   PageCsrfTokenStore,
   ReviewApiClient,
   mapCaseDetail,
+  mapActivity,
   SessionExpiredError,
   mapLibrary,
 } from '../src/api/http'
@@ -71,6 +72,25 @@ describe('ReviewApiClient', () => {
       credentials: 'same-origin',
       signal: controller.signal,
     }))
+  })
+
+  it('rejects a malformed activity display projection before it reaches the workspace', () => {
+    expect(() => mapActivity({ schema_version: 'continuous-field-activity-v1', backup_ready: true, paused: false })).toThrow(ApiError)
+  })
+
+  it('maps bounded activity labels and grouped state into the display seam', () => {
+    const activity = mapActivity({
+      schema_version: 'continuous-field-activity-v1', backup_ready: true, paused: false,
+      configured_libraries: [{ connection: 'primary', library: 'Fiction', prepared: { automatic: 1, human: 2, total: 3 } }],
+      consented_libraries: [], enabled_libraries: [], counts: { verified: 1 },
+      capabilities: [{ connection: 'primary', library: 'Fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: true }] }],
+      events: [{ destination: 'title', library: 'Fiction', occurred_at: 1, origin: 'human', state: 'verified', work_id: 'work-1' }],
+      example: null, last_failure: null, prepared: { automatic: 1, human: 2, total: 3 }, suspensions: [],
+    })
+
+    expect(activity.configured_libraries[0]?.library).toBe('Fiction')
+    expect(activity.capabilities[0]?.destinations[0]).toMatchObject({ destination: 'title', consented: true })
+    expect(activity.events[0]).toMatchObject({ library: 'Fiction', state: 'verified', origin: 'human' })
   })
 
   it('renews CSRF once but requires an explicit retry of an unsafe request', async () => {

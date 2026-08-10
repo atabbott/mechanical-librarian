@@ -1,6 +1,38 @@
 {
   "components": {
     "schemas": {
+      "_ActivityCapability": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "title": "Connection",
+            "type": "string"
+          },
+          "destinations": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityDestination"
+            },
+            "title": "Destinations",
+            "type": "array"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connection",
+          "destinations",
+          "library",
+          "state"
+        ],
+        "title": "_ActivityCapability",
+        "type": "object"
+      },
       "_ActivityConsentGrant": {
         "additionalProperties": false,
         "properties": {
@@ -44,6 +76,320 @@
           "grants"
         ],
         "title": "_ActivityConsentRequest",
+        "type": "object"
+      },
+      "_ActivityDestination": {
+        "additionalProperties": false,
+        "properties": {
+          "consented": {
+            "title": "Consented",
+            "type": "boolean"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "consented",
+          "destination",
+          "state"
+        ],
+        "title": "_ActivityDestination",
+        "type": "object"
+      },
+      "_ActivityEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "work_id": {
+            "title": "Work Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "destination",
+          "library",
+          "origin",
+          "state",
+          "work_id"
+        ],
+        "title": "_ActivityEvent",
+        "type": "object"
+      },
+      "_ActivityExample": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "title": "After"
+          },
+          "before": {
+            "title": "Before"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "work_id": {
+            "title": "Work Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "after",
+          "before",
+          "destination",
+          "library",
+          "work_id"
+        ],
+        "title": "_ActivityExample",
+        "type": "object"
+      },
+      "_ActivityLibrary": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "title": "Connection",
+            "type": "string"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "prepared": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ActivityPrepared"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "connection",
+          "library"
+        ],
+        "title": "_ActivityLibrary",
+        "type": "object"
+      },
+      "_ActivityPrepared": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic": {
+            "title": "Automatic",
+            "type": "integer"
+          },
+          "human": {
+            "title": "Human",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "automatic",
+          "human",
+          "total"
+        ],
+        "title": "_ActivityPrepared",
+        "type": "object"
+      },
+      "_ActivityResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "backup_ready": {
+            "title": "Backup Ready",
+            "type": "boolean"
+          },
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityCapability"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "configured_libraries": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityLibrary"
+            },
+            "title": "Configured Libraries",
+            "type": "array"
+          },
+          "consented_libraries": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityLibrary"
+            },
+            "title": "Consented Libraries",
+            "type": "array"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "enabled_libraries": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityLibrary"
+            },
+            "title": "Enabled Libraries",
+            "type": "array"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "example": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ActivityExample"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_failure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Failure"
+          },
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "prepared": {
+            "$ref": "#/components/schemas/_ActivityPrepared"
+          },
+          "schema_version": {
+            "const": "continuous-field-activity-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "suspensions": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivitySuspension"
+            },
+            "title": "Suspensions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "backup_ready",
+          "capabilities",
+          "configured_libraries",
+          "consented_libraries",
+          "counts",
+          "enabled_libraries",
+          "events",
+          "example",
+          "last_failure",
+          "paused",
+          "prepared",
+          "schema_version",
+          "suspensions"
+        ],
+        "title": "_ActivityResponse",
+        "type": "object"
+      },
+      "_ActivitySuspension": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "title": "Connection",
+            "type": "string"
+          },
+          "destination": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "connection",
+          "destination",
+          "reason",
+          "scope",
+          "updated_at"
+        ],
+        "title": "_ActivitySuspension",
         "type": "object"
       },
       "_AttentionItem": {
@@ -2192,9 +2538,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Activity Status Api V1 Activity Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/_ActivityResponse"
                 }
               }
             },
@@ -2268,9 +2612,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Enable Guarded Activity Api V1 Activity Consent Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/_ActivityResponse"
                 }
               }
             },
@@ -2382,9 +2724,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Revoke Guarded Activity Api V1 Activity  Connection   Library  Revoke Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/_ActivityResponse"
                 }
               }
             },
