@@ -1112,6 +1112,9 @@ class SQLiteMetadataReportRepository:
         if (type(grants) is not tuple or not grants
                 or any(type(library) is not str or not library
                        or type(destinations) is not tuple or not destinations
+                       or any(type(destination) is not str or not destination
+                              for destination in destinations)
+                       or len(set(destinations)) != len(destinations)
                        for library, destinations in grants)
                 or len({library for library, _ in grants}) != len(grants)):
             raise FieldEffectError("invalid_consent")
@@ -1120,9 +1123,30 @@ class SQLiteMetadataReportRepository:
             self._connection.execute("BEGIN IMMEDIATE")
             for library, destinations in grants:
                 envelope_identity = self.field_effect_consent_envelope_identity(library)
-                for destination in destinations:
-                    if type(destination) is not str or not destination:
+                eligible_destinations = set(destinations)
+                current_rows = self._connection.execute(
+                    "SELECT document FROM field_effect_consents WHERE current=1 "
+                    "AND json_extract(document,'$.consent.connection')=? "
+                    "AND json_extract(document,'$.consent.library')=?",
+                    (connection, library),
+                ).fetchall()
+                for (document,) in current_rows:
+                    raw = json.loads(document)
+                    consent = EffectConsent.from_data(raw["consent"])
+                    if raw.get("current") is not True:
                         raise FieldEffectError("invalid_consent")
+                    if consent.destination in eligible_destinations:
+                        continue
+                    self._connection.execute(
+                        "UPDATE field_effect_consents SET current=0,updated_at=?,document=? "
+                        "WHERE consent_id=? AND current=1",
+                        (granted_at, canonical_effect_json({
+                            "consent": consent.to_data(), "current": False,
+                            "schema_version": "field-effect-consent-state-v1",
+                            "updated_at": granted_at,
+                        }), consent.consent_id),
+                    )
+                for destination in destinations:
                     row = self._connection.execute(
                         "SELECT document FROM field_effect_consents WHERE current=1 "
                         "AND json_extract(document,'$.consent.connection')=? "
@@ -1849,7 +1873,7 @@ class SQLiteMetadataReportRepository:
             self._connection.execute(
                 "DELETE FROM field_effect_suspensions "
                 "WHERE scope=? AND connection_name=? AND destination=? "
-                "AND updated_at<=?",
+                "AND updated_at<?",
                 (scope, connection, destination, observed_at),
             )
             self._connection.commit()
