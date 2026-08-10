@@ -182,7 +182,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.get_by_role("heading", name="Fields needing attention").wait_for()
             page.go_back()
             page.get_by_role("heading", name="Review library").wait_for()
-            self.assertEqual(documents, before_navigation + 1)
+            self.assertEqual(documents, before_navigation)
             page.get_by_role("button", name="Sign out").click()
             page.get_by_text("Writes are blocked", exact=False).wait_for()
             fail_policy_persistently = True
@@ -190,12 +190,12 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.get_by_role(
                 "heading", name="The current workspace assets could not be loaded."
             ).wait_for()
-            self.assertEqual(documents, before_navigation)
+            self.assertEqual(documents, before_navigation + 1)
             page.get_by_role("button", name="Reload the current application").click()
             page.get_by_role(
                 "heading", name="The current workspace assets could not be loaded."
             ).wait_for()
-            self.assertEqual(documents, before_navigation + 1)
+            self.assertEqual(documents, before_navigation + 2)
             expected_chunk_errors = [
                 error
                 for error in errors
