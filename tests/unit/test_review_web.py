@@ -441,7 +441,7 @@ class _Preparation:
 
 class _ActivityApplication(ContinuousGuardedApplication):
     def __init__(self) -> None:
-        self.enabled = False
+        self.enabled_libraries: set[str] = set()
         self.paused = False
 
     def attach_serialization(self, serialize) -> None:
@@ -465,21 +465,28 @@ class _ActivityApplication(ContinuousGuardedApplication):
     def activity(self):
         return {
             "backup_ready": True,
-            "configured_libraries": [{"connection": "primary", "library": "fiction"}],
-            "consented_libraries": ([{"connection": "primary", "library": "fiction"}] if self.enabled else []),
-            "counts": {}, "enabled_libraries": ([{"connection": "primary", "library": "fiction"}] if self.enabled else []),
-            "events": [], "example": {"after": "After", "before": "Before", "destination": "title", "library": "fiction", "work_id": "book-1"},
+            "configured_libraries": [
+                {"connection": "primary", "library": "fiction", "prepared": {"automatic": 1, "human": 1, "total": 2}},
+                {"connection": "primary", "library": "history", "prepared": {"automatic": 1, "human": 0, "total": 1}},
+            ],
+            "consented_libraries": [{"connection": "primary", "library": library} for library in sorted(self.enabled_libraries)],
+            "capabilities": [
+                {"library": "fiction", "state": "allowed"},
+                {"library": "history", "state": "allowed"},
+            ],
+            "counts": {}, "enabled_libraries": [{"connection": "primary", "library": library} for library in sorted(self.enabled_libraries)],
+            "events": [{"destination": "title", "failure": None, "library": "fiction", "occurred_at": 1, "origin": "automatic_policy", "state": "verified", "work_id": "book-1"}], "example": {"after": "After", "before": "Before", "destination": "title", "library": "fiction", "work_id": "book-1"},
             "last_failure": None, "paused": self.paused,
             "prepared": {"automatic": 1, "human": 1, "total": 2},
             "schema_version": "continuous-field-activity-v1", "suspensions": [],
         }
 
     def enable(self, libraries):
-        self.enabled = libraries == ("fiction",)
+        self.enabled_libraries.update(libraries)
         return self.activity()
 
     def revoke(self, connection, library):
-        self.enabled = False
+        self.enabled_libraries.discard(library)
         return self.activity()
 
     def set_paused(self, paused):
@@ -656,6 +663,8 @@ class ReviewWebTests(unittest.TestCase):
         activity_script = self.client.get("/assets/activity.js").text
         self.assertIn('libraries.querySelectorAll("input:checked")', activity_script)
         self.assertIn("!library.prepared.total", activity_script)
+        self.assertIn('origin === "automatic_policy"', activity_script)
+        self.assertIn('return "recorded origin"', activity_script)
         self.assertEqual(self.client.get("/api/v1/activity").json()["prepared"]["total"], 2)
         denied = self.client.post(
             "/api/v1/activity/consent",
@@ -671,6 +680,25 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(enabled.status_code, 200)
         self.assertEqual(enabled.json()["enabled_libraries"][0]["library"], "fiction")
+        later = self.client.post(
+            "/api/v1/activity/consent",
+            headers={**self.origin, "X-CSRF-Token": login["csrf_token"]},
+            json={"libraries": ["history"]},
+        )
+        self.assertEqual(later.status_code, 200)
+        self.assertEqual(
+            {item["library"] for item in later.json()["enabled_libraries"]},
+            {"fiction", "history"},
+        )
+        revoked = self.client.post(
+            "/api/v1/activity/primary/fiction/revoke",
+            headers={**self.origin, "X-CSRF-Token": login["csrf_token"]},
+        )
+        self.assertEqual(revoked.status_code, 200)
+        self.assertEqual(
+            [item["library"] for item in revoked.json()["enabled_libraries"]],
+            ["history"],
+        )
 
     def test_review_preparation_is_authenticated_csrf_bound_and_bounded(self) -> None:
         configuration = ReviewWebConfiguration(

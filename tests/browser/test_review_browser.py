@@ -17,7 +17,17 @@ from argon2 import PasswordHasher
 from playwright.sync_api import Locator, Page, sync_playwright
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
+from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    EffectConsent,
+    FieldEffectOperation,
+    FieldEffectPlan,
+)
 from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.interfaces.web import create_review_app
@@ -35,6 +45,87 @@ from scripts.verify_playwright_browser import verify_playwright_browser
 
 
 _PASSWORD = "synthetic browser password"
+
+
+def _qualified_automatic_operation() -> FieldEffectOperation:
+    authority = EffectAuthority(
+        "automatic_decision_" + "a" * 64, "review_case_" + "b" * 64,
+        "c" * 64, "fake_service", "automatic_policy", "candidate",
+        "resolved_policy_fixture", "d" * 64,
+    )
+    consent = EffectConsent.create(
+        connection="primary", library="fiction", destination="title",
+        envelope_identity="e" * 64, granted_at=1,
+    )
+    plan = FieldEffectPlan.create(
+        connection="primary", library="fiction", work_id="qualified-auto",
+        destination="title", pre_value="Before", desired_value="After",
+        target_fingerprint="c" * 64, target_version="version-1",
+        dependency_digests=("f" * 64,), authority=authority, consent=consent,
+        capability_digest="0" * 64, created_at=1,
+    )
+    return FieldEffectOperation(plan, updated_at=1)
+
+
+class _BrowserActivityApplication(ContinuousGuardedApplication):
+    def __init__(self, repository) -> None:
+        self.repository = repository
+        self.enabled_libraries: set[str] = set()
+
+    def attach_serialization(self, serialize) -> None:
+        self.serialize = serialize
+
+    def attach_timing(self, timing) -> None:
+        return None
+
+    def start(self):
+        return (0, 0, 0)
+
+    def begin_drain(self) -> None:
+        return None
+
+    def close_admission(self) -> None:
+        return None
+
+    def wait_for_drain(self, deadline=None) -> None:
+        return None
+
+    def activity(self):
+        enabled = [
+            {"connection": "primary", "library": library}
+            for library in sorted(self.enabled_libraries)
+        ]
+        return {
+            **self.repository.field_effect_activity_data(),
+            "backup_ready": True,
+            "capabilities": [
+                {"library": "fiction", "state": "allowed"},
+                {"library": "history", "state": "allowed"},
+                {"library": "blocked", "state": "connection_unavailable"},
+            ],
+            "configured_libraries": [
+                {"connection": "primary", "library": "fiction", "prepared": {"automatic": 1, "human": 0, "total": 1}},
+                {"connection": "primary", "library": "history", "prepared": {"automatic": 0, "human": 1, "total": 1}},
+                {"connection": "primary", "library": "blocked", "prepared": {"automatic": 1, "human": 0, "total": 1}},
+            ],
+            "enabled_libraries": enabled,
+            "example": None,
+            "last_failure": None,
+            "paused": False,
+            "prepared": {"automatic": 1, "human": 1, "total": 2},
+            "schema_version": "continuous-field-activity-v1",
+            "suspensions": [],
+        }
+
+    def enable(self, libraries):
+        if "blocked" in libraries:
+            raise GuardedApplicationError("capability")
+        self.enabled_libraries.update(libraries)
+        return self.activity()
+
+    def revoke(self, _connection, library):
+        self.enabled_libraries.discard(library)
+        return self.activity()
 
 
 def _unused_port() -> int:
@@ -125,6 +216,8 @@ def _server(
     port: int,
     report=None,
     policy_libraries=(),
+    field_application=None,
+    activity_event=None,
 ):
     repository = open_repository(
         database,
@@ -139,6 +232,10 @@ def _server(
         case_id = json.loads(repository.admit_review_case(proposal_set))[
             "review_case_id"
         ]
+    if activity_event is not None:
+        repository.record_field_effect(activity_event)
+    if field_application is _BrowserActivityApplication:
+        field_application = field_application(repository)
     origin = f"https://127.0.0.1:{port}"
     app = create_review_app(
         repository,
@@ -149,6 +246,7 @@ def _server(
         clock=lambda: 1_000,
         close_repository=True,
         policy_libraries=policy_libraries,
+        field_application=field_application,
     )
     server = uvicorn.Server(
         uvicorn.Config(
@@ -237,6 +335,49 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         verify_playwright_browser()
+
+    def test_activity_allows_later_library_consent_and_scoped_revocation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.chmod(root, 0o700)
+            hash_path = root / "owner.hash"
+            hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+            os.chmod(hash_path, 0o600)
+            certificate, key = _certificate(root)
+            port = _unused_port()
+            errors: list[str] = []
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                context = browser.new_context(ignore_https_errors=True)
+                page = context.new_page()
+                _capture_errors(page, errors)
+                with _server(
+                    database=root / "activity.sqlite3", hash_path=hash_path,
+                    certificate=certificate, key=key, port=port, report=_manual_report(),
+                    activity_event=_qualified_automatic_operation(),
+                    field_application=_BrowserActivityApplication,
+                ) as (origin, _):
+                    _login(page, origin)
+                    page.goto(f"{origin}/activity")
+                    page.get_by_role("heading", name="Enable guarded writes").wait_for()
+                    page.locator('.activity-libraries input[value="history"]').uncheck()
+                    self.assertTrue(page.locator('.activity-libraries input[value="blocked"]').is_disabled())
+                    page.get_by_role("button", name="Enable guarded writes").click()
+                    page.get_by_text("qualified automatic").wait_for()
+                    page.get_by_role("heading", name="Enable another library").wait_for()
+                    blocked = page.locator('.activity-additional-consent input[value="blocked"]')
+                    self.assertTrue(blocked.is_disabled())
+                    history = page.locator('.activity-additional-consent input[value="history"]')
+                    history.uncheck()
+                    self.assertTrue(page.get_by_role("button", name="Enable selected libraries").is_disabled())
+                    history.check()
+                    page.get_by_role("button", name="Enable selected libraries").click()
+                    page.get_by_role("button", name="Remove write permission for fiction").wait_for()
+                    page.get_by_role("button", name="Remove write permission for fiction").click()
+                    page.get_by_role("button", name="Remove write permission for history").wait_for()
+                    self.assertEqual([], errors)
+                context.close()
+                browser.close()
 
     def test_policy_notebook_initializes_active_draft_and_responsive_navigation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

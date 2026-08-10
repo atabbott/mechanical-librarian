@@ -1052,6 +1052,11 @@ if (guardedActivityRoot) {
     if (event.state === "planned") return "Accepted decision is ready for its fair mutation turn.";
     return `${state} under the guarded application contract.`;
   };
+  const activityOrigin = origin => {
+    if (origin === "automatic_policy") return "qualified automatic";
+    if (origin === "human") return "human decision";
+    return "recorded origin";
+  };
   let timer = null;
   const renderGuardedActivity = data => {
     clearTimeout(timer);
@@ -1109,14 +1114,33 @@ if (guardedActivityRoot) {
         revoke.addEventListener("click", async () => { revoke.disabled=true; try { await activityCall(`/api/v1/activity/${encodeURIComponent(library.connection)}/${encodeURIComponent(library.library)}/revoke`, "POST"); renderGuardedActivity(await activityCall("/api/v1/activity")); } catch { revoke.disabled=false; controlStatus.setAttribute("role", "alert"); controlStatus.textContent=`Permission for ${library.library} was not removed. Try again.`; } });
         permissions.append(revoke);
       }
-      side.append(counts, controls, permissions, controlStatus);
+      const enabledLibraries = new Set(data.enabled_libraries.map(library => library.library));
+      const capabilityByLibrary = new Map(data.capabilities.map(item => [item.library, item.state]));
+      const additionalLibraries = data.configured_libraries.filter(library => !enabledLibraries.has(library.library));
+      const additionalConsent = element("div", null, "activity-additional-consent");
+      if (additionalLibraries.length) {
+        additionalConsent.append(element("h3", "Enable another library"));
+        const choices = element("fieldset", null, "activity-libraries"); choices.append(element("legend", "Prepared libraries"));
+        for (const library of additionalLibraries) {
+          const label = element("label"); const choice = element("input"); choice.type = "checkbox"; choice.value = library.library;
+          const state = capabilityByLibrary.get(library.library) || "not_ready"; choice.disabled = !["allowed", "partially_allowed"].includes(state) || !library.prepared.total; choice.checked = !choice.disabled;
+          label.append(choice, document.createTextNode(` ${library.library} · ${library.prepared.total} prepared${choice.disabled ? ` · ${friendly(state)}` : ""}`)); choices.append(label);
+        }
+        const enableAdditional = element("button", "Enable selected libraries", "activity-permission"); enableAdditional.type = "button";
+        const selectedAdditional = () => [...choices.querySelectorAll("input:checked")].map(item => item.value);
+        const refreshAdditional = () => { enableAdditional.disabled = !data.backup_ready || !selectedAdditional().length; };
+        choices.addEventListener("change", refreshAdditional); refreshAdditional();
+        enableAdditional.addEventListener("click", async () => { enableAdditional.disabled=true; try { renderGuardedActivity(await activityCall("/api/v1/activity/consent", "POST", {libraries: selectedAdditional()})); } catch (error) { enableAdditional.disabled=false; controlStatus.setAttribute("role", "alert"); controlStatus.textContent=`Additional write permission was not enabled (${friendly(error.code || "unavailable")}).`; } });
+        additionalConsent.append(choices, enableAdditional);
+      }
+      side.append(counts, controls, permissions, additionalConsent, controlStatus);
       const ledger = element("section", null, "policy-paper activity-ledger");
       if (data.suspensions.length || data.last_failure || data.cleanup.pending || count("reconciling") || count("retryable")) {
         const recovery = element("section", null, "recovery-summary"); recovery.append(element("span", "", "activity-pulse"));
         const copy=element("div"); copy.append(element("p", "Grouped recovery", "eyebrow"), element("h2", data.cleanup.exhausted ? "Owner action is required" : "A shared cause is being contained"), element("p", data.cleanup.exhausted ? "Private cover recovery could not complete after bounded retries. Accepted decisions and captured pre-state remain retained." : "New affected work is held safely while current library state is checked. Accepted decisions are retained."), element("small", `${data.suspensions.length} capability suspension(s) · ${count("reconciling") + count("retryable")} recoverable work item(s) · ${data.cleanup.pending} private cleanup(s)`)); recovery.append(copy); ledger.append(recovery);
       }
       const ledgerHead=element("header", null, "activity-ledger-heading"); const ledgerCopy=element("div"); ledgerCopy.append(element("p", "Recent outcomes", "eyebrow"), element("h2", "What Mechanical Librarian is doing"), element("p", "Execution detail is available when wanted, without exposing queue controls.")); ledgerHead.append(ledgerCopy); ledger.append(ledgerHead);
-      for (const event of data.events) { const row=element("div", null, `activity-event${["claimed","applying","reconciling"].includes(event.state) ? " current" : ""}`); const icon=["claimed","applying","reconciling"].includes(event.state) ? element("span", "", "activity-pulse") : element("span", initials(event.work_id), "work-mark"); icon.setAttribute("aria-hidden", "true"); const copy=element("div"); copy.append(element("strong", `${event.work_id} · ${friendly(event.state)}`), element("p", eventCopy(event)), element("small", `${event.library} · ${friendly(event.destination)} · ${event.origin === "automatic" ? "qualified automatic" : "human decision"}`)); row.append(icon,copy); ledger.append(row); }
+      for (const event of data.events) { const row=element("div", null, `activity-event${["claimed","applying","reconciling"].includes(event.state) ? " current" : ""}`); const icon=["claimed","applying","reconciling"].includes(event.state) ? element("span", "", "activity-pulse") : element("span", initials(event.work_id), "work-mark"); icon.setAttribute("aria-hidden", "true"); const copy=element("div"); copy.append(element("strong", `${event.work_id} · ${friendly(event.state)}`), element("p", eventCopy(event)), element("small", `${event.library} · ${friendly(event.destination)} · ${activityOrigin(event.origin)}`)); row.append(icon,copy); ledger.append(row); }
       if (!data.events.length) ledger.append(element("p", "No application outcomes have been recorded yet.", "empty-state"));
       layout.append(side,ledger); guardedActivityRoot.replaceChildren(top,layout);
     }
