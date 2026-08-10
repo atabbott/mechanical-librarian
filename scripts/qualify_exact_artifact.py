@@ -414,14 +414,15 @@ def _qualify_runtime_console(
     environment: dict[str, str],
 ) -> bytes:
     """Prove the installed command surface and source-workbench exclusion."""
-    output = _run(
+    completed = _run(
         (str(console), "--help"),
         cwd=run_directory,
         env=environment,
         reason="installed_console_failed",
-    ).stdout
+    )
+    output = completed.stdout
     help_text = _decode_stdout(
-        output,
+        completed,
         encoding="utf-8",
         reason="installed_console_failed",
     )

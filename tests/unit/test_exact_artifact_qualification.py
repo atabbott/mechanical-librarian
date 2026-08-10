@@ -18,6 +18,7 @@ from scripts.qualify_exact_artifact import (
     QualificationFailure,
     _decode_stdout,
     _qualification_environment,
+    _qualify_runtime_console,
     _run,
     _validate_wheel,
     _verify_installed_payload,
@@ -26,6 +27,22 @@ from scripts.qualify_exact_artifact import (
 
 
 class ExactArtifactQualificationTests(unittest.TestCase):
+    def test_runtime_probe_decodes_help_and_requires_workbench_absence(self) -> None:
+        help_output = b"usage: mechanical-librarian {review-serve}\nreview-serve service\n"
+        completed = (
+            subprocess.CompletedProcess(("console", "--help"), 0, help_output, b""),
+            subprocess.CompletedProcess(("python", "-I"), 0, b"", b""),
+        )
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            qualifier_module, "_run", side_effect=completed
+        ), patch.object(qualifier_module, "_qualify_guarded_effect_lifecycle"):
+            result = _qualify_runtime_console(
+                Path(directory) / "bin" / "mechanical-librarian",
+                Path(directory),
+                {},
+            )
+        self.assertEqual(result, help_output)
+
     def test_runtime_probe_runs_from_owner_only_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)
