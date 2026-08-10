@@ -6,12 +6,14 @@ import unittest
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 from scripts.qualify_audiobookshelf_field_effect import (
     QualificationError,
     _epub,
     _qualification_hardcover_client,
     _require_installed_return_automatic_transition,
+    _require_installed_return_lineage_progress,
     _operator_epub,
     _require_installed_full_chain_coverage,
 )
@@ -29,6 +31,58 @@ class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
             QualificationError, "installed_return_automatic_failed"
         ):
             _require_installed_return_automatic_transition(204, None)
+
+    def test_return_to_automatic_requires_requested_scan_before_hold_clear(self) -> None:
+        requested_scan_id = "scan-library"
+        requested_at = 20
+        self.assertFalse(_require_installed_return_lineage_progress(
+            SimpleNamespace(
+                scan_id=requested_scan_id, state="processing",
+                rescan_requested=True, updated_at=requested_at,
+            ),
+            requested_scan_id,
+            requested_at,
+            object(),
+        ))
+        self.assertTrue(_require_installed_return_lineage_progress(
+            SimpleNamespace(
+                scan_id=requested_scan_id, state="completed",
+                rescan_requested=False, updated_at=requested_at + 1,
+            ),
+            requested_scan_id,
+            requested_at,
+            None,
+        ))
+        self.assertTrue(_require_installed_return_lineage_progress(
+            SimpleNamespace(
+                scan_id=requested_scan_id, state="completed",
+                rescan_requested=False, updated_at=requested_at + 1,
+            ),
+            requested_scan_id,
+            requested_at,
+            object(),
+        ))
+        for progress, hold in (
+            (SimpleNamespace(
+                scan_id=requested_scan_id, state="processing",
+                rescan_requested=True, updated_at=requested_at,
+            ), None),
+            (SimpleNamespace(
+                scan_id=requested_scan_id, state="completed",
+                rescan_requested=False, updated_at=requested_at - 1,
+            ), None),
+            (SimpleNamespace(
+                scan_id=requested_scan_id, state="completed_with_failures",
+                rescan_requested=False, updated_at=requested_at + 1,
+            ), object()),
+        ):
+            with self.subTest(progress=progress, hold=hold):
+                with self.assertRaisesRegex(
+                    QualificationError, "installed_return_fresh_lineage_failed"
+                ):
+                    _require_installed_return_lineage_progress(
+                        progress, requested_scan_id, requested_at, hold
+                    )
 
     def test_hardcover_fixture_uses_distinct_candidate_identities_per_discovery_lane(self) -> None:
         client = _qualification_hardcover_client(
