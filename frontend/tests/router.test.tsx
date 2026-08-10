@@ -353,6 +353,32 @@ describe('typed review routes', () => {
     ))
   })
 
+  it('keeps a fully connection-blocked prepared library visible but unselectable', async () => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => ({
+        backup_ready: true,
+        configured_libraries: [{ connection: 'primary', library: 'blocked', prepared: { automatic: 2, human: 0, total: 2 } }],
+        enabled_libraries: [],
+        capabilities: [{
+          connection: 'primary', library: 'blocked', state: 'connection_unavailable',
+          destinations: [
+            { destination: 'authors', state: 'connection_unavailable', consented: false },
+            { destination: 'title', state: 'connection_unavailable', consented: false },
+          ],
+        }],
+        events: [], paused: false,
+      })),
+    }
+    renderRoute('/activity', http)
+
+    const disclosure = await screen.findByRole('list', { name: 'blocked destination consent' })
+    expect(disclosure).toHaveTextContent('authors: Excluded · connection unavailable')
+    expect(disclosure).toHaveTextContent('title: Excluded · connection unavailable')
+    expect(screen.getByRole('checkbox', { name: /blocked · 2 prepared/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Enable guarded writes' })).toBeDisabled()
+  })
+
   it('labels qualified automatic activity and bounds unknown origins neutrally', async () => {
     const unknown = 'unexpected_origin_' + 'x'.repeat(100)
     const http: ReviewHttp = {
