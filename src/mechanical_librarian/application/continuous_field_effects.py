@@ -295,6 +295,7 @@ class ContinuousGuardedApplication:
                     continue
                 raise
             del consent
+            observed_at = self._clock()
             observed = capability.observe(  # type: ignore[arg-type]
                 _CapabilityProbe(snapshot.work_id, snapshot.destination)
             )
@@ -312,10 +313,11 @@ class ContinuousGuardedApplication:
                 continue
             self._repository.clear_field_effect_capability_suspension(
                 scope="destination", connection=snapshot.connection,
-                destination=snapshot.destination,
+                destination=snapshot.destination, observed_at=observed_at,
             )
             self._repository.clear_field_effect_capability_suspension(
                 scope="connection", connection=snapshot.connection, destination="",
+                observed_at=observed_at,
             )
             operation = application.plan(
                 decision,
@@ -437,7 +439,13 @@ class ContinuousGuardedApplication:
             with self._capability_lock:
                 cached = self._capability_cache.get(library)
             if not force and cached is not None and now - cached[0] <= 30:
-                results.append(dict(cached[1]))
+                results.append({
+                    **cached[1],
+                    "destinations": [
+                        {"destination": destination, "state": state}
+                        for destination, state in cached[1]["destinations"]
+                    ],
+                })
                 continue
             work_id = representatives.get(library)
             destinations = []
@@ -445,6 +453,7 @@ class ContinuousGuardedApplication:
             if work_id is not None:
                 observer = self._capabilities[(connection, library)]
                 for destination in sorted(SUPPORTED_DESTINATIONS):
+                    observed_at = self._clock()
                     observed = observer.observe(_CapabilityProbe(work_id, destination))  # type: ignore[arg-type]
                     destinations.append({
                         "destination": destination, "state": observed.category,
@@ -452,7 +461,7 @@ class ContinuousGuardedApplication:
                     if observed.category == "allowed":
                         self._repository.clear_field_effect_capability_suspension(
                             scope="destination", connection=connection,
-                            destination=destination,
+                            destination=destination, observed_at=observed_at,
                         )
                     elif observed.category == "connection_unavailable":
                         destinations = [
@@ -476,15 +485,26 @@ class ContinuousGuardedApplication:
                 ]
             if state != "connection_unavailable" and work_id is not None:
                 self._repository.clear_field_effect_capability_suspension(
-                    scope="connection", connection=connection, destination=""
+                    scope="connection", connection=connection, destination="",
+                    observed_at=now,
                 )
-            result = {
+            cached_result = {
                 "connection": connection, "library": library, "state": state,
-                "destinations": destinations,
+                "destinations": tuple(
+                    (str(value["destination"]), str(value["state"]))
+                    for value in destinations
+                ),
             }
             with self._capability_lock:
-                self._capability_cache[library] = (now, result)
-            results.append(dict(result))
+                self._capability_cache[library] = (now, cached_result)
+            results.append({
+                **cached_result,
+                "destinations": [
+                    {"destination": destination, "state": destination_state}
+                    for destination, destination_state
+                    in cached_result["destinations"]
+                ],
+            })
         return results
 
     def _run(self) -> None:

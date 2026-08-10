@@ -10,7 +10,7 @@ from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.field_effects import GuardedApplicationError
-from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.field_effect import FieldEffectError, SUPPORTED_DESTINATIONS
 from mechanical_librarian.domain.human_decision import HumanDecision
 
 
@@ -206,6 +206,11 @@ class _MixedCapability:
         return SimpleNamespace(category=category, digest="c" * 64)
 
 
+class _ConnectionUnavailableCapability:
+    def observe(self, _):
+        return SimpleNamespace(category="connection_unavailable", digest="d" * 64)
+
+
 class ContinuousGuardedApplicationTests(unittest.TestCase):
     def test_return_to_automatic_releases_only_after_current_scan_completes(self) -> None:
         repository = _HoldRepository()
@@ -346,6 +351,26 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         service.enable(("alpha",))
         self.assertIsNotNone(repository.grants)
         self.assertNotIn("subtitle", repository.grants[1][0][1])
+
+    def test_readiness_is_exactly_field_bounded_and_connection_fail_closed(self) -> None:
+        decision = self._decisions(1)[0]
+        for capability, state in (
+            (_MixedCapability(), "partially_allowed"),
+            (_ConnectionUnavailableCapability(), "connection_unavailable"),
+        ):
+            repository = _PagedRepository([decision])
+            service = ContinuousGuardedApplication(
+                repository, {("primary", "alpha"): _Planner()},
+                {("primary", "alpha"): capability}, _Authority(),
+                (("primary", "alpha"),), lambda: 1, lambda *_: None,
+            )
+            readiness = service._capability_readiness(("alpha",), force=True)[0]
+            self.assertEqual(readiness["state"], state)
+            self.assertEqual(len(readiness["destinations"]), 14)
+            self.assertEqual(
+                {value["destination"] for value in readiness["destinations"]},
+                set(SUPPORTED_DESTINATIONS),
+            )
 
     def test_blocked_oldest_page_does_not_starve_later_eligible_work(self) -> None:
         decisions = self._decisions(101)

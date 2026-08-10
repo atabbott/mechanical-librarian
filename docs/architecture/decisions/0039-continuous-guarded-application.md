@@ -61,8 +61,11 @@ it presents bounded per-destination readiness, representative before/after conte
 and one enable action. Afterwards it presents a quiet summary and chronological
 ledger with pause, resume, revoke, and grouped recovery. Library, Attention,
 Policy, and Detail retain their accepted hierarchy and language. Capability
-failure disables only the affected detail control and explains why; it does not
-create a queue console or dashboard.
+failure removes only the affected field from actionable Library and Attention
+projections while Detail retains its visible read-only evidence and explanation;
+it does not create a queue console or dashboard. A successful observation clears
+only a suspension no newer than the observation timestamp, preserving a later
+failure even when serialized application work resumes after an observation.
 
 ## Consequences
 

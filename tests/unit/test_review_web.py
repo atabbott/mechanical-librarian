@@ -2943,7 +2943,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 repository.list_current_attention_documents(None, 10, 0), ()
             )
             repository.clear_field_effect_capability_suspension(
-                scope="destination", connection="primary", destination="title",
+                scope="destination", connection="primary", destination="title", observed_at=2,
             )
             self.assertEqual(repository.count_current_review_cases(None), (2, 1))
             repository.suspend_field_effect_capability(
@@ -2953,7 +2953,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             self.assertEqual(repository.count_current_review_cases(None), (2, 0))
             self.assertEqual(repository.count_current_attention_fields(None), 0)
             repository.clear_field_effect_capability_suspension(
-                scope="connection", connection="primary", destination="",
+                scope="connection", connection="primary", destination="", observed_at=3,
             )
             self.assertEqual(repository.count_current_review_cases(None), (2, 1))
             self.assertEqual(
@@ -2999,6 +2999,18 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             )
             self.assertEqual(repository.count_current_attention_fields(None), 3)
             self.assertEqual(repository.count_current_review_cases(None), (1, 1))
+            repository.suspend_field_effect_capability(
+                scope="destination", connection="primary", destination="series",
+                reason="field_unavailable", changed_at=1,
+            )
+            self.assertEqual(
+                [row[2] for row in repository.list_current_attention_documents(None, 1, 0)],
+                ["subtitle"],
+            )
+            self.assertEqual(repository.count_current_attention_fields(None), 2)
+            repository.clear_field_effect_capability_suspension(
+                scope="destination", connection="primary", destination="series", observed_at=2,
+            )
             repository.close()
 
 
