@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from playwright.sync_api import Route, sync_playwright
+from playwright.sync_api import Route, expect, sync_playwright
 
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetBundle,
@@ -133,7 +133,10 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 ("/library?lens=all", "Every work, with exceptions first"),
                 ("/attention", "Needs your attention"),
                 ("/review/case-1?field=title&subview=review", "Current review case"),
-                ("/policy?section=identity", "Choose how prepared metadata reaches you"),
+                ("/policy?section=identity", "Choose meaning before automation."),
+                ("/policy?section=publication", "Choose meaning before automation."),
+                ("/policy?section=curation", "Choose meaning before automation."),
+                ("/policy?section=unsupported", "Choose meaning before automation."),
                 ("/activity", "Ready when you are"),
             )
             for path, heading in routes:
@@ -143,6 +146,14 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertIsNotNone(response)
                 self.assertEqual(response.status, 200)
                 page.get_by_role("heading", name=heading).wait_for()
+                if path.startswith("/policy"):
+                    section = path.rsplit("=", 1)[-1]
+                    expect(page.locator(f"#policy-{section}")).to_be_focused()
+                    self.assertEqual(
+                        page.get_by_role("combobox", name="Policy chapter").input_value(),
+                        section,
+                    )
+                    self.assertTrue(page.url.endswith(path), f"{path} restored as {page.url}")
                 self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
                 self.assertEqual(page.locator("img, script:not([src])").count(), 0)
                 self.assertIsNone(page.evaluate("() => window.__metadataExecuted"))
@@ -220,10 +231,14 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
             self.assertEqual(documents, before_navigation)
             page.get_by_role("link", name="Policy", exact=True).click()
-            page.get_by_role("button", name="Draft", exact=True).click()
-            page.get_by_text("Draft matches the active policy.", exact=True).wait_for()
-            page.get_by_label("Draft name").fill("Edited synthetic policy")
-            page.get_by_text("Draft has changes from the active policy.", exact=True).wait_for()
+            page.get_by_role(
+                "heading", name="Choose meaning before automation."
+            ).wait_for()
+            page.locator(".policy-impact").get_by_text(
+                "Draft matches active policy", exact=True
+            ).wait_for()
+            page.get_by_label("Policy name").fill("Edited synthetic policy")
+            page.get_by_text("Draft differs from active policy", exact=True).wait_for()
             page.get_by_role("button", name="Sign out").click()
             page.get_by_text("Writes are blocked", exact=False).wait_for()
             fail_policy_persistently = True

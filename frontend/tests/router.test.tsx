@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError } from '../src/api/http'
 import type { ActivityDisplayView, ActivityView, AttentionView, CaseDetailView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
-import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
+import { createApplicationRouter, normalizeLibrarySearch, normalizePolicySearch } from '../src/router'
 import { activityEventKeys, activityOutcome } from '../src/activityState'
 
 const library: LibraryView = {
@@ -132,6 +132,13 @@ describe('typed review routes', () => {
       lens: 'all', q: 'title', cursor: 'next', preview: 'case-1',
     })
     expect(normalizeLibrarySearch({ lens: 'hostile', q: 'x'.repeat(129) })).toEqual({ lens: 'all' })
+  })
+
+  it('normalizes Policy deep links to the four protected semantic chapters', () => {
+    expect(normalizePolicySearch({ section: 'publication' })).toEqual({ section: 'publication' })
+    expect(normalizePolicySearch({ section: 'curation' })).toEqual({ section: 'curation' })
+    expect(normalizePolicySearch({ section: 'unsupported' })).toEqual({ section: 'unsupported' })
+    expect(normalizePolicySearch({ section: 'effects' })).toEqual({ section: 'identity' })
   })
 
   it.each(['needs_attention', 'no_attention_needed'] as const)(
@@ -462,6 +469,86 @@ describe('typed review routes', () => {
 
     expect(await screen.findByRole('heading', { name: 'Current review case' })).toBeVisible()
     await waitFor(() => expect(router.state.location.search).toEqual({ field: 'title', subview: 'review' }))
+  })
+
+  it('presents Policy as a semantic notebook and preserves guarded activation currentness', async () => {
+    const user = userEvent.setup()
+    const options = {
+      title_layout: 'title_and_subtitle', date_precision: 'year', language_rendering: 'display_name', contributor_names: 'canonical', publisher_preference: 'publisher', genres: 'catalogue', tags: 'catalogue', description_fill: 'fill_when_empty', isbn_form: 'isbn13', cover_order: 'fixed_source_order', asin: 'canonical_asin', explicit: 'unsupported',
+    }
+    const destinations = {
+      title_layout: 'ask', date_precision: 'ask', language_rendering: 'ask', contributor_names: 'ask', publisher_preference: 'ask', genres: 'ask', tags: 'ignore', description_fill: 'ask', isbn_form: 'ask', cover_order: 'ask', asin: 'ask', explicit: 'unsupported',
+    }
+    let draftSaves = 0
+    const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
+      if (path === 'validate' && (body as { name?: string }).name === '') throw new ApiError(422, 'invalid_policy')
+      if (path === 'drafts' && ++draftSaves > 1) throw new AmbiguousMutationError()
+      if (path === 'drafts') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v1' }
+      if (path === 'preview') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-preview-v1', libraries: [{ library: 'Hostile <script> library', affected_categories: ['title_layout', 'tags'], current_unapplied_count: 3, resolved_policy_id: 'resolved-policy' }] }
+      if (path === 'activate') throw new ApiError(409, 'active_policy_changed')
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v1' }
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({ schema_version: 'metadata-policy-notebook-v1', policy_id: 'opaque-policy-identity', profile: { schema_version: 'metadata-policy-profile-v1', name: 'Qualified default', options, destinations } })),
+      policyCommand: <T,>(path: string, body?: unknown) => policyCommand(path, body) as Promise<T>,
+    }
+    renderRoute('/policy?section=publication', http)
+
+    expect(await screen.findByRole('heading', { name: 'Choose meaning before automation.' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Identity' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Publication' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Curation' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Unsupported content' })).toBeVisible()
+    expect(screen.getByRole('combobox', { name: 'Policy chapter' })).toHaveValue('publication')
+    expect(screen.queryByText('opaque-policy-identity')).toBeNull()
+    const isbn = screen.getByRole('group', { name: /ISBN/ })
+    expect(within(isbn).getByRole('button', { name: 'Automatic' })).toBeDisabled()
+    expect(within(isbn).getByText(/Automatic is not qualified/)).toBeVisible()
+
+    await user.clear(screen.getByRole('textbox', { name: 'Policy name' }))
+    await user.click(screen.getByRole('button', { name: 'Check draft' }))
+    expect(await screen.findByText('The draft is not valid. Review the highlighted policy intent and try again.')).toBeVisible()
+    await user.type(screen.getByRole('textbox', { name: 'Policy name' }), 'Qualified draft')
+    const titleLayout = screen.getByRole('group', { name: /Title and subtitle/ })
+    await user.selectOptions(within(titleLayout).getByRole('combobox', { name: 'Title and subtitle representation' }), 'preserve')
+    expect(screen.getAllByText('Draft has unreviewed changes').length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: 'Check draft' }))
+    expect(await screen.findByText('Draft is valid. The active policy is unchanged.')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+    expect(await screen.findByText('Immutable draft saved. Preview its impact before activation.')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Preview impact' }))
+    expect(await screen.findByText('Hostile <script> library')).toBeVisible()
+    expect(screen.getByText(/Title and subtitle, Tags/)).toBeVisible()
+    const reviewActivation = screen.getByRole('button', { name: 'Review activation' })
+    await user.click(reviewActivation)
+    let activationDialog = screen.getByRole('dialog', { name: 'Apply this policy to current unapplied work?' })
+    const cancelActivation = within(activationDialog).getByRole('button', { name: 'Cancel' })
+    const activatePolicy = within(activationDialog).getByRole('button', { name: 'Activate policy' })
+    expect(cancelActivation).toHaveFocus()
+    await user.tab()
+    expect(activatePolicy).toHaveFocus()
+    await user.tab()
+    expect(cancelActivation).toHaveFocus()
+    await user.tab({ shift: true })
+    expect(activatePolicy).toHaveFocus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(reviewActivation).toHaveFocus())
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    await user.click(reviewActivation)
+    activationDialog = screen.getByRole('dialog', { name: 'Apply this policy to current unapplied work?' })
+    await user.click(within(activationDialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(reviewActivation).toHaveFocus())
+
+    await user.click(reviewActivation)
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Activate policy' }))
+
+    expect(await screen.findByText('The active policy changed before activation. Review the refreshed policy and create a new draft.')).toBeVisible()
+    await waitFor(() => expect(reviewActivation).toHaveFocus())
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+    expect(await screen.findByText('The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.')).toBeVisible()
+    expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate', 'validate', 'drafts', 'preview', 'activate', 'drafts'])
   })
 
   it('aborts a superseded critical load and renders only the current route result', async () => {

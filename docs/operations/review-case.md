@@ -129,6 +129,20 @@ While processing, the notebook refreshes this compact status at a bounded
 interval; retry restarts polling, while terminal or acknowledged state stops it.
 Another activation cannot overlap processing or unacknowledged failed
 completion. An exact response-loss retry returns the original transition.
+
+The owner-facing notebook groups the closed policy catalogue into Identity,
+Publication, Curation, and Unsupported content chapters. Its sticky desktop
+index becomes a pinned chapter selector at compact widths. Field names,
+representation choices, and Automatic, Ask me, or Ignore posture are presented
+in user language; a disabled Automatic choice explains whether the field or
+representation is unqualified or Preview mode has not been entered. The active
+profile and changed draft remain distinct throughout validation, impact preview,
+activation review, currentness conflict, and cutover progress. Impact uses
+readable field and library names rather than policy identifiers. These display
+groupings do not add categories, qualification, or authority. Activation review
+contains keyboard focus until Cancel or Escape returns it to the review trigger;
+the same closed draft, preview, and guarded activation operations remain
+authoritative.
 Authenticated `/library` provides bounded attention-first, all, and
 no-attention-needed lenses; `/attention` contains only exact unresolved/manual
 fields and links to the exact field on detail. Both support bounded search,

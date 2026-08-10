@@ -18,7 +18,7 @@ const bounded = (value: unknown) => typeof value === 'string' && value.length > 
 export const normalizeLibrarySearch = (search: Record<string, unknown>): LibrarySearch => { const lens = search.lens === 'needs_attention' || search.lens === 'no_attention_needed' ? search.lens : 'all'; const q = bounded(search.q); const cursor = bounded(search.cursor); const preview = bounded(search.preview); return { lens, ...(q ? { q } : {}), ...(cursor ? { cursor } : {}), ...(preview ? { preview } : {}) } }
 export const normalizeAttentionSearch = (search: Record<string, unknown>): AttentionSearch => { const q = bounded(search.q); const cursor = bounded(search.cursor); return { ...(q ? { q } : {}), ...(cursor ? { cursor } : {}) } }
 export const normalizeDetailSearch = (search: Record<string, unknown>): DetailSearch => { const field = bounded(search.field); const subview = search.subview === 'evidence' || search.subview === 'history' ? search.subview : 'review'; return { ...(field ? { field } : {}), subview } }
-export const normalizePolicySearch = (search: Record<string, unknown>): PolicySearch => ({ section: search.section === 'draft' || search.section === 'effects' || search.section === 'availability' ? search.section : 'identity' })
+export const normalizePolicySearch = (search: Record<string, unknown>): PolicySearch => ({ section: search.section === 'publication' || search.section === 'curation' || search.section === 'unsupported' ? search.section : 'identity' })
 
 export const libraryQuery = (http: ReviewHttp, search: LibrarySearch) => queryOptions({ queryKey: ['library', search.lens, search.q ?? null, search.cursor ?? null] as const, queryFn: ({ signal }) => http.getLibrary(search, signal), staleTime: 15_000, retry: false })
 export const attentionQuery = (http: ReviewHttp, search: AttentionSearch) => queryOptions({ queryKey: ['attention', search.q ?? null, search.cursor ?? null] as const, queryFn: ({ signal }) => http.getAttention(search, signal), staleTime: 15_000, retry: false })
@@ -84,7 +84,7 @@ const Shell = () => {
     document.title = `${title} · Mechanical Librarian`
     const changed = previousPath.current !== path
     previousPath.current = path
-    const frame = requestAnimationFrame(() => { const target = main.current?.querySelector<HTMLElement>('[data-route-focus]') ?? main.current; target?.focus({ preventScroll: true }); if (changed && !popNavigation.current) window.scrollTo({ top: 0 }); popNavigation.current = false })
+    const frame = requestAnimationFrame(() => { const target = main.current?.querySelector<HTMLElement>('[data-route-focus]') ?? main.current; target?.focus({ preventScroll: true }); if (changed && !popNavigation.current) window.scrollTo({ top: 0 }); popNavigation.current = false; main.current?.setAttribute('data-restored-path', path); dispatchEvent(new Event('ml:route-restored')) })
     return () => cancelAnimationFrame(frame)
   }, [navigation.status, path, title])
   const signOut = async () => { setShellError(''); try { await http.logout(); window.location.assign('/login') } catch (error) { if (!(error instanceof BuildMismatchError)) setShellError('Sign out failed. Try again.') } }

@@ -13,7 +13,12 @@ from pathlib import Path
 
 import uvicorn
 from argon2 import PasswordHasher
-from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
+from playwright.sync_api import (
+    Page,
+    TimeoutError as PlaywrightTimeoutError,
+    expect,
+    sync_playwright,
+)
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
@@ -194,8 +199,107 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     page.get_by_role("heading", name="Needs your attention").wait_for()
                     page.get_by_role("link", name="Policy", exact=True).click()
                     page.get_by_role(
-                        "heading", name="Choose how prepared metadata reaches you"
+                        "heading", name="Choose meaning before automation."
                     ).wait_for()
+                    chapter = page.get_by_role("combobox", name="Policy chapter")
+                    self.assertTrue(chapter.is_visible())
+                    chapter.select_option("curation")
+                    page.wait_for_url("**/policy?section=curation")
+                    expect(page.locator("#policy-curation")).to_be_focused()
+                    self.assertLessEqual(
+                        page.evaluate("() => document.documentElement.scrollWidth"), 390
+                    )
+                    page.get_by_role("button", name="Save draft").click()
+                    page.get_by_text(
+                        "Immutable draft saved. Preview its impact before activation."
+                    ).wait_for()
+                    page.get_by_role("button", name="Preview impact").click()
+                    page.get_by_text(
+                        "Impact preview is current. The active policy is unchanged."
+                    ).wait_for()
+                    review_activation = page.get_by_role(
+                        "button", name="Review activation"
+                    )
+                    review_activation.click()
+                    activation_dialog = page.get_by_role(
+                        "dialog", name="Apply this policy to current unapplied work?"
+                    )
+                    cancel_activation = activation_dialog.get_by_role(
+                        "button", name="Cancel"
+                    )
+                    activate_policy = activation_dialog.get_by_role(
+                        "button", name="Activate policy"
+                    )
+                    self.assertTrue(
+                        cancel_activation.evaluate(
+                            "node => node === document.activeElement"
+                        )
+                    )
+                    page.keyboard.press("Tab")
+                    self.assertTrue(
+                        activate_policy.evaluate(
+                            "node => node === document.activeElement"
+                        )
+                    )
+                    page.keyboard.press("Tab")
+                    self.assertTrue(
+                        cancel_activation.evaluate(
+                            "node => node === document.activeElement"
+                        )
+                    )
+                    page.keyboard.press("Shift+Tab")
+                    self.assertTrue(
+                        activate_policy.evaluate(
+                            "node => node === document.activeElement"
+                        )
+                    )
+                    page.keyboard.press("Escape")
+                    self.assertEqual(activation_dialog.count(), 0)
+                    expect(review_activation).to_be_focused()
+                    page.get_by_role("button", name="Use dark mode").click()
+                    self.assertEqual(
+                        page.evaluate("() => document.documentElement.dataset.theme"),
+                        "dark",
+                    )
+                    page.set_viewport_size({"width": 1440, "height": 900})
+                    self.assertTrue(
+                        page.get_by_role("navigation", name="Policy chapters").is_visible()
+                    )
+                    review_activation.click()
+                    activation_dialog = page.get_by_role(
+                        "dialog", name="Apply this policy to current unapplied work?"
+                    )
+                    cancel_activation = activation_dialog.get_by_role(
+                        "button", name="Cancel"
+                    )
+                    activate_policy = activation_dialog.get_by_role(
+                        "button", name="Activate policy"
+                    )
+                    self.assertTrue(
+                        cancel_activation.evaluate(
+                            "node => node === document.activeElement"
+                        )
+                    )
+                    page.keyboard.press("Shift+Tab")
+                    self.assertTrue(
+                        activate_policy.evaluate(
+                            "node => node === document.activeElement"
+                        )
+                    )
+                    page.keyboard.press("Tab")
+                    self.assertTrue(
+                        cancel_activation.evaluate(
+                            "node => node === document.activeElement"
+                        )
+                    )
+                    cancel_activation.click()
+                    self.assertEqual(activation_dialog.count(), 0)
+                    expect(review_activation).to_be_focused()
+                    self.assertLessEqual(
+                        page.evaluate("() => document.documentElement.scrollWidth"), 1440
+                    )
+                    page.set_viewport_size({"width": 390, "height": 844})
+                    page.get_by_role("button", name="Use light mode").click()
                     activity_requests = 0
 
                     def activity_poll(route) -> None:

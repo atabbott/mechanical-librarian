@@ -7,7 +7,7 @@ type CaseDetailDto = Schema<'_CaseDetailResponse'>
 
 export type LibraryLens = 'needs_attention' | 'all' | 'no_attention_needed'
 export type DetailSubview = 'review' | 'evidence' | 'history'
-export type PolicySection = 'identity' | 'draft' | 'effects' | 'availability'
+export type PolicySection = 'identity' | 'publication' | 'curation' | 'unsupported'
 export type DecisionOutcome = 'accept' | 'keep_current' | 'reject'
 
 export interface LibrarySearch { lens: LibraryLens; q?: string; cursor?: string; preview?: string }
