@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Reconcile and qualify the complete 0.14.1 authenticated interface against its
+  exact surface-specific references. The packaged source, wheel, and container
+  retain one persistent responsive shell, direct current-or-specific-value
+  decisions, the refined Policy notebook, and the calm Activity ledger without
+  expanding metadata or write authority. (#534, #499)
+
 - Restore Activity as the calm, readable guarded-work ledger: explicit
   consent/readiness with backup explanation, readable current-report work and
   author identity, continued history during partial consent, scoped pause and

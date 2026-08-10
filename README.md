@@ -8,7 +8,7 @@ effect gate passes.
 
 ## Current checkpoint
 
-The 0.14.0 release-candidate checkpoint runs one authenticated owner workspace.
+The 0.14.1 interface-fidelity checkpoint runs one authenticated owner workspace.
 It discovers configured Audiobookshelf ebook libraries, prepares exact-current
 reports, ProposalSets, and review cases in the background, presents Library,
 Attention, detail, Policy, and Activity through one packaged React shell, and
@@ -37,6 +37,15 @@ The authenticated Library, Attention, review-detail, Policy, and Activity URLs
 share one persistent packaged React workspace; FastAPI retains every session,
 currentness, policy, effect, persistence, and mutation decision, and `/login`
 remains server-rendered.
+
+Library keeps every current work discoverable while Attention leads with fields
+that benefit from an owner decision. Review detail records the selected current
+or specific proposed value immediately, without generic outcome controls or a
+separate submit step. Policy is a semantic notebook, and Activity is the calm
+consent, guarded-work, history, and recovery ledger. The five surfaces share one
+responsive editorial language at desktop and compact widths in light and dark
+themes. See the [0.14.1 interface-fidelity reconciliation](docs/development/0-14-1-interface-fidelity.md)
+for the protected-reference boundary and cumulative qualification contract.
 
 See the [catalogue guide](docs/operations/catalogue.md),
 [foreground batch guide](docs/operations/ebook-evidence-batches.md),

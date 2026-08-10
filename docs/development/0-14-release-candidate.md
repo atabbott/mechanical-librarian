@@ -49,8 +49,7 @@ artifact checks must prove the single build identity and exclude Node,
 frontend source/generated DTOs/source maps, workbench code/state, and private
 artifacts from production contents.
 
-Do not enter the separate first-release decision yet. The smallest evidenced
-follow-on is milestone 0.14.1's already-open interface-fidelity restoration;
-after that outcome is implemented and qualified, maintainers can make a fresh
-first-release decision without treating this platform cutover as visual or
-interaction approval.
+This checkpoint did not authorize a first-release decision. Its bounded
+interface-fidelity follow-on is now recorded separately in the
+[0.14.1 reconciliation](0-14-1-interface-fidelity.md), so this historical
+platform cutover is still not visual or interaction approval by itself.

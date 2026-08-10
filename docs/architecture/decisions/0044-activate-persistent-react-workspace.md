@@ -81,3 +81,11 @@ functional envelope, not the legacy presentation as a desired design.
   desktop and 390-pixel light/dark layouts, and clean console/page-error runs.
 - Exact installed wheel and container proofs for the activated shell, hashed
   assets, build identity, and exclusion of the deleted frontend and build tools.
+
+## Later evolution
+
+Milestone 0.14.1 restored the five authenticated surfaces without changing this
+architecture or authority boundary. Its protected surface ownership and
+cumulative source, wheel, container, responsive, accessibility, and interaction
+qualification are recorded in the
+[0.14.1 interface-fidelity reconciliation](../../development/0-14-1-interface-fidelity.md).
