@@ -74,17 +74,24 @@ Metadata-policy Preview and activation add owner-authenticated operations:
 - CSRF-protected `POST /api/v1/metadata-policy/shadow/enter` accepts no body and
   enters Preview without changing human work;
 - `GET /api/v1/metadata-policy/shadow/leave-preview` returns per-library impact
-  and whether the exact preview may be confirmed;
+  but always returns `can_confirm: false`; it describes legacy Preview impact,
+  not confirmation availability;
 - CSRF-protected `POST /api/v1/metadata-policy/shadow/confirm-automatic`
-  activates only the qualified decision-only authority after revalidation; and
+  activates only the qualified decision-only authority when Preview, the exact
+  qualified policy, and the completed current-generation transition all
+  revalidate; and
 - `GET /api/v1/metadata-policy/shadow/outcomes?limit=1..50` returns a bounded,
   one-MiB maximum sample of closed identity-rich outcome documents.
 
 While posture is `preview`, policy validation, draft creation, preview, and
 activation accept Automatic only as non-authoritative intent. Confirmation
 rechecks the exact preview and grants the closed `decision_only` authority;
-automatic outcomes still create no effect plan or target/media write. Separate
-automatic-safety pause, suspension, and recovery operations fail closed.
+automatic outcome publication itself creates no effect plan or target/media
+write. A persisted qualified automatic decision can later enter the same
+consent, backup, capability, field-currentness, verification, audit, and
+reconciliation-guarded field-effect path as an accepted human decision.
+Separate automatic-safety pause, suspension, and recovery operations fail
+closed.
 Shadow history events remain distinct from human decision events. Malformed
 persistence fails the complete request with a value-free unavailable response.
 
@@ -189,8 +196,10 @@ desired lifecycle state.
 Bulk review and decision reversal are not current interfaces. A human decision
 may instead be superseded only through the exact current per-field operations
 the API exposes, including an explicit human override of an automatic outcome.
-Once apply begins, recovery uses the plan-specific cancellation, verification,
-and recovery resources rather than a review-interface undo operation.
+There is no plan-cancellation operation. Pause and consent or authority
+revocation stop new claims while already claimed work completes; persisted
+status and reconciliation recover ambiguity or interruption rather than a
+review-interface undo operation.
 
 ## Mutation guards
 
