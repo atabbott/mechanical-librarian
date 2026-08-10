@@ -372,9 +372,21 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertTrue(page.get_by_role("button", name="Enable selected libraries").is_disabled())
                     history.check()
                     page.get_by_role("button", name="Enable selected libraries").click()
-                    page.get_by_role("button", name="Remove write permission for fiction").wait_for()
-                    page.get_by_role("button", name="Remove write permission for fiction").click()
-                    page.get_by_role("button", name="Remove write permission for history").wait_for()
+                    fiction_revoke = page.get_by_role(
+                        "button", name="Remove write permission for fiction"
+                    )
+                    fiction_revoke.wait_for()
+                    fiction_revoke.click()
+                    fiction_revoke.wait_for(state="detached")
+                    page.get_by_role(
+                        "button", name="Remove write permission for history"
+                    ).wait_for(state="visible")
+                    activity = page.request.get(f"{origin}/api/v1/activity")
+                    self.assertTrue(activity.ok)
+                    self.assertEqual(
+                        activity.json()["enabled_libraries"],
+                        [{"connection": "primary", "library": "history"}],
+                    )
                     self.assertEqual([], errors)
                 context.close()
                 browser.close()
