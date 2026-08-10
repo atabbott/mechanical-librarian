@@ -216,8 +216,25 @@ The default order prioritizes unresolved human work while keeping confirmed
 siblings adjacent. Filtering cannot leave a hidden case active.
 
 The detail view presents identity and current-versus-proposed choices before
-supporting evidence. Irrelevant panels are absent. Evidence explanations,
-source rows, policy versions, and diagnostics are progressively disclosed.
+supporting evidence. The current value and each specific eligible proposed
+value are themselves the mutually exclusive direct choices: selecting one
+records the existing exact-field decision immediately, without generic
+Accept/Keep/Reject controls or a separate submit step. Irrelevant panels are
+absent. Evidence explanations, source rows, policy versions, and diagnostics
+are progressively disclosed.
+
+An unresolved field with no eligible proposal still presents its current value
+as the one direct choice; automatic, resolved, and stale fields never present a
+false choice.
+
+After a decision, the detail refreshes the authoritative case, then advances
+forward through the displayed unresolved field order, wrapping once. If no
+other unresolved field remains, the recorded field stays as the terminal case.
+Deliberate navigation away from that field while the refresh is pending is
+preserved rather than overwritten by automatic advancement.
+
+Recorded human decisions retain their exact selected value in the detail view.
+The deterministic disposition remains distinct from that live decision record.
 
 The post-first-release #195 outcome may add a global review summary presenting
 remaining work, conflicts, stale cases, readiness, and planned changes by
