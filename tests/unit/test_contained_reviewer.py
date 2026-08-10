@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -60,6 +61,25 @@ class ContainedReviewerTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception, "profile"):
                 adapter.load_contained_reviewer_profile(profile)
 
+    def test_profile_limits_output_to_the_child_file_limit(self) -> None:
+        with self.assertRaisesRegex(Exception, "profile"):
+            replace(_identity(), output_bytes=131_073)
+
+    def test_reasoning_config_escapes_hostile_profile_text_as_one_toml_value(self) -> None:
+        config = adapter._exact_config('medium"\nfeatures.shell_tool=true')
+        self.assertEqual(
+            config[0],
+            'model_reasoning_effort="medium\\"\\nfeatures.shell_tool=true"',
+        )
+        self.assertNotIn("\n", config[0])
+
+    def test_reasoning_config_preserves_astral_unicode_as_valid_toml(self) -> None:
+        reasoning = "medium😀"
+        config = adapter._exact_config(reasoning)
+        self.assertEqual(
+            tomllib.loads(config[0]), {"model_reasoning_effort": reasoning}
+        )
+
     def test_private_directories_and_bound_artifacts_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -112,6 +132,27 @@ class ContainedReviewerTests(unittest.TestCase):
         self.assertIn('web_search="disabled"', config)
         self.assertIn('approval_policy="never"', config)
         self.assertIn('shell_environment_policy.inherit="none"', config)
+
+    def test_sandbox_version_is_bound_before_use(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+            sandbox = adapter._BoundArtifact(10, "/proc/self/fd/10")
+            accepted = subprocess.CompletedProcess([], 0, b"bubblewrap 1\n", b"")
+            rejected = subprocess.CompletedProcess([], 0, b"bubblewrap 2\n", b"")
+            with patch.object(adapter.subprocess, "run", return_value=accepted):
+                reviewer._verify_sandbox(sandbox)
+            with patch.object(adapter.subprocess, "run", return_value=rejected):
+                with self.assertRaisesRegex(Exception, "setup"):
+                    reviewer._verify_sandbox(sandbox)
+
+    def test_root_output_schema_must_describe_an_object(self) -> None:
+        schema = json.dumps(
+            {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "string"},
+            separators=(",", ":"), sort_keys=True,
+        )
+        request = ContainedReviewRequest("Summarize.", '{"value":"synthetic"}', schema)
+        with self.assertRaisesRegex(Exception, "response_format"):
+            adapter._schema_binding(request)
 
     def test_timeout_and_cancel_are_typed_without_process_output(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -172,6 +213,7 @@ class ContainedReviewerTests(unittest.TestCase):
                 return 0
 
             with patch.object(adapter.sys, "platform", "linux"), \
+                 patch.object(reviewer, "_verify_sandbox"), \
                  patch.object(reviewer, "_verify_codex"), \
                  patch.object(reviewer, "_require_chatgpt_auth"), \
                  patch.object(reviewer, "_sandbox_command", side_effect=sandbox_command), \

@@ -61,6 +61,7 @@ class ContainedReviewerIdentity:
             or type(self.memory_bytes) is not int or not 16_777_216 <= self.memory_bytes <= 8_589_934_592
             or type(self.process_limit) is not int or not 1 <= self.process_limit <= 64
             or type(self.file_bytes) is not int or not 2 <= self.file_bytes <= 1_048_576
+            or self.output_bytes > self.file_bytes
         ):
             raise ContainedReviewerError("profile")
 

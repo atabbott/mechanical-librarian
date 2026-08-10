@@ -29,7 +29,10 @@
   request/attempt/dispatch/result persistence, browser model-advice projection,
   and its qualification machinery. Preserve the deterministic packet and
   automatic-decision contracts, and retain one source-only contained-reviewer
-  workbench kernel for sanitized bounded experiments. (#493)
+  workbench kernel for sanitized bounded experiments. Contained profiles now
+  require the output allowance to fit the child file limit, root schemas to
+  describe objects, and the bound sandbox version to match before use; reasoning
+  overrides are serialized as one TOML-safe value. (#493)
 
 - Contract the installed command surface to the authenticated `review-serve`
   launcher. Catalogue, report, batch, proposal, case, deterministic decision,

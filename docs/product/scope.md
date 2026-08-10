@@ -10,7 +10,6 @@
 - EPUB package, bounded opening-matter, navigation, and structural evidence plus
   read-only audio tags, chapters, and duration.
 - Replaceable catalogue/provider adapters.
-- Replaceable AI reviewer adapters, beginning with Codex CLI.
 - SQLite-backed durable state, job recovery, audit history, and configuration.
 - Readiness, backup, validation, apply, verification, rollback, and alerting.
 - Private single-user API and bundled interface implementing the
@@ -22,10 +21,9 @@
 - Optional bounded opening-audio transcription and spoken-credit extraction
   under the [opening-audio evidence contract](opening-audio-evidence.md).
 - Calibre-Web/Calibre-compatible service adapter.
-- Additional AI backends under the
-  [post-1.0 reviewer-backend plan](future-reviewer-backends.md), beginning with
-  owner-controlled OpenRouter access and optional connections to separately
-  operated compatible model servers.
+- Additional AI backends under the explicitly deferred
+  [post-1.0 reviewer-backend plan](future-reviewer-backends.md); none is a
+  current product capability or assigned delivery slice.
 - Embedded metadata writes with separate media backup gates.
 - Additional notification and identity providers.
 
