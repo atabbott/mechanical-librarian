@@ -665,6 +665,14 @@ def _qualification_hardcover_client(
     return httpx.Client(transport=httpx.MockTransport(respond))
 
 
+def _require_installed_return_automatic_transition(
+    status_code: int, manual_hold_context: object | None
+) -> None:
+    """A return request schedules fresh lineage; it does not clear its hold."""
+    if status_code != 204 or manual_hold_context is None:
+        raise QualificationError("installed_return_automatic_failed")
+
+
 def _installed_continuous_qualification(
     root: Path, base: str, writer_key: str,
     libraries: tuple[tuple[str, str, Path], ...],
@@ -1041,11 +1049,12 @@ def _installed_continuous_qualification(
                     f"{automatic_destination}/return-to-automatic",
                     headers=mutation_headers,
                 )
-                if (returned.status_code != 204
-                        or repository.field_effect_manual_hold_context(
-                            case_id, automatic_destination
-                        ) is not None):
-                    raise QualificationError("installed_return_automatic_failed")
+                _require_installed_return_automatic_transition(
+                    returned.status_code,
+                    repository.field_effect_manual_hold_context(
+                        case_id, automatic_destination
+                    ),
+                )
                 returned_automatic = True
                 returned_destination = automatic_destination
                 returned_work_id = target.get("item")

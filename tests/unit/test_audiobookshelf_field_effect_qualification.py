@@ -11,12 +11,25 @@ from scripts.qualify_audiobookshelf_field_effect import (
     QualificationError,
     _epub,
     _qualification_hardcover_client,
+    _require_installed_return_automatic_transition,
     _operator_epub,
     _require_installed_full_chain_coverage,
 )
 
 
 class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
+    def test_return_to_automatic_retains_manual_hold_until_fresh_lineage(self) -> None:
+        _require_installed_return_automatic_transition(204, object())
+
+        with self.assertRaisesRegex(
+            QualificationError, "installed_return_automatic_failed"
+        ):
+            _require_installed_return_automatic_transition(202, object())
+        with self.assertRaisesRegex(
+            QualificationError, "installed_return_automatic_failed"
+        ):
+            _require_installed_return_automatic_transition(204, None)
+
     def test_hardcover_fixture_uses_distinct_candidate_identities_per_discovery_lane(self) -> None:
         client = _qualification_hardcover_client(
             {}, "synthetic-provider-token-a", {}, {}, {}
