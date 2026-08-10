@@ -6,9 +6,9 @@
   Library rows now lead with readable work identity and truthful field counts,
   while Attention groups only human-beneficial fields with bounded reason and
   outcome context, complete per-work counts, and exact-field links. Complete
-  Library discovery includes current work without a review case, and bounded
-  search covers readable author and media identity. Persistent routing,
-  44px shell controls, bounded search,
+  Library discovery includes current work before or without review admission,
+  and bounded search covers readable author and media identity. Persistent
+  routing, 44px shell controls, bounded search,
   lenses, pagination, compact single-surface flow, light/dark themes, and
   hostile-text safety remain intact. (#535)
 

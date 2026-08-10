@@ -416,17 +416,17 @@ _CURRENT_REVIEW_FROM_SQL = (
     "AND mf.report_id=rc.report_id"
 )
 _CURRENT_LIBRARY_FROM_SQL = (
-    "FROM current_review_case_lineages c "
-    "LEFT JOIN review_cases rc ON rc.review_case_id=c.review_case_id "
-    "JOIN metadata_reports mr ON mr.report_id=c.report_id "
-    "JOIN current_metadata_report_lineages ml "
-    "ON ml.connection_name=c.connection_name "
-    "AND ml.library_name=c.library_name AND ml.item_id=c.item_id "
-    "AND ml.report_id=c.report_id "
+    "FROM current_metadata_report_lineages ml "
+    "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
     "JOIN current_metadata_reports mf "
-    "ON mf.connection_name=c.connection_name "
-    "AND mf.library_name=c.library_name AND mf.item_id=c.item_id "
-    "AND mf.report_id=c.report_id"
+    "ON mf.connection_name=ml.connection_name "
+    "AND mf.library_name=ml.library_name AND mf.item_id=ml.item_id "
+    "AND mf.report_id=ml.report_id "
+    "LEFT JOIN current_review_case_lineages c "
+    "ON c.connection_name=ml.connection_name "
+    "AND c.library_name=ml.library_name AND c.item_id=ml.item_id "
+    "AND c.report_id=ml.report_id "
+    "LEFT JOIN review_cases rc ON rc.review_case_id=c.review_case_id"
 )
 _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL = (
     "EXISTS (SELECT 1 FROM json_each(rc.document,'$.results') manual_result "
@@ -471,8 +471,8 @@ _REVIEW_ATTENTION_SQL = (
 _REVIEW_SEARCH_SQL = (
     " AND (? IS NULL OR "
     "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) "
-    "LIKE ? ESCAPE '\\' OR ml_casefold(c.item_id) LIKE ? ESCAPE '\\' "
-    "OR ml_casefold(c.library_name) LIKE ? ESCAPE '\\' "
+    "LIKE ? ESCAPE '\\' OR ml_casefold(ml.item_id) LIKE ? ESCAPE '\\' "
+    "OR ml_casefold(ml.library_name) LIKE ? ESCAPE '\\' "
     "OR EXISTS (SELECT 1 FROM json_each(mr.document,'$.target.fields') author_field, "
     "json_each(author_field.value,'$.value') author WHERE "
     "json_extract(author_field.value,'$.destination')='authors' "
@@ -4364,17 +4364,18 @@ class SQLiteMetadataReportRepository:
             elif attention is None:
                 condition = "1"
             rows = self._connection.execute(
-                "SELECT rc.document,mr.document,c.connection_name,c.library_name,"
-                "c.item_id,c.outcome "
+                "SELECT rc.document,mr.document,ml.connection_name,ml.library_name,"
+                "ml.item_id,c.outcome "
                 + _CURRENT_LIBRARY_FROM_SQL
-                + " WHERE c.outcome<>'tombstoned' AND "
+                + " WHERE COALESCE(c.outcome,'')<>'tombstoned' AND "
                 + condition
                 + _REVIEW_SEARCH_SQL
                 + " ORDER BY CASE WHEN "
                 + _REVIEW_ATTENTION_SQL
                 + " THEN 0 ELSE 1 END,"
                 "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')),"
-                "c.library_name,c.item_id,rc.review_case_id LIMIT ? OFFSET ?",
+                "ml.library_name,ml.item_id,ml.connection_name,"
+                "COALESCE(rc.review_case_id,'') LIMIT ? OFFSET ?",
                 (query, pattern, pattern, pattern, pattern, pattern, limit, offset),
             ).fetchall()
             values: list[tuple[str | None, str]] = []
@@ -4382,22 +4383,31 @@ class SQLiteMetadataReportRepository:
                 if (
                     len(row) != 6
                     or type(row[1]) is not str
-                    or any(type(value) is not str for value in row[2:])
+                    or any(type(value) is not str for value in row[2:5])
+                    or (row[5] is not None and type(row[5]) is not str)
                 ):
                     raise MetadataReportError("review browse row is invalid")
                 lineage = (row[2], row[3], row[4])
-                pointer = self._validated_review_pointer(lineage)
                 report = MetadataReport.from_json(row[1])
                 if (
-                    pointer is None
-                    or pointer[1] != report.report_id
-                    or pointer[5] != row[5]
-                    or (
+                    (
                         report.target.connection,
                         report.target.library,
                         report.target.item,
                     )
                     != lineage
+                ):
+                    raise MetadataReportError("review browse row disagrees")
+                if row[5] is None:
+                    if row[0] is not None:
+                        raise MetadataReportError("review browse row disagrees")
+                    values.append((None, report.to_json()))
+                    continue
+                pointer = self._validated_review_pointer(lineage)
+                if (
+                    pointer is None
+                    or pointer[1] != report.report_id
+                    or pointer[5] != row[5]
                 ):
                     raise MetadataReportError("review browse row disagrees")
                 if row[0] is None:
@@ -4436,7 +4446,7 @@ class SQLiteMetadataReportRepository:
                 + _REVIEW_ATTENTION_SQL
                 + " THEN 1 ELSE 0 END),0) "
                 + _CURRENT_LIBRARY_FROM_SQL
-                + " WHERE c.outcome<>'tombstoned'"
+                + " WHERE COALESCE(c.outcome,'')<>'tombstoned'"
                 + _REVIEW_SEARCH_SQL,
                 (query, pattern, pattern, pattern, pattern, pattern),
             ).fetchone()

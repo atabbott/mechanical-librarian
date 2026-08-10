@@ -2078,13 +2078,13 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(self.client.get("/library").status_code, 200)
         self.assertEqual(self.client.get("/attention").status_code, 200)
 
-    def test_complete_library_includes_current_work_without_a_review_case(self) -> None:
-        current = _report(title="Catalogue-only work", actionable=False)
+    def test_complete_library_includes_current_report_without_review_lineage(self) -> None:
+        current = _report(title="In-progress report", actionable=False)
         self.repository.browse_without_cases.append(current)
         self._login()
 
         response = self.client.get(
-            "/api/v1/library?lens=all&q=Catalogue-only"
+            "/api/v1/library?lens=all&q=In-progress"
         )
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -3178,16 +3178,62 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 json.loads(repository.admit_review_case(retired_proposal))["status"],
                 "retired",
             )
+            in_progress = for_item(
+                _report("In-progress report", "7", "8"),
+                "in-progress-item",
+            )
+            repository.publish(in_progress, lambda: True)
 
-            self.assertEqual(repository.count_current_review_cases(None), (2, 0))
+            self.assertEqual(repository.count_current_review_cases(None), (3, 0))
             self.assertEqual(repository.count_current_review_cases("No-case"), (1, 0))
+            self.assertEqual(
+                repository.count_current_review_cases("In-progress"), (1, 0)
+            )
             rows = repository.list_current_review_case_documents(
                 None, 10, 0, False
             )
-            self.assertEqual(len(rows), 2)
+            self.assertEqual(len(rows), 3)
             self.assertTrue(all(case_document is None for case_document, _ in rows))
             self.assertEqual(
                 repository.list_current_attention_documents(None, 10, 0), ()
+            )
+            repository.close()
+
+    def test_sqlite_library_order_is_total_across_duplicate_work_identity(self) -> None:
+        def for_connection(source: MetadataReport, connection: str) -> MetadataReport:
+            return MetadataReport.create(
+                target=TargetFacts(
+                    connection,
+                    source.target.library,
+                    source.target.item,
+                    source.target.fields,
+                ),
+                file=source.file,
+                local_claims=source.local_claims,
+                local_reasons=source.local_reasons,
+                providers=source.providers,
+                cover_sources=source.cover_sources,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "application.sqlite3")
+            source = _report("Duplicate title", "1", "2", actionable=False)
+            for connection in ("zeta", "alpha"):
+                repository.publish(for_connection(source, connection), lambda: True)
+
+            pages = [
+                repository.list_current_review_case_documents(None, 1, offset, None)
+                for offset in (0, 1)
+            ]
+            connections = [
+                MetadataReport.from_json(page[0][1]).target.connection
+                for page in pages
+            ]
+            self.assertEqual(connections, ["alpha", "zeta"])
+            self.assertEqual(len(set(connections)), 2)
+            self.assertEqual(
+                repository.list_current_review_case_documents(None, 1, 0, None),
+                pages[0],
             )
             repository.close()
 
