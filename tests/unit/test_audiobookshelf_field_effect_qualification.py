@@ -14,6 +14,7 @@ from scripts.qualify_audiobookshelf_field_effect import (
     _compose_review_client,
     _epub,
     _qualification_hardcover_client,
+    _read_installed_return_lineage,
     _require_installed_return_automatic_transition,
     _require_installed_return_lineage_progress,
     _operator_epub,
@@ -65,16 +66,12 @@ class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
         create.assert_called_once_with(application, review)
 
     def test_return_to_automatic_retains_manual_hold_until_fresh_lineage(self) -> None:
-        _require_installed_return_automatic_transition(204, object())
+        _require_installed_return_automatic_transition(204)
 
         with self.assertRaisesRegex(
             QualificationError, "installed_return_automatic_failed"
         ):
-            _require_installed_return_automatic_transition(202, object())
-        with self.assertRaisesRegex(
-            QualificationError, "installed_return_automatic_failed"
-        ):
-            _require_installed_return_automatic_transition(204, None)
+            _require_installed_return_automatic_transition(202)
 
     def test_return_to_automatic_requires_requested_scan_before_hold_clear(self) -> None:
         requested_scan_id = "scan-library"
@@ -127,6 +124,27 @@ class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
                     _require_installed_return_lineage_progress(
                         progress, requested_scan_id, requested_at, hold
                     )
+
+    def test_return_lineage_reads_hold_before_progress(self) -> None:
+        events = []
+        repository = SimpleNamespace(
+            field_effect_manual_hold_context=(
+                lambda *_: events.append("hold") or None
+            ),
+            review_pipeline_progress=(
+                lambda *_: events.append("progress") or SimpleNamespace(
+                    state="completed"
+                )
+            ),
+        )
+
+        progress, hold = _read_installed_return_lineage(
+            repository, "primary", "books", "review_case", "title"
+        )
+
+        self.assertEqual(events, ["hold", "progress"])
+        self.assertEqual(progress.state, "completed")
+        self.assertIsNone(hold)
 
     def test_hardcover_fixture_uses_distinct_candidate_identities_per_discovery_lane(self) -> None:
         client = _qualification_hardcover_client(

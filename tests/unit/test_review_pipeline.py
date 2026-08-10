@@ -473,6 +473,91 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertTrue(progress.rescan_requested)
         reopened.close()
 
+    def test_request_during_discovery_forces_a_successor_scan(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+
+        requested = repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 12
+        )
+
+        self.assertEqual(requested.state, "discovering")
+        self.assertTrue(requested.rescan_requested)
+        self.assertEqual(requested.updated_at, 12)
+        repository.complete_review_discovery(
+            discovery, 1, "a" * 64, (), 13
+        )
+        processing = repository.review_pipeline_progress("primary", "fiction")
+        assert processing is not None
+        self.assertTrue(processing.rescan_requested)
+        self.assertIsNone(repository.claim_review_pipeline_action(14))
+        queued = repository.review_pipeline_progress("primary", "fiction")
+        assert queued is not None
+        self.assertEqual(queued.state, "queued")
+        repository.close()
+
+    def test_failed_discovery_preserves_the_requested_successor(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 12
+        )
+
+        with patch.object(
+            repository, "_has_pending_field_effect_manual_return",
+            return_value=True,
+        ):
+            repository.fail_review_pipeline_action(
+                discovery, "failed", False, 13
+            )
+
+        progress = repository.review_pipeline_progress("primary", "fiction")
+        assert progress is not None
+        self.assertEqual(progress.state, "queued")
+        self.assertFalse(progress.rescan_requested)
+        successor = repository.claim_review_pipeline_action(14)
+        assert successor is not None
+        self.assertEqual(successor.stage, "discovery")
+        repository.close()
+
+    def test_failed_processing_preserves_the_requested_successor(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery, 1, "a" * 64, (_entry("item-1", "1" * 64),), 12
+        )
+        work = repository.claim_review_pipeline_action(13)
+        assert work is not None
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 14
+        )
+        repository.fail_review_pipeline_action(work, "failed", False, 15)
+
+        with patch.object(
+            repository, "_has_pending_field_effect_manual_return",
+            return_value=True,
+        ):
+            self.assertIsNone(repository.claim_review_pipeline_action(16))
+        progress = repository.review_pipeline_progress("primary", "fiction")
+        assert progress is not None
+        self.assertEqual(progress.state, "queued")
+        successor = repository.claim_review_pipeline_action(17)
+        assert successor is not None
+        self.assertEqual(successor.stage, "discovery")
+        repository.close()
+
     def test_complete_empty_discovery_reaches_a_bounded_summary(self) -> None:
         repository = open_repository(self.path)
         repository.request_review_scan(

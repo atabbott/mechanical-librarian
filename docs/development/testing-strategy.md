@@ -505,7 +505,10 @@ destination across mixed human and qualified automatic origins and proves
 field-local drift, multi-library progress, pause/revoke, restart, manual hold,
 scoped suspension, audit and cover cleanup. Deterministic fake-service tests own
 exhaustive ambiguity, retry exhaustion, policy demotion and scheduling-fairness
-proof. Raw
+proof. Exact-current persistence and continuous-application source tests separately
+prove restart recovery of accepted return-to-automatic requests, post-discovery
+successor forcing, failure-path successor preservation and greater-than-one-page
+release recovery. Raw
 case identities, metadata, paths and media remain private; public evidence is
 aggregate only.
 

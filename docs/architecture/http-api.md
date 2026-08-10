@@ -50,7 +50,11 @@ example, plan events, and typed suspensions. It does not expose credentials,
 cover bytes, unrestricted paths, an arbitrary target, or a generic queue/apply
 command. Consent is restricted to configured libraries and the existing 14
 destinations; return-to-automatic requests a fresh scan and does not delete an
-immutable human decision.
+immutable human decision. Its accepted scan identity and originating human-hold
+token are persisted before the response, so restart resumes the same conditional
+release rather than requiring the owner to repeat the command. A request made
+during active discovery forces a successor scan; bounded recovery rotates through
+every accepted request instead of repeatedly stopping at the oldest page.
 
 Progressive preparation adds authenticated
 `GET /api/v1/review-preparation` and CSRF-protected
