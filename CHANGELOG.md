@@ -11,7 +11,10 @@
   persistent authenticated React shell at their existing URLs. Direct entry,
   progressive current reads, cancellation, focus and URL ownership, CSRF and
   build-identity mutation gates, and authoritative recovery replace the
-  authenticated embedded frontend without expanding product authority. (#496)
+  authenticated embedded frontend without expanding product authority. Scan and
+  retry acknowledgements, preparation-panel focus, duplicate activity events,
+  uncertain Activity commands, and persistent chunk recovery now preserve
+  their respective current-state contracts. (#496)
 
 - Establish an exactly pinned React, strict-TypeScript, Vite, TanStack Router,
   and TanStack Query browser platform without switching current routes. Exact

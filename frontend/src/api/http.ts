@@ -39,6 +39,7 @@ export interface CaseDetailView { id: string; current: boolean; title: string; s
 export type EvidenceView = Schema<'_EvidenceResponse'>
 export type HistoryView = Schema<'_HistoryResponse'>
 export type PreparationView = Schema<'_PreparationResponse'>
+export type PreparationProgress = Schema<'_PreparationProgress'>
 export type PolicyStateView = Schema<'_PolicyProfileResponse'>
 export type ShadowPostureView = Schema<'_ShadowPostureResponse'>
 export type AutomaticSafetyView = Schema<'_AutomaticSafetyResponse'>
@@ -65,7 +66,7 @@ export interface ReviewHttp {
   getEvidence(reviewCaseId: string, cursor?: string, signal?: AbortSignal): Promise<EvidenceView>
   getHistory(reviewCaseId: string, signal?: AbortSignal): Promise<HistoryView>
   getPreparation(signal?: AbortSignal): Promise<PreparationView>
-  preparationAction(path: string, signal?: AbortSignal): Promise<PreparationView>
+  preparationAction(path: string, signal?: AbortSignal): Promise<PreparationView | PreparationProgress>
   recordDecision(reviewCaseId: string, command: DecisionCommand, signal?: AbortSignal): Promise<Schema<'_DecisionAcknowledgement'>>
   returnToAutomatic(reviewCaseId: string, destination: string, signal?: AbortSignal): Promise<void>
   getPolicyState(signal?: AbortSignal): Promise<PolicyStateView>
@@ -129,7 +130,11 @@ export class ReviewApiClient implements ReviewHttp {
   async getEvidence(id: string, cursor?: string, signal?: AbortSignal) { const p = new URLSearchParams({ limit: '50' }); if (cursor) p.set('cursor', cursor); return validateObject(await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}/evidence?${p}`, signal), 'evidence') as unknown as EvidenceView }
   async getHistory(id: string, signal?: AbortSignal) { return validateObject(await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}/history`, signal), 'history') as unknown as HistoryView }
   async getPreparation(signal?: AbortSignal) { return validateObject(await this.read('/api/v1/review-preparation', signal), 'preparation') as unknown as PreparationView }
-  async preparationAction(path: string, signal?: AbortSignal) { return validateObject(await this.mutate(`/api/v1/review-preparation/${path}`, undefined, signal), 'preparation') as unknown as PreparationView }
+  async preparationAction(path: string, signal?: AbortSignal) {
+    const value = await this.mutate(`/api/v1/review-preparation/${path}`, undefined, signal)
+    if (/(?:^|\/)(?:scan|retry)$/.test(path)) return preparationProgress(value)
+    return validateObject(value, 'preparation') as unknown as PreparationView
+  }
   async recordDecision(id: string, command: DecisionCommand, signal?: AbortSignal) {
     const { idempotencyKey, proposalId, targetFingerprint, selectedValue, destination, outcome } = command
     return validateObject(await this.mutate(`/api/v1/review-cases/${encodeURIComponent(id)}/decisions`, { destination, outcome, proposal_id: proposalId, selected_value: selectedValue ?? null, target_fingerprint: targetFingerprint }, signal, { 'idempotency-key': idempotencyKey }), 'decision') as unknown as Schema<'_DecisionAcknowledgement'>
@@ -182,6 +187,13 @@ const stringArray = (value: unknown, field: string) => { if (!Array.isArray(valu
 export const displayValue = (value: unknown): string => value === null ? 'Not set' : typeof value === 'string' || typeof value === 'boolean' ? String(value) : Array.isArray(value) ? value.map(displayValue).join(' · ') : record(value) && typeof value.name === 'string' ? `${value.name}${typeof value.sequence === 'string' ? ` · ${value.sequence}` : ''}` : 'Unavailable'
 
 const validateObject = (value: unknown, name: string): Record<string, unknown> => { if (!record(value) || typeof value.schema_version !== 'string') throw new ApiError(502, `invalid_${name}_response`); return value }
+const preparationProgress = (value: unknown): PreparationProgress => {
+  if (!record(value)) throw new ApiError(502, 'invalid_preparation_progress')
+  for (const field of ['scan_id', 'connection', 'library', 'library_id', 'state']) stringValue(value[field], `preparation_${field}`)
+  for (const field of ['checked', 'total', 'ready', 'blocked']) integerValue(value[field], `preparation_${field}`)
+  if (typeof value.rescan_requested !== 'boolean') throw new ApiError(502, 'invalid_preparation_rescan_requested')
+  return value as unknown as PreparationProgress
+}
 const mapActivity = (value: unknown): ActivityView => { if (!record(value)) throw new ApiError(502, 'invalid_activity_response'); return value }
 
 export const mapLibrary = (value: unknown): LibraryView => {

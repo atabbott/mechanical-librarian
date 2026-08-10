@@ -68,7 +68,17 @@ export const loadRouteChunk = async <Value>(
   }
 }
 
+export const reloadCurrentApplication = (
+  buildIdentity = currentBuildIdentity,
+  runtime: ChunkRecoveryRuntime = browserRuntime,
+) => {
+  if (buildIdentity && buildPattern.test(buildIdentity)) {
+    attemptedBuildIdentity = buildIdentity
+    runtime.markAttempt(buildIdentity)
+  }
+  runtime.reload()
+}
+
 export const recoverableLazy = <Properties extends object>(
   load: () => Promise<{ default: ComponentType<Properties> }>,
 ) => lazy(() => loadRouteChunk(load))
-

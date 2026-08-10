@@ -150,6 +150,16 @@ describe('ReviewApiClient', () => {
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('x-ml-build-identity')).toBe(buildIdentity)
   })
 
+  it('accepts scan progress acknowledgements independently from preparation controls', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ scan_id: 'scan-1', connection: 'primary', library: 'Books', library_id: 'books', state: 'queued', checked: 0, total: 2, ready: 0, blocked: 0, rescan_requested: false }))
+      .mockResolvedValueOnce(Response.json({ schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [] }))
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+
+    await expect(client.preparationAction('primary/Books/scan')).resolves.toMatchObject({ scan_id: 'scan-1', state: 'queued' })
+    await expect(client.preparationAction('pause')).resolves.toMatchObject({ schema_version: 'review-preparation-v1', paused: false })
+  })
+
   it('preserves structured server error codes and rejects malformed DTOs', async () => {
     const client = new ReviewApiClient({
       csrf,

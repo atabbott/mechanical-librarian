@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { AmbiguousMutationError, ApiError } from '../src/api/http'
 import type { ActivityView, CaseDetailView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
 import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
+import { activityEventKeys, activityOutcome } from '../src/activityState'
 
 const library: LibraryView = {
   lens: 'all',
@@ -76,6 +77,45 @@ const renderRoute = (entry: string, http = createHttp()) => {
 }
 
 describe('typed review routes', () => {
+  it('fails closed while classifying every authoritative Activity command outcome', () => {
+    expect(activityOutcome({}, { path: 'field-effects/pause' })).toBe('unknown')
+    expect(activityOutcome({ paused: true }, { path: 'field-effects/pause' })).toBe('applied')
+    expect(activityOutcome({ paused: false }, { path: 'field-effects/pause' })).toBe('unknown')
+    expect(activityOutcome({ paused: false }, { path: 'field-effects/resume' })).toBe('applied')
+    expect(activityOutcome({ paused: true }, { path: 'field-effects/resume' })).toBe('unknown')
+    expect(activityOutcome({ paused: 'false' }, { path: 'field-effects/resume' })).toBe('unknown')
+
+    const revoke = { path: 'activity/primary/fiction/revoke' }
+    expect(activityOutcome({ enabled_libraries: [] }, revoke)).toBe('applied')
+    expect(activityOutcome({ enabled_libraries: [{ connection: 'primary', library: 'fiction' }] }, revoke)).toBe('unknown')
+    expect(activityOutcome({ enabled_libraries: [{}] }, revoke)).toBe('unknown')
+
+    const consent = { path: 'activity/consent', body: { grants: [{ library: 'fiction', destinations: ['title'] }] } }
+    expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title', consented: true }] }] }, consent)).toBe('applied')
+    expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title', consented: false }] }] }, consent)).toBe('unknown')
+    expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title' }] }] }, consent)).toBe('unknown')
+    expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title', consented: true }, { destination: 'title', consented: true }] }] }, consent)).toBe('unknown')
+    expect(activityOutcome({ capabilities: [{ library: 'fiction', destinations: [{ destination: 'title', consented: true }] }, { library: 'fiction', destinations: [{ destination: 'title', consented: false }] }] }, consent)).toBe('unknown')
+    expect(activityOutcome({ capabilities: [{}] }, consent)).toBe('unknown')
+  })
+
+  it('keeps numeric ledger identities stable across newest-first capped polling', () => {
+    const existing = Array.from({ length: 50 }, (_, index) => ({
+      work_id: `work-${String(index)}`,
+      destination: index % 2 === 0 ? 'title' : 'authors',
+      state: 'verified',
+      occurred_at: 1_000 - index,
+      library: 'fiction',
+      origin: 'human',
+      failure: null,
+    }))
+    const next = [{ ...existing[0], work_id: 'new-work', occurred_at: 1_001 }, ...existing.slice(0, 49)]
+    expect(activityEventKeys(next).slice(1)).toEqual(activityEventKeys(existing).slice(0, 49))
+
+    const duplicate = { work_id: 'same', destination: 'title', state: 'verified', occurred_at: 1_000, library: 'fiction', origin: 'human', failure: null }
+    const duplicateWindow = Array.from({ length: 50 }, () => duplicate)
+    expect(new Set(activityEventKeys([duplicate, ...duplicateWindow.slice(0, 49)]))).toEqual(new Set(activityEventKeys(duplicateWindow)))
+  })
   it('bounds and normalizes URL-owned library search state', () => {
     expect(normalizeLibrarySearch({ lens: 'all', q: 'title', cursor: 'next', preview: 'case-1' })).toEqual({
       lens: 'all', q: 'title', cursor: 'next', preview: 'case-1',
@@ -312,6 +352,33 @@ describe('typed review routes', () => {
     }
   })
 
+  it('returns focus to the preparation trigger when its activity panel closes', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async (): Promise<PreparationView> => ({ schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [{ blocked: 0, checked: 1, connection: 'primary', library: 'Books', library_id: 'books', ready: 0, rescan_requested: false, scan_id: 'scan-1', state: 'scanning', total: 2 }] })) }
+    renderRoute('/library?lens=all', http)
+
+    const trigger = await screen.findByRole('button', { name: 'Preparing libraries' })
+    await user.click(trigger)
+    await user.click(screen.getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+
+  it('moves focus to the persistent main landmark when polling removes preparation activity', async () => {
+    const user = userEvent.setup()
+    const active: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [] }
+    const inactive: PreparationView = { schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [] }
+    let current = active
+    const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => current) }
+    const { queryClient } = renderRoute('/library?lens=all', http)
+    const trigger = await screen.findByRole('button', { name: 'Preparing libraries' })
+    await user.click(trigger)
+    current = inactive
+    await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Preparing libraries' })).toBeNull())
+    expect(document.getElementById('main-content')).toHaveFocus()
+  })
+
   it('polls idle Activity while mounted and tears the poll down after navigation', async () => {
     vi.useFakeTimers()
     try {
@@ -367,6 +434,52 @@ describe('typed review routes', () => {
     ))
     await waitFor(() => expect(choice).not.toBeChecked())
     expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
+  })
+
+  it.each([
+    ['applied', true, 'The requested activity change was applied, confirmed by the authoritative server.'],
+    ['unconfirmed', false, 'The activity outcome could not be confirmed. No command was resent.'],
+  ])('reconciles an ambiguous pause as %s without resending it', async (_name, paused, message) => {
+    const user = userEvent.setup()
+    const initial: ActivityView = { backup_ready: true, configured_libraries: [], enabled_libraries: [{ connection: 'primary', library: 'fiction' }], capabilities: [], events: [], paused: false }
+    let current = initial
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current), activityCommand: vi.fn(async () => { throw new AmbiguousMutationError() }) }
+    renderRoute('/activity', http)
+    await screen.findByRole('button', { name: 'Pause new work' })
+    current = { ...initial, paused }
+    await user.click(screen.getByRole('button', { name: 'Pause new work' }))
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(message))
+    expect(http.activityCommand).toHaveBeenCalledOnce()
+    expect(http.getActivity).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports an unresolved ambiguous pause without calling it safe or resending it', async () => {
+    const user = userEvent.setup()
+    const initial: ActivityView = { backup_ready: true, configured_libraries: [], enabled_libraries: [{ connection: 'primary', library: 'fiction' }], capabilities: [], events: [], paused: false }
+    let available = true
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => { if (!available) throw new Error('offline'); return initial }), activityCommand: vi.fn(async () => { throw new AmbiguousMutationError() }) }
+    renderRoute('/activity', http)
+    await screen.findByRole('button', { name: 'Pause new work' })
+    available = false
+    await user.click(screen.getByRole('button', { name: 'Pause new work' }))
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The activity outcome could not be confirmed. No command was resent.'))
+    expect(http.activityCommand).toHaveBeenCalledOnce()
+  })
+
+  it('does not treat a missing requested consent destination as applied after ambiguity', async () => {
+    const user = userEvent.setup()
+    const initial: ActivityView = { backup_ready: true, configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { total: 1 } }], enabled_libraries: [], capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false }] }], events: [], paused: false }
+    let current = initial
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current), activityCommand: vi.fn(async () => { throw new AmbiguousMutationError() }) }
+    renderRoute('/activity', http)
+    await user.click(await screen.findByRole('checkbox', { name: /fiction · 1 prepared/ }))
+    current = { ...initial, capabilities: [] }
+    await user.click(screen.getByRole('button', { name: 'Enable guarded writes' }))
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The activity outcome could not be confirmed. No command was resent.'))
+    expect(http.activityCommand).toHaveBeenCalledOnce()
   })
 
   it('prunes a selection when polling removes and later restores eligibility', async () => {
@@ -442,6 +555,17 @@ describe('typed review routes', () => {
     expect(neutral).toBeVisible()
     expect(neutral.textContent).not.toContain(unknown)
     expect(neutral.textContent).not.toContain('automatic')
+  })
+
+  it('renders duplicate activity events without duplicate React keys', async () => {
+    const duplicate = { work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', occurred_at: '2026-08-10T00:00:00Z' }
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => ({ backup_ready: true, configured_libraries: [], enabled_libraries: [], capabilities: [], events: [duplicate, duplicate], paused: false })) }
+    renderRoute('/activity', http)
+
+    await screen.findAllByText('book-1 · verified')
+    expect(error).not.toHaveBeenCalledWith(expect.stringContaining('same key'), expect.anything())
+    error.mockRestore()
   })
 
   it('keeps an unknown direct entry inside a safe shell fallback', async () => {
