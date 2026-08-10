@@ -222,9 +222,11 @@ describe('typed review routes', () => {
     const second = { kind: 'text', value: 'Another title' } as const
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('detail fixture requires a title field')
+    const staleNextField = { ...titleField, destination: 'subtitle', proposalId: 'proposal-2', targetFingerprint: 'fingerprint-2' }
+    const actualNextField = { ...titleField, destination: 'authors', proposalId: 'proposal-3', targetFingerprint: 'fingerprint-3' }
     const initial: CaseDetailView = {
       ...detail,
-      fields: [{ ...titleField, proposedValues: [...titleField.proposedValues, second] }],
+      fields: [{ ...titleField, proposedValues: [...titleField.proposedValues, second] }, staleNextField, actualNextField],
     }
     const initialField = initial.fields[0]
     if (!initialField) throw new Error('detail fixture requires an initial title field')
@@ -238,7 +240,15 @@ describe('typed review routes', () => {
           outcome: 'accept', proposal_id: 'proposal-1', review_case_id: 'case-1',
           selected_value: second, target_fingerprint: 'fingerprint-1',
         },
-      }],
+      }, {
+        ...staleNextField,
+        needsAttention: false,
+        automaticDecision: {
+          candidate_id: null, decision_id: 'automatic-decision-2', destination: 'subtitle', occurred_at: 1,
+          outcome: 'accept', proposal_id: 'proposal-2', review_case_id: 'case-1',
+          selected_value: staleNextField.proposedValues[0] ?? null, target_fingerprint: 'fingerprint-2',
+        },
+      }, actualNextField],
     }
     let current = initial
     const http: ReviewHttp = {
@@ -249,18 +259,53 @@ describe('typed review routes', () => {
         return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-1', destination: 'title', occurred_at: 1, outcome: 'accept', proposal_id: 'proposal-1', review_case_id: 'case-1', selected_value: second, target_fingerprint: 'fingerprint-1' }
       }),
     }
-    renderRoute('/review/case-1?field=title&subview=review', http)
+    const { router } = renderRoute('/review/case-1?field=title&subview=review', http)
 
-    await user.click(await screen.findByRole('button', { name: 'Accept proposed value 2: Another title' }))
+    expect((await screen.findAllByLabelText('Reviewer facts')).at(0)).toHaveTextContent('Available choices3')
+    await user.click(await screen.findByRole('button', { name: 'Choose proposed value 2: Another title' }))
 
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledWith('case-1', expect.objectContaining({ selectedValue: second })))
-    expect(await screen.findByText('Human decision: accept by owner.')).toBeVisible()
-    expect(screen.queryByRole('button', { name: 'Keep current value' })).toBeNull()
+    expect(await screen.findByText('Decision recorded. Continuing with authors.')).toBeVisible()
+    await waitFor(() => expect(router.state.location.search).toEqual({ field: 'authors', subview: 'review' }))
+    expect(await screen.findByRole('heading', { name: 'authors' })).toBeVisible()
     expect(http.getCaseDetail).toHaveBeenCalledTimes(2)
   })
 
-  it('preserves a human override for an automatically decided field', async () => {
+  it('offers only the current-value choice when an unresolved field has no proposal', async () => {
     const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('detail fixture requires a title field')
+    const currentOnly: CaseDetailView = { ...detail, fields: [{ ...titleField, proposedValues: [] }] }
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => currentOnly) }
+    renderRoute('/review/case-1?field=title&subview=review', http)
+
+    expect(await screen.findByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
+    expect(screen.getAllByLabelText('Reviewer facts').at(0)).toHaveTextContent('Available choices1')
+    expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Choose current value: Old title' }))
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledWith('case-1', expect.objectContaining({
+      destination: 'title', outcome: 'keep_current', selectedValue: null,
+    })))
+  })
+
+  it('halts the acknowledged field when a successful decision cannot refresh current detail', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn().mockResolvedValueOnce(detail).mockRejectedValue(new Error('refresh unavailable')),
+    }
+    const { router } = renderRoute('/review/case-1?field=title&subview=review', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+
+    expect(await screen.findByText('Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.')).toBeVisible()
+    expect(router.state.location.search).toEqual({ field: 'title', subview: 'review' })
+    expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    expect(screen.getAllByLabelText('Reviewer facts').at(0)).toHaveTextContent('Available choices0')
+  })
+
+  it('never offers a false human choice for an automatically decided field', async () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('detail fixture requires a title field')
     const automatic: CaseDetailView = {
@@ -284,13 +329,10 @@ describe('typed review routes', () => {
     const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => automatic) }
     renderRoute('/review/case-1?field=title&subview=review', http)
 
-    await user.click(await screen.findByRole('button', { name: 'Choose human override' }))
-    await user.click(screen.getByRole('button', { name: 'Keep current value' }))
-
-    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledWith(
-      'case-1',
-      expect.objectContaining({ destination: 'title', outcome: 'keep_current' }),
-    ))
+    expect(await screen.findByText('Handled automatically: accept · policy origin.')).toBeVisible()
+    expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
+    expect(http.recordDecision).not.toHaveBeenCalled()
   })
 
   it('reconciles an ambiguous decision without retrying and routes stale cases safely', async () => {
@@ -318,15 +360,17 @@ describe('typed review routes', () => {
     }
     renderRoute('/review/case-1?field=title&subview=review', http)
 
-    await user.click(await screen.findByRole('button', { name: 'Keep current value' }))
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
 
     expect(await screen.findByText('Human decision: keep current by owner.')).toBeVisible()
     expect(screen.getByText('The response was lost. The current case was reloaded before any retry.')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
     expect(ambiguous).toHaveBeenCalledOnce()
 
     const staleHttp: ReviewHttp = { ...createHttp(), recordDecision: vi.fn(async () => { throw new ApiError(409, 'stale') }) }
     const stale = renderRoute('/review/case-1?field=title&subview=review', staleHttp)
-    const keep = (await screen.findAllByRole('button', { name: 'Keep current value' })).at(-1)
+    const keep = (await screen.findAllByRole('button', { name: 'Choose current value: Old title' })).at(-1)
     if (!keep) throw new Error('stale fixture requires a decision control')
     await user.click(keep)
     await waitFor(() => expect(stale.router.state.location.pathname).toBe('/library'))

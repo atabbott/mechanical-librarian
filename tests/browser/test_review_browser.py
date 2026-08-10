@@ -229,17 +229,25 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertLessEqual(
                         page.evaluate("() => document.documentElement.scrollWidth"), 390
                     )
+                    self.assertEqual(
+                        page.get_by_role("button", name="Choose current value:", exact=False).count(),
+                        1,
+                    )
+                    self.assertEqual(
+                        page.get_by_role("button", name="Choose proposed value", exact=False).count(),
+                        0,
+                    )
+                    page.get_by_role("button", name="series", exact=True).click()
                     page.get_by_role("button", name="Use dark mode").click()
                     self.assertEqual(
                         page.locator("html").get_attribute("data-theme"), "dark"
                     )
-                    page.get_by_role("button", name="Keep current value").first.click()
-                    page.get_by_text(
-                        "Decision recorded from the authoritative case."
-                    ).wait_for()
+                    page.get_by_role("button", name="Choose current value:", exact=False).first.click()
+                    page.get_by_text("Decision recorded.", exact=False).wait_for()
+                    page.get_by_role("button", name="series", exact=True).click()
                     page.get_by_text("Human decision: keep current by owner.").wait_for()
                     self.assertEqual(
-                        page.get_by_role("button", name="Keep current value").count(),
+                        page.get_by_role("button", name="Choose current value:", exact=False).count(),
                         0,
                     )
                     page.get_by_role("button", name="Evidence").click()

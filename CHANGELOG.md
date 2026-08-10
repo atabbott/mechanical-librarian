@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Restore Variant M review detail: direct current-or-specific-proposed value
+  controls record the existing exact-field decision without generic outcome
+  controls or a submit step. Readable reviewer facts and secondary,
+  retryable evidence/history remain available without blocking the decision.
+  (#531)
+
 - Restore the Variant M editorial shell and complete attention-first Library.
   Library rows now lead with readable work identity and truthful field counts,
   while Attention groups only human-beneficial fields with bounded reason and

@@ -5,10 +5,20 @@ import { useEffect, useRef, useState } from 'react'
 import { AmbiguousMutationError, ApiError, displayValue } from '../api/http'
 import type { CaseDetailView, DecisionCommand, DecisionOutcome, EvidenceView } from '../api/http'
 import { useRouteReadyFocus } from '../focus'
-import { detailRoute, useReviewContext } from '../router'
+import { detailQuery, detailRoute, useReviewContext } from '../router'
 
 const friendly = (value: string) => value.replaceAll('_', ' ')
+const readable = (value: string) => `${friendly(value).slice(0, 1).toUpperCase()}${friendly(value).slice(1)}`
+const reviewedSource = (value: string) => value.startsWith('provider_') ? 'Provider evidence' : readable(value)
 const requestKey = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `decision-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+const actionable = (field: CaseDetailView['fields'][number]) => field.needsAttention && field.humanDecision === null && field.automaticDecision === null
+// Keep the field queue stable: after a recorded decision, move forward in displayed
+// order and wrap once; terminal cases remain on the authoritative selected field.
+const nextUnresolved = (fields: CaseDetailView['fields'], destination: string) => {
+  const index = fields.findIndex((field) => field.destination === destination)
+  const ordered = index < 0 ? fields : [...fields.slice(index + 1), ...fields.slice(0, index)]
+  return ordered.find(actionable)
+}
 
 export default function DetailPage({ data }: { data: CaseDetailView }) {
   const { http, queryClient } = useReviewContext()
@@ -17,12 +27,31 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   const navigate = useNavigate({ from: '/review/$reviewCaseId' })
   const [status, setStatus] = useState('')
   const [pending, setPending] = useState<DecisionCommand | null>(null)
-  const [editingDestination, setEditingDestination] = useState<string | null>(null)
+  const [acknowledgedDestination, setAcknowledgedDestination] = useState<string | null>(null)
   const canonicalized = useRef('')
   const evidence = useInfiniteQuery({ queryKey: ['review-case', reviewCaseId, 'evidence'], initialPageParam: undefined as string | undefined, queryFn: ({ pageParam, signal }) => http.getEvidence(reviewCaseId, pageParam, signal), getNextPageParam: (page: EvidenceView) => page.next_cursor ?? undefined, staleTime: 30_000, retry: false })
   const history = useQuery({ queryKey: ['review-case', reviewCaseId, 'history'], queryFn: ({ signal }) => http.getHistory(reviewCaseId, signal), staleTime: 30_000, retry: false })
-  const settle = async () => { await Promise.all([queryClient.invalidateQueries({ queryKey: ['review-case', reviewCaseId] }), queryClient.invalidateQueries({ queryKey: ['library'] }), queryClient.invalidateQueries({ queryKey: ['attention'] })]) }
-  const decision = useMutation({ mutationFn: (command: DecisionCommand) => http.recordDecision(reviewCaseId, command), retry: false, onSuccess: async () => { setPending(null); setStatus('Decision recorded from the authoritative case.'); await settle() }, onError: async (error) => { await settle(); if (error instanceof ApiError && error.code === 'stale') { setStatus('This case was superseded. Reopen its current replacement from Library.'); await navigate({ to: '/library', search: { lens: 'needs_attention' } }); return } if (error instanceof ApiError && error.code === 'already_decided') { setPending(null); setStatus('The authoritative decision was reloaded.'); return } setStatus(error instanceof AmbiguousMutationError ? 'The response was lost. The current case was reloaded before any retry.' : 'The decision was not recorded. Your choice is unchanged.') } })
+  const settle = async () => {
+    await Promise.all([queryClient.invalidateQueries({ queryKey: ['library'] }), queryClient.invalidateQueries({ queryKey: ['attention'] })])
+    try {
+      return await queryClient.fetchQuery({ ...detailQuery(http, reviewCaseId), staleTime: 0 })
+    } catch {
+      return undefined
+    }
+  }
+  const decision = useMutation({ mutationFn: (command: DecisionCommand) => http.recordDecision(reviewCaseId, command), retry: false, onSuccess: async (_, command) => {
+    const refreshed = await settle()
+    setPending(null)
+    if (!refreshed) {
+      setAcknowledgedDestination(command.destination)
+      setStatus('Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.')
+      return
+    }
+    setAcknowledgedDestination(null)
+    const next = nextUnresolved(refreshed.fields, command.destination)
+    setStatus(next ? `Decision recorded. Continuing with ${friendly(next.destination)}.` : 'Decision recorded. No unresolved fields remain.')
+    if (next) await navigate({ search: { ...search, field: next.destination, subview: 'review' } })
+  }, onError: async (error, command) => { const refreshed = await settle(); const refreshedField = refreshed?.fields.find((field) => field.destination === command.destination); if (refreshedField && !actionable(refreshedField)) setPending(null); if (error instanceof ApiError && error.code === 'stale') { setStatus('This case was superseded. Reopen its current replacement from Library.'); await navigate({ to: '/library', search: { lens: 'needs_attention' } }); return } if (error instanceof ApiError && error.code === 'already_decided') { setPending(null); setStatus('The authoritative decision was reloaded.'); return } setStatus(error instanceof AmbiguousMutationError ? 'The response was lost. The current case was reloaded before any retry.' : 'The decision was not recorded. Your choice is unchanged.') } })
   const returnAutomatic = useMutation({ mutationFn: (destination: string) => http.returnToAutomatic(reviewCaseId, destination), retry: false, onSuccess: async () => { setStatus('Automatic policy resumes after fresh checks.'); await settle() }, onError: async () => { setStatus('Manual hold is unchanged. Try again.'); await settle() } })
   const selected = data.fields.some((field) => field.destination === search.field) ? search.field : data.fields[0]?.destination
   useRouteReadyFocus(`${search.subview}:${selected ?? ''}`)
@@ -40,16 +69,15 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
       <nav className="field-navigation" aria-label="Review fields">{data.fields.map((field) => <button key={field.destination} aria-current={selected === field.destination} onClick={() => void navigate({ search: { ...search, field: field.destination } })}>{friendly(field.destination)}</button>)}</nav>
       <section className="field-list" aria-label="Review fields">{data.fields.map((field) => {
         const hasDecision = field.humanDecision !== null || field.automaticDecision !== null
-        const choicesVisible = field.needsAttention || editingDestination === field.destination
+        const choicesVisible = actionable(field) && acknowledgedDestination !== field.destination
+        const availableChoiceCount = choicesVisible ? field.proposedValues.length + 1 : 0
         return <article id={`field-${field.destination}`} key={field.destination} hidden={selected !== field.destination} tabIndex={-1} data-route-focus={selected === field.destination ? '' : undefined}>
-          <h2>{friendly(field.destination)}</h2>
-          <div className="comparison"><div><small>Current</small><p>{field.currentValue}</p></div><div><small>Proposed</small><p>{field.proposedValues.length ? field.proposedValues.map((value) => displayValue(value.value)).join(' · ') : 'No proposed value'}</p></div></div>
-          {field.notices.map((notice) => <p key={notice}>{notice}</p>)}
+          <div className="detail-field-heading"><div><p className="eyebrow">{choicesVisible ? 'Your decision' : 'Field status'}</p><h2>{friendly(field.destination)}</h2></div><div className="reviewer-facts" aria-label="Reviewer facts"><span><small>Review state</small><strong>{readable(field.disposition)}</strong></span><span><small>Available choices</small><strong>{String(availableChoiceCount)}</strong></span></div></div>
+          {choicesVisible ? <section className="direct-choice" aria-label={`Choose a ${friendly(field.destination)} value`}><p className="choice-intro">Choose the value that should remain bound to this field. Your selection records this field only.</p><div className="direct-choice-grid"><button aria-label={`Choose current value: ${field.currentValue}`} className="value-choice current-value" disabled={decision.isPending} onClick={() => submit(field, 'keep_current')}><small>Current value</small><strong>{field.currentValue}</strong><span>Retain this exact value</span></button>{field.proposedValues.map((value, index) => <button aria-label={`Choose proposed value ${String(index + 1)}: ${displayValue(value.value)}`} className="value-choice proposed-value" key={`${value.kind}:${String(index)}`} disabled={decision.isPending} onClick={() => submit(field, 'accept', value)}><small>Proposed value {field.proposedValues.length > 1 ? String(index + 1) : ''}</small><strong>{displayValue(value.value)}</strong><span>Use this exact value</span></button>)}</div></section> : <div className="comparison"><div><small>Current value</small><p>{field.currentValue}</p></div><div><small>Review state</small><p>{hasDecision ? 'A decision is already recorded.' : field.proposedValues.length ? `${String(field.proposedValues.length)} eligible proposed value${field.proposedValues.length === 1 ? '' : 's'}.` : 'No eligible proposed values.'}</p></div></div>}
+          {field.notices.length || field.provenance.length ? <section className="field-notices" aria-label="Reviewer notes">{field.notices.map((notice) => <p key={notice}>{readable(notice)}</p>)}{field.provenance.map((source) => <p key={source}><small>Reviewed source</small> {reviewedSource(source)}</p>)}</section> : null}
           {field.humanDecision ? <p className="decision-recorded">Human decision: {friendly(field.humanDecision.outcome)} by {field.humanDecision.actor}.</p> : field.automaticDecision ? <p className="decision-recorded">Handled automatically: {friendly(field.automaticDecision.outcome)} · policy origin.</p> : null}
-          {hasDecision && !choicesVisible ? <button className="inline-action" onClick={() => setEditingDestination(field.destination)}>{field.humanDecision ? 'Change human decision' : 'Choose human override'}</button> : null}
-          {choicesVisible ? <div className="choices">{field.proposedValues.map((value, index) => <button key={`${value.kind}:${String(index)}`} disabled={decision.isPending} onClick={() => submit(field, 'accept', value)}>{field.proposedValues.length === 1 ? 'Accept proposed value' : `Accept proposed value ${String(index + 1)}: ${displayValue(value.value)}`}</button>)}<button disabled={decision.isPending} onClick={() => submit(field, 'keep_current')}>Keep current value</button><button disabled={decision.isPending} onClick={() => submit(field, 'reject')}>Reject proposed change</button></div> : null}
           {field.manualHold ? <button disabled={returnAutomatic.isPending} onClick={() => returnAutomatic.mutate(field.destination)}>Return to automatic handling</button> : null}
-          {decision.isError && pending?.destination === field.destination ? <button onClick={() => submit(field, pending.outcome, pending.selectedValue, true)}>Try again</button> : null}
+          {decision.isError && choicesVisible && pending?.destination === field.destination ? <button onClick={() => submit(field, pending.outcome, pending.selectedValue, true)}>Try again</button> : null}
         </article>
       })}</section>
     </div> : null}
