@@ -290,9 +290,12 @@ describe('typed review routes', () => {
 
   it('halts the acknowledged field when a successful decision cannot refresh current detail', async () => {
     const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('detail fixture requires a title field')
+    const failedRefresh = { ...detail, fields: [titleField, { ...titleField, destination: 'series', proposalId: 'proposal-2', targetFingerprint: 'fingerprint-2' }] }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn().mockResolvedValueOnce(detail).mockRejectedValue(new Error('refresh unavailable')),
+      getCaseDetail: vi.fn().mockResolvedValueOnce(failedRefresh).mockRejectedValue(new Error('refresh unavailable')),
     }
     const { router } = renderRoute('/review/case-1?field=title&subview=review', http)
 
@@ -303,6 +306,59 @@ describe('typed review routes', () => {
     expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
     expect(screen.getAllByLabelText('Reviewer facts').at(0)).toHaveTextContent('Available choices0')
+    await user.click(screen.getByRole('button', { name: 'series' }))
+    expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
+    expect(screen.getAllByLabelText('Reviewer facts').at(1)).toHaveTextContent('Available choices0')
+  })
+
+  it('advances in the displayed pre-decision order after refreshed fields are reordered', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('detail fixture requires a title field')
+    const authors = { ...titleField, destination: 'authors', proposalId: 'proposal-2', targetFingerprint: 'fingerprint-2' }
+    const series = { ...titleField, destination: 'series', proposalId: 'proposal-3', targetFingerprint: 'fingerprint-3' }
+    const initial = { ...detail, fields: [titleField, authors, series] }
+    const refreshed = { ...initial, fields: [titleField, series, { ...authors, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'decision-2', destination: 'authors', occurred_at: 1, outcome: 'keep_current' as const, proposal_id: 'proposal-2', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-2' } }] }
+    let current = initial
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { current = refreshed; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-2', destination: 'authors', occurred_at: 1, outcome: 'keep_current', proposal_id: 'proposal-2', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-2' } }) }
+    const { router } = renderRoute('/review/case-1?field=authors&subview=review', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+
+    expect(await screen.findByText('Decision recorded. Continuing with series.')).toBeVisible()
+    await waitFor(() => expect(router.state.location.search).toEqual({ field: 'series', subview: 'review' }))
+  })
+
+  it('preserves navigation made while a decision is settling', async () => {
+    const user = userEvent.setup()
+    let resolveDecision: (() => void) | undefined
+    const completion = new Promise<void>((resolve) => { resolveDecision = resolve })
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('detail fixture requires a title field')
+    const resolved = { ...detail, fields: [{ ...titleField, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'decision-3', destination: 'title', occurred_at: 1, outcome: 'keep_current' as const, proposal_id: 'proposal-1', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-1' } }] }
+    let current = detail
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { await completion; current = resolved; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-3', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: 'proposal-1', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-1' } }) }
+    const { router } = renderRoute('/review/case-1?field=title&subview=review', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    await user.click(screen.getByRole('button', { name: 'Evidence' }))
+    await act(async () => { resolveDecision?.() })
+
+    await waitFor(() => expect(router.state.location.search).toEqual({ field: 'title', subview: 'evidence' }))
+  })
+
+  it('replaces opaque provenance references with distinct bounded reviewer facts', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('detail fixture requires a title field')
+    const opaque = `provider_${'a'.repeat(64)}`
+    const longHostile = `<img src=x>${'evidence '.repeat(100)}`
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, fields: [{ ...titleField, provenance: [opaque, longHostile] }] })) }
+    renderRoute('/review/case-1?field=title&subview=review', http)
+
+    expect(await screen.findByText('Evidence record 1')).toBeVisible()
+    expect(screen.getByText(/Reviewed source 2/u)).toBeVisible()
+    expect(screen.queryByText(opaque)).toBeNull()
+    expect(screen.queryByRole('img')).toBeNull()
   })
 
   it('never offers a false human choice for an automatically decided field', async () => {
