@@ -63,6 +63,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             <article key={work.id} className="work-row">
               <div>
                 <h2><Link to="/review/$reviewCaseId" params={{ reviewCaseId: work.id }} search={{ subview: 'review' }} preload="intent">{work.title}</Link></h2>
+                <p>{work.authors.length ? work.authors.join(', ') : 'Author details unavailable'}</p>
                 <p>{work.subtitle}</p>
               </div>
               <span>{friendly(work.attention)}</span>

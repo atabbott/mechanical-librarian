@@ -128,6 +128,9 @@ bundled interface and automation clients:
   independent;
 - evidence-detail resources loaded separately from case collections;
 - aggregate review counts and adapter-separated planned-change summaries; and
+- a closed, bounded Activity projection with readable library, destination,
+  consent, prepared-work, and outcome state; opaque connection and work IDs
+  remain command or route inputs rather than display identity.
 - automatic decision history suitable for audit and quality sampling.
 
 List responses never embed the complete evidence store, unrestricted source

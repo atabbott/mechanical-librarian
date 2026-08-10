@@ -379,6 +379,13 @@ class ContinuousGuardedApplication:
 
     def activity(self) -> dict[str, object]:
         data = self._repository.field_effect_activity_data(50)
+        cleanup = data.pop("cleanup", None)
+        if cleanup is not None and (
+            type(cleanup) is not dict
+            or set(cleanup) != {"pending", "exhausted"}
+            or any(type(value) is not int or value < 0 for value in cleanup.values())
+        ):
+            raise GuardedApplicationError("activity")
         consented = {
             (
                 str(value["connection"]), str(value["library"]),

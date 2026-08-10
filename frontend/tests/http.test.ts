@@ -5,6 +5,8 @@ import {
   PageCsrfTokenStore,
   ReviewApiClient,
   mapCaseDetail,
+  mapActivity,
+  derivePolicyDraftDisplay,
   SessionExpiredError,
   mapLibrary,
 } from '../src/api/http'
@@ -21,7 +23,7 @@ describe('ReviewApiClient', () => {
   it('preserves present and absent series sequences in the mapped review value', () => {
     const detail = (series: readonly Record<string, unknown>[]) => mapCaseDetail({
       schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true,
-      target: { item: 'A Book', library: 'Books', connection: 'primary' },
+      target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
       fields: [{
         destination: 'series', deterministic_disposition: 'review', effect_capability: 'manual',
         needs_attention: true, manual_hold: false, current: { value: series },
@@ -45,7 +47,9 @@ describe('ReviewApiClient', () => {
         items: [{
           review_case_id: 'case-1',
           title: 'A Book',
+          authors: ['Ada Example'],
           library: 'Books',
+          media_kind: 'ebook',
           item: 'item-1',
           attention_count: 1,
           attention_state: 'needs_attention',
@@ -62,7 +66,8 @@ describe('ReviewApiClient', () => {
     expect(view.works[0]).toEqual({
       id: 'case-1',
       title: 'A Book',
-      subtitle: 'Books · item-1',
+      authors: ['Ada Example'],
+      subtitle: 'Books · ebook · item-1',
       attention: 'needs_attention',
       dispositions: ['review'],
     })
@@ -71,6 +76,37 @@ describe('ReviewApiClient', () => {
       credentials: 'same-origin',
       signal: controller.signal,
     }))
+  })
+
+  it('rejects a malformed activity display projection before it reaches the workspace', () => {
+    expect(() => mapActivity({ schema_version: 'continuous-field-activity-v1', backup_ready: true, paused: false })).toThrow(ApiError)
+  })
+
+  it('maps bounded activity labels and grouped state into the display seam', () => {
+    const activity = mapActivity({
+      schema_version: 'continuous-field-activity-v1', backup_ready: true, paused: false,
+      configured_libraries: [{ connection: 'primary', library: 'Fiction', prepared: { automatic: 1, human: 2, total: 3 } }],
+      consented_libraries: [], enabled_libraries: [], counts: { verified: 1 },
+      capabilities: [{ connection: 'primary', library: 'Fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: true }] }],
+      events: [{ destination: 'title', library: 'Fiction', occurred_at: 1, origin: 'human', state: 'verified', work_id: 'work-1' }],
+      example: { after: 'After', before: 'Before', destination: 'title', library: 'Fiction', work_id: 'work-1' }, last_failure: null, prepared: { automatic: 1, human: 2, total: 3 }, suspensions: [{ connection: 'primary', destination: null, reason: 'recovery', scope: 'library', updated_at: 1 }],
+    })
+
+    expect(activity.configured_libraries[0]?.library).toBe('Fiction')
+    expect(activity.capabilities[0]?.destinations[0]).toMatchObject({ destination: 'title', consented: true })
+    expect(activity.events[0]).toMatchObject({ library: 'Fiction', state: 'verified', origin: 'human' })
+    expect(activity.events[0]).toMatchObject({ work_label: 'Work details unavailable' })
+    expect(activity.suspensions[0]).toMatchObject({ scope: 'library', destination: null })
+    expect(() => mapActivity({ ...activity, suspensions: [{ connection: 'primary', destination: null, reason: 'recovery', scope: 'library', updated_at: 'later' }] })).toThrow(ApiError)
+    expect(() => mapActivity({ ...activity, example: { after: 'After' } })).toThrow(ApiError)
+  })
+
+  it('distinguishes matching active policy values from a changed local draft', () => {
+    const active = { schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v1', name: 'Active', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } } } as never
+    expect(derivePolicyDraftDisplay(active, { name: 'Active', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } })).toMatchObject({ changed: false, activeName: 'Active' })
+    const reordered = { schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v1', name: 'Active', options: { first: 'one', second: 'two' }, destinations: { first: 'ask', second: 'ignore' } } } as never
+    expect(derivePolicyDraftDisplay(reordered, { name: 'Active', options: { second: 'two', first: 'one' }, destinations: { second: 'ignore', first: 'ask' } })).toMatchObject({ changed: false })
+    expect(derivePolicyDraftDisplay(active, { name: 'Draft', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } })).toMatchObject({ changed: true, draftName: 'Draft' })
   })
 
   it('renews CSRF once but requires an explicit retry of an unsafe request', async () => {

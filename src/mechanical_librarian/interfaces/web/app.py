@@ -143,9 +143,11 @@ class _ReviewField(_ClosedModel):
 
 
 class _TargetIdentity(_ClosedModel):
+    authors: list[str]
     connection: str
     item: str
     library: str
+    media_kind: str
 
 
 class _CaseDetailResponse(_ClosedModel):
@@ -243,12 +245,14 @@ class _ReviewCounts(_ClosedModel):
 
 
 class _LibraryWork(_ClosedModel):
+    authors: list[str]
     attention_count: int
     attention_state: str
     detail_url: str
     dispositions: list[str]
     item: str
     library: str
+    media_kind: str
     review_case_id: str
     title: str
 
@@ -263,10 +267,12 @@ class _LibraryResponse(_ClosedModel):
 
 
 class _AttentionItem(_ClosedModel):
+    authors: list[str]
     destination: str
     detail_url: str
     item: str
     library: str
+    media_kind: str
     notices: list[str]
     provenance: list[str]
     review_case_id: str
@@ -279,6 +285,73 @@ class _AttentionResponse(_ClosedModel):
     query: str | None
     schema_version: str
     total: int
+
+
+class _ActivityPrepared(_ClosedModel):
+    automatic: int
+    human: int
+    total: int
+
+
+class _ActivityLibrary(_ClosedModel):
+    connection: str
+    library: str
+    prepared: _ActivityPrepared | None = None
+
+
+class _ActivityDestination(_ClosedModel):
+    consented: bool
+    destination: str
+    state: str
+
+
+class _ActivityCapability(_ClosedModel):
+    connection: str
+    destinations: list[_ActivityDestination]
+    library: str
+    state: str
+
+
+class _ActivityEvent(_ClosedModel):
+    destination: str
+    failure: str | None = None
+    library: str
+    occurred_at: int | None = None
+    origin: str
+    state: str
+    work_id: str
+
+
+class _ActivitySuspension(_ClosedModel):
+    connection: str
+    destination: str | None
+    reason: str
+    scope: str
+    updated_at: int
+
+
+class _ActivityExample(_ClosedModel):
+    after: object
+    before: object
+    destination: str
+    library: str
+    work_id: str
+
+
+class _ActivityResponse(_ClosedModel):
+    backup_ready: bool
+    capabilities: list[_ActivityCapability]
+    configured_libraries: list[_ActivityLibrary]
+    consented_libraries: list[_ActivityLibrary]
+    counts: dict[str, int]
+    enabled_libraries: list[_ActivityLibrary]
+    events: list[_ActivityEvent]
+    example: _ActivityExample | None
+    last_failure: str | None
+    paused: bool
+    prepared: _ActivityPrepared
+    schema_version: Literal["continuous-field-activity-v1"]
+    suspensions: list[_ActivitySuspension]
 
 
 class _PreparationProgress(_ClosedModel):
@@ -1190,42 +1263,42 @@ def _register_case_and_effect_routes(
             } else 503
             raise HTTPException(status_code, detail={"code": code}) from None
 
-    @app.get("/api/v1/activity", response_model=dict[str, object],
+    @app.get("/api/v1/activity", response_model=_ActivityResponse,
              responses={status: {"model": _ErrorResponse} for status in (401, 503)})
     def activity_status(
         ml_session: str = Depends(authenticated_session_cookie),
-    ) -> dict[str, object]:
+    ) -> _ActivityResponse:
         _require_session(sessions, ml_session)
-        return field_effect_call(application.activity)
+        return _ActivityResponse.model_validate(field_effect_call(application.activity))
 
-    @app.post("/api/v1/activity/consent", response_model=dict[str, object],
+    @app.post("/api/v1/activity/consent", response_model=_ActivityResponse,
               responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)})
     def enable_guarded_activity(
         payload: _ActivityConsentRequest,
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
-    ) -> dict[str, object]:
+    ) -> _ActivityResponse:
         _require_session(sessions, ml_session, x_csrf_token)
-        return field_effect_call(
+        return _ActivityResponse.model_validate(field_effect_call(
             lambda: application.enable_activity(tuple(
                 (grant.library, tuple(grant.destinations))
                 for grant in payload.grants
             ))
-        )
+        ))
 
     @app.post("/api/v1/activity/{connection}/{library}/revoke",
-              response_model=dict[str, object],
+              response_model=_ActivityResponse,
               responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)})
     def revoke_guarded_activity(
         connection: str,
         library: str,
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
-    ) -> dict[str, object]:
+    ) -> _ActivityResponse:
         _require_session(sessions, ml_session, x_csrf_token)
-        return field_effect_call(
+        return _ActivityResponse.model_validate(field_effect_call(
             lambda: application.revoke_activity(connection, library)
-        )
+        ))
 
     @app.post(
         "/api/v1/review-cases/{review_case_id}/fields/{destination}/return-to-automatic",

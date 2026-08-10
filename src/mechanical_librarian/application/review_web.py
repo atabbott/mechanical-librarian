@@ -14,7 +14,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.application.operations import StageTimer
 
@@ -305,9 +305,11 @@ class InspectCurrentReviewCase:
             "review_case_id": case.review_case_id,
             "schema_version": "review-case-detail-v1",
             "target": {
+                "authors": _report_authors(report),
                 "connection": report.target.connection,
                 "item": report.target.item,
                 "library": report.target.library,
+                "media_kind": report.file.format,
             },
         }, report, snapshot
 
@@ -811,6 +813,15 @@ def _needs_attention(proposal: dict[str, object], automatic_attention_destinatio
     )
 
 
+def _report_authors(report: MetadataReport) -> list[str]:
+    """Derive the bounded current author display value without persistence."""
+    value = next(
+        (field.value for field in report.target.fields if field.destination is TargetDestination.AUTHORS),
+        (),
+    )
+    return list(value) if type(value) is tuple and all(type(author) is str for author in value) else []
+
+
 def _library_item(
     case_document: str,
     report_document: str,
@@ -842,6 +853,7 @@ def _library_item(
         }
     )
     return {
+        "authors": _report_authors(report),
         "attention_count": len(attention),
         "attention_state": (
             "needs_attention" if attention else "no_attention_needed"
@@ -850,6 +862,7 @@ def _library_item(
         "dispositions": outcomes,
         "item": report.target.item,
         "library": report.target.library,
+        "media_kind": report.file.format,
         "review_case_id": case.review_case_id,
         "title": report.target.current_title or "Untitled",
     }
@@ -874,10 +887,12 @@ def _attention_item(
     result = proposal["result"]
     assert type(result) is dict
     return {
+        "authors": _report_authors(report),
         "destination": destination,
         "detail_url": f"/review/{case.review_case_id}?field={destination}",
         "item": report.target.item,
         "library": report.target.library,
+        "media_kind": report.file.format,
         "notices": result["reasons"],
         "provenance": sorted(
             {

@@ -472,7 +472,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
             def grant_field_effect_consent_matrix(self, *arguments):
                 self.grants = arguments
 
-            def field_effect_activity_data(self, _): return {"cleanup": {}, "suspensions": []}
+            def field_effect_activity_data(self, _): return {"cleanup": {"pending": 0, "exhausted": 0}, "suspensions": []}
 
         repository = Repository()
         service = ContinuousGuardedApplication(
@@ -546,6 +546,36 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         self.assertTrue(destinations["title"]["consented"])
         self.assertFalse(destinations["authors"]["consented"])
         self.assertEqual(destinations["subtitle"]["state"], "field_unavailable")
+
+    def test_activity_strips_valid_cleanup_and_rejects_malformed_cleanup(self) -> None:
+        decision = self._decisions(1)[0]
+
+        class Repository(_PagedRepository):
+            def __init__(self, cleanup):
+                super().__init__([decision])
+                self._cleanup = cleanup
+
+            def field_effect_activity_data(self, limit):
+                return {
+                    "cleanup": self._cleanup,
+                    "consented_destinations": [],
+                    "consented_libraries": [],
+                    "counts": {},
+                    "events": [],
+                    "paused": False,
+                    "suspensions": [],
+                }
+
+        def service(cleanup):
+            return ContinuousGuardedApplication(
+                Repository(cleanup), {("primary", "alpha"): _Planner()},
+                {("primary", "alpha"): _AllowedCapability()}, _Authority(),
+                (("primary", "alpha"),), lambda: 1, lambda *_: None,
+            )
+
+        self.assertNotIn("cleanup", service({"pending": 0, "exhausted": 0}).activity())
+        with self.assertRaisesRegex(GuardedApplicationError, "activity"):
+            service({"pending": "zero", "exhausted": 0}).activity()
 
     def test_successful_probe_preserves_unexpected_behavior_suspension(self) -> None:
         decision = self._decisions(1)[0]
