@@ -21,11 +21,7 @@ from mechanical_librarian.domain.metadata_report import TargetDestination
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_review import (
-    ReviewerProfileIdentity,
     ShadowReviewPacket,
-    ShadowReviewRequest,
-    ShadowReviewResult,
-    ShadowReviewSemanticError,
 )
 from mechanical_librarian.domain.shadow_review_actions import (
     ACTION_CATALOGUE_SCHEMA,
@@ -40,31 +36,11 @@ from tests.unit.test_bibliographic_bundles import (
     _source,
 )
 from tests.unit.test_proposal_set import _report
-
-
-def _identity() -> ReviewerProfileIdentity:
-    return ReviewerProfileIdentity(
-        "a" * 64,
-        "codex-cli 0.146.0-alpha.3.1",
-        "b" * 64,
-        "bubblewrap-v1",
-        "gpt-5.6-sol",
-        "medium",
-        "shadow-review-prompt-v3",
-        "codex-shadow-profile-v2",
-        "shadow-review-packet-v5",
-        "shadow-review-result-v2",
-        "qualification-only-policy-v1",
-        120,
-        65_536,
-        536_870_912,
-        16,
-        131_072,
-    )
+from tests.unit.shadow_packet_fixtures import synthetic_packet
 
 
 def _packet_data() -> dict[str, object]:
-    return ShadowReviewRequest.synthetic_canary(_identity()).packet.to_data()
+    return synthetic_packet().to_data()
 
 
 def _packet(data: dict[str, object]) -> ShadowReviewPacket:
@@ -117,7 +93,7 @@ class ShadowReviewActionCompilerTests(unittest.TestCase):
 
     def test_catalogue_rejects_forged_contract_versions(self) -> None:
         catalogue = compile_shadow_review_actions(
-            ShadowReviewRequest.synthetic_canary(_identity()).packet
+            synthetic_packet()
         )
 
         with self.assertRaises(PolicyActionCompilationError):
@@ -131,7 +107,7 @@ class ShadowReviewActionCompilerTests(unittest.TestCase):
     def test_manual_proposal_compiles_candidate_and_explicit_manual_independently(
         self,
     ) -> None:
-        packet = ShadowReviewRequest.synthetic_canary(_identity()).packet
+        packet = synthetic_packet()
 
         catalogue = compile_shadow_review_actions(packet)
 
@@ -362,107 +338,61 @@ class ShadowReviewActionCompilerTests(unittest.TestCase):
             compile_shadow_review_actions(reordered).to_json(),
         )
 
-    def test_request_schema_and_result_reject_an_excluded_candidate(self) -> None:
+
+
+
+    def test_excluded_candidate_compiles_only_manual_action(self) -> None:
         data = _packet_data()
         candidate = data["proposals"][0]["candidates"][0]
-        candidate["assessment"] = {
-            "confidence": "synthetic",
-            "problems": [],
-        }
-        request = ShadowReviewRequest.create_from_packet(_identity(), _packet(data))
-        schema = json.loads(request.output_schema)
+        candidate["assessment"] = {"confidence": "synthetic", "problems": []}
 
-        variants = schema["properties"]["recommendations"]["items"]["anyOf"]
-        self.assertEqual(1, len(variants))
-        self.assertEqual(
-            "manual",
-            variants[0]["properties"]["recommendation"]["const"],
-        )
-        result = ShadowReviewResult(
-            request.review_request_id,
-            (
-                {
-                    "candidate_id": candidate["candidate_id"],
-                    "citations": list(candidate["evidence_references"]),
-                    "problems": [],
-                    "proposal_id": data["proposals"][0]["proposal_id"],
-                    "reasons": ["Excluded candidate."],
-                    "recommendation": "recommend_candidate",
-                },
-            ),
-        )
-        with self.assertRaises(ShadowReviewSemanticError):
-            result.validate_for(request)
+        catalogue = compile_shadow_review_actions(_packet(data))
 
-    def test_result_requires_the_complete_action_citation_closure(self) -> None:
+        proposal_id = data["proposals"][0]["proposal_id"]
+        self.assertIsNone(
+            catalogue.action_for(
+                proposal_id, "recommend_candidate", candidate["candidate_id"]
+            )
+        )
+        self.assertIsNotNone(catalogue.action_for(proposal_id, "manual", None))
+        self.assertTrue(
+            any(value.proposal_id == proposal_id for value in catalogue.exclusions)
+        )
+
+    def test_candidate_action_binds_complete_citation_closure(self) -> None:
         data = _packet_data()
         candidate = data["proposals"][0]["candidates"][0]
         second_citation = "synthetic_citation_" + ("9" * 64)
         data["citations"].append(
-            {
-                **data["citations"][0],
-                "citation_id": second_citation,
-            }
+            {**data["citations"][0], "citation_id": second_citation}
         )
         candidate["evidence_references"].append(second_citation)
-        request = ShadowReviewRequest.create_from_packet(_identity(), _packet(data))
-        action = compile_shadow_review_actions(request.packet).action_for(
+
+        action = compile_shadow_review_actions(_packet(data)).action_for(
             data["proposals"][0]["proposal_id"],
             "recommend_candidate",
             candidate["candidate_id"],
         )
+
+        self.assertIsNotNone(action)
         assert action is not None
-        schema = json.loads(request.output_schema)
-        variant = next(
-            value
-            for value in schema["properties"]["recommendations"]["items"][
-                "anyOf"
-            ]
-            if value["properties"]["recommendation"]["const"]
-            == "recommend_candidate"
-        )
-        result = ShadowReviewResult(
-            request.review_request_id,
-            (
-                {
-                    "candidate_id": candidate["candidate_id"],
-                    "citations": [action.citation_ids[0]],
-                    "problems": [],
-                    "proposal_id": data["proposals"][0]["proposal_id"],
-                    "reasons": ["Candidate is supported."],
-                    "recommendation": "recommend_candidate",
-                },
-            ),
-        )
-
         self.assertEqual(
-            len(action.citation_ids),
-            variant["properties"]["citations"]["minItems"],
+            tuple(candidate["evidence_references"]), action.citation_ids
         )
-        with self.assertRaises(ShadowReviewSemanticError):
-            result.validate_for(request)
 
-    def test_manual_is_representable_without_manufactured_citations(self) -> None:
+    def test_manual_action_needs_no_manufactured_citations(self) -> None:
         data = _packet_data()
         data["proposals"][0]["candidates"] = []
         data["citations"] = []
         data["correlations"] = []
-        request = ShadowReviewRequest.create_from_packet(_identity(), _packet(data))
-        result = ShadowReviewResult(
-            request.review_request_id,
-            (
-                {
-                    "candidate_id": None,
-                    "citations": [],
-                    "problems": ["No admissible nonmanual action."],
-                    "proposal_id": data["proposals"][0]["proposal_id"],
-                    "reasons": ["Manual review is required."],
-                    "recommendation": "manual",
-                },
-            ),
+
+        action = compile_shadow_review_actions(_packet(data)).action_for(
+            data["proposals"][0]["proposal_id"], "manual", None
         )
 
-        result.validate_for(request)
+        self.assertIsNotNone(action)
+        assert action is not None
+        self.assertEqual((), action.citation_ids)
 
     def test_admission_is_crossed_with_destination_not_historical_frequency(
         self,

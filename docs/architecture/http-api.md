@@ -80,7 +80,7 @@ Automatic remains absent from qualified authority.
 
 There is no leave commit, cursor, automatic-decision, queue, apply, target, or
 write operation. Shadow history events are a separate typed variant from human
-decision events and model advice. Malformed persistence fails the complete
+decision events. Malformed persistence fails the complete
 request with a value-free unavailable response.
 
 The bundled browser obtains a freshly rotated per-page CSRF token from its

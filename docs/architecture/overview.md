@@ -38,32 +38,14 @@ Web Scan now -> application ReviewPreparationPipeline
              |-> two fixed independently claimable work lanes
              `-> bounded persisted scan/work state and read-only projection
 
-Workbench reviewer preview -> application preview
-                          -> profile bytes + exact-current ReviewCase lineage
-                          -> no reviewer construction or egress
-
-Workbench reviewer inspector -> application inspect
-                          -> exact persisted request, including historical
-                             `current: false` state
-                          -> no reviewer construction or egress
-
-Workbench reviewer request -> application execution
-                          |-> exact-current case/report/proposal/profile/packet
-                          |-> append-only request/attempt/dispatch/outcome records
-                          `-> isolated Codex reviewer for one request only
-
-Workbench reviewer reevaluation -> application explicit reevaluation
-                             |-> latest-attempt and process-absence checks
-                             |-> append-only successor attempt records
-                             `-> isolated Codex reviewer for one request only
-
-Workbench reviewer authentication -> bootstrap profile load -> CodexShadowReviewer.auth
+Workbench contained-reviewer scenario -> narrow source contract
+                                      -> isolated source-only adapter
+                                      -> bounded schema-validated JSON result
 ```
 
-Reviewer authentication is deliberately bootstrap-owned; it is separate from
-the application-owned shadow-review execution and persistence contracts.
-The workbench is source-only, disposable by default, excluded from the wheel and
-container, and has no production-target bridge.
+Contained-reviewer authentication actions are adapter-owned and establish no
+product lifecycle. The workbench is source-only, disposable by default,
+excluded from the wheel and container, and has no production-target bridge.
 
 Dependency direction remains:
 
@@ -84,14 +66,14 @@ closed field states, the evidence vocabulary, scope, role, source ordinal,
 validation, and canonical replay. The application owns orchestration and the
 exactly-once canonical merge of adapter and attempt diagnostics. The ProposalSet
 seam adds exact create/get orchestration but no provider or write
-port. ReviewCase and shadow-review seams add exact-current admission and
-qualification-only execution/persistence. Review preparation is one closed,
+port. ReviewCase and deterministic shadow-decision seams add exact-current
+admission and source-validated automatic outcomes. Review preparation is one closed,
 manual-triggered pipeline rather than a general-purpose queue or scheduler.
 There is no central speculative ports module, generic provider registry, job
 broker, polling service, or plugin scheduler. Bootstrap
 explicitly composes Audiobookshelf, the isolated EPUB and cover children, the
 closed Hardcover/Open Library/Google Books adapter choice, private-file credentials, SQLite,
-the private artifact store, and the external reviewer tuple.
+and the private artifact store. The contained-reviewer tuple is workbench-only.
 
 The catalogue adapter uses bounded Audiobookshelf library, library-items, and
 item-detail GET routes. It atomically publishes one current generation of at
@@ -131,8 +113,8 @@ table accepts only `fixed-conservative-v6`; earlier proposal-store shapes are
 rejected without migration. Report insert and pointer advance share one
 transaction. Proposal insertion separately rechecks the exact report and
 current pointer after external currentness. The report database also stores
-immutable ReviewCases with current lineages and append-only qualification-only
-shadow request, attempt, dispatch, and outcome records. The sole baseline uses
+immutable ReviewCases with current lineages and retained deterministic shadow
+decision/outcome records. The sole baseline uses
 rollback-journal `DELETE` mode. The separate catalogue database stores one
 exact-current `catalogue-v2` schema. The final report database, catalogue
 database, configuration, artifacts, and manifest each recognize only absent or
@@ -142,8 +124,7 @@ workflow, job, cache, or deletion surface. Batch work stores no attempt or
 resume state. Review preparation stores only bounded mutable scan/work
 progression and reconciles one current per-work row on a later scan; immutable
 reports, ProposalSets, ReviewCases, decisions, and audit transitions retain
-their existing authority. Shadow-review attempts remain the explicit
-qualification-only exception. These rules are the current-runtime application
+their existing authority. These rules are the current-runtime application
 of repository-wide ADR-0013.
 The `metadata-report-v22` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
@@ -171,10 +152,9 @@ Provider observations also retain aggregate-only failure diagnostics from
 adapter parser/schema classification and application attempt mapping. Their
 canonical merge is persisted once and replayed without inflation. Invalid
 optional values and raw process-local attempt records are not persisted.
-Shadow outcomes store the same canonical bounded diagnostic object, while
-`shadow-review-inspect-v2` projects only case/request identities, aggregate
-attempt count, currentness, status, and canonical diagnostics; it does not
-expose request/packet/result content or process and attempt identities.
+Deterministic shadow outcomes retain their existing canonical product
+contracts; no model request, result, process, attempt, or advice projection is
+stored.
 
 On supported Linux deployments, the repository retains a no-follow,
 identity-checked directory chain from the filesystem root, holds an exclusive

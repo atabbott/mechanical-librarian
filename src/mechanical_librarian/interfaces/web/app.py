@@ -164,29 +164,9 @@ class _TargetIdentity(_ClosedModel):
     library: str
 
 
-class _ModelRecommendation(_ClosedModel):
-    candidate_id: str | None
-    citations: list[str]
-    problems: list[str]
-    proposal_id: str
-    reasons: list[str]
-    recommendation: str
-
-
-class _ModelAdviceResult(_ClosedModel):
-    recommendations: list[_ModelRecommendation]
-    review_request_id: str
-
-
-class _ModelAdvice(_ClosedModel):
-    results: list[_ModelAdviceResult]
-    state: str
-
-
 class _CaseDetailResponse(_ClosedModel):
     current: bool
     fields: list[_ReviewField]
-    model_advice: _ModelAdvice
     review_case_id: str
     schema_version: str
     target: _TargetIdentity

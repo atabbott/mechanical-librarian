@@ -46,7 +46,7 @@ Deliverables:
   evidence extractors, metadata providers, and reviewer backends, while keeping
   deterministic policy in the domain;
 - define vendor-neutral canonical target, snapshot, evidence, candidate,
-  proposal, reviewer-packet, decision, and apply-plan schemas with stable opaque
+  proposal, deterministic packet, decision, and apply-plan schemas with stable opaque
   scoped identifiers, clocks, and idempotency keys;
 - keep raw vendor payload semantics adapter-local and permit an external item
   value to cross only as an uninterpreted `ExternalItemId` inside a fully scoped

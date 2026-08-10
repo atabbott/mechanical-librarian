@@ -163,7 +163,7 @@ The versioned bibliographic relationship projection is separate from that
 result tuple. It enumerates complete compatible title/subtitle/series member
 tuples using existing alternative IDs or exact target-field fingerprints.
 Relationship identity participates in ProposalSet identity and propagates
-unchanged through review admission and reviewer-packet replay.
+unchanged through review admission and deterministic packet replay.
 
 ## ReviewCase admission
 

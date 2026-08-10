@@ -53,6 +53,7 @@ context and consequences rather than reproducing code.
 | [0038](0038-bounded-single-container-operations.md) | accepted | Bound operational evidence inside the single container |
 | [0039](0039-continuous-guarded-application.md) | accepted | Run continuous guarded application without target CAS |
 | [0040](0040-source-only-contributor-workbench.md) | accepted | Separate the runtime launcher from the contributor workbench |
+| [0041](0041-contract-contained-reviewer-kernel.md) | accepted | Contract the contained-reviewer kernel and retire F11 product workflow |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

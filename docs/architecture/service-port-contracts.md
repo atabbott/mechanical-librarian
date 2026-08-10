@@ -2,54 +2,50 @@
 
 ## Current boundary
 
-The current 0.10 runtime owns application contracts for bounded evidence
-observation and durable report publication, catalogue refresh and inspection,
-foreground manifest batches, deterministic ProposalSet creation and reopening,
-exact-current ReviewCase admission and reopening, and qualification-only
-shadow-review execution and persistence.
+The installed runtime owns bounded evidence observation and publication,
+catalogue refresh and inspection, deterministic ProposalSet creation,
+exact-current ReviewCase admission, deterministic decision/outcome persistence,
+and authenticated review operations. It has no model-review application service
+or reviewer persistence.
 
-Each contract exchanges typed, bounded application or domain values, including
-explicit mount and relative-path values where the application protocol requires
-them. Vendor payloads, concrete transport clients, SQLite rows, credential
-bytes, and direct filesystem operations remain implementation-side; the
-composition root selects the concrete adapter and credentials. The domain does
-not depend on those implementations.
+Each contract exchanges typed, bounded application or domain values. Vendor
+payloads, transport clients, SQLite rows, credential bytes, and direct
+filesystem operations remain implementation-side; the composition root selects
+concrete adapters. The domain does not depend on them.
 
 ## Contract families
 
 - Evidence reporting reads one selected current item, isolates EPUB inspection,
   records configured provider and cover observations, verifies currentness, and
-  publishes one immutable report with its report-bound artifacts.
+  publishes one immutable report with report-bound artifacts.
 - Catalogue and batch contracts publish or inspect a bounded current catalogue,
-  create and inspect immutable manifests, and serially execute the selected
-  report work in the foreground.
-- Proposal and review contracts reopen immutable report and ProposalSet evidence
-  by exact ID, create or reopen deterministic ProposalSets, and admit a
-  ReviewCase only at the documented exact-current boundary. Exact ReviewCase
-  reopening deliberately supports immutable historical or superseded cases and
-  reports `current: false` when that case is no longer current.
-- Qualification-only reviewer contracts preview, request, inspect, or
-  explicitly reevaluate one isolated shadow-review attempt through the
-  application-owned runner and repository contracts, without exposing target or
-  provider credentials to the reviewer.
+  create immutable manifests, and execute selected report work serially.
+- Proposal and review contracts reopen immutable evidence by exact ID, create
+  deterministic ProposalSets, admit ReviewCases at the exact-current boundary,
+  and preserve explicit historical currentness.
+- The deterministic decision service consumes the retained source-validated
+  `ShadowReviewPacket` and compiled action catalogue. It performs no model or
+  provider dispatch and preserves the existing automatic decision/outcome
+  contracts.
 
-## Bootstrap authentication
-
-Reviewer authentication is not an application-owned contract. Bootstrap loads
-the declared qualification profile and invokes `CodexShadowReviewer.auth`
-directly. The application-owned shadow-review contracts begin with execution
-and durable request/attempt/dispatch/outcome persistence after that separate
-authentication path.
-
-The supported command and persistence details are authoritative in the
-[operations guides](../operations/metadata-report.md),
-[reference contracts](../reference/compatibility.md), and
-[security model](security.md), not in this overview.
+The repository-only workbench owns a separate `contained-reviewer` caller. Its
+narrow source contract accepts one sanitized canonical JSON input, bounded
+instruction, and closed output schema, then returns one locally schema-validated
+canonical JSON object or a typed abstention/failure. It is not composed into the
+installed runtime, does not use application persistence, and receives no target
+or provider credentials.
 
 ## Authority limits
 
-These contracts remain synchronous and bounded. They provide no target or media
-write, decision, approval, apply, generic provider framework, background
-executor, queue, scheduler, automatic retry, or cache authority. The
-qualification-only reviewer returns advice only; it cannot grant normal
-activation or mutation authority.
+The contained reviewer is source-only and experimental. Its isolated adapter
+binds private artifacts and credentials, disables tools and write authority,
+durably gates process release behind the caller callback, bounds every input and
+output, validates the returned object locally, and proves process-group death on
+timeout or cancellation. Authentication actions remain adapter-owned and create
+no product lifecycle.
+
+These contracts grant no extra target/media write, approval, apply, generic
+provider framework, reviewer workflow, retry scheduler, cache, release, or
+production-service authority. Current operations and compatibility are defined
+by the [operations guides](../operations/metadata-report.md), [compatibility
+contract](../reference/compatibility.md), and [security model](security.md).

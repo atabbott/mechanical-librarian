@@ -265,16 +265,12 @@ class _Repository:
             raise RuntimeError
         return self.report.to_json()
 
-    def get_review_model_advice(self, review_case_id: str) -> dict[str, object]:
-        return self.advice
-
     def read_current_review_case(
         self, review_case_id: str, history_limit: int | None
     ) -> CurrentReviewCaseSnapshot:
         return CurrentReviewCaseSnapshot(
             case_document=self.get_review_case(review_case_id),
             report_document=self.get_review_case_report(review_case_id),
-            model_advice=self.get_review_model_advice(review_case_id),
             decision_documents=self.get_review_case_decisions(review_case_id),
             history=(
                 ()
@@ -1109,7 +1105,7 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(title["deterministic_disposition"], "unresolved_choice")
         self.assertTrue(title["needs_attention"])
         self.assertFalse(detail.json()["fields"][-1]["needs_attention"])
-        self.assertEqual(detail.json()["model_advice"]["state"], "not_requested")
+        self.assertNotIn("model_advice", detail.json())
         evidence = self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}/evidence")
         history = self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}/history")
         self.assertEqual(evidence.status_code, 200)
@@ -1233,18 +1229,7 @@ class ReviewWebTests(unittest.TestCase):
             cover_reference,
         }
         detail = {
-            "fields": [
-                {"provenance": sorted(references.difference({rich_reference}))}
-            ],
-            "model_advice": {
-                "results": [
-                    {
-                        "recommendations": [
-                            {"citations": [rich_reference]}
-                        ]
-                    }
-                ]
-            },
+            "fields": [{"provenance": sorted(references)}],
         }
         report = SimpleNamespace(to_data=lambda: data)
         cases = InspectCurrentReviewCase(Mock())
@@ -1260,10 +1245,7 @@ class ReviewWebTests(unittest.TestCase):
                     "review_case_" + "d" * 64,
                     cursor=first["next_cursor"],
                 )
-            changed_detail = {
-                **detail,
-                "model_advice": {"results": []},
-            }
+            changed_detail = {"fields": [{"provenance": []}]}
             with patch.object(
                 cases,
                 "_read",
@@ -2015,37 +1997,6 @@ class ReviewWebTests(unittest.TestCase):
         with self.assertRaises(ReviewWebError):
             _encode_cursor(True, "library", "all", None)
 
-    def test_model_advice_is_separate_bounded_nondecision_data(self) -> None:
-        self.repository.advice = {
-            "results": [
-                {
-                    "recommendations": [
-                        {
-                            "candidate_id": None,
-                            "citations": ["evidence_" + "a" * 64],
-                            "problems": ["conflicting editions"],
-                            "proposal_id": self.case.proposals[0]["proposal_id"],
-                            "reasons": ["manual comparison required"],
-                            "recommendation": "manual",
-                        }
-                    ],
-                    "review_request_id": "review_request_" + "b" * 64,
-                }
-            ],
-            "state": "available",
-        }
-        self._login()
-        response = self.client.get(
-            f"/api/v1/review-cases/{self.case.review_case_id}"
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        advice = response.json()["model_advice"]
-        self.assertEqual(advice["state"], "available")
-        self.assertEqual(
-            advice["results"][0]["recommendations"][0]["recommendation"],
-            "manual",
-        )
-        self.assertNotIn("human_decision", advice)
 
     def test_large_library_payload_and_dom_inputs_remain_page_bounded(self) -> None:
         self.repository.browse_cases = [

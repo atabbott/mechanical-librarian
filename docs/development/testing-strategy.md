@@ -353,16 +353,12 @@ controls, target non-independence, and canonical proposal/case/packet replay.
 Private acceptable-action adjudication and scoring are not product-policy
 tests.
 
-Private shadow-review qualification follows the separate
-[execution and action-scoring contract](reviewer-qualification.md). It freezes
-the compiler catalogue, treatment, cohort, order, and scorer before fresh
-scoring; reports first-pass, retry-pair, execution-inclusive ITT, and terminal
-semantic views separately; and scores only exact catalogue actions. Ordinary
-timeouts and semantic outcomes are terminal observations. Only predeclared,
-bounded process, transport, cancellation, resource, or receipt-integrity
-failures may receive an append-only paired retry. Development and CI use no
-live library or provider for this harness; any explicitly authorized private
-provider qualification remains synthetic or irreversibly sanitized.
+Focused contained-reviewer tests use fake processes and synthetic inputs to
+prove private artifact/profile binding, authentication isolation, durable
+pre-invocation attempt evidence, in-memory child-release gating, local schema
+enforcement, bounded output, redaction,
+timeout/cancellation cleanup, and exact child-process death. No live library,
+provider, or production service is used.
 
 Focused bibliographic-relationship tests cover title-to-subtitle and
 title-to-series movement, clean versus decorated titles, exact-component
@@ -444,7 +440,7 @@ time regressions inject fixed clocks at every metadata-provider boundary,
 exercise successful and terminal post-dispatch statuses, prove absent time for
 no-input, overflow, invalid-clock, and expired pre-dispatch paths, and verify
 canonical serialization, database/report reopen, proposal derivation, and
-reviewer projection never refresh the stored value.
+deterministic packet projection never refresh the stored value.
 
 Hostile-input tests name a supported external actor and reachable boundary.
 Typed in-process collaborators are not attacker-controlled unless the product

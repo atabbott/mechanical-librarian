@@ -1,0 +1,230 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from dataclasses import replace
+from pathlib import Path
+from unittest.mock import patch
+
+ROOT = Path(__file__).parents[2]
+sys.path.insert(0, str(ROOT / "workbench"))
+
+from mechanical_librarian_workbench import contained_reviewer as adapter  # noqa: E402
+from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa: E402
+    ContainedReviewRequest,
+    ContainedReviewerIdentity,
+)
+
+
+def _identity() -> ContainedReviewerIdentity:
+    return ContainedReviewerIdentity(
+        "a" * 64, "codex 1", "b" * 64, "bubblewrap 1", "reviewer", "medium",
+        30, 65_536, 268_435_456, 8, 131_072,
+    )
+
+
+def _profile(root: Path) -> adapter.ContainedReviewerProfile:
+    for name in ("auth", "jobs"):
+        (root / name).mkdir(mode=0o700)
+    return adapter.ContainedReviewerProfile(
+        root / "codex", root / "bwrap", root / "auth", root / "jobs", _identity()
+    )
+
+
+class ContainedReviewerTests(unittest.TestCase):
+    def test_profile_load_is_canonical_private_and_does_not_touch_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            document = {
+                "auth_store_path": str(root / "auth"),
+                "codex": {"path": str(root / "missing-codex"), "sha256": "a" * 64, "version": "codex 1"},
+                "job_root_path": str(root / "jobs"),
+                "limits": {"file_bytes": 131_072, "memory_bytes": 268_435_456,
+                           "output_bytes": 65_536, "processes": 8, "timeout_seconds": 30},
+                "model": "reviewer", "reasoning": "medium",
+                "sandbox": {"path": str(root / "missing-bwrap"), "sha256": "b" * 64, "version": "bubblewrap 1"},
+                "schema_version": "contained-reviewer-profile-v1",
+            }
+            profile = root / "profile.json"
+            profile.write_text(json.dumps(document, separators=(",", ":"), sort_keys=True), encoding="utf-8")
+            os.chmod(profile, 0o600)
+            loaded = adapter.load_contained_reviewer_profile(profile)
+            self.assertEqual(loaded.identity, _identity())
+            self.assertFalse(loaded.codex_path.exists())
+            os.chmod(profile, 0o644)
+            with self.assertRaisesRegex(Exception, "profile"):
+                adapter.load_contained_reviewer_profile(profile)
+
+    def test_private_directories_and_bound_artifacts_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile = _profile(root)
+            reviewer = adapter.ContainedReviewerAdapter(profile)
+            reviewer._require_private_directory(profile.auth_store_path)
+            os.chmod(profile.auth_store_path, 0o755)
+            with self.assertRaisesRegex(Exception, "setup"):
+                reviewer._require_private_directory(profile.auth_store_path)
+            profile.codex_path.write_bytes(b"binary")
+            os.chmod(profile.codex_path, 0o700)
+            with self.assertRaisesRegex(Exception, "setup"):
+                with adapter._bound_artifact(profile.codex_path, "0" * 64):
+                    self.fail("digest mismatch was accepted")
+
+    def test_request_and_result_boundary_rejects_duplicate_malformed_and_overbound_output(self) -> None:
+        schema = json.dumps({"$schema": "https://json-schema.org/draft/2020-12/schema",
+                             "additionalProperties": False,
+                             "properties": {"summary": {"type": "string"}},
+                             "required": ["summary"], "type": "object"}, separators=(",", ":"), sort_keys=True)
+        request = ContainedReviewRequest("Summarize.", '{"value":"synthetic"}', schema)
+        self.assertRegex(request.digest, r"^[0-9a-f]{64}$")
+        for document in ('{"value":NaN}', '{"value":Infinity}'):
+            with self.subTest(document=document), self.assertRaisesRegex(
+                Exception, "response_format"
+            ):
+                ContainedReviewRequest("Summarize.", document, schema)
+        parsed_schema = json.loads(schema)
+        result = adapter._validated_result(
+            b'{"summary":"safe"}', maximum=64, schema=parsed_schema
+        )
+        self.assertEqual(result.document, '{"summary":"safe"}')
+        for payload, maximum in ((b'{"summary":"a","summary":"b"}', 64), (b"not-json", 64), (b'{"summary":"long"}', 4)):
+            with self.subTest(payload=payload), self.assertRaisesRegex(Exception, "malformed_output"):
+                adapter._validated_result(
+                    payload, maximum=maximum, schema=parsed_schema
+                )
+        with self.assertRaisesRegex(Exception, "malformed_output"):
+            adapter._validated_result(
+                b'{"wrong":"canonical-but-untyped"}',
+                maximum=64,
+                schema=parsed_schema,
+            )
+
+    def test_failure_is_value_free_and_auth_configuration_disables_authority(self) -> None:
+        failure = adapter.ContainedReviewerProcessError("runtime", digest=hashlib.sha256(b"private").hexdigest())
+        self.assertEqual(str(failure), "runtime")
+        self.assertNotIn("private", str(failure))
+        config = adapter._exact_config("medium")
+        self.assertIn('web_search="disabled"', config)
+        self.assertIn('approval_policy="never"', config)
+        self.assertIn('shell_environment_policy.inherit="none"', config)
+
+    def test_timeout_and_cancel_are_typed_without_process_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+            artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
+            for error, code in ((subprocess.TimeoutExpired([], 1), "timeout"), (KeyboardInterrupt(), "cancel")):
+                with self.subTest(code=code), patch.object(adapter.subprocess, "run", side_effect=error):
+                    with self.assertRaisesRegex(Exception, code):
+                        reviewer._run_auth([], artifact, artifact, 11)
+
+    def test_fake_process_invocation_records_dispatch_before_output_and_cleans_job(self) -> None:
+        schema = json.dumps({"$schema": "https://json-schema.org/draft/2020-12/schema",
+                             "additionalProperties": False,
+                             "properties": {"summary": {"type": "string"}},
+                             "required": ["summary"], "type": "object"}, separators=(",", ":"), sort_keys=True)
+        request = ContainedReviewRequest("Summarize.", '{"value":"synthetic"}', schema)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile = _profile(root)
+            profile.codex_path.write_bytes(b"codex")
+            profile.sandbox_path.write_bytes(b"sandbox")
+            os.chmod(profile.codex_path, 0o700)
+            os.chmod(profile.sandbox_path, 0o700)
+            profile = replace(
+                profile,
+                identity=replace(
+                    profile.identity,
+                    executable_sha256=hashlib.sha256(b"codex").hexdigest(),
+                    sandbox_sha256=hashlib.sha256(b"sandbox").hexdigest(),
+                ),
+            )
+            credential = profile.auth_store_path / "auth.json"
+            credential.write_bytes(b'{"synthetic":true}')
+            os.chmod(credential, 0o600)
+            reviewer = adapter.ContainedReviewerAdapter(profile)
+            attempt = root / "attempt.json"
+            attempt.write_text('{"state":"prepared"}', encoding="utf-8")
+            observed: list[str] = []
+
+            def persist_dispatch(pid: int, pgid: int, token: str) -> None:
+                with attempt.open("w", encoding="utf-8") as stream:
+                    stream.write('{"state":"dispatched"}')
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                observed.append(f"{pid}:{pgid}:{token}")
+
+            def sandbox_command(job_path, result_path, *_args):
+                result_path.write_text('{"summary":"safe"}', encoding="utf-8")
+                return ["fake-sandbox"]
+
+            def gated(_command, _codex, _sandbox, _stdin, _stdout, _stderr, dispatched, **_kwargs):
+                self.assertEqual(attempt.read_text(encoding="utf-8"), '{"state":"prepared"}')
+                dispatched(4321, 4321, "9876")
+                self.assertEqual(observed, ["4321:4321:9876"])
+                self.assertEqual(
+                    attempt.read_text(encoding="utf-8"), '{"state":"dispatched"}'
+                )
+                return 0
+
+            with patch.object(adapter.sys, "platform", "linux"), \
+                 patch.object(reviewer, "_verify_codex"), \
+                 patch.object(reviewer, "_require_chatgpt_auth"), \
+                 patch.object(reviewer, "_sandbox_command", side_effect=sandbox_command), \
+                 patch.object(reviewer, "_run_gated", side_effect=gated):
+                result = reviewer.run(
+                    request,
+                    persist_dispatch,
+                )
+            self.assertEqual(result.document, '{"summary":"safe"}')
+            self.assertEqual(credential.read_bytes(), b'{"synthetic":true}')
+            self.assertEqual(list(profile.job_root_path.iterdir()), [])
+
+    def test_gated_timeout_and_cancel_kill_the_captured_process_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+            artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
+            for failure, code in ((TimeoutError(), "timeout"), (KeyboardInterrupt(), "cancel")):
+                killed: list[tuple[int, int, str]] = []
+                with self.subTest(code=code), \
+                     patch.object(adapter.os, "pipe", side_effect=[(20, 21), (22, 23)]), \
+                     patch.object(adapter.os, "fork", return_value=4321), \
+                     patch.object(adapter.os, "close"), \
+                     patch.object(adapter.os, "read", return_value=b"R"), \
+                     patch.object(adapter.os, "write"), \
+                     patch.object(adapter, "_process_start_token", return_value="9876"), \
+                     patch.object(adapter, "_safe_start_token", return_value="9876"), \
+                     patch.object(adapter, "_wait_for_exit", side_effect=failure), \
+                     patch.object(adapter, "_kill_and_prove_dead", side_effect=lambda pid, pgid, token: killed.append((pid, pgid, token))):
+                    with self.assertRaisesRegex(Exception, code):
+                        reviewer._run_gated([], artifact, artifact, 1, 2, 3, lambda *_: None, credential_descriptor=4)
+                self.assertEqual(killed, [(4321, 4321, "9876")])
+
+    def test_cleanup_kills_group_and_proves_process_death(self) -> None:
+        with patch.object(adapter.os, "killpg") as kill, \
+             patch.object(adapter, "_wait_for_exit", return_value=0), \
+             patch.object(adapter, "_process_identity_alive", return_value=False) as alive:
+            adapter._kill_and_prove_dead(12, 12, "34")
+        kill.assert_called_once_with(12, adapter.signal.SIGKILL)
+        alive.assert_called_once_with(12, 12, "34")
+
+    def test_live_schema_rejection_maps_to_closed_response_format_failure(self) -> None:
+        message = adapter._LIVE_SCHEMA_REJECTION_PREFIX + "synthetic"
+        event = json.dumps({"error": {"message": message}, "type": "turn.failed"}, separators=(",", ":")).encode() + b"\n"
+        with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+            stdout.write(event)
+            code, count, digest = adapter._nonzero_failure(stdout, stderr, returncode=1)
+        self.assertEqual((code, count), ("response_format", len(event)))
+        self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+    def test_proc_parser_uses_final_command_delimiter(self) -> None:
+        fields = ["S", "1", "77"] + ["0"] * 16 + ["12345"] + ["0"] * 4
+        self.assertEqual(adapter._proc_identity("99 (odd ) command) " + " ".join(fields)), ("12345", 77))
+
+
+if __name__ == "__main__":
+    unittest.main()

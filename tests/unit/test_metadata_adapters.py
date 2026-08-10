@@ -186,10 +186,6 @@ def _create_prior_schema(
         metadata_persistence._REVIEW_CASES_SQL,
         metadata_persistence._REVIEW_POINTERS_SQL,
         metadata_persistence._REVIEW_TRANSITIONS_SQL,
-        metadata_persistence._SHADOW_REQUESTS_SQL,
-        metadata_persistence._SHADOW_ATTEMPTS_SQL,
-        metadata_persistence._SHADOW_DISPATCHES_SQL,
-        metadata_persistence._SHADOW_OUTCOMES_SQL,
         metadata_persistence._NO_UPDATE_SQL,
         metadata_persistence._COVER_NO_UPDATE_SQL,
         metadata_persistence._COVER_NO_DELETE_SQL,
@@ -199,14 +195,6 @@ def _create_prior_schema(
         metadata_persistence._REVIEW_NO_DELETE_SQL,
         metadata_persistence._REVIEW_TRANSITION_NO_UPDATE_SQL,
         metadata_persistence._REVIEW_TRANSITION_NO_DELETE_SQL,
-        metadata_persistence._SHADOW_REQUEST_NO_UPDATE_SQL,
-        metadata_persistence._SHADOW_REQUEST_NO_DELETE_SQL,
-        metadata_persistence._SHADOW_ATTEMPT_NO_UPDATE_SQL,
-        metadata_persistence._SHADOW_ATTEMPT_NO_DELETE_SQL,
-        metadata_persistence._SHADOW_DISPATCH_NO_UPDATE_SQL,
-        metadata_persistence._SHADOW_DISPATCH_NO_DELETE_SQL,
-        metadata_persistence._SHADOW_OUTCOME_NO_UPDATE_SQL,
-        metadata_persistence._SHADOW_OUTCOME_NO_DELETE_SQL,
         metadata_persistence._NO_DELETE_SQL,
     )
     for statement in statements:
@@ -494,10 +482,6 @@ class MetadataPersistenceTests(unittest.TestCase):
                     ("review_preparation_work",),
                     ("review_sessions",),
                     ("shadow_decision_outcomes",),
-                    ("shadow_review_attempts",),
-                    ("shadow_review_dispatches",),
-                    ("shadow_review_outcomes",),
-                    ("shadow_review_requests",),
                 ],
             )
             self.assertEqual(len(rows), 2)

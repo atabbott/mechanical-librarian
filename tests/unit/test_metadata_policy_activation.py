@@ -27,7 +27,6 @@ from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecis
 from mechanical_librarian.application.metadata_policy import MetadataPolicyApplicationError, PolicyNotebook
 from mechanical_librarian.bootstrap import composition
 from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report
-from tests.unit.test_shadow_reviews import _identity
 
 
 def _draft() -> MetadataPolicyProfile:
@@ -412,11 +411,8 @@ class MetadataPolicyActivationTests(unittest.TestCase):
             successor_case_id,
             tuple(ReviewCase.from_json(value[0]).review_case_id for value in browsed),
         )
-        shadow_request = reopened._shadow_request(successor_case_id, _identity())
-        self.assertEqual(
-            shadow_request,
-            reopened.validate_shadow_request(shadow_request.to_json()),
-        )
+        packet = reopened.preview_shadow_packet(successor_case_id)
+        self.assertEqual(packet.review_case_id, successor_case_id)
         acknowledged = reopened.acknowledge_metadata_policy_transition(completed.transition_id, 37)
         self.assertTrue(acknowledged.acknowledged)
         self.assertIsNone(

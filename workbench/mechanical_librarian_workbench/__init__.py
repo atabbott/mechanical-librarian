@@ -6,12 +6,11 @@ from .results import WorkbenchResult
 from .scenarios import (
     BatchRequest,
     CatalogueRequest,
+    ContainedReviewerRequest,
     DecisionPreviewRequest,
     ProposalRequest,
     ReportRequest,
     ReviewCaseRequest,
-    ReviewerAuthRequest,
-    ReviewerRequest,
     ScenarioRequest,
     WorkbenchFailure,
     WorkbenchOperations,
@@ -19,9 +18,9 @@ from .scenarios import (
 )
 
 __all__ = [
-    "BatchRequest", "CAPABILITIES", "Capability", "CatalogueRequest",
+    "BatchRequest", "CAPABILITIES", "Capability", "CatalogueRequest", "ContainedReviewerRequest",
     "DecisionPreviewRequest", "IsolatedNetworkProfile", "ProposalRequest",
-    "ReportRequest", "ReviewCaseRequest", "ReviewerAuthRequest", "ReviewerRequest",
+    "ReportRequest", "ReviewCaseRequest",
     "ScenarioRequest", "WorkbenchContext", "WorkbenchFailure", "WorkbenchOperations", "WorkbenchResult",
     "execute",
 ]
