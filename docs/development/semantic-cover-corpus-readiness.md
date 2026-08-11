@@ -23,52 +23,40 @@ per-case outcomes.
 
 | Measure | Aggregate result |
 | --- | ---: |
-| Admitted source works | 341 |
+| Admitted source works | 340 |
 | Completed report runs | 340 |
-| Report failures | 1 |
+| Report failures | 0 |
 | Distinct usable provider previews | 643 |
 | Report-bound provider preview references | 790 |
-| Work families with a usable preview | 274 |
-| Multi-choice packets | 269 |
-| Work-family-disjoint multi-choice packets | 264 |
-| Inspectable incumbents available / retained | 0 / 0 |
-| Packets with at least five exact previews | 16 |
+| Work families with a usable preview | 272 |
+| Work-family-disjoint multi-choice packets | 262 |
+| Inspectable incumbents available / retained | 259 / 259 |
+| Packets with at least five exact previews | 17 |
 | Packets with at least six exact previews | 1 |
 
 The 2026-08-11 packet-readiness contract requires at least ten packets with
 five previews across the sealed inventory, including at least one in the
-pre-frozen qualification-holdout role. It passes with sixteen and three,
+pre-frozen qualification-holdout role. It passes with seventeen and five,
 respectively. This is exploratory transport readiness, not a statistical yield
-or semantic-quality claim. Exact five-candidate transport remains subject to a
-later zero-mismatch and p95-at-most-180-seconds qualification.
-
-| Qualification-holdout measure | Aggregate result |
-| --- | ---: |
-| Assigned source works | 98 |
-| Completed report runs | 98 |
-| Work families | 95 |
-| Work families with a usable preview | 77 |
-| Work-family-disjoint multi-choice packets | 74 |
-| Packets with at least five exact previews | 3 |
-| Maximum exact previews per packet | 5 |
-
-Its packet distribution is 0: 18, 1: 3, 2: 30, 3: 21, 4: 20, 5: 3. The role
-assignments, acquisition behavior, and sealed inventory were reused unchanged;
-no cases were moved to meet the readiness gate.
+or semantic-quality claim. The role assignments, acquisition behavior, and
+sealed inventory were reused unchanged; no cases were moved to meet the
+readiness gate.
 
 Provider outcomes are bounded aggregate counts:
 
 | Provider | Success | No result | Failure | Truncation |
 | --- | ---: | ---: | ---: | ---: |
-| Hardcover | 269 | 0 | 71 | 10 |
-| Open Library | 293 | 0 | 47 | 23 |
+| Hardcover | 269 | 40 | 31 | 10 |
+| Open Library | 293 | 39 | 8 | 23 |
 
 Success, no-result, and failure are mutually exclusive terminal categories:
 each provider row therefore totals 340 report runs. Truncation is an overlapping
 bounded flag, not an additional terminal outcome.
 
-Usable-preview packets have this distribution: 0: 61, 1: 10, 2: 119, 3: 75,
-4: 59, 5: 15, 6: 1. The observed maximum is 6; p50 is 2 and p95 is 4.
+Usable-preview packets have this distribution: 0: 61, 1: 10, 2: 119, 3: 76,
+4: 57, 5: 16, 6: 1. The observed maximum is 6; p50 is 2 and p95 is 4.
+Acquisition made zero production-library accesses or writes and zero
+model/reviewer calls.
 
 ## Identity-review qualification
 
@@ -86,9 +74,10 @@ the revised minimums.
 | Final-holdout cohort size | 50 |
 | First reviews completed | 100 |
 | Independent second reviews completed | 100 |
-| First-review corrections accepted | 38 |
-| Second-review corrections accepted | 47 |
-| Adjudications ending in closed unknown/conflict outcomes | 47 |
+| First/second review agreements | 33 |
+| First/second review disagreements | 67 |
+| Final labels corrected from first review | 59 |
+| Final resolutions differing from second review | 16 |
 | Split/leakage status | passed |
 | Product-prediction and score-impact blinding | passed |
 | Second-review answer blinding | passed |
@@ -96,11 +85,11 @@ the revised minimums.
 
 | Closed identity class | Development | Final holdout | Both cohorts |
 | --- | ---: | ---: | ---: |
-| Verified manifestation match | 15 | 11 | 26 |
-| Verified work match | 5 | 3 | 8 |
-| Plausible match | 3 | 5 | 8 |
-| Unknown | 8 | 15 | 23 |
-| Conflict | 19 | 16 | 35 |
+| Verified manifestation match | 29 | 30 | 59 |
+| Verified work match | 8 | 8 | 16 |
+| Plausible match | 4 | 4 | 8 |
+| Unknown | 6 | 3 | 9 |
+| Conflict | 3 | 5 | 8 |
 
 Every case has a sealed final adjudicated class: no final label is unresolved.
 The `unknown` and `conflict` classes are closed policy outcomes that preserve
@@ -108,6 +97,11 @@ insufficient evidence or deterministic contradiction, respectively; they do
 not represent unresolved ground-truth labels.
 
 All acquisition and identity-coverage gates therefore pass. The corpus is
-qualified for the bounded semantic-cover decision workbench; downstream issue
-and Project-state reconciliation remains a coordinator action. #501 / 0.15.1
-remains unpromoted.
+qualified for the bounded semantic-cover decision workbench. This does not
+claim that the separate real contained-reviewer transport qualification passed:
+the historical negative invocation and current admission-only replay are
+separately recorded in the contributor-workbench qualification evidence. The
+current eight eligible packets have no rebound historical latency or outcome
+mapping (`sealed_subset_mapping_insufficient`), no model rerun occurred, and the
+required transport bound **DID NOT QUALIFY**. Downstream issue and Project-state
+reconciliation remains a coordinator action. #501 / 0.15.1 remains unpromoted.

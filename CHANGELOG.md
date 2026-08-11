@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Admit deterministic report-bound cover packets to the source-only contained
+  reviewer with opaque digest/order identity, incumbent-preserving deduplication,
+  fixed 12-preview/1-MiB-each/8-MiB-total limits, read-only ephemeral image
+  arguments, typed cleanup, and no runtime, production-library, or write
+  authority. (#542)
+
 - Reconcile and qualify the complete 0.14.1 authenticated interface against its
   exact surface-specific references. The packaged source, wheel, and container
   retain one persistent responsive shell, direct current-or-specific-value

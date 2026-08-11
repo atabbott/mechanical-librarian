@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 from .context import WorkbenchContext
+from .cover_packets import prepare_cover_packet
 from .results import WorkbenchResult
 
 Operation = Callable[..., object]
@@ -216,9 +217,34 @@ class ContainedReviewerRequest:
         return "contained-reviewer"
 
 
+@dataclass(frozen=True)
+class CoverPacketRequest:
+    report_id: str
+    database: str = "reports.sqlite"
+    artifacts: str = "artifacts"
+    profile: str = "contained-reviewer-profile.json"
+    instruction: str = "cover-reviewer-instruction.txt"
+    output_schema: str = "cover-reviewer-output-schema.json"
+
+    def __post_init__(self) -> None:
+        _required(self.report_id, "report id")
+        for value, label in (
+            (self.database, "database"),
+            (self.artifacts, "artifacts"),
+            (self.profile, "reviewer profile"),
+            (self.instruction, "reviewer instruction"),
+            (self.output_schema, "reviewer output schema"),
+        ):
+            _required(value, label)
+
+    @property
+    def name(self) -> str:
+        return "cover-packet-review"
+
+
 ScenarioRequest: TypeAlias = (
     ReportRequest | ProposalRequest | ReviewCaseRequest | CatalogueRequest
-    | BatchRequest | DecisionPreviewRequest | ContainedReviewerRequest
+    | BatchRequest | DecisionPreviewRequest | ContainedReviewerRequest | CoverPacketRequest
 )
 
 
@@ -238,16 +264,20 @@ class WorkbenchOperations:
     run_batch: Operation
     preview_shadow_decision_case: Operation
     run_contained_reviewer: Operation
+    run_cover_packet_reviewer: Operation
 
     @classmethod
     def production_operations(cls) -> "WorkbenchOperations":
         """Bind source workbench scenarios to the same application composition seams."""
         from mechanical_librarian.bootstrap import composition
 
-        from .reviewer import run_contained_reviewer
+        from .reviewer import run_contained_reviewer, run_cover_packet_reviewer
 
         return cls(**{
-            name: run_contained_reviewer if name == "run_contained_reviewer"
+            name: {
+                "run_contained_reviewer": run_contained_reviewer,
+                "run_cover_packet_reviewer": run_cover_packet_reviewer,
+            }[name] if name.startswith("run_") and name.endswith("_reviewer")
             else getattr(composition, name)
             for name in cls.__dataclass_fields__
         })
@@ -410,6 +440,37 @@ def _execute(
     elif isinstance(request, DecisionPreviewRequest):
         raw = selected.preview_shadow_decision_case(
             context.path(request.database), request.review_case_id
+        )
+    elif isinstance(request, CoverPacketRequest):
+        database = context.path(request.database)
+        artifacts = context.path(request.artifacts)
+        report_document = selected.reopen_metadata_report(database, request.report_id)
+        if type(report_document) is not str:
+            raise ValueError("cover packet report is invalid")
+
+        def read_preview(artifact_id: str, variant: str) -> bytes:
+            preview = selected.reopen_cover_preview(
+                database, artifacts, request.report_id, artifact_id, variant
+            )
+            if type(preview) is not bytes:
+                raise ValueError("cover packet preview is invalid")
+            return preview
+
+        packet = prepare_cover_packet(
+            report_document,
+            read_preview,
+        )
+        packet_snapshot = context.authority_snapshot(packet.document.encode("utf-8"))
+        paths = (
+            context.path(request.profile),
+            context.path(request.instruction),
+            context.path(request.output_schema),
+            packet_snapshot,
+        )
+        bound = context.require_network(*paths, private_first=True, private_tail=1)
+        raw = selected.run_cover_packet_reviewer(
+            bound[0], bound[1], bound[3], bound[2],
+            tuple((value.reference, value.digest, value.payload) for value in packet.images),
         )
     elif isinstance(request, ContainedReviewerRequest):
         paths = tuple(

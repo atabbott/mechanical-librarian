@@ -53,10 +53,11 @@ context and consequences rather than reproducing code.
 | [0038](0038-bounded-single-container-operations.md) | accepted | Bound operational evidence inside the single container |
 | [0039](0039-continuous-guarded-application.md) | accepted | Run continuous guarded application without target CAS |
 | [0040](0040-source-only-contributor-workbench.md) | accepted | Separate the runtime launcher from the contributor workbench |
-| [0041](0041-contract-contained-reviewer-kernel.md) | accepted | Contract the contained-reviewer kernel and retire F11 product workflow |
+| [0041](0041-contract-contained-reviewer-kernel.md) | accepted; no-cover-transport provision superseded by 0045 | Contract the contained-reviewer kernel and retire F11 product workflow |
 | [0042](0042-compose-authenticated-browser-operations.md) | accepted | Compose authenticated browser operations before transport |
 | [0043](0043-reproducible-react-browser-platform.md) | accepted | Build a reproducible, currently unactivated React browser platform |
 | [0044](0044-activate-persistent-react-workspace.md) | accepted | Activate one persistent authenticated React workspace |
+| [0045](0045-bind-report-cover-packets.md) | accepted | Bind report cover packets to isolated reviewer images |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

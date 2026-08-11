@@ -435,7 +435,8 @@ deterministic packet and shadow decision/outcome contracts perform no model or
 provider dispatch.
 
 The repository-only contained reviewer accepts only bounded canonical sanitized
-JSON/text and a locally admitted output schema. Its private profile binds exact
+JSON/text, one locally admitted output schema, and—only for the closed cover
+packet scenario—exact report-bound PNG previews. Its private profile binds exact
 artifacts, credential store, limits, and model configuration. The isolated child
 has no repository, database, media, service configuration, target/provider
 credential, shell, tool, plugin, web, history, approval, or environment authority.
@@ -446,7 +447,60 @@ token; those process facts are deliberately not persisted. Returned JSON is
 bounded, duplicate-free, canonical, and locally validated against the bound
 schema. Timeout or cancellation kills the captured process group and proves its
 identity dead; credential drift or cleanup failure blocks success. Raw streams,
-paths, prompts, credentials, and reasoning never cross the boundary.
+paths, prompts, credentials, and reasoning never cross the boundary. Cover
+previews use opaque references, fixed 12-image/1-MiB-each/8-MiB-total limits,
+digest/order binding, a separate ephemeral read-only mount, and repeatable exact
+image arguments. The generic reviewer entry point is image-free. Its closed
+request and adapter method have no image member or image argument. A distinct
+cover request is created only by one full `cover-review-packet-v1` parser that
+validates all closed fields and invariants, a content-bound packet reference,
+preview byte/dimension facts, incumbent/provenance/omission facts and limits,
+canonical candidate order, reason-specific omission preconditions, domain
+privacy-safe context text, and exact ordered reference/digest equality with the
+supplied images. Producer and admission use that same semantic validator. It
+checks the complete bounded, canonically ordered PNG chunk structure and
+checksums and fully decodes each image before mounting it, admitting only
+single-frame RGBA PNG previews no larger than 320 by 480 whose decoded and
+declared preview dimensions agree. Its closed profile accepts only exact IHDR,
+one consecutive IDAT run containing exactly one completed zlib stream with no
+trailing bytes, and final IEND. ICC profiles, PLTE, and every other
+ancillary or unknown chunk fail before mount; their bytes cannot cross the
+reviewer boundary. Original-cover technical dimensions remain separate ordering
+evidence; digest-equal groups bind the canonical best observed dimensions by
+area, width, then height, and every represented source kind affects diversity
+priority and counts. Forged signatures, corrupt or truncated streams,
+invalid chunk state, trailing bytes, unsafe dimensions, and decoder warnings or
+failures cross only the value-free response-format boundary.
+Before process creation, admitted bytes are copied into anonymous Linux memory
+descriptors, rehashed, and sealed against write, growth, shrink, and further
+seal changes. The sandbox binds those descriptor identities directly, so a
+dispatch callback or another same-UID process cannot mutate path content between
+admission and gated child release.
+The image-capable adapter independently reconstructs and fully re-admits the
+packet and exact ordered image tuple immediately before this path. A directly
+constructed private request object therefore has no admission authority.
+Duplicate groups bind to a retained representative only after final selection;
+fully excluded groups contain only their reason-specific omission evidence.
+Only the bounded Instruction is authoritative; canonical input, provider
+metadata, images, and OCR text are hostile evidence, not instructions;
+arbitrary paths, URLs, originals, remote fetches, target/service identities, and
+generic attachments remain unavailable.
+
+Historical sealed-v2 five-preview qualification attempted 17 development and
+qualification-holdout packets. Its aggregate-only receipt records 17 typed
+`contained_reviewer_invocation_insufficient` failures, zero ordered-reference
+mismatches, zero admitted image or reviewer-output bytes, p50 129 ms, p95 160
+ms, successful cleanup, and a failed sandbox aggregate.
+
+The current exact-head admission-only replay has 17 packets: eight eligible and
+nine rejected before dispatch as `icc_bearing_preview_rejected`, with no other
+rejection class. No model rerun occurred. Because sealed v2 retained no
+per-packet outcome or latency mapping, the eligible subset cannot be rebound to
+historical results (`sealed_subset_mapping_insufficient`); historical latency
+must not be attributed to the current head. The required real transport bound
+therefore **DID NOT QUALIFY**. No retry or authority, limit, profile, model, or
+threshold widening followed. The seam remains source-only/report-only and
+synthetically verified, not a runtime activation.
 
 Authentication actions remain adapter-owned and create no product lifecycle. The
 kernel is reachable only through the source workbench, excluded from installed

@@ -43,4 +43,8 @@ CAPABILITIES = (
     Capability("batch-run", "scenario", "run_batch"),
     Capability("decision-preview", "inspector", "preview_shadow_decision_case"),
     Capability("contained-reviewer", "scenario", "run_contained_reviewer"),
+    Capability(
+        "cover-packet-review", "scenario", "run_cover_packet_reviewer",
+        ("reopen_metadata_report", "reopen_cover_preview"),
+    ),
 )

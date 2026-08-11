@@ -9,8 +9,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from mechanical_librarian_workbench.cover_packet_semantics import (
+    MAX_COVER_PREVIEW_BYTES as MAX_IMAGE_BYTES,
+    bind_cover_packet,
+)
+
 MAX_INPUT_BYTES = 1_048_576
 MAX_SCHEMA_BYTES = 65_536
+_COVER_REFERENCE = re.compile(r"^cover_ref_[0-9a-f]{64}$")
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 
 def canonical_json(value: object) -> str:
@@ -67,8 +74,28 @@ class ContainedReviewerIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class _CoverReviewImage:
+    """One opaque, digest-bound PNG input; no caller path or URL is admitted."""
+
+    reference: str
+    digest: str
+    payload: bytes
+
+    def __post_init__(self) -> None:
+        if (
+            _COVER_REFERENCE.fullmatch(self.reference) is None
+            or _DIGEST.fullmatch(self.digest) is None
+            or type(self.payload) is not bytes
+            or not 1 <= len(self.payload) <= MAX_IMAGE_BYTES
+            or hashlib.sha256(self.payload).hexdigest() != self.digest
+            or not self.payload.startswith(b"\x89PNG\r\n\x1a\n")
+        ):
+            raise ContainedReviewerError("response_format")
+
+
+@dataclass(frozen=True, slots=True)
 class ContainedReviewRequest:
-    """Sanitized typed input and one closed JSON result schema."""
+    """Sanitized image-free input and one closed JSON result schema."""
 
     instruction: str
     input_document: str
@@ -106,8 +133,63 @@ class ContainedReviewRequest:
         return hashlib.sha256(canonical_json({
             "input": self.input_document,
             "instruction": self.instruction,
+            "images": [],
             "output_schema": self.output_schema,
         }).encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class _CoverReviewRequest:
+    """Fully parsed cover packet plus its exact ordered private images."""
+
+    instruction: str
+    input_document: str
+    output_schema: str
+    images: tuple[_CoverReviewImage, ...]
+
+    def __new__(cls) -> "_CoverReviewRequest":
+        raise TypeError("cover requests require full packet admission")
+
+    @classmethod
+    def _admit(
+        cls,
+        base: ContainedReviewRequest,
+        images: tuple[_CoverReviewImage, ...],
+    ) -> "_CoverReviewRequest":
+        request = object.__new__(cls)
+        object.__setattr__(request, "instruction", base.instruction)
+        object.__setattr__(request, "input_document", base.input_document)
+        object.__setattr__(request, "output_schema", base.output_schema)
+        object.__setattr__(request, "images", images)
+        return request
+
+    @property
+    def digest(self) -> str:
+        return hashlib.sha256(canonical_json({
+            "input": self.input_document,
+            "instruction": self.instruction,
+            "images": [
+                {"reference": value.reference, "sha256": value.digest}
+                for value in self.images
+            ],
+            "output_schema": self.output_schema,
+        }).encode("utf-8")).hexdigest()
+
+
+def admit_cover_review_request(
+    instruction: str,
+    packet_document: str,
+    output_schema: str,
+    image_payloads: tuple[tuple[str, str, bytes], ...],
+) -> _CoverReviewRequest:
+    """Fully validate one exact cover-review-packet-v1 and its image mapping."""
+    try:
+        base = ContainedReviewRequest(instruction, packet_document, output_schema)
+        admitted = bind_cover_packet(packet_document, image_payloads)
+        images = tuple(_CoverReviewImage(*value) for value in admitted.images)
+        return _CoverReviewRequest._admit(base, images)
+    except (json.JSONDecodeError, RecursionError, TypeError, UnicodeError, ValueError) as error:
+        raise ContainedReviewerError("response_format") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,5 +230,6 @@ def _reject_json_constant(value: str) -> object:
 
 __all__ = [
     "ContainedReviewRequest", "ContainedReviewResult", "ContainedReviewer",
-    "ContainedReviewerError", "ContainedReviewerIdentity", "canonical_json",
+    "ContainedReviewerError", "ContainedReviewerIdentity",
+    "admit_cover_review_request", "canonical_json",
 ]
