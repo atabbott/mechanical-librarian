@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Restore the Variant M Library review workspace: one permanent Library
+  destination with a URL-owned Attention queue, direct current-or-specific
+  value decisions, authoritative shared settlement and reconciliation, bounded
+  readable evidence, cross-work continuation, and a compact single-task flow.
+  The synthetic qualification cohort contains 20 public-domain works across
+  local, Project Gutenberg, Google Books, and Open Library shaped evidence.
+  (#554)
+
 - Admit deterministic report-bound cover packets to the source-only contained
   reviewer with opaque digest/order identity, incumbent-preserving deduplication,
   fixed 12-preview/1-MiB-each/8-MiB-total limits, read-only ephemeral image

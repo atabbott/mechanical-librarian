@@ -238,7 +238,7 @@ Add dated entries; do not overwrite earlier observations.
 | 2026-08-11 | `7fd8f8a` | Current installed Activity | local fixture | fail | IF-07 reported: route cannot be loaded; exact request/console reproduction still required. |
 | 2026-08-11 | `7fd8f8a` | Full frontend Impeccable critique | source, protected references, and bounded browser evidence | 28/40 | Dual independent assessments confirmed IF-01–IF-05 and IF-07/IF-08, advanced IF-09 to refinement, and added IF-10/IF-11. Browser overlay injection failed, so no overlay evidence is claimed. |
 | 2026-08-11 | `7fd8f8a` | Current installed Policy | desktop and compact | provisional pass | Semantics broadly accepted; critique found bounded density and activation-cadence refinement under IF-09. |
-| 2026-08-11 | candidate pending commit | Variant M Library workspace source build | frontend unit fixture | source-qualified only | Direct-value canvas, filmstrip, and URL-owned attention rail are implemented; matched-width installed comparison remains required before any verified closure claim. |
+| 2026-08-11 | exact candidate pending commit | Variant M Library workspace installed build | frontend unit fixture | Installed 390px → 1440px light-theme comparison, 70 frontend tests, typecheck, lint, build, artifact browser gate, and diff check pass. | Direct-value canvas, filmstrip, URL-owned attention rail, shared authoritative settlement, and compact single-task priority match the protected operating composition. The safe fixture contains 20 public-domain works and Local, Project Gutenberg, Google Books, and Open Library provider-shaped evidence. The 16px secondary `Open full review` target and compact brand/theme width are recorded as #555 polish, not #554 blockers. |
 
 ## Definition of done
 

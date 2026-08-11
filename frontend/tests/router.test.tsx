@@ -157,12 +157,70 @@ describe('typed review routes', () => {
 
     expect(await screen.findByRole('heading', { name: 'Every work, with exceptions first' })).toBeVisible()
     expect(http.getLibrary).toHaveBeenCalledWith({ lens: 'all', q: 'title' }, expect.any(AbortSignal))
-    await user.click(screen.getByRole('button', { name: 'Preview' }))
+    await user.click(screen.getByRole('button', { name: 'A Book' }))
     expect(await screen.findByText('Progressive detail')).toBeVisible()
     expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
     expect(screen.queryByText('item-1')).toBeNull()
     expect(screen.getByText('Author details unavailable · Books · ebook')).toBeVisible()
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
+  })
+
+  it('uses the review-case identity for workspace selection and advances through the frozen attention cohort', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    const firstWork = library.works[0]
+    if (!titleField) throw new Error('detail fixture requires a title field')
+    if (!firstWork) throw new Error('library fixture requires a work')
+    const selectedLibrary: LibraryView = { ...library, works: [{ ...firstWork, id: 'work-identity-is-not-case-identity' }] }
+    const settled: CaseDetailView = { ...detail, fields: [{ ...titleField, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'decision-identity', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }] }
+    let current = detail
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => selectedLibrary),
+      getAttention: vi.fn(async () => ({ total: 2, items: [
+        { id: 'case-1', destination: 'title', title: 'A Book', authors: [], library: 'Books', mediaKind: 'ebook', notices: [], provenance: ['Local catalogue'], workAttentionCount: 1 },
+        { id: 'case-2', destination: 'authors', title: 'Off-page successor', authors: ['Ada Example'], library: 'Project Gutenberg', mediaKind: 'audiobook', notices: [], provenance: ['Project Gutenberg record'], workAttentionCount: 1 },
+      ] })),
+      getCaseDetail: vi.fn(async (id: string) => id === 'case-2' ? { ...detail, id, title: 'Off-page successor' } : current),
+      recordDecision: vi.fn(async () => { current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-identity', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }),
+    }
+    const { router } = renderRoute('/library?lens=all', http)
+
+    expect(screen.queryByRole('link', { name: 'Attention' })).toBeNull()
+    await user.click(await screen.findByRole('button', { name: 'A Book' }))
+    const currentValue = (await screen.findByText('Old title')).closest('button')
+    if (!currentValue) throw new Error('workspace fixture requires a current-value decision control')
+    await user.click(currentValue)
+
+    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-2', field: 'authors' }))
+    expect(await screen.findByRole('heading', { name: 'Off-page successor' })).toBeVisible()
+    expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
+    expect(http.getCaseDetail).toHaveBeenCalledWith('case-2', expect.any(AbortSignal))
+  })
+
+  it('settles a deferred Detail decision without reviving recording status after Evidence and Library traversal', async () => {
+    const user = userEvent.setup()
+    const field = detail.fields[0]
+    if (!field) throw new Error('detail fixture requires a field')
+    let resolveDecision: (() => void) | undefined
+    const deferred = new Promise<void>((resolve) => { resolveDecision = resolve })
+    const settled: CaseDetailView = { ...detail, fields: [{ ...field, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'settled', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: field.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: field.targetFingerprint } }] }
+    let current = detail
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { await deferred; current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'settled', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: field.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: field.targetFingerprint } }) }
+    const { router } = renderRoute('/review/case-1?field=title&subview=review', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    await user.click(screen.getByRole('button', { name: 'Evidence' }))
+    await act(async () => { resolveDecision?.() })
+    await waitFor(() => expect(router.state.location.search).toEqual({ field: 'title', subview: 'evidence' }))
+    expect(await screen.findByText('Decision recorded from the authoritative case.')).toBeVisible()
+    expect(screen.queryByText(/Recording keep current/u)).toBeNull()
+
+    await user.click(screen.getByRole('link', { name: 'Library' }))
+    await user.click(await screen.findByRole('button', { name: 'A Book' }))
+    await user.click(await screen.findByRole('link', { name: 'Open full review' }))
+    expect(await screen.findByText('Decision recorded from the authoritative case.')).toBeVisible()
+    expect(screen.queryByText(/Recording keep current/u)).toBeNull()
   })
 
   it('clears preview and cursor when the Library search query changes', async () => {
@@ -524,8 +582,9 @@ describe('typed review routes', () => {
     expect(recordDecision).toHaveBeenCalledOnce()
 
     await user.click(screen.getByRole('link', { name: 'Library' }))
-    await user.click(await screen.findByRole('link', { name: 'A Book' }))
-    await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalledTimes(3))
+    await user.click(await screen.findByRole('button', { name: 'A Book' }))
+    await user.click(await screen.findByRole('link', { name: 'Open full review' }))
+    await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalledTimes(4))
 
     expect(screen.getByText(status)).toHaveAttribute('role', 'alert')
     expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
@@ -535,9 +594,10 @@ describe('typed review routes', () => {
     await user.click(screen.getByRole('button', { name: 'authors' }))
     expect(screen.getAllByLabelText('Reviewer facts').at(1)).toHaveTextContent('Available choices0')
 
-    await user.click(screen.getByRole('link', { name: 'Library' }))
     refreshAvailable = true
-    await user.click(await screen.findByRole('link', { name: 'A Book' }))
+    await user.click(screen.getByRole('link', { name: 'Library' }))
+    await user.click(await screen.findByRole('button', { name: 'A Book' }))
+    await user.click(await screen.findByRole('link', { name: 'Open full review' }))
 
     expect(await screen.findByText('Human decision: keep current by owner. Recorded value: Old title.')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'authors' }))
@@ -582,16 +642,18 @@ describe('typed review routes', () => {
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
 
     await user.click(screen.getByRole('link', { name: 'Library' }))
-    await user.click(await screen.findByRole('link', { name: 'A Book' }))
-    await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalledTimes(4))
+    await user.click(await screen.findByRole('button', { name: 'A Book' }))
+    await user.click(await screen.findByRole('link', { name: 'Open full review' }))
+    await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalledTimes(5))
     expect(screen.getByText(locked)).toHaveAttribute('role', 'alert')
     expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
     await user.click(screen.getByRole('button', { name: 'authors' }))
     expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
 
-    await user.click(screen.getByRole('link', { name: 'Library' }))
     postLockRefreshAvailable = true
-    await user.click(await screen.findByRole('link', { name: 'A Book' }))
+    await user.click(screen.getByRole('link', { name: 'Library' }))
+    await user.click(await screen.findByRole('button', { name: 'A Book' }))
+    await user.click(await screen.findByRole('link', { name: 'Open full review' }))
     await user.click(await screen.findByRole('button', { name: 'authors' }))
     expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Choose proposed value 1: New title' })).toBeVisible()

@@ -163,6 +163,20 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.set_viewport_size({"width": 1440, "height": 900})
             page.goto("https://react-platform.invalid/library?lens=all")
             page.get_by_text("Catalogue-only work", exact=True).wait_for()
+            expect(page).to_have_url("https://react-platform.invalid/library?lens=all&preview=case-1")
+            self.assertEqual(
+                page.locator(".masthead nav").get_by_text("Attention", exact=True).count(),
+                0,
+            )
+            expect(page.locator(".workspace-detail .direct-choice-grid .value-choice")).to_have_count(4)
+            workspace_evidence = page.locator(".workspace-detail .decision-canvas footer").inner_text()
+            self.assertIn("Local catalogue record", workspace_evidence)
+            self.assertIn("Project Gutenberg record", workspace_evidence)
+            self.assertIn("Google Books catalogue record", workspace_evidence)
+            page.locator(".attention-toggle").click()
+            expect(page).to_have_url("https://react-platform.invalid/library?lens=all&preview=case-1&attention=open")
+            expect(page.locator(".attention-rail")).to_be_visible()
+            page.locator(".attention-rail header button").click()
             self.assertEqual(page.locator(".library-work-row").count(), 6)
             page.locator(".library-work-row").first.get_by_text(
                 "Mara Venn", exact=False
@@ -173,9 +187,9 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             )
             no_case_row = page.locator(".library-work-row").filter(has_text="Catalogue-only work")
             self.assertEqual(no_case_row.get_by_role("link").count(), 0)
-            self.assertEqual(no_case_row.get_by_role("button", name="Preview").count(), 0)
+            self.assertEqual(no_case_row.locator(".work-select").count(), 0)
             page.get_by_role("link", name="Needs attention", exact=True).click()
-            expect(page.locator(".library-work-row")).to_have_count(4)
+            expect(page.locator(".library-work-row")).to_have_count(5)
             page.get_by_role("link", name="No attention needed", exact=True).click()
             expect(page.locator(".library-work-row")).to_have_count(6)
             page.get_by_role("link", name="All", exact=True).click()
@@ -204,14 +218,14 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             for control in page.locator(".masthead nav a, .shell-actions button").all():
                 self.assertGreaterEqual(control.bounding_box()["height"], 44)
             for control in page.locator(
-                ".lenses a, .preview-button, .library-pager a, .library-work-copy h3 a"
+                ".lenses a, .work-select, .library-pager a"
             ).all():
                 self.assertGreaterEqual(control.bounding_box()["height"], 44)
             for lens in page.locator(".lenses a").all():
                 self.assertGreaterEqual(lens.bounding_box()["width"], 44)
             long_title = page.locator(".library-work-row").filter(
                 has_text=LONG_TITLE
-            ).locator(".library-work-copy h3 a")
+            ).locator(".library-work-copy .work-select")
             self.assertEqual(long_title.inner_text(), LONG_TITLE)
             self.assertIn(UNBROKEN_TITLE_SEGMENT, long_title.inner_text())
             self.assertLessEqual(
@@ -245,16 +259,37 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             )
             for _ in range(10):
                 page.keyboard.press("Tab")
-                if page.evaluate("() => document.activeElement.matches('.library-work-copy h3 a')"):
+                if page.evaluate("() => document.activeElement.matches('.library-work-copy .work-select')"):
                     break
             self.assertTrue(
-                page.evaluate("() => document.activeElement.matches('.library-work-copy h3 a')")
+                page.evaluate("() => document.activeElement.matches('.library-work-copy .work-select')")
             )
             self.assertEqual(
                 page.evaluate("() => getComputedStyle(document.activeElement).outlineStyle"),
                 "solid",
             )
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 1440)
+
+            page.set_viewport_size({"width": 390, "height": 844})
+            page.goto("https://react-platform.invalid/library?lens=all")
+            expect(page.locator(".library-works")).to_be_visible()
+            expect(page.locator(".workspace-detail")).to_be_hidden()
+            page.locator(".attention-toggle").click()
+            expect(page.locator(".attention-rail")).to_be_visible()
+            expect(page.locator(".library-works")).to_be_hidden()
+            expect(page.locator(".workspace-detail")).to_be_hidden()
+            page.locator(".attention-queue-item").first.click()
+            expect(page.locator(".workspace-detail")).to_be_visible()
+            expect(page.locator(".library-works")).to_be_hidden()
+            expect(page.locator(".compact-workspace-controls button")).to_have_count(2)
+            for control in page.locator(".compact-workspace-controls button").all():
+                self.assertGreaterEqual(control.bounding_box()["height"], 44)
+            page.get_by_role("button", name="Back to works").click()
+            expect(page.locator(".library-works")).to_be_visible()
+            expect(page.locator(".workspace-detail")).to_be_hidden()
+            page.set_viewport_size({"width": 1440, "height": 900})
+            expect(page).to_have_url("https://react-platform.invalid/library?lens=all&preview=case-1")
+            expect(page.locator(".workspace-detail")).to_be_visible()
             page.goto("https://react-platform.invalid/review/case-1?field=title&subview=review")
             page.get_by_text(
                 "Three independent catalogue observations disagree on presentation.",
@@ -268,7 +303,10 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertEqual(page.get_by_role("button", name="Reject proposed change").count(), 0)
             self.assertEqual(page.get_by_role("button", name="Keep current value").count(), 0)
             title_notices = page.locator("#field-title .field-notices")
-            self.assertIn("Evidence record 1", title_notices.inner_text())
+            self.assertIn("Local catalogue record", title_notices.inner_text())
+            self.assertIn("Project Gutenberg record", title_notices.inner_text())
+            self.assertIn("Google Books catalogue record", title_notices.inner_text())
+            self.assertIn("Open Library record", title_notices.inner_text())
             self.assertNotIn("provider_", title_notices.inner_text())
             page.locator("#field-title .proposed-value").first.click()
             page.get_by_text(
