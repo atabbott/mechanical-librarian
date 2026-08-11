@@ -33,6 +33,7 @@
 - [Recoverability qualification](development/recoverability-qualification.md)
 - [Testing strategy](development/testing-strategy.md)
 - [0.14.0 release-candidate reconciliation](development/0-14-release-candidate.md)
+- [0.14.1 interface-fidelity reconciliation](development/0-14-1-interface-fidelity.md)
 - [Repository structure](development/repository-structure.md)
 - [Functional slice delivery](development/slice-delivery.md)
 - [Exact-head merging](development/exact-head-merging.md)
