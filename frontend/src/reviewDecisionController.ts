@@ -35,7 +35,7 @@ export const useReviewDecisionController = ({ reviewCaseId, fields, active, onAd
     const refreshed = await settle(); setPending((current) => current?.caseId === reviewCaseId ? null : current)
     if (!refreshed) { lock('Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.'); announce(reviewCaseId, ''); return }
     const next = nextUnresolved(order.current, refreshed.fields, command.destination)
-    if (!mounted.current) return
+    if (!mounted.current) { queryClient.setQueryData(decisionStatusKey(reviewCaseId), 'Decision recorded from the authoritative case.'); return }
     if (!active(command)) { announce(reviewCaseId, 'Decision recorded from the authoritative case.'); return }
     if (next) { setStatus((current) => current.caseId === reviewCaseId ? { ...current, text: `Decision recorded. Continuing with ${next.destination.replaceAll('_', ' ')}.` } : current); await onAdvance(next.destination); return }
     setStatus((current) => current.caseId === reviewCaseId ? { ...current, text: 'Decision recorded from the authoritative case.' } : current)

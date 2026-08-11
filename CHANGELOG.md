@@ -3,10 +3,11 @@
 ## Unreleased
 
 - Restore the Variant M Library review workspace: one permanent Library
-  destination with a URL-owned Attention queue, direct current-or-specific
-  value decisions, authoritative shared settlement and reconciliation, bounded
+  destination with a paginated, recoverable URL-owned Attention queue, direct
+  current-or-specific value decisions, authoritative shared settlement, bounded
   readable evidence, cross-work continuation, and a compact single-task flow.
-  Direct review entry restores focus to the selected decision field.
+  Superseded cases never expose decision controls; work and field position carry
+  into full review; direct review entry restores focus to the selected field.
   The synthetic qualification cohort contains 20 public-domain works across
   local, Project Gutenberg, Google Books, and Open Library shaped evidence.
   (#554)

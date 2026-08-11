@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError } from '../src/api/http'
-import type { ActivityDisplayView, ActivityView, AttentionView, CaseDetailView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
+import type { ActivityDisplayView, ActivityView, AttentionSearch, AttentionView, CaseDetailView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
 import { createApplicationRouter, detailQuery, normalizeLibrarySearch, normalizePolicySearch } from '../src/router'
 import { activityEventKeys, activityOutcome } from '../src/activityState'
 
@@ -165,6 +165,56 @@ describe('typed review routes', () => {
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
   })
 
+  it('suppresses workspace decisions for a superseded case', async () => {
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, current: false })) }
+    renderRoute('/library?lens=all&preview=case-1', http)
+
+    expect(await screen.findByText('This review case is no longer current. Reopen its current replacement from Library.')).toHaveAttribute('role', 'alert')
+    expect(screen.queryByRole('button', { name: /Current value/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Specific proposed value/ })).toBeNull()
+  })
+
+  it('preserves the selected field in full review and clears it when another work is selected', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    const firstWork = library.works[0]
+    if (!titleField || !firstWork) throw new Error('workspace fixture requires a field and work')
+    const authorsField = { ...titleField, destination: 'authors', proposalId: 'proposal-authors', targetFingerprint: 'fingerprint-authors' }
+    const secondWork = { ...firstWork, id: 'work-2', reviewCaseId: 'case-2', title: 'Second work' }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({ ...library, counts: { ...library.counts, all: 2 }, works: [firstWork, secondWork] })),
+      getCaseDetail: vi.fn(async (id: string) => ({ ...detail, id, title: id === 'case-2' ? 'Second work' : detail.title, fields: [titleField, authorsField] })),
+    }
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=authors', http)
+
+    expect(await screen.findByRole('link', { name: 'Open full review' })).toHaveAttribute('href', '/review/case-1?subview=review&field=authors')
+    await user.click(screen.getByRole('button', { name: 'Second work' }))
+    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-2' }))
+  })
+
+  it('recovers and paginates the contextual attention queue', async () => {
+    const user = userEvent.setup()
+    let calls = 0
+    const item = { id: 'case-1', destination: 'title', title: 'A Book', authors: [], library: 'Books', mediaKind: 'ebook', notices: [], provenance: [], workAttentionCount: 1 }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getAttention: vi.fn(async (search: AttentionSearch) => {
+        calls += 1
+        if (calls === 1) throw new Error('temporary attention failure')
+        return search.cursor ? { total: 2, items: [{ ...item, id: 'case-2', title: 'Second queued work' }] } : { total: 2, nextCursor: 'next', items: [item] }
+      }),
+    }
+    renderRoute('/library?lens=all', http)
+
+    await user.click(await screen.findByRole('button', { name: /Attention/ }))
+    await user.click(await screen.findByRole('button', { name: 'Try again' }))
+    expect(within(screen.getByLabelText('Attention queue')).getByText('A Book')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Load more attention' }))
+    expect(await screen.findByText('Second queued work')).toBeVisible()
+    expect(http.getAttention).toHaveBeenLastCalledWith({ cursor: 'next' }, expect.any(AbortSignal))
+  })
+
   it('uses the review-case identity for workspace selection and advances through the frozen attention cohort', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]
@@ -217,6 +267,26 @@ describe('typed review routes', () => {
     expect(screen.queryByText(/Recording keep current/u)).toBeNull()
 
     await user.click(screen.getByRole('link', { name: 'Library' }))
+    await user.click(await screen.findByRole('button', { name: 'A Book' }))
+    await user.click(await screen.findByRole('link', { name: 'Open full review' }))
+    expect(await screen.findByText('Decision recorded from the authoritative case.')).toBeVisible()
+    expect(screen.queryByText(/Recording keep current/u)).toBeNull()
+  })
+
+  it('settles durable decision status after leaving the submitting route', async () => {
+    const user = userEvent.setup()
+    const field = detail.fields[0]
+    if (!field) throw new Error('detail fixture requires a field')
+    let resolveDecision: (() => void) | undefined
+    const deferred = new Promise<void>((resolve) => { resolveDecision = resolve })
+    const settled = { ...detail, fields: [{ ...field, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'settled-after-leave', destination: 'title', occurred_at: 1, outcome: 'keep_current' as const, proposal_id: field.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: field.targetFingerprint } }] }
+    let current = detail
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { await deferred; current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'settled-after-leave', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: field.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: field.targetFingerprint } }) }
+    renderRoute('/review/case-1?field=title&subview=review', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    await user.click(screen.getByRole('link', { name: 'Library' }))
+    await act(async () => { resolveDecision?.() })
     await user.click(await screen.findByRole('button', { name: 'A Book' }))
     await user.click(await screen.findByRole('link', { name: 'Open full review' }))
     expect(await screen.findByText('Decision recorded from the authoritative case.')).toBeVisible()
@@ -599,7 +669,9 @@ describe('typed review routes', () => {
     await user.click(await screen.findByRole('button', { name: 'A Book' }))
     await user.click(await screen.findByRole('link', { name: 'Open full review' }))
 
-    expect(await screen.findByText('Human decision: keep current by owner. Recorded value: Old title.')).toBeVisible()
+    expect(await screen.findByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'title' }))
+    expect(screen.getByText('Human decision: keep current by owner. Recorded value: Old title.')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'authors' }))
     expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Choose proposed value 1: New title' })).toBeVisible()
