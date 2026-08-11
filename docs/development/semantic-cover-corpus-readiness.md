@@ -91,22 +91,36 @@ This is the natural observed class distribution. It is not a statistical or
 model-quality claim, and no case was selected, moved, or relabelled to improve
 that distribution.
 
-## Identity-classifier development evidence
+## Identity-classifier qualification — PASS
 
 The source-only classifier was run against the unchanged 50-case development
 cohort before the final holdout was opened. Forty-nine cases had an exact
 report-bound cover source; one retained case was typed unavailable instead of
-being replaced. The classifier made 20 verified-manifestation, 12
-verified-work, 14 unknown, and 3 conflict predictions. It made no verified
-false positives (32/32 verified precision), retained all 3 reviewed conflicts,
-and exactly matched 39 of the 49 evaluable review outcomes. The ten differences
-were reviewed `plausible` cases conservatively projected as `unknown` because
-the retained report evidence was ambiguous; the remaining reviewed plausible
-case was the typed unavailable case. No case was tuned, moved, or relabelled.
+being replaced. After the implementation and its exact artifact passed review
+and validation, the unchanged 50-case final holdout was opened once.
 
-The development run made zero provider or model calls and performed zero
-production access or writes. These figures are development evidence only; the
-final-holdout result is not claimed here.
+| Measure | Development | Final holdout | Combined |
+| --- | ---: | ---: | ---: |
+| Verified manifestation predictions | 20 | 25 | 45 |
+| Verified work predictions | 12 | 9 | 21 |
+| Plausible predictions | 0 | 0 | 0 |
+| Unknown predictions | 14 | 14 | 28 |
+| Conflict predictions | 3 | 2 | 5 |
+| Typed unavailable cases | 1 | 0 | 1 |
+| Exact matches / evaluable cases | 39/49 | 39/50 | 78/99 |
+| Verified precision | 32/32 | 34/34 | 66/66 |
+| Reviewed conflicts retained | 3/3 | 2/2 | 5/5 |
+
+Ten development and eleven final reviewed `plausible` cases were
+conservatively projected as `unknown` because the retained report evidence was
+ambiguous; the remaining reviewed plausible development case was the typed
+unavailable case. All reviewed unknown cases remained unknown. This is an
+honest precision-first negative recall result, not a semantic-quality or
+production-activation claim. No case was tuned, moved, relabelled, or replaced.
+
+Both runs made zero provider or model calls and performed zero production
+access or writes. The final holdout was unavailable to implementation and
+tuning before its one-shot aggregate qualification.
 
 ## Outcome
 
