@@ -447,7 +447,7 @@ fact/reference disagreement, forged kind/value/applicability/scope/raw-order
 or provider/candidate membership, invalid ISBN/ASIN syntax, private or
 credential-shaped context, missing rich-date-evidence linkage, malformed
 identifier and format shapes, duplicate/reordered facts, and context beyond
-either 16-fact bound. Packet-v5 replay recompiles the exact packet-only action
+either 16-fact bound. Packet-v6 replay recompiles the exact packet-only action
 catalogue. Tests cross positive
 candidate actions into destinations that previously produced only manual
 outcomes and negative actions into historically feasible destinations, then

@@ -183,6 +183,11 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             ("event attribute", '<p onclick="unsafe()">Text</p>', FieldState.MALFORMED),
             ("unclosed markup", "<p>Text", FieldState.MALFORMED),
             ("incomplete opening tag", "Summary <em", FieldState.MALFORMED),
+            (
+                "unterminated quoted attribute",
+                'Intro <span title="broken>body</span>',
+                FieldState.MALFORMED,
+            ),
             ("empty visible text", "<p></p>", FieldState.MALFORMED),
             (
                 "over input bound",

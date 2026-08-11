@@ -1134,9 +1134,11 @@ def _candidate(
     for kind in (ClaimKind.TAG, ClaimKind.GENRE):
         add(kind, None, ClaimScope.WORK, state=FieldState.UNSUPPORTED)
     series, sequences, series_state = _series_projection(work)
-    for value in series:
+    for index, value in enumerate(series):
         add(ClaimKind.SERIES, value, ClaimScope.WORK)
-    for value in sequences:
+        if index < len(sequences):
+            add(ClaimKind.SERIES_SEQUENCE, sequences[index], ClaimScope.WORK)
+    for value in sequences[len(series):]:
         add(ClaimKind.SERIES_SEQUENCE, value, ClaimScope.WORK)
     if series_state is not None:
         for kind in (ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE):

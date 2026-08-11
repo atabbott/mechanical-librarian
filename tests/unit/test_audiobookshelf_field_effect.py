@@ -154,6 +154,14 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         )
         self.detail["media"].pop("tags")
         self.assertEqual(self.target.read(self.plan("tags", ["old"], ["new"])).value, ["old"])
+        self.detail["media"]["tags"] = ["top-level"]
+        self.detail["media"].pop("metadata")
+        self.assertEqual(
+            self.target.read(
+                self.plan("tags", ["top-level"], ["new"])
+            ).value,
+            ["top-level"],
+        )
 
     def test_empty_collections_and_service_series_shape_are_normalized(self) -> None:
         metadata = self.detail["media"]["metadata"]
@@ -310,6 +318,14 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "connection_unavailable")
         user["permissions"]["accessAllLibraries"] = True
         self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "allowed")
+        self.detail["media"]["tags"] = ["top-level"]
+        self.detail["media"].pop("metadata")
+        self.assertEqual(
+            capabilities.result(
+                self.plan("tags", ["top-level"], ["new"])
+            ).category,
+            "allowed",
+        )
         self.detail["media"]["metadata"] = "invalid"
         self.assertEqual(capabilities.result(self.plan("title", "Before", "After")).category, "field_unavailable")
         self.detail["media"]["metadata"] = {"title": "Before"}

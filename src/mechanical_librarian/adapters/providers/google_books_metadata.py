@@ -987,8 +987,21 @@ def _visible_description(value: object) -> object:
         return _DESCRIPTION_OVERSIZED
     position = 0
     while (start := value.find("<", position)) >= 0:
-        end = value.find(">", start + 1)
-        if end < 0 or value.find("<", start + 1, end) >= 0:
+        quote: str | None = None
+        end = start + 1
+        while end < len(value):
+            character = value[end]
+            if quote is not None:
+                if character == quote:
+                    quote = None
+            elif character in {'"', "'"}:
+                quote = character
+            elif character == "<":
+                return None
+            elif character == ">":
+                break
+            end += 1
+        if end >= len(value) or quote is not None:
             return None
         position = end + 1
     parser = _DescriptionParser()

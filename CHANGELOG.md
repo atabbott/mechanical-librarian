@@ -14,7 +14,9 @@
   (#541)
 
 - Preserve bounded rich metadata evidence for manual review without widening
-  automatic authority. (#563)
+  automatic authority. Advance the exact-current shadow-review packet to v6
+  so typed taxonomy citations cannot be confused with the prior packet shape.
+  (#563)
 
 - Add a source-only, report-local cover identity projection that classifies each
   retained cover as verified manifestation/work, plausible, unknown, or

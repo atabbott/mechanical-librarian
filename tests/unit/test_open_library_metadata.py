@@ -327,6 +327,21 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 ),
             ),
             (
+                "multiple full",
+                ["Cycle", "Publication order"],
+                ["2", "5"],
+                (
+                    (ClaimKind.SERIES, FieldState.VALID, "Cycle"),
+                    (ClaimKind.SERIES_SEQUENCE, FieldState.VALID, "2"),
+                    (
+                        ClaimKind.SERIES,
+                        FieldState.VALID,
+                        "Publication order",
+                    ),
+                    (ClaimKind.SERIES_SEQUENCE, FieldState.VALID, "5"),
+                ),
+            ),
+            (
                 "series only",
                 ["Cycle"],
                 [],

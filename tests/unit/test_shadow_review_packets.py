@@ -8,7 +8,7 @@ from mechanical_librarian.domain.cover_evidence import CoverArtifact, CoverDesig
 from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope, FieldState, FileFacts, LocalClaim, MAX_CONTRIBUTIONS, MetadataReport, ProviderCandidate, ProviderClaim, ProviderEvidence, ProviderEvidenceKind, ProviderObservation, ProviderQueryKind, ProviderStatus, PublicationDateRelation, TargetDestination, TargetFacts, TargetField, TargetFieldState, default_target_fields
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.reviewer_decision_summary import MAX_CREATOR_ROLE_FACTS, MAX_DECISION_CORRELATIONS
-from mechanical_librarian.domain.shadow_review import MAX_LINKAGE_FORMAT_FACTS, MAX_LINKAGE_IDENTIFIER_FACTS, ShadowReviewPacket, ShadowReviewValueError, canonical_json
+from mechanical_librarian.domain.shadow_review import MAX_LINKAGE_FORMAT_FACTS, MAX_LINKAGE_IDENTIFIER_FACTS, PACKET_SCHEMA, ShadowReviewPacket, ShadowReviewValueError, canonical_json
 from tests.unit.test_proposal_set import _claim, _contradictory_publication_provider, _explicit_local_ebook_isbn, _fields as _proposal_fields, _identity_bound_alias_report, _partially_bound_direct_author_report, _publication_local_isbn, _publication_provider, _provider, _report as _proposal_report
 
 def _local_isbn() -> LocalClaim:
@@ -26,7 +26,12 @@ class ShadowReviewPacketTests(unittest.TestCase):
         self.assertEqual({'en', 'eng'}, {candidate['value']['value'] for candidate in language['candidates']})
         self.assertTrue(all((candidate['decision_summary']['support'] == {'independent_provider_correlations': 1, 'local_evidence': 0, 'target_only_preservation': 0} and candidate['decision_summary']['selected_manifestation_binding'] == 'unresolved' for candidate in language['candidates'])))
         self.assertEqual({'evidence_sufficiency': 'candidate', 'target_only_preservation': 0}, language['decision_summary'])
+        self.assertEqual("shadow-review-packet-v6", PACKET_SCHEMA)
         self.assertEqual(packet, ShadowReviewPacket.from_json(packet.to_json(), report))
+        prior = json.loads(packet.to_json())
+        prior["schema_version"] = "shadow-review-packet-v5"
+        with self.assertRaises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(canonical_json(prior), report)
 
     def test_populated_competing_field_marks_target_only_preservation(self) -> None:
 

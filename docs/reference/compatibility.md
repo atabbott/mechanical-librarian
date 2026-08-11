@@ -13,7 +13,7 @@ The current installed contract is intentionally narrow:
 - an absent database or the installed exact current report database containing
   `metadata-report-v23` plus `proposal-set-v4` under
   `fixed-conservative-v6`, or the separate `catalogue-v2` schema;
-- `review-case-v2`, `shadow-review-packet-v5`,
+- `review-case-v2`, `shadow-review-packet-v6`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v5`,
   and the exact-current deterministic shadow decision/outcome schema;
@@ -89,8 +89,9 @@ outcomes without choosing one. No earlier proposal policy is interpreted:
 pre-release databases using `fixed-conservative-v5` or earlier are rejected
 before mutation and require a clean rebuild.
 
-Packet v5 decision summaries are exact deterministic projections of the current
-report, ProposalSet, ReviewCase, and bibliographic combinations. The former F11
+Packet v6 decision summaries and typed provider evidence are exact deterministic
+projections of the current report, ProposalSet, ReviewCase, and bibliographic
+combinations. The former F11
 request, prompt, qualification-profile, provider-transport, and result contracts
 are retired and have no current compatibility surface. Their stored lifecycle
 state is not interpreted or migrated. The source-only contained-reviewer

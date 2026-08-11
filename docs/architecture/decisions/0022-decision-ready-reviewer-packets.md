@@ -81,6 +81,16 @@ Private qualification assets, provider requests, scoring, prompts, result
 semantics, reviewer decisions, apply, and production writes remain out of
 scope.
 
+### Pre-release packet-v6 amendment
+
+Issue #563 extends provider-evidence citations with an exact nullable
+`taxonomy_type` member so retained taxonomy values remain typed through packet
+replay. `shadow-review-packet-v6` preserves the complete packet-v5 projection
+and changes no decision or reviewer authority. Packet v5 is incompatible
+pre-release state and is rejected rather than inferred, migrated, imported, or
+converted under ADR-0013. The former request/profile lifecycle remains retired
+and has no current runtime compatibility surface.
+
 ## Consequences
 
 ### Positive

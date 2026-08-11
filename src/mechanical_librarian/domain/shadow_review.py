@@ -51,7 +51,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
     compile_shadow_review_actions,
 )
 
-PACKET_SCHEMA = "shadow-review-packet-v5"
+PACKET_SCHEMA = "shadow-review-packet-v6"
 MAX_PACKET_BYTES = 1_048_576
 # The generated schema is ASCII-only. Embedding it as a JSON string can add at
 # most one escape byte per schema byte; the remaining allowance covers the
