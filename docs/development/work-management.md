@@ -350,36 +350,33 @@ non-activation increment must fully satisfy and natively close at least one
 constituent. The activation pull request may satisfy that required closing
 reference with the slice tracker and is the only increment that closes it. If
 an increment cannot meet that boundary, keep it draft and re-slice the
-increment or refine the ticket plan before ready review. The linked-work
-workflow rejects placeholder, nonexistent, closed, or missing references. A
+increment or refine the ticket plan before ready review. The trusted delivery
+controller rejects placeholder, nonexistent, closed, or missing references. A
 horizontal ticket commit alone does not justify a separate ready pull request;
 each increment must be independently safe and vertically demonstrable.
 
-The gate uses GitHub-recognized closing-link metadata plus the raw pull-request
-body only to distinguish a same-issue manual/native overlap. Its deliberately
-narrow line scan accepts standalone GitHub closing lines, while examples,
-quotations, fenced or indented code, inline code, comments, manual links,
-nonexistent issues, and closed issues do not satisfy it. At least one supported
-closing reference must resolve to an open issue in this repository. The
+The maintainer-owned controller checks the live raw pull-request body against
+its bounded expected issue set. Its deliberately narrow line scan accepts
+standalone GitHub closing lines, while examples, quotations, fenced or indented
+code, inline code, comments, manual links, nonexistent issues, and closed issues
+do not satisfy it. At least one supported closing reference must resolve to an
+open issue in this repository. The
 case-insensitive keyword vocabulary is `close`, `closes`, `closed`, `fix`,
 `fixes`, `fixed`, `resolve`, `resolves`, and `resolved`. Every recognized closing
-reference used by the gate must remain open when the pull request becomes ready.
-Cross-repository and non-default-branch closing links do not satisfy this
-repository-local gate. Drafts are exempt and are checked on the
-`ready_for_review` transition; description edits are checked again.
-The bounded gate supports at most 100 recognized references and reports a
-specific limit failure rather than evaluating incomplete pagination. If the
-same issue is both manually linked and named by a closing keyword, place the
-closing reference on its own line so the gate can distinguish the body source
-without treating examples, custom links, formatting, quotations, or code as
-closing instructions.
+reference in the expected set must remain open at preflight. Cross-repository
+and non-default-branch closing links do not satisfy this repository-local
+control. Draft/ready transitions, labels, and description edits do not trigger
+a remote validator. The controller reads the live body and issue state during
+its dry run and repeats that race-sensitive preflight immediately before the
+conditional merge, so any intervening edit invalidates the evidence.
 
 The narrow exception is trivial cleanup that consists only of spelling,
-formatting, broken-link, or comment-only corrections. The gate's native
-authorization is the exact maintainer-applied `tracking-exempt` label. Review
+formatting, broken-link, or comment-only corrections. Its native authorization
+is the exact maintainer-applied `tracking-exempt` label. Review
 policy also requires visible prose beneath the single top-level `Tracking
 exemption` heading in the pull-request description; that human-facing policy is
-not interpreted by the gate. The gate does not inspect or classify the diff.
+not interpreted by the autonomous controller. The controller has no exemption
+path, so an exempt merge requires separate maintainer handling and diff review.
 
 The exception is unavailable when a change affects executable behavior,
 dependencies or lockfiles, builds, CI or workflows, releases, configuration,
@@ -388,10 +385,9 @@ delivery plan. Those changes require an open repository issue and a supported
 closing reference. Issue #198 and pull request #196 are material tracked work,
 not examples eligible for the exemption.
 
-The workflow runs from protected base-branch context with explicit read-only
-permissions, checks out only the recorded base SHA, and treats pull-request
-metadata as data. It never executes the pull request checkout or receives write
-authority.
+No pull-request-target workflow or workflow token evaluates this policy. The
+trusted controller remains local, candidate-independent, and outside the
+pull-request credential boundary.
 
 This keeps each issue lifecycle aligned with the merge that satisfies it while
 the slice tracker remains open until activation. It does not grant a workflow

@@ -331,28 +331,9 @@ class LinkedIssueGateTests(unittest.TestCase):
             result.references, (f"{REPOSITORY}#135", f"{REPOSITORY}#139")
         )
 
-    def test_workflow_contract_is_bounded_and_read_only(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "require-linked-issue.yml").read_text()
-        self.assertIn("pull_request_target:", workflow)
-        self.assertNotIn("\n  pull_request:\n", workflow)
-        self.assertIn("types: [opened, edited, reopened, ready_for_review, synchronize, labeled, unlabeled]", workflow)
-        self.assertIn("contents: read", workflow)
-        self.assertIn("issues: read", workflow)
-        self.assertIn("pull-requests: read", workflow)
-        self.assertNotIn("permissions: write", workflow)
-        self.assertIn("timeout-minutes: 2", workflow)
-        self.assertIn("actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5", workflow)
-        self.assertIn("persist-credentials: false", workflow)
-        self.assertIn("ref: ${{ github.event.pull_request.base.sha }}", workflow)
-        self.assertIn("userLinkedOnly:true", workflow)
-        self.assertIn("first:100", workflow)
-        self.assertIn("pageInfo{hasNextPage}", workflow)
-        self.assertIn(" body ", workflow)
-        self.assertNotIn("bodyHTML", workflow)
-        self.assertIn("labels(first:100)", workflow)
-        self.assertNotIn("github.event.pull_request.head", workflow)
-        self.assertIn("group: linked-issue-${{ github.event.pull_request.number }}", workflow)
-        self.assertIn("cancel-in-progress: true", workflow)
+    def test_remote_linked_issue_workflow_is_not_maintained(self) -> None:
+        workflow = ROOT / ".github" / "workflows" / "require-linked-issue.yml"
+        self.assertFalse(workflow.exists())
 
 
 if __name__ == "__main__":

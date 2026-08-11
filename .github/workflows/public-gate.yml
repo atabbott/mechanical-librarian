@@ -2,17 +2,16 @@ name: Public repository gate
 
 on:
   pull_request:
-  push:
-    branches: [main]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
 
 concurrency:
-  group: public-gate-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.event.pull_request.number }}
-  # A superseding pull-request head may cancel obsolete work. Each push event
-  # to main runs at its tip SHA and cannot be cancelled by a later push.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: public-gate-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  # A superseding pull-request head may cancel obsolete work for that pull
+  # request. Delivery publishes one converged candidate whenever possible.
+  cancel-in-progress: true
 
 jobs:
   fast-source:
@@ -22,6 +21,7 @@ jobs:
       - name: Check out the exact revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: Install Python
@@ -78,6 +78,7 @@ jobs:
       - name: Check out the exact revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: Install Python
@@ -105,7 +106,7 @@ jobs:
         run: >-
           python3
           scripts/qualify_exact_artifact.py
-          --source-sha "${{ github.sha }}"
+          --source-sha "${{ github.event.pull_request.head.sha }}"
           --test-tier required
 
   protected-browser:
@@ -115,6 +116,7 @@ jobs:
       - name: Check out the exact revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: Install Python
@@ -160,19 +162,3 @@ jobs:
         env:
           ML_REACT_ASSET_DIR: ${{ runner.temp }}/react-assets
         run: uv run python scripts/run_test_tier.py browser
-
-  public-gate:
-    if: always()
-    needs: [fast-source, exact-installed, protected-browser]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-      - name: Require every public qualification tier
-        env:
-          FAST_SOURCE_RESULT: ${{ needs.fast-source.result }}
-          EXACT_INSTALLED_RESULT: ${{ needs.exact-installed.result }}
-          PROTECTED_BROWSER_RESULT: ${{ needs.protected-browser.result }}
-        run: |
-          test "$FAST_SOURCE_RESULT" = success
-          test "$EXACT_INSTALLED_RESULT" = success
-          test "$PROTECTED_BROWSER_RESULT" = success
