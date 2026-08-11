@@ -340,6 +340,15 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 "Three independent catalogue observations disagree on presentation.",
                 exact=True,
             ).wait_for()
+            desktop_field_rail = page.locator(".detail-layout > .field-navigation")
+            self.assertEqual(
+                desktop_field_rail.evaluate("node => getComputedStyle(node).position"),
+                "sticky",
+            )
+            self.assertEqual(
+                desktop_field_rail.evaluate("node => getComputedStyle(node).top"),
+                "82px",
+            )
             choices = page.locator("#field-title .direct-choice-grid")
             self.assertIn("Current <script> title", choices.inner_text())
             self.assertIn("The Clockmaker's Cartography", choices.inner_text())
@@ -410,6 +419,15 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             ).wait_for()
             self.assertEqual(return_automatic_requests, 1)
             page.set_viewport_size({"width": 390, "height": 844})
+            compact_field_rail = page.locator(".detail-layout > .field-navigation")
+            self.assertEqual(
+                compact_field_rail.evaluate("node => getComputedStyle(node).position"),
+                "static",
+            )
+            self.assertEqual(
+                compact_field_rail.evaluate("node => getComputedStyle(node).top"),
+                "auto",
+            )
             for control in page.locator(".masthead nav a, .shell-actions button").all():
                 self.assertGreaterEqual(control.bounding_box()["height"], 44)
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)

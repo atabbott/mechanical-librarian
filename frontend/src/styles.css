@@ -210,7 +210,9 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .policy-cadence li { display:grid; grid-template-columns:24px minmax(0,1fr); align-items:center; gap:.4rem; min-width:0; color:var(--soft); }
 .policy-cadence li span { display:grid; width:24px; height:24px; place-items:center; border:1px solid var(--line-strong); border-radius:50%; font-size:.75rem; font-weight:800; }
 .policy-cadence li[data-complete='true'] span { border-color:var(--accent); color:var(--surface); background:var(--accent-strong); }
-.policy-cadence small { min-width:0; font-size:.75rem; font-weight:750; }
+.policy-cadence li[data-current='true'] span { border-color:var(--notice); color:var(--notice); background:var(--notice-soft); }
+.policy-cadence small { display:grid; min-width:0; font-size:.75rem; font-weight:750; }
+.policy-cadence em { color:var(--soft); font-size:.7rem; font-style:normal; font-weight:600; }
 .policy-workflow-actions { display:flex; grid-column:1 / -1; flex-wrap:wrap; justify-content:flex-end; gap:.4rem; }
 .policy-workflow-actions button { font-size:.78rem; font-weight:800; }
 .policy-workflow-actions .primary-action { border-color:var(--accent); color:var(--surface); background:var(--accent-strong); }
@@ -307,7 +309,8 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .attention-field-row { grid-template-columns:minmax(0,1fr) auto; gap:.6rem; }
   .attention-field-row > span:nth-child(2), .attention-field-row > span:nth-child(3) { grid-column:1 / -1; }
   .attention-field-row > span:last-child { grid-column:2; grid-row:1; }
-  .field-navigation { position:static; flex-flow:row nowrap; overflow-x:auto; padding:.25rem; }
+  .detail-layout > .field-navigation { position:static; top:auto; }
+  .field-navigation { flex-flow:row nowrap; overflow-x:auto; padding:.25rem; }
   .field-navigation button { flex:0 0 auto; }
   .choices, .detail-layout .direct-choice-grid { grid-template-columns:1fr; }
   .policy-notebook { grid-template-columns:1fr; border:0; border-radius:0; box-shadow:none; }

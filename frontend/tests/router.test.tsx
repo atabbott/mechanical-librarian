@@ -823,6 +823,76 @@ describe('typed review routes', () => {
     expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate', 'validate', 'drafts', 'preview', 'activate', 'drafts'])
   })
 
+  it('tracks truthful Policy cadence stages and resets them after a draft edit', async () => {
+    const user = userEvent.setup()
+    const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
+      if (path === 'drafts') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v1' }
+      if (path === 'preview') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-preview-v1', libraries: [] }
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v1' }
+    })
+    const http: ReviewHttp = { ...createHttp(), policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T> }
+    renderRoute('/policy?section=identity', http)
+
+    const cadence = await screen.findByRole('list', { name: 'Policy activation steps' })
+    const step = (name: string) => within(cadence).getByText(name).closest('li')
+    expect(step('Validate')).toHaveAttribute('data-complete', 'false')
+    expect(step('Preview')).toHaveTextContent('Not started')
+    expect(step('Inspect impact')).toHaveAttribute('data-complete', 'false')
+
+    await user.click(screen.getByRole('button', { name: 'Check draft' }))
+    expect(await screen.findByText('Draft is valid. The active policy is unchanged.')).toBeVisible()
+    expect(step('Validate')).toHaveAttribute('data-complete', 'true')
+    expect(step('Preview')).toHaveAttribute('data-complete', 'false')
+
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+    expect(await screen.findByText('Immutable draft saved. Preview its impact before activation.')).toBeVisible()
+    expect(step('Preview')).toHaveAttribute('data-complete', 'false')
+    expect(step('Preview')).toHaveAttribute('data-current', 'true')
+    expect(step('Preview')).toHaveTextContent('Draft saved')
+
+    await user.click(screen.getByRole('button', { name: 'Preview impact' }))
+    expect(await screen.findByText('Impact preview is current. The active policy is unchanged.')).toBeVisible()
+    expect(step('Preview')).toHaveAttribute('data-complete', 'true')
+    expect(step('Inspect impact')).toHaveAttribute('data-complete', 'false')
+
+    await user.click(screen.getByRole('button', { name: 'Review activation' }))
+    expect(step('Inspect impact')).toHaveAttribute('data-complete', 'true')
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+
+    await user.type(screen.getByRole('textbox', { name: 'Policy name' }), ' revised')
+    for (const name of ['Validate', 'Preview', 'Inspect impact', 'Activate']) {
+      expect(step(name)).toHaveAttribute('data-complete', 'false')
+    }
+    expect(step('Preview')).toHaveTextContent('Not started')
+    expect(screen.getByRole('button', { name: 'Review activation' })).toBeDisabled()
+  })
+
+  it('keeps every completed Policy cadence marker after successful activation', async () => {
+    const user = userEvent.setup()
+    const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
+      if (path === 'drafts') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v1' }
+      if (path === 'preview') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-preview-v1', libraries: [] }
+      if (path === 'activate') return { policy_id: 'policy-active', schema_version: 'metadata-policy-activation-v1', transition_id: 'transition-1' }
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v1' }
+    })
+    const http: ReviewHttp = { ...createHttp(), policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T> }
+    renderRoute('/policy?section=identity', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Check draft' }))
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+    await user.click(screen.getByRole('button', { name: 'Preview impact' }))
+    await user.click(screen.getByRole('button', { name: 'Review activation' }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Activate policy' }))
+
+    expect(await screen.findByText('Policy activated. Current unapplied work is being reconciled.')).toBeVisible()
+    const cadence = screen.getByRole('list', { name: 'Policy activation steps' })
+    for (const name of ['Validate', 'Preview', 'Inspect impact', 'Activate']) {
+      expect(within(cadence).getByText(name).closest('li')).toHaveAttribute('data-complete', 'true')
+    }
+    expect(within(cadence).getByText('Activate').closest('li')).toHaveTextContent('Activated')
+    expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate', 'drafts', 'preview', 'activate'])
+  })
+
   it('aborts a superseded critical load and renders only the current route result', async () => {
     const signals: AbortSignal[] = []
     let resolveFirst: ((value: LibraryView) => void) | undefined
@@ -949,6 +1019,7 @@ describe('typed review routes', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getActivity: vi.fn(async () => activity({
+        prepared: { automatic: 1, human: 1, total: 2 },
         configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 1, human: 1, total: 2 } }],
         enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
         capabilities: [{
@@ -964,7 +1035,8 @@ describe('typed review routes', () => {
     }
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('heading', { name: 'Ready for new work' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Ready work is waiting safely' })).toBeVisible()
+    expect(screen.getByText('1 library is ready for consent · 2 prepared decisions')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Open write-permission details' }))
     const disclosure = await screen.findByRole('list', { name: 'fiction destination consent' })
     expect(disclosure).toHaveTextContent('Authors: Included · consent requested')
@@ -1190,6 +1262,7 @@ describe('typed review routes', () => {
     const user = userEvent.setup()
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
       backup_ready: false,
+      prepared: { automatic: 1, human: 0, total: 1 },
       configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 1, human: 0, total: 1 } }],
       capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false }] }],
       events: [{ work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', origin: 'human', occurred_at: null, failure: null, work_label: 'Recorded work' }],
@@ -1197,8 +1270,10 @@ describe('typed review routes', () => {
     renderRoute('/activity', http)
 
     expect(await screen.findByText('Recorded work')).toBeVisible()
+    expect(screen.getByText('0 libraries are ready for consent · 1 prepared decision')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Open write-permission details' }))
     expect(await screen.findByText(/A verified backup is required/)).toBeVisible()
+    expect(screen.getByRole('checkbox', { name: /fiction · 1 prepared/ })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Enable guarded writes' })).toBeDisabled()
   })
 
@@ -1213,8 +1288,10 @@ describe('typed review routes', () => {
 
     expect(await screen.findByText('Recorded work')).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Completed work is up to date' })).toBeVisible()
+    expect(screen.getByText('0 libraries are ready for consent · 0 prepared decisions')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Open write-permission details' }))
     expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
+    expect(screen.getByRole('checkbox', { name: /fiction · 0 prepared/ })).toBeDisabled()
     expect(screen.queryByRole('button', { name: /pause new work|resume new work/i })).toBeNull()
   })
 

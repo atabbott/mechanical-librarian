@@ -11,7 +11,11 @@
   keeping write consent in a reachable disclosure. Direct and native Activity
   entry remain inspectable in the installed application. Root entry now routes
   to sign-in, while authenticated review deep links and refreshes render the
-  application shell so its bounded missing-case recovery can run.
+  application shell so its bounded missing-case recovery can run. Policy's
+  cadence now reports checked, saved, previewed, inspected, and activated state
+  truthfully; compact review navigation cannot remain sticky beneath a wrapped
+  masthead; and collapsed Activity consent counts only libraries whose exact
+  backup, capability, destination, and prepared-work gates permit action.
   (#555)
 
 - Restore the Variant M Library review workspace: one permanent Library

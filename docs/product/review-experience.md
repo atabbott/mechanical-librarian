@@ -374,7 +374,10 @@ consent it opens that disclosure to show prepared human/automatic counts, all
 representative before/after example, backup readiness and one enable action. A
 partially consented library returns to the same disclosure when a newly eligible
 destination can be added; the action binds the exact visible subset and fails
-safely if it changes. Qualified automatic outcomes are named clearly, unknown
+safely if it changes. Its collapsed ready count uses the same backup,
+capability, unconsented-destination, and prepared-work gates as the enabled
+checkbox and command; unavailable action is never summarized as readiness.
+Qualified automatic outcomes are named clearly, unknown
 origins remain neutral bounded text, and pause/resume/revoke remain the only
 prominent controls. Activity does not expose internal jobs or rates, add a
 badge, or turn operational failure into a metadata decision.
