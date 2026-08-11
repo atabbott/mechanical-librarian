@@ -23,7 +23,8 @@ converged draft candidate wherever possible, then requests review explicitly
 after the exact-head jobs pass. The workflow has read-only repository contents
 permission and:
 
-1. checks out the exact event revision without persisting credentials;
+1. explicitly checks out the exact pull-request head SHA without persisting
+   credentials, rather than GitHub's synthetic pull-request merge revision;
 2. uses commit-pinned GitHub Actions and a version-pinned `uv` installation;
 3. rejects a stale lockfile with `uv lock --check`;
 4. snapshots that clean committed source, disables build/install caches, builds
@@ -38,7 +39,7 @@ permission and:
 7. verifies the recorded install and import origins, then proves from outside
    the checkout that installed help exposes only `review-serve` and that the
    contributor workbench cannot be imported. The emitted path-free evidence
-   binds the event source SHA and wheel, payload, and command output SHA-256
+   binds the pull-request head SHA and wheel, payload, and command output SHA-256
    values.
 
 The concurrency key is scoped to the pull request. A new head cancels obsolete

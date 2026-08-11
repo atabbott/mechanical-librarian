@@ -21,6 +21,7 @@ jobs:
       - name: Check out the exact revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: Install Python
@@ -77,6 +78,7 @@ jobs:
       - name: Check out the exact revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: Install Python
@@ -104,7 +106,7 @@ jobs:
         run: >-
           python3
           scripts/qualify_exact_artifact.py
-          --source-sha "${{ github.sha }}"
+          --source-sha "${{ github.event.pull_request.head.sha }}"
           --test-tier required
 
   protected-browser:
@@ -114,6 +116,7 @@ jobs:
       - name: Check out the exact revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: Install Python

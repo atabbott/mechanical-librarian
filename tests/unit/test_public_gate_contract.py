@@ -16,6 +16,10 @@ class PublicGateContractTests(unittest.TestCase):
         self.assertNotIn("\n  push:", workflow)
         self.assertNotIn("ready_for_review", workflow)
         self.assertIn("cancel-in-progress: true", workflow)
+        head_sha = "${{ github.event.pull_request.head.sha }}"
+        self.assertEqual(workflow.count(f"ref: {head_sha}"), 3)
+        self.assertIn(f'--source-sha "{head_sha}"', workflow)
+        self.assertNotIn("${{ github.sha }}", workflow)
 
     def test_retains_three_independent_timeout_bounded_jobs(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
