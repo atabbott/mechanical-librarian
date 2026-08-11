@@ -133,10 +133,12 @@ post-review requalification.
 The historical contained-reviewer attempt failed before reviewer execution.
 Diagnosis isolated two independent local causes: sealed image `/proc` path
 mounts were not resolvable by Bubblewrap, and an authentication-capable private
-profile was too small for inference. The corrected adapter uses rewound sealed
-descriptor-data mounts. A no-model five-image Linux proof reproduced the exact
-bytes inside the sandbox, and a bounded 512 MiB memory and 32-task isolated
-profile completed a structured reviewer probe.
+profile was too small for inference. The corrected adapter uses verified
+child-private descriptor cursors as descriptor-data mounts. A no-model
+five-image Linux proof reproduced the exact bytes inside the sandbox while the
+parent repeatedly sought its inherited descriptors to EOF, and a bounded
+512 MiB memory and 32-task isolated profile completed a structured reviewer
+probe.
 
 The corrected exact implementation then admitted one retained real development
 packet with five exact previews. It returned five ordered observations with zero

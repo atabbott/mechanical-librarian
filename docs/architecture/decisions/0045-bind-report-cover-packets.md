@@ -59,12 +59,17 @@ request and generic adapter method have no image member or image argument. The
 durable pre-egress attempt binds that packet together with the
 exact reviewer profile, instruction, and output schema. The local result binds
 the request and profile identities. Preview bytes are copied into anonymous
-Linux memory descriptors, rehashed, sealed against write, growth, shrink, and
-seal removal before process creation, rewound, and copied through Bubblewrap's
-descriptor-data mount into private read-only sandbox files before being passed
-as repeatable ordered `codex exec --image` arguments. This closes callback and
-same-UID mutation races before gated child release without depending on a
-`/proc` path mount.
+Linux memory descriptors, rehashed, and sealed against write, growth, shrink,
+and seal removal before process creation. A preview larger than the profile's
+child file limit fails before dispatch. After gated release, the child reopens
+every sealed descriptor read-only through its own `/proc`, verifies the same
+descriptor identity, seals, size, and digest, rewinds the resulting independent
+open-file description, and replaces the inherited descriptor before limits and
+exec. Bubblewrap then copies from those child-private cursors through
+descriptor-data mounts into private read-only sandbox files before passing them
+as repeatable ordered `codex exec --image` arguments. This closes both
+byte-mutation and shared file-offset races without asking Bubblewrap to resolve
+a `/proc` path mount.
 Unknown, repeated, changed, non-PNG, over-bound, or unbound inputs fail closed.
 The image-capable adapter reconstructs and fully re-admits the packet and exact
 ordered image tuple at its own boundary; importing or directly constructing a
@@ -122,8 +127,9 @@ and results remain ignored owner-only workbench state.
   successful cleanup, and a failed sandbox aggregate.
 - Diagnosis proved that the historic attempt never reached reviewer execution:
   Bubblewrap could not resolve sealed image `/proc` paths. The corrected adapter
-  uses rewound sealed descriptors as descriptor-data mounts. A five-image
-  no-model Linux proof reproduced exact bytes inside the sandbox.
+  uses child-private verified descriptor cursors as descriptor-data mounts. A
+  five-image no-model Linux proof reproduced exact bytes inside the sandbox even
+  while the parent repeatedly sought its inherited descriptors to EOF.
 - Authentication-only success had also hidden an under-sized private inference
   envelope. A bounded 512 MiB memory and 32-task isolated profile completed a
   structured reviewer probe without widening model, prompt, network, image,

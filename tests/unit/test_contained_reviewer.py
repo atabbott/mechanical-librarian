@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import tomllib
 import unittest
 from contextlib import contextmanager
@@ -215,6 +216,35 @@ class ContainedReviewerTests(unittest.TestCase):
     def test_profile_limits_output_to_the_child_file_limit(self) -> None:
         with self.assertRaisesRegex(Exception, "profile"):
             replace(_identity(), output_bytes=131_073)
+
+    def test_cover_larger_than_child_file_limit_fails_before_dispatch(self) -> None:
+        request = _cover_request()
+        image_bytes = len(request.images[0].payload)  # type: ignore[attr-defined]
+        with tempfile.TemporaryDirectory() as temporary:
+            profile = _profile(Path(temporary))
+            profile = replace(
+                profile,
+                identity=replace(
+                    profile.identity,
+                    output_bytes=2,
+                    file_bytes=image_bytes - 1,
+                ),
+            )
+            reviewer = adapter.ContainedReviewerAdapter(profile)
+            dispatches: list[tuple[int, int, str]] = []
+            with patch.object(adapter.sys, "platform", "linux"), \
+                 patch.object(adapter.os, "fork") as fork, \
+                 patch.object(adapter.subprocess, "run") as process_run:
+                with self.assertRaisesRegex(Exception, "profile"):
+                    reviewer.run_cover(  # type: ignore[arg-type]
+                        request,
+                        lambda pid, pgid, token: dispatches.append(
+                            (pid, pgid, token)
+                        ),
+                    )
+            fork.assert_not_called()
+            process_run.assert_not_called()
+            self.assertEqual(dispatches, [])
 
     def test_reasoning_config_escapes_hostile_profile_text_as_one_toml_value(self) -> None:
         config = adapter._exact_config('medium"\nfeatures.shell_tool=true')
@@ -467,7 +497,7 @@ class ContainedReviewerTests(unittest.TestCase):
                         stderr.fileno(),
                         attack_after_fork,
                         credential_descriptor=credential.fileno(),
-                        image_descriptors=(image.descriptor,),
+                        sealed_images=(image,),
                     )
                 self.assertEqual(returncode, 0)
 
@@ -535,14 +565,40 @@ class ContainedReviewerTests(unittest.TestCase):
                         bound_codex.invocation_path, bound_sandbox.invocation_path,
                         f"/proc/self/fd/{credential_file.fileno()}",
                     )
-                    with patch.object(reviewer, "_limit_child"):
-                        returncode = reviewer._run_gated(
-                            command, bound_codex, bound_sandbox,
-                            stdin.fileno(), stdout.fileno(), stderr.fileno(),
-                            lambda *_: None,
-                            credential_descriptor=credential_file.fileno(),
-                            image_descriptors=tuple(image.descriptor for image in images),
+                    stop_seeking = threading.Event()
+                    interferers: list[threading.Thread] = []
+
+                    def seek_shared_descriptors_to_eof(*_identity: object) -> None:
+                        for image in images:
+                            os.lseek(image.descriptor, 0, os.SEEK_END)
+
+                        def interfere() -> None:
+                            while not stop_seeking.is_set():
+                                for image in images:
+                                    os.lseek(image.descriptor, 0, os.SEEK_END)
+
+                        interferer = threading.Thread(
+                            target=interfere,
+                            name="sealed-image-offset-interference",
+                            daemon=True,
                         )
+                        interferers.append(interferer)
+                        interferer.start()
+
+                    try:
+                        with patch.object(reviewer, "_limit_child"):
+                            returncode = reviewer._run_gated(
+                                command, bound_codex, bound_sandbox,
+                                stdin.fileno(), stdout.fileno(), stderr.fileno(),
+                                seek_shared_descriptors_to_eof,
+                                credential_descriptor=credential_file.fileno(),
+                                sealed_images=images,
+                            )
+                    finally:
+                        stop_seeking.set()
+                        for interferer in interferers:
+                            interferer.join(timeout=5)
+                            self.assertFalse(interferer.is_alive())
                     stdout.seek(0)
                     observed = stdout.read().decode("ascii").splitlines()
                     stderr.seek(0)

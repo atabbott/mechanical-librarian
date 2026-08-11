@@ -514,10 +514,14 @@ invalid chunk state, trailing bytes, unsafe dimensions, and decoder warnings or
 failures cross only the value-free response-format boundary.
 Before process creation, admitted bytes are copied into anonymous Linux memory
 descriptors, rehashed, and sealed against write, growth, shrink, and further
-seal changes. Bubblewrap copies each rewound sealed descriptor through its
-descriptor-data mount into a private read-only sandbox file, so a
-dispatch callback or another same-UID process cannot mutate path content between
-admission and gated child release.
+seal changes. An image larger than the profile's child file limit fails before
+dispatch. After gated release, the child reopens every sealed descriptor
+read-only through its own `/proc`, verifies its identity, seals, size, and digest,
+rewinds the independent open-file description, and replaces the inherited
+descriptor before limits and exec. Bubblewrap copies from these child-private
+cursors through descriptor-data mounts into private read-only sandbox files. A
+dispatch callback or another same-UID process can therefore neither mutate the
+sealed bytes nor steer Bubblewrap with a shared inherited file offset.
 The image-capable adapter independently reconstructs and fully re-admits the
 packet and exact ordered image tuple immediately before this path. A directly
 constructed private request object therefore has no admission authority.
@@ -536,8 +540,10 @@ ms, successful cleanup, and a failed sandbox aggregate.
 
 Diagnosis proved that the historic attempt never reached reviewer execution:
 Bubblewrap could not resolve the sealed images through `/proc` paths. The
-corrected adapter uses rewound sealed descriptors as descriptor-data mounts; a
-five-image no-model Linux proof reproduced exact bytes inside the sandbox.
+corrected adapter uses verified child-private descriptor cursors as
+descriptor-data mounts; a five-image no-model Linux proof reproduced exact bytes
+inside the sandbox while the parent repeatedly sought its inherited descriptors
+to EOF.
 Authentication-only success had also hidden an under-sized private inference
 envelope. A bounded 512 MiB memory and 32-task isolated profile completed a
 structured reviewer probe without changing the model or widening prompt,

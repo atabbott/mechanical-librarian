@@ -144,10 +144,12 @@ bytes. Absolute private-file references are rebound to matching owner-private
 snapshots in the execution configuration; contained-reviewer operations receive
 the admitted bytes directly. For a cover packet, the same durable attempt also
 binds the canonical ordered opaque-reference/preview-digest mapping. Exact
-preview bytes are copied to sealed anonymous descriptors, rewound, and copied
-through Bubblewrap descriptor-data mounts into private read-only sandbox files.
-Those files are supplied as repeatable ordered `--image` arguments, and the
-descriptors are closed with the job.
+preview bytes are copied to sealed anonymous descriptors. An image larger than
+the profile's child file limit fails before dispatch. After gated release, the
+child reopens and verifies each descriptor with an independent read cursor;
+Bubblewrap copies those cursors through descriptor-data mounts into private
+read-only sandbox files. Those files are supplied as repeatable ordered
+`--image` arguments, and the descriptors are closed with the job.
 The cover entry accepts only canonical `cover-review-packet-v1` input whose
 content-bound packet reference, every closed candidate/provenance/context and
 omission field, byte/dimension and incumbent facts, omission reasons, and limits
@@ -179,10 +181,13 @@ eligibility, ranking, or a winner.
 
 Admitted image bytes are copied into anonymous Linux memory descriptors, hashed
 again, and sealed against write, growth, shrink, and seal removal before process
-creation. Bubblewrap copies each rewound sealed descriptor through its
-descriptor-data mount into a private read-only sandbox file. A dispatch callback
-or another same-UID process therefore cannot replace or mutate the bytes between
-recorded admission and child release.
+creation. After gated release, the child reopens each sealed descriptor read-only
+through its own `/proc`, verifies its identity, seals, size, and digest, rewinds
+the independent open-file description, and replaces the inherited descriptor
+before limits and exec. Bubblewrap then copies from those child-private cursors
+through descriptor-data mounts into private read-only sandbox files. A dispatch
+callback or another same-UID process therefore cannot replace or mutate the bytes
+or steer the copy by seeking a shared inherited cursor.
 The image-capable adapter also reconstructs and fully re-admits the complete
 packet and exact ordered image tuple at its own boundary, so directly importing
 or constructing a private request shape cannot bypass packet validation.
@@ -225,9 +230,10 @@ ms, successful cleanup, and a failed sandbox aggregate.
 
 Diagnosis showed that the historic attempt exited before reviewer execution:
 Bubblewrap could not bind sealed images through `/proc` paths. The corrected
-adapter instead supplies rewound sealed descriptors through descriptor-data
-mounts. A no-model five-image Linux proof reproduced exact bytes inside the
-sandbox. A text-only reviewer probe then exposed independently bounded private
+adapter instead supplies verified child-private descriptor cursors through
+descriptor-data mounts. A no-model five-image Linux proof reproduced exact bytes
+inside the sandbox while the parent repeatedly sought its inherited descriptors
+to EOF. A text-only reviewer probe then exposed independently bounded private
 profile limits that permitted authentication but starved inference; a 512 MiB
 memory and 32-task isolated envelope completed the admitted probe without
 changing model, prompt, network, image, output, provider, or corpus authority.

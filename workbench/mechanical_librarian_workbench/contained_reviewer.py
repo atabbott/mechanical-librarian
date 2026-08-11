@@ -144,6 +144,65 @@ def _sealed_cover_images(
                 pass
 
 
+def _isolate_child_image_descriptors(
+    images: tuple[_SealedImage, ...],
+) -> None:
+    """Replace inherited image descriptors with verified independent readers."""
+    required_seals = (
+        fcntl.F_SEAL_SEAL
+        | fcntl.F_SEAL_SHRINK
+        | fcntl.F_SEAL_GROW
+        | fcntl.F_SEAL_WRITE
+    )
+    for image in images:
+        inherited = os.fstat(image.descriptor)
+        reopened = os.open(
+            f"/proc/self/fd/{image.descriptor}",
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+        )
+        try:
+            isolated = os.fstat(reopened)
+            if (
+                not stat.S_ISREG(isolated.st_mode)
+                or (isolated.st_dev, isolated.st_ino, isolated.st_size)
+                != (inherited.st_dev, inherited.st_ino, inherited.st_size)
+                or fcntl.fcntl(reopened, fcntl.F_GETFL) & os.O_ACCMODE
+                != os.O_RDONLY
+                or fcntl.fcntl(reopened, fcntl.F_GET_SEALS) & required_seals
+                != required_seals
+            ):
+                raise OSError("isolated image identity changed")
+            digest = hashlib.sha256()
+            remaining = isolated.st_size
+            while remaining:
+                chunk = os.read(reopened, min(remaining, 65_536))
+                if not chunk:
+                    break
+                digest.update(chunk)
+                remaining -= len(chunk)
+            if (
+                remaining
+                or os.read(reopened, 1)
+                or digest.hexdigest() != image.digest
+            ):
+                raise OSError("isolated image bytes changed")
+            os.lseek(reopened, 0, os.SEEK_SET)
+            os.dup2(reopened, image.descriptor, inheritable=False)
+        finally:
+            os.close(reopened)
+        replacement = os.fstat(image.descriptor)
+        if (
+            (replacement.st_dev, replacement.st_ino, replacement.st_size)
+            != (inherited.st_dev, inherited.st_ino, inherited.st_size)
+            or os.lseek(image.descriptor, 0, os.SEEK_CUR) != 0
+            or fcntl.fcntl(image.descriptor, fcntl.F_GETFL) & os.O_ACCMODE
+            != os.O_RDONLY
+            or fcntl.fcntl(image.descriptor, fcntl.F_GET_SEALS) & required_seals
+            != required_seals
+        ):
+            raise OSError("isolated image descriptor changed")
+
+
 @dataclass(frozen=True, slots=True)
 class ContainedReviewerProfile:
     codex_path: Path
@@ -391,6 +450,11 @@ class ContainedReviewerAdapter:
     ) -> ContainedReviewResult:
         if not sys.platform.startswith("linux"):
             raise ContainedReviewerProcessError("setup")
+        if any(
+            len(image.payload) > self._profile.identity.file_bytes
+            for image in images
+        ):
+            raise ContainedReviewerProcessError("profile")
         job_path: Path | None = None
         self._require_private_directory(self._profile.auth_store_path)
         self._require_private_directory(self._profile.job_root_path)
@@ -480,9 +544,7 @@ class ContainedReviewerAdapter:
                                 stderr_file.fileno(),
                                 dispatched,
                                 credential_descriptor=credential.descriptor,
-                                image_descriptors=tuple(
-                                    value.descriptor for value in sealed_images
-                                ),
+                                sealed_images=sealed_images,
                             )
                             if returncode != 0:
                                 code, count, digest = _nonzero_failure(
@@ -952,7 +1014,7 @@ class ContainedReviewerAdapter:
         dispatched: Callable[[int, int, str], None],
         *,
         credential_descriptor: int,
-        image_descriptors: tuple[int, ...] = (),
+        sealed_images: tuple[_SealedImage, ...] = (),
     ) -> int:
         release_read, release_write = os.pipe()
         ready_read, ready_write = os.pipe()
@@ -967,14 +1029,15 @@ class ContainedReviewerAdapter:
                 if os.read(release_read, 1) != b"G":
                     os._exit(125)
                 os.close(release_read)
+                _isolate_child_image_descriptors(sealed_images)
                 os.dup2(stdin_descriptor, 0)
                 os.dup2(stdout_descriptor, 1)
                 os.dup2(stderr_descriptor, 2)
                 os.set_inheritable(codex.descriptor, True)
                 os.set_inheritable(sandbox.descriptor, True)
                 os.set_inheritable(credential_descriptor, True)
-                for descriptor in image_descriptors:
-                    os.set_inheritable(descriptor, True)
+                for image in sealed_images:
+                    os.set_inheritable(image.descriptor, True)
                 self._limit_child()
                 os.execve(sandbox.invocation_path, command, {})
             except BaseException:

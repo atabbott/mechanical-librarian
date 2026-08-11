@@ -4,8 +4,11 @@
 
 - Fix source-only contained cover-reviewer image transport so the Linux sandbox
   receives each rehashed, sealed preview through a descriptor-data mount instead
-  of a `/proc` path mount. The correction preserves the existing image bounds,
-  read-only sandbox files, gated dispatch, and absence of production authority.
+  of a `/proc` path mount. Oversized descriptor copies now fail before dispatch,
+  and the gated child verifies and reopens each sealed image with an independent
+  read cursor before Bubblewrap copies it. The correction preserves the existing
+  image bounds, read-only sandbox files, gated dispatch, and absence of production
+  authority.
   One retained real five-preview packet produced five admitted observations with
   zero mapping mismatch in 16.263 seconds under a bounded isolated profile.
   (#542)
