@@ -34,6 +34,7 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderCandidate,
     ProviderClaim,
+    ProviderEvidenceKind,
     TargetDestination,
     TargetField,
     TargetFieldState,
@@ -1065,7 +1066,12 @@ def _observations(
                     and _eligible_identifier_reference(
                         report, destination, claim.reference
                     )
-                    and _eligible_description(destination, claim.value)
+                    and _eligible_provider_manifestation(
+                        destination, claim.applicability
+                    )
+                    and _eligible_provider_description(
+                        destination, claim.value, candidate
+                    )
                     and _eligible_field_value(destination, claim.value)
                     and (
                         destination is not TargetDestination.TITLE
@@ -1089,7 +1095,7 @@ def _observations(
                 ):
                     values.append(
                         _Observed(
-                            _value(destination, claim.value),
+                        _value(destination, claim.value),
                             (claim.reference,),
                             _provider_correlation(provider),
                             _scope(claim.scope),
@@ -1297,22 +1303,12 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
             and claim.scope is ClaimScope.WORK
             and claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
         )
-        if any(
-            claim.state is not FieldState.VALID or claim.canonical is None
-            for claim in source_claims
-        ):
-            continue
-        claims = tuple(
-            claim
-            for claim in source_claims
-            if claim.state is FieldState.VALID and claim.canonical is not None
-        )
-        observed = _series_from_claims(claims)
+        observed = _series_from_claims(source_claims)
         if observed is not None:
             values.append(
                 _Observed(
                     ProposalValue(ProposalValueKind.SERIES, observed),
-                    tuple(claim.reference for claim in claims),
+                    tuple(claim.reference for claim in source_claims),
                     _correlation("local:selected_epub"),
                     ProposalScope.WORK,
                     _local_representation(basis),
@@ -1326,22 +1322,12 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                 if claim.scope is ClaimScope.WORK
                 and claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
             )
-            if any(
-                claim.state is not FieldState.VALID or claim.value is None
-                for claim in source_claims
-            ):
-                continue
-            claims = tuple(
-                claim
-                for claim in source_claims
-                if claim.state is FieldState.VALID and claim.value is not None
-            )
-            observed = _series_from_claims(claims)
+            observed = _series_from_claims(source_claims)
             if observed is not None:
                 values.append(
                     _Observed(
                         ProposalValue(ProposalValueKind.SERIES, observed),
-                        tuple(claim.reference for claim in claims),
+                        tuple(claim.reference for claim in source_claims),
                         _provider_correlation(provider),
                         ProposalScope.WORK,
                         _provider_representation(provider, candidate),
@@ -1353,30 +1339,60 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
 def _series_from_claims(
     claims: tuple[LocalClaim | ProviderClaim, ...],
 ) -> tuple[TargetSeries, ...] | None:
-    names = [
-        normalize_title(
-            claim.canonical
-            if type(claim) is LocalClaim
-            else claim.value
-        )
-        for claim in claims
-        if claim.kind is ClaimKind.SERIES
-    ]
-    sequences = [
-        claim.canonical if type(claim) is LocalClaim else claim.value
-        for claim in claims
-        if claim.kind is ClaimKind.SERIES_SEQUENCE
-    ]
-    if (
-        not names
-        or len(sequences) > len(names)
-        or (len(names) > 1 and len(sequences) != len(names))
-    ):
+    series_count = sum(claim.kind is ClaimKind.SERIES for claim in claims)
+    if not series_count:
         return None
-    return tuple(
-        TargetSeries(name, sequences[index] if index < len(sequences) else None)
-        for index, name in enumerate(names)
-    )
+    result: list[TargetSeries] = []
+    index = 0
+    while index < len(claims):
+        sequence_claim: LocalClaim | ProviderClaim | None = None
+        if claims[index].kind is ClaimKind.SERIES_SEQUENCE:
+            sequence_claim = claims[index]
+            index += 1
+            if index >= len(claims):
+                return None
+        name_claim = claims[index]
+        name = (
+            name_claim.canonical
+            if type(name_claim) is LocalClaim
+            else name_claim.value
+        )
+        if (
+            name_claim.kind is not ClaimKind.SERIES
+            or name_claim.state is not FieldState.VALID
+            or name is None
+        ):
+            return None
+        index += 1
+        sequence: str | None = None
+        if (
+            sequence_claim is None
+            and index < len(claims)
+            and claims[index].kind is ClaimKind.SERIES_SEQUENCE
+        ):
+            sequence_claim = claims[index]
+            index += 1
+        if sequence_claim is not None:
+            sequence_value = (
+                sequence_claim.canonical
+                if type(sequence_claim) is LocalClaim
+                else sequence_claim.value
+            )
+            if sequence_claim.state is FieldState.VALID:
+                if sequence_value is None:
+                    return None
+                sequence = sequence_value
+            elif not (
+                sequence_claim.state is FieldState.ABSENT
+                and sequence_value is None
+            ):
+                return None
+        elif series_count > 1:
+            # Multiple names are only safe when every source occurrence has
+            # its own explicit sequence slot, including an absent one.
+            return None
+        result.append(TargetSeries(name, sequence))
+    return tuple(result)
 
 
 def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
@@ -2090,6 +2106,15 @@ def _eligible_identifier(
     return True
 
 
+def _eligible_provider_manifestation(
+    destination: TargetDestination, applicability: str
+) -> bool:
+    return destination not in {
+        TargetDestination.SUBTITLE,
+        TargetDestination.ASIN,
+    } or applicability == "ebook"
+
+
 def _eligible_identifier_reference(
     report: MetadataReport,
     destination: TargetDestination,
@@ -2133,6 +2158,29 @@ def _eligible_description(
 ) -> bool:
     return destination is not TargetDestination.DESCRIPTION or (
         "<" not in value and ">" not in value
+    )
+
+
+def _eligible_provider_description(
+    destination: TargetDestination,
+    value: str,
+    candidate: ProviderCandidate,
+) -> bool:
+    if _eligible_description(destination, value):
+        return True
+    descriptions = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.DESCRIPTION
+        and claim.scope is ClaimScope.WORK
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
+    return len(descriptions) == 1 and any(
+        evidence.kind is ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
+        and evidence.scope is ClaimScope.WORK
+        and evidence.value == "google-books-html-visible-text-v1"
+        for evidence in candidate.evidence
     )
 
 

@@ -49,8 +49,28 @@ class MetadataPolicyTests(unittest.TestCase):
             resolve_policy(profile, "library", {"options": {"removed": "anything"}, "destinations": {}})
         with self.assertRaises(MetadataPolicyError):
             resolve_policy(profile, "library", {"options": {}, "destinations": {"explicit": "ask"}})
-        automatic = resolve_policy(profile, "library", {"options": {}, "destinations": {"tags": "automatic"}})
-        self.assertEqual("unavailable", automatic.qualification("tags"))
+        unavailable = {
+            "genres",
+            "tags",
+            "description_fill",
+            "isbn_form",
+            "cover_order",
+            "asin",
+        }
+        automatic = resolve_policy(
+            profile,
+            "library",
+            {
+                "options": {},
+                "destinations": {
+                    field: "automatic" for field in unavailable
+                },
+            },
+        )
+        self.assertEqual(
+            {field: "unavailable" for field in unavailable},
+            {field: automatic.qualification(field) for field in unavailable},
+        )
 
     def test_preview_names_each_library_categories_and_unapplied_count_without_mutation(self) -> None:
         class Repository:

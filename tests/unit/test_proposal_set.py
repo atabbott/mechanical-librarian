@@ -2870,6 +2870,7 @@ class ProposalSetTests(unittest.TestCase):
                             ClaimKind.SUBTITLE,
                             "Edition subtitle",
                             scope=ClaimScope.EDITION,
+                            applicability="ebook",
                         ),
                     ),
                 )
@@ -2954,6 +2955,7 @@ class ProposalSetTests(unittest.TestCase):
             ClaimKind.SUBTITLE,
             "Shared subtitle",
             scope=ClaimScope.EDITION,
+            applicability="ebook",
         )
         provider_claim = replace(
             provisional,
@@ -3061,6 +3063,79 @@ class ProposalSetTests(unittest.TestCase):
         self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
         self.assertEqual((), result.alternatives)
 
+    def test_complete_multiple_series_preserves_exact_names_and_sequences(self) -> None:
+        def claims(provider: str) -> tuple[ProviderClaim, ...]:
+            return (
+                _claim(
+                    provider,
+                    "edition-1",
+                    ClaimKind.SERIES,
+                    "Reading Order",
+                    scope=ClaimScope.WORK,
+                    order=0,
+                ),
+                _claim(
+                    provider,
+                    "edition-1",
+                    ClaimKind.SERIES_SEQUENCE,
+                    "2",
+                    scope=ClaimScope.WORK,
+                    order=1,
+                ),
+                _claim(
+                    provider,
+                    "edition-1",
+                    ClaimKind.SERIES,
+                    "Publication Order",
+                    scope=ClaimScope.WORK,
+                    order=2,
+                ),
+                ProviderClaim.create(
+                    provider=provider,
+                    candidate="edition-1",
+                    kind=ClaimKind.SERIES_SEQUENCE,
+                    value=None,
+                    state=FieldState.ABSENT,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                    raw_order=3,
+                ),
+            )
+
+        result = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(
+                        series=TargetField(
+                            TargetDestination.SERIES,
+                            TargetFieldState.MISSING,
+                        ),
+                    ),
+                    providers=(
+                        _provider("catalogue", "edition-1", claims("catalogue")),
+                        _provider(
+                            "open_library",
+                            "edition-1",
+                            claims("open_library"),
+                        ),
+                    ),
+                )
+            ),
+            TargetDestination.SERIES,
+        )
+        self.assertEqual(
+            ProposalOutcome.PROPOSE_CHANGE,
+            result.outcome,
+            result.to_data(),
+        )
+        self.assertEqual(
+            (
+                TargetSeries("Reading Order", "2"),
+                TargetSeries("Publication Order", None),
+            ),
+            result.alternatives[0].value.value,
+        )
+
     def test_unusable_series_sequence_withholds_the_source_aggregate(self) -> None:
         for state in (FieldState.MALFORMED, FieldState.OVERSIZED):
             with self.subTest(state=state):
@@ -3138,6 +3213,46 @@ class ProposalSetTests(unittest.TestCase):
             TargetDestination.SERIES,
         )
         self.assertEqual(ProposalOutcome.KEEP, result.outcome)
+
+    def test_series_preservation_accepts_local_sequence_before_name(self) -> None:
+        claims = (
+            LocalClaim.create(
+                kind=ClaimKind.SERIES_SEQUENCE,
+                observed="2",
+                canonical="2",
+                excerpt="2",
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.WORK,
+                occurrence=0,
+            ),
+            LocalClaim.create(
+                kind=ClaimKind.SERIES,
+                observed="Reading Order",
+                canonical="Reading Order",
+                excerpt="Reading Order",
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.WORK,
+                occurrence=1,
+            ),
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(),
+                    local_claims=claims,
+                )
+            ),
+            TargetDestination.SERIES,
+        )
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
+        self.assertEqual(
+            (TargetSeries("Reading Order", "2"),),
+            result.alternatives[0].value.value,
+        )
 
     def test_series_without_sequence_remains_eligible(self) -> None:
         claims = (
@@ -3905,14 +4020,8 @@ class ProposalSetTests(unittest.TestCase):
         self.assertEqual(ProposalOutcome.DEFER, result.outcome)
         self.assertIn("current_cover_unverified", result.reasons)
 
-    def test_markup_description_is_not_a_plain_text_candidate(self) -> None:
-        claim = _claim(
-            "catalogue",
-            "edition-1",
-            ClaimKind.DESCRIPTION,
-            "Summary <em>",
-            scope=ClaimScope.WORK,
-        )
+    def test_non_google_markup_description_is_ineligible(self) -> None:
+        claim = _claim("catalogue", "edition-1", ClaimKind.DESCRIPTION, "Summary <em>", scope=ClaimScope.WORK)
         result = _result(
             evaluate_report(
                 _report(
@@ -3922,7 +4031,80 @@ class ProposalSetTests(unittest.TestCase):
             TargetDestination.DESCRIPTION,
         )
         self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
-        self.assertEqual((), result.alternatives)
+
+    def test_transformed_google_visible_angle_characters_remain_eligible(self) -> None:
+        claim = _claim(
+            "google",
+            "edition-1",
+            ClaimKind.DESCRIPTION,
+            "2 < 3",
+            scope=ClaimScope.WORK,
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    providers=(
+                        _provider(
+                            "google",
+                            "edition-1",
+                            (claim,),
+                            (
+                                ProviderEvidence(
+                                    ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
+                                    "google-books-html-visible-text-v1",
+                                    ClaimScope.WORK,
+                                ),
+                            ),
+                        ),
+                    )
+                )
+            ),
+            TargetDestination.DESCRIPTION,
+        )
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
+        self.assertEqual("2 < 3", result.alternatives[0].value.value)
+
+    def test_provider_subtitle_and_asin_require_exact_ebook_applicability(self) -> None:
+        cases = (
+            (TargetDestination.SUBTITLE, ClaimKind.SUBTITLE, "Edition subtitle"),
+            (TargetDestination.ASIN, ClaimKind.ASIN, "B012345678"),
+        )
+        for destination, kind, value in cases:
+            for applicability in ("ebook", "print", "unknown", "ambiguous"):
+                claim = _claim(
+                    "catalogue",
+                    "edition-1",
+                    kind,
+                    value,
+                    scope=ClaimScope.EDITION,
+                    applicability=applicability,
+                )
+                result = _result(
+                    evaluate_report(
+                        _report(
+                            providers=(
+                                _provider(
+                                    "catalogue",
+                                    "edition-1",
+                                    (claim,),
+                                ),
+                            )
+                        )
+                    ),
+                    destination,
+                )
+                with self.subTest(
+                    destination=destination,
+                    applicability=applicability,
+                ):
+                    self.assertEqual(
+                        (
+                            ProposalOutcome.PROPOSE_CHANGE
+                            if applicability == "ebook"
+                            else ProposalOutcome.INELIGIBLE
+                        ),
+                        result.outcome,
+                    )
 
     def test_long_descriptions_compare_without_title_bounds(self) -> None:
         matching = "A complete description " + "x" * 700

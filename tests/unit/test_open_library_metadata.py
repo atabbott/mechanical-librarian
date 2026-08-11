@@ -327,6 +327,21 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 ),
             ),
             (
+                "multiple full",
+                ["Cycle", "Publication order"],
+                ["2", "5"],
+                (
+                    (ClaimKind.SERIES, FieldState.VALID, "Cycle"),
+                    (ClaimKind.SERIES_SEQUENCE, FieldState.VALID, "2"),
+                    (
+                        ClaimKind.SERIES,
+                        FieldState.VALID,
+                        "Publication order",
+                    ),
+                    (ClaimKind.SERIES_SEQUENCE, FieldState.VALID, "5"),
+                ),
+            ),
+            (
                 "series only",
                 ["Cycle"],
                 [],
@@ -1090,6 +1105,13 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         self.assertEqual(ProviderStatus.CANDIDATES, reopened.providers[0].status)
         self.assertEqual((), reopened.providers[0].diagnostics)
         candidate = reopened.providers[0].candidates[0]
+        edition_subtitle = next(
+            value
+            for value in candidate.claims
+            if value.kind is ClaimKind.SUBTITLE
+            and value.scope is ClaimScope.EDITION
+        )
+        self.assertEqual("ebook", edition_subtitle.applicability)
         expected_claims = (
             (0, ClaimKind.ISBN, ClaimScope.EDITION, None, FieldState.VALID, "0306406152"),
             (1, ClaimKind.ISBN, ClaimScope.EDITION, None, FieldState.VALID, "9780306406157"),

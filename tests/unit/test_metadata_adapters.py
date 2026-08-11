@@ -157,7 +157,7 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v22'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v23'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -172,7 +172,7 @@ def _create_prior_schema(
 ) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v22'", f"= '{version}'"
+            "= 'metadata-report-v23'", f"= '{version}'"
         ),
         metadata_persistence._CURRENT_SQL,
         metadata_persistence._CURRENT_LINEAGE_SQL,
@@ -345,10 +345,17 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ),
             ),
             (
-                "previous proposal policy v3",
+                "previous v22",
                 lambda connection: _create_prior_schema(
                     connection,
                     "metadata-report-v22",
+                ),
+            ),
+            (
+                "previous proposal policy v3",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v23",
                     "fixed-conservative-v3",
                 ),
             ),
@@ -356,7 +363,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "previous proposal policy v4",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v22",
+                    "metadata-report-v23",
                     "fixed-conservative-v4",
                 ),
             ),
@@ -364,7 +371,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "previous proposal policy v5",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v22",
+                    "metadata-report-v23",
                     "fixed-conservative-v5",
                 ),
             ),
@@ -485,7 +492,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
-            self.assertEqual(schema_version, ("metadata-report-v22",))
+            self.assertEqual(schema_version, ("metadata-report-v23",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)
@@ -1385,6 +1392,14 @@ class ProviderAdapterTests(unittest.TestCase):
                 if claim.kind is ClaimKind.ASIN
             ),
         )
+        self.assertEqual(
+            {"ebook"},
+            {
+                claim.applicability
+                for claim in claims
+                if claim.kind in {ClaimKind.ASIN, ClaimKind.SUBTITLE}
+            },
+        )
         self.assertEqual([claim.raw_order for claim in claims], list(range(len(claims))))
         self.assertEqual({claim.kind for claim in claims}, {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLICATION_DATE, ClaimKind.PUBLISHER, ClaimKind.IMPRINT, ClaimKind.LANGUAGE, ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR, ClaimKind.DESCRIPTION, ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE, ClaimKind.TAG, ClaimKind.GENRE})
         self.assertEqual(next(claim.scope for claim in claims if claim.kind is ClaimKind.PUBLISHER), ClaimScope.EDITION)
@@ -2219,9 +2234,44 @@ class ProviderAdapterTests(unittest.TestCase):
                 ProviderEvidenceKind.AUTHOR_IDENTITY,
                 ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
                 ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+                ProviderEvidenceKind.TAXONOMY,
             },
             {value.kind for value in observation.candidates[0].evidence},
         )
+        taxonomy = sorted(
+            (
+                value
+                for value in observation.candidates[0].evidence
+                if value.kind is ProviderEvidenceKind.TAXONOMY
+            ),
+            key=lambda value: value.source_ordinal,
+        )
+        self.assertEqual(
+            [
+                ("Genre", "Fantasy", 0),
+                ("Mood", "Hopeful", 1),
+                ("ContentWarning", "Violence", 2),
+            ],
+            [
+                (value.taxonomy_type, value.value, value.source_ordinal)
+                for value in taxonomy
+            ],
+        )
+        replayed = MetadataReport.from_json(
+            MetadataReport.create(
+                target=TargetFacts(
+                    "primary",
+                    "ebooks",
+                    "item-1",
+                    default_target_fields("Current title"),
+                ),
+                file=FileFacts(0, "a" * 64, "b" * 64),
+                local_claims=(),
+                local_reasons=("no_opening_claims",),
+                providers=(observation,),
+            ).to_json()
+        ).providers[0]
+        self.assertEqual(observation, replayed)
         publication = next(
             value
             for value in observation.candidates[0].evidence
@@ -2247,6 +2297,120 @@ class ProviderAdapterTests(unittest.TestCase):
                 for value in default_cover.provenance.context
             ],
         )
+
+    def test_equal_taxonomy_values_keep_type_and_source_order_through_replay(self) -> None:
+        payload = self._envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": "9780306406157",
+                }
+            ],
+            [
+                {
+                    "id": 1,
+                    "title": "Current title",
+                    "taggings": [
+                        {
+                            "id": 1,
+                            "tag": {
+                                "id": 1,
+                                "tag": "Shared",
+                                "tag_category": {
+                                    "id": 1,
+                                    "category": "Mood",
+                                },
+                            },
+                        },
+                        {
+                            "id": 2,
+                            "tag": {
+                                "id": 2,
+                                "tag": "Shared",
+                                "tag_category": {
+                                    "id": 2,
+                                    "category": "Genre",
+                                },
+                            },
+                        },
+                        {
+                            "id": 3,
+                            "tag": {
+                                "id": 3,
+                                "tag": "Shared",
+                                "tag_category": {
+                                    "id": 3,
+                                    "category": "Mood",
+                                },
+                            },
+                        },
+                    ],
+                }
+            ],
+        )
+        observation = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
+                )
+            ),
+            65_536,
+        ).observe(_isbn_lookup((self._claim(),)))
+        taxonomy = sorted(
+            (
+                value
+                for value in observation.candidates[0].evidence
+                if value.kind is ProviderEvidenceKind.TAXONOMY
+            ),
+            key=lambda value: value.source_ordinal,
+        )
+        self.assertEqual(
+            [
+                ("Mood", "Shared", 0),
+                ("Genre", "Shared", 1),
+                ("Mood", "Shared", 2),
+            ],
+            [
+                (value.taxonomy_type, value.value, value.source_ordinal)
+                for value in taxonomy
+            ],
+        )
+        selected_taxonomy = tuple(
+            claim
+            for claim in observation.candidates[0].claims
+            if claim.kind in {ClaimKind.GENRE, ClaimKind.TAG}
+        )
+        self.assertEqual(
+            {
+                (ClaimKind.GENRE, FieldState.VALID, "Shared"),
+                (ClaimKind.TAG, FieldState.VALID, "Shared"),
+            },
+            {
+                (claim.kind, claim.state, claim.value)
+                for claim in selected_taxonomy
+            },
+        )
+        self.assertEqual((), observation.diagnostics)
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields("Current title"),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(self._claim(),),
+            local_reasons=("opening_matter_isbn",),
+            providers=(observation,),
+        )
+        self.assertEqual(report, MetadataReport.from_json(report.to_json()))
 
     def test_hardcover_taxonomy_and_work_publication_fail_closed(self) -> None:
         def observe(book: dict[str, object]) -> ProviderObservation:
@@ -2369,7 +2533,7 @@ class ProviderAdapterTests(unittest.TestCase):
         )
 
     def test_rich_field_boundaries_are_local_and_public_safe(self) -> None:
-        row = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": "B012345678", "title": "T" * 513, "subtitle": None, "release_date": "not-a-date", "publisher": None, "language": None, "contributions": [{"id": 1, "contribution": "Author", "author": {"id": 1, "name": "Ada"}}, {"id": 2, "contribution": "/Users/private", "author": {"id": 2, "name": "Bea"}}]}
+        row = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": "B012345678", "title": "T" * 513, "subtitle": "Edition subtitle", "release_date": "not-a-date", "publisher": None, "language": None, "contributions": [{"id": 1, "contribution": "Author", "author": {"id": 1, "name": "Ada"}}, {"id": 2, "contribution": "/Users/private", "author": {"id": 2, "name": "Bea"}}]}
         book = {"id": 1, "title": "/Users/private/title", "description": "D" * 16385, "contributions": [{"id": 3, "contribution": "Translator", "author": {"id": 3, "name": "Cy"}}], "book_series": [{"id": 4, "position": 1.5, "series": {"id": 4, "name": "Series"}}], "taggings": []}
         payload = json.dumps(self._envelope([row], [book])).encode()
         claims = hardcover_metadata._parse_candidates(payload, "catalogue", (self._claim(),)).__getitem__(0).claims
@@ -2404,6 +2568,27 @@ class ProviderAdapterTests(unittest.TestCase):
                 claim.applicability
                 for claim in print_claims
                 if claim.kind is ClaimKind.ISBN and claim.value is not None
+            },
+        )
+        self.assertEqual(
+            {"print"},
+            {
+                claim.applicability
+                for claim in print_claims
+                if claim.kind in {ClaimKind.ASIN, ClaimKind.SUBTITLE}
+            },
+        )
+        unknown_claims = hardcover_metadata._parse_candidates(
+            payload,
+            "catalogue",
+            (self._title_claim(),),
+        )[0].claims
+        self.assertEqual(
+            {"unknown"},
+            {
+                claim.applicability
+                for claim in unknown_claims
+                if claim.kind in {ClaimKind.ASIN, ClaimKind.SUBTITLE}
             },
         )
 
@@ -2623,6 +2808,58 @@ class ProviderAdapterTests(unittest.TestCase):
             payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], [{"id": 1, "title": None, "book_series": [{"id": 1, "position": position, "series": {"id": 1, "name": "S"}}]}])
             claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())[0].claims
             self.assertEqual(next(claim.state for claim in claims if claim.kind is ClaimKind.SERIES_SEQUENCE), state)
+
+    def test_hardcover_multiple_series_keep_exact_correlated_sequence_slots(self) -> None:
+        payload = self._envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": "9780306406157",
+                }
+            ],
+            [
+                {
+                    "id": 1,
+                    "title": "Current title",
+                    "book_series": [
+                        {
+                            "id": 1,
+                            "position": "2",
+                            "series": {"id": 1, "name": "Reading Order"},
+                        },
+                        {
+                            "id": 2,
+                            "position": None,
+                            "series": {
+                                "id": 2,
+                                "name": "Publication Order",
+                            },
+                        },
+                    ],
+                }
+            ],
+        )
+        claims = hardcover_metadata._parse_candidates(
+            json.dumps(payload).encode(),
+            "catalogue",
+            (self._claim(),),
+        )[0].claims
+        series = tuple(
+            (claim.kind, claim.state, claim.value)
+            for claim in claims
+            if claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
+        )
+        self.assertEqual(
+            (
+                (ClaimKind.SERIES, FieldState.VALID, "Reading Order"),
+                (ClaimKind.SERIES_SEQUENCE, FieldState.VALID, "2"),
+                (ClaimKind.SERIES, FieldState.VALID, "Publication Order"),
+                (ClaimKind.SERIES_SEQUENCE, FieldState.ABSENT, None),
+            ),
+            series,
+        )
 
     def test_optional_hardcover_projection_members_are_field_local(self) -> None:
         row = {
@@ -2943,7 +3180,7 @@ class ProviderAdapterTests(unittest.TestCase):
                 )
                 self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
                 self.assertEqual(
-                    (1,),
+                    () if name == "taxonomy enum" else (1,),
                     tuple(value.count for value in observation.diagnostics),
                 )
 
@@ -3970,6 +4207,8 @@ class ProviderAdapterTests(unittest.TestCase):
                     "book_id": 10,
                     "isbn_10": "0306406152",
                     "isbn_13": "9780140328721",
+                    "asin": "B012345678",
+                    "subtitle": "Edition subtitle",
                     "image": {"url": "https://images.example/edition.jpg"},
                 }
             ],
@@ -4075,6 +4314,14 @@ class ProviderAdapterTests(unittest.TestCase):
                 == {link.local_reference for link in claim.links}
                 for claim in isbn_claims
             )
+        )
+        self.assertEqual(
+            {"ambiguous"},
+            {
+                claim.applicability
+                for claim in observation.candidates[0].claims
+                if claim.kind in {ClaimKind.ASIN, ClaimKind.SUBTITLE}
+            },
         )
         self.assertEqual(2, len(provider.cover_descriptors))
         self.assertEqual(
@@ -4597,6 +4844,7 @@ class AudiobookshelfItemTests(unittest.TestCase):
             "coverPath": "/metadata/items/item-1/cover.jpg",
             "media": {
                 "metadata": metadata,
+                "tags": ["Actual tag", "Second tag"],
                 "ebookFile": {
                     "ebookFormat": "epub",
                     "ino": "inode-1",
@@ -4655,6 +4903,10 @@ class AudiobookshelfItemTests(unittest.TestCase):
             False,
         )
         self.assertEqual(
+            by_destination[TargetDestination.TAGS].value,
+            ("Actual tag", "Second tag"),
+        )
+        self.assertEqual(
             by_destination[TargetDestination.COVER].value,
             snapshot.cover.identity,
         )
@@ -4663,13 +4915,39 @@ class AudiobookshelfItemTests(unittest.TestCase):
             json.dumps([field.to_data() for field in snapshot.fields]),
         )
 
+        payload["media"]["tags"] = None
+        explicit_null = reader.read("item-1")
+        explicit_null_tags = next(
+            field
+            for field in explicit_null.fields
+            if field.destination is TargetDestination.TAGS
+        )
+        self.assertIs(TargetFieldState.NULL, explicit_null_tags.state)
+        self.assertIsNone(explicit_null_tags.value)
+
+        payload["media"].pop("tags")
+        fallback = reader.read("item-1")
+        self.assertEqual(
+            ("Measured",),
+            next(
+                field.value
+                for field in fallback.fields
+                if field.destination is TargetDestination.TAGS
+            ),
+        )
+        payload["media"]["tags"] = ["Actual tag", "Second tag"]
         payload["media"].pop("metadata")
         unloaded = reader.read("item-1")
         self.assertTrue(
             all(
                 field.state is TargetFieldState.UNLOADED
                 for field in unloaded.fields[:-1]
+                if field.destination is not TargetDestination.TAGS
             )
+        )
+        self.assertEqual(
+            ("Actual tag", "Second tag"),
+            next(field.value for field in unloaded.fields if field.destination is TargetDestination.TAGS),
         )
 
     def test_target_text_bounds_preserve_oversized_and_malformed_states(self) -> None:

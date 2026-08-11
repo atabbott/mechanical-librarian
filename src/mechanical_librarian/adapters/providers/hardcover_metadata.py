@@ -1204,6 +1204,12 @@ def _edition_claims(
     rejected: _OptionalRejections | None = None,
 ) -> list[ProviderClaim]:
     claims: list[ProviderClaim] = []
+    isbn_applicability = tuple(
+        provider_isbn_applicability(row[key], local)
+        for key in ("isbn_10", "isbn_13")
+        if row[key] is not None
+    )
+    edition_applicability = _edition_applicability(isbn_applicability)
     def add(kind: ClaimKind, value: object, scope: ClaimScope = ClaimScope.EDITION, applicability: str = "not_applicable") -> None:
         claims.append(_claim(provider, identity, kind, value, scope, applicability, None, local, len(claims), rejected))
     for key, kind in (("isbn_10", ClaimKind.ISBN), ("isbn_13", ClaimKind.ISBN), ("asin", ClaimKind.ASIN), ("title", ClaimKind.TITLE), ("subtitle", ClaimKind.SUBTITLE), ("release_date", ClaimKind.PUBLICATION_DATE)):
@@ -1214,6 +1220,8 @@ def _edition_claims(
             (
                 provider_isbn_applicability(row[key], local)
                 if kind is ClaimKind.ISBN
+                else edition_applicability
+                if kind in {ClaimKind.ASIN, ClaimKind.SUBTITLE}
                 else "not_applicable"
             ),
         )
@@ -1233,6 +1241,15 @@ def _edition_claims(
     add(ClaimKind.LANGUAGE, language_value)
     claims.extend(_contributions(provider, identity, row["contributions"], ClaimScope.EDITION, local, len(claims), rejected))
     return claims
+
+
+def _edition_applicability(values: tuple[str, ...]) -> str:
+    """Reduce only the exact edition's ISBN lanes without strengthening doubt."""
+    if not values or "unknown" in values:
+        return "unknown"
+    if "ambiguous" in values or len(set(values)) != 1:
+        return "ambiguous"
+    return values[0]
 
 
 def _work_claims(
@@ -1303,6 +1320,7 @@ def _work_claims(
             for index, kind in enumerate((ClaimKind.GENRE, ClaimKind.TAG))
         )
     taggings, taggings_overflow, taggings_invalid = _optional_bounded_list(book["taggings"], MAX_TAGS, {"id", "tag"}, rejected)
+    taxonomy: list[tuple[str, str]] = []
     categorized: list[tuple[ClaimKind, str]] = []
     seen: dict[str, ClaimKind] = {}
     malformed_taxonomy = False
@@ -1331,25 +1349,16 @@ def _work_claims(
             if rejected: rejected.reject()
             malformed_taxonomy = True
             continue
-        if category_name == "Genre":
-            kind = ClaimKind.GENRE
-        elif category_name in {"Mood", "ContentWarning"}:
-            kind = ClaimKind.TAG
-        else:
-            if rejected: rejected.reject()
-            malformed_taxonomy = True
-            continue
         taxonomy_identity = " ".join(
-            unicodedata.normalize("NFC", name).split()
+            unicodedata.normalize("NFC", f"{category_name}\0{name}").split()
         ).casefold()
-        previous = seen.get(taxonomy_identity)
-        if previous is not None and previous is not kind:
-            if rejected: rejected.reject()
-            malformed_taxonomy = True
-            continue
-        if previous is None:
-            seen[taxonomy_identity] = kind
-            categorized.append((kind, name))
+        taxonomy.append((category_name, name))
+        if taxonomy_identity not in seen:
+            seen[taxonomy_identity] = ClaimKind.TAG
+            if category_name == "Genre":
+                categorized.append((ClaimKind.GENRE, name))
+            elif category_name in {"Mood", "ContentWarning"}:
+                categorized.append((ClaimKind.TAG, name))
     if taggings_overflow:
         claims.extend(
             _state_claim(
@@ -1367,15 +1376,8 @@ def _work_claims(
     for kind, name in categorized:
         claims.append(
             _claim(
-                provider,
-                identity,
-                kind,
-                name,
-                ClaimScope.WORK,
-                "not_applicable",
-                None,
-                local,
-                len(claims) + offset,
+                provider, identity, kind, name, ClaimScope.WORK,
+                "not_applicable", None, local, len(claims) + offset,
             )
         )
     if malformed_taxonomy or taggings_invalid:
@@ -1411,11 +1413,21 @@ def _work_claims(
                     len(claims) + offset,
                 )
             )
+    book["_taxonomy"] = tuple(taxonomy)
     return claims
 
 
 def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
     evidence: list[ProviderEvidence] = []
+    for taxonomy_type, value in book.get("_taxonomy", ()):
+        evidence.append(
+            ProviderEvidence(
+                ProviderEvidenceKind.TAXONOMY,
+                value,
+                ClaimScope.WORK,
+                taxonomy_type=taxonomy_type,
+            )
+        )
     release_date = book["release_date"]
     if release_date is not None:
         try:
@@ -1448,6 +1460,7 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
                     value.kind.value,
                     value.value,
                     value.role or "",
+                    value.taxonomy_type or "",
                 ),
             )
         )
@@ -1493,6 +1506,7 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
                 value.kind.value,
                 value.value,
                 value.role or "",
+                value.taxonomy_type or "",
             ),
         )
     )

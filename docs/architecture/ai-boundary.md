@@ -8,7 +8,7 @@ service requests, persist product advice, or execute writes.
 
 The deterministic decision-preview and qualified automatic-decision
 paths are outside the AI boundary. They consume the retained exact,
-source-validated `shadow-review-packet-v5` and trusted compiled action
+source-validated `shadow-review-packet-v6` and trusted compiled action
 catalogue without model/provider dispatch. Their packet, rule identity,
 `source_outcome_id`, `shadow_decision`, and `shadow_outcome` contracts
 remain deterministic and authoritative.

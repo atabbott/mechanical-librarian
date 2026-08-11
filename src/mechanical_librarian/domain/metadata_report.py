@@ -36,7 +36,7 @@ from mechanical_librarian.domain.epub_inspection import (
 )
 
 
-REPORT_SCHEMA = "metadata-report-v22"
+REPORT_SCHEMA = "metadata-report-v23"
 COMPARISON_VERSION = "closed-title-creator-publication-v4"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -156,6 +156,8 @@ class ProviderEvidenceKind(StrEnum):
     SEARCH_PUBLICATION_DATE = "search_publication_date"
     SEARCH_LANGUAGE = "search_language"
     SEARCH_EDITION = "search_edition"
+    TAXONOMY = "taxonomy"
+    DESCRIPTION_TRANSFORMATION = "description_transformation"
 
 
 class DateLinkConfidence(StrEnum):
@@ -1243,6 +1245,7 @@ class ProviderEvidence:
     date_confidence: DateLinkConfidence | None = None
     source_ordinal: int = 0
     links: tuple[ComparisonLink, ...] = ()
+    taxonomy_type: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.kind) is not ProviderEvidenceKind or type(self.scope) is not ClaimScope:
@@ -1262,6 +1265,10 @@ class ProviderEvidence:
         ):
             raise ReportValueError("provider rich evidence source ordinal is invalid")
         _projection_text(self.value, "provider rich evidence value", MAX_SCALAR_CHARACTERS)
+        if self.kind is ProviderEvidenceKind.TAXONOMY:
+            _projection_text(self.taxonomy_type, "provider taxonomy type", MAX_SCALAR_CHARACTERS)
+        elif self.taxonomy_type is not None:
+            raise ReportValueError("provider taxonomy type is invalid")
         if (
             self.kind
             is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
@@ -1384,6 +1391,7 @@ class ProviderEvidence:
             ),
             "source_ordinal": self.source_ordinal,
             "links": [value.to_data() for value in self.links],
+            "taxonomy_type": self.taxonomy_type,
         }
 
 
@@ -1514,6 +1522,8 @@ class ProviderCandidate:
             ProviderEvidenceKind.SEARCH_PUBLICATION_DATE,
             ProviderEvidenceKind.SEARCH_LANGUAGE,
             ProviderEvidenceKind.SEARCH_EDITION,
+            ProviderEvidenceKind.TAXONOMY,
+            ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
         }
         work_relations = tuple(
             value
@@ -1589,6 +1599,7 @@ class ProviderCandidate:
                             else value.date_precision.value
                         ),
                         value.date_normalized or "",
+                        value.taxonomy_type or "",
                         (
                             ""
                             if value.date_confidence is None
@@ -2954,6 +2965,7 @@ def finalize_candidate_comparisons(
                         else value.date_precision.value
                     ),
                     value.date_normalized or "",
+                    value.taxonomy_type or "",
                     (
                         ""
                         if value.date_confidence is None
@@ -3719,7 +3731,7 @@ def _provider_identity_binding_from_data(
 
 
 def _provider_evidence_from_data(value: object) -> ProviderEvidence:
-    item = _object(value, {"date_confidence", "date_event", "date_normalized", "date_precision", "kind", "links", "role", "scope", "source_ordinal", "value"})
+    item = _object(value, {"date_confidence", "date_event", "date_normalized", "date_precision", "kind", "links", "role", "scope", "source_ordinal", "taxonomy_type", "value"})
     return ProviderEvidence(
         ProviderEvidenceKind(item["kind"]),
         item["value"],
@@ -3735,6 +3747,7 @@ def _provider_evidence_from_data(value: object) -> ProviderEvidence:
         ),
         item["source_ordinal"],
         tuple(_comparison_link_from_data(link) for link in _list(item["links"])),
+        item["taxonomy_type"],
     )
 
 

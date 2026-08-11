@@ -51,7 +51,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
     compile_shadow_review_actions,
 )
 
-PACKET_SCHEMA = "shadow-review-packet-v5"
+PACKET_SCHEMA = "shadow-review-packet-v6"
 MAX_PACKET_BYTES = 1_048_576
 # The generated schema is ASCII-only. Embedding it as a JSON string can add at
 # most one escape byte per schema byte; the remaining allowance covers the
@@ -986,6 +986,7 @@ def _validate_provider_citation(
         "role",
         "scope",
         "source_ordinal",
+        "taxonomy_type",
         "value",
     }:
         raise ShadowReviewValueError("shadow-review provider citation is invalid")
@@ -1013,6 +1014,7 @@ def _validate_provider_citation(
             ),
             evidence_data["source_ordinal"],
             _comparison_links(evidence_data["links"]),
+            evidence_data["taxonomy_type"],
         )
     except (ReportValueError, TypeError, ValueError) as error:
         raise ShadowReviewValueError(
@@ -1215,6 +1217,7 @@ def _validate_provider_linkage(
                 "role",
                 "scope",
                 "source_ordinal",
+                "taxonomy_type",
                 "value",
             }
             or type(fact["kind"]) is not str
@@ -1232,6 +1235,7 @@ def _validate_provider_linkage(
                     "date_event",
                     "date_normalized",
                     "date_precision",
+                    "taxonomy_type",
                 )
             )
             or type(fact["value"]) is not str

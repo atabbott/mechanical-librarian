@@ -244,6 +244,10 @@ def _target_fields(
             _target_field(source, destination)
             for destination in TargetDestination
         ]
+    if "tags" in media:
+        fields[list(TargetDestination).index(TargetDestination.TAGS)] = _target_field(
+            {TargetDestination.TAGS.value: media["tags"]}, TargetDestination.TAGS
+        )
     fields[-1] = _cover_field(root, cover)
     return tuple(fields)
 

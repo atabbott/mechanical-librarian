@@ -269,14 +269,13 @@ class AudiobookshelfFieldEffectTarget:
             if media_type not in {"image/jpeg", "image/png", "image/webp"} or observed_media_type != media_type:
                 raise TargetServiceUnavailable("destination")
             return "cover_" + hashlib.sha256(body).hexdigest()
-        metadata = detail["media"].get("metadata")
-        if type(metadata) is not dict:
-            raise TargetServiceUnavailable("destination")
-        if plan.destination == "tags":
-            value = detail["media"].get("tags")
-            if value is None:
-                value = metadata.get("tags")
+        media = detail["media"]
+        if plan.destination == "tags" and "tags" in media:
+            value = media["tags"]
         else:
+            metadata = media.get("metadata")
+            if type(metadata) is not dict:
+                raise TargetServiceUnavailable("destination")
             value = metadata.get(plan.destination)
         if plan.destination == "authors":
             if not isinstance(value, list) or any(type(item) is not dict or type(item.get("name")) is not str for item in value):
@@ -297,6 +296,8 @@ class AudiobookshelfFieldEffectTarget:
                     "sequence": None if sequence is None else str(sequence),
                 })
             return normalized or None
+        if plan.destination == "tags" and value is None:
+            return None
         if plan.destination in {"genres", "tags"}:
             if type(value) is not list or any(type(item) is not str for item in value):
                 raise TargetServiceUnavailable("destination")
@@ -395,12 +396,23 @@ def _media_payload(destination: str, value: object) -> dict[str, object]:
 
 def _capability_value_shape(detail: dict[str, Any], destination: str) -> None:
     media = detail.get("media")
-    if type(media) is not dict or type(media.get("metadata")) is not dict:
+    if type(media) is not dict:
         raise ValueError("Audiobookshelf metadata capability invalid")
     if destination == "tags":
-        value = media.get("tags", media["metadata"].get("tags"))
-        if type(value) is not list or any(type(item) is not str for item in value):
+        if "tags" in media:
+            value = media["tags"]
+        else:
+            metadata = media.get("metadata")
+            if type(metadata) is not dict:
+                raise ValueError("Audiobookshelf metadata capability invalid")
+            value = metadata.get("tags")
+        if value is not None and (
+            type(value) is not list
+            or any(type(item) is not str for item in value)
+        ):
             raise ValueError("Audiobookshelf tag capability invalid")
+    elif type(media.get("metadata")) is not dict:
+        raise ValueError("Audiobookshelf metadata capability invalid")
 
 
 def _image_media_type(body: bytes) -> str:
