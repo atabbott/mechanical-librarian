@@ -481,10 +481,26 @@ describe('typed review routes', () => {
     if (!titleField) throw new Error('detail fixture requires a title field')
     const authorsField = { ...titleField, destination: 'authors', proposalId: 'proposal-2', targetFingerprint: 'fingerprint-2' }
     const unresolved = { ...detail, fields: [titleField, authorsField] }
+    const reconciled = { ...unresolved, fields: [{
+      ...titleField,
+      needsAttention: false,
+      humanDecision: {
+        actor: 'owner', decision_id: 'decision-reconciled', destination: 'title', occurred_at: 1,
+        outcome: 'keep_current' as const, proposal_id: 'proposal-1', review_case_id: 'case-1',
+        selected_value: null, target_fingerprint: 'fingerprint-1',
+      },
+    }, authorsField] }
+    let reads = 0
+    let refreshAvailable = false
     const recordDecision = vi.fn(async () => { throw error })
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn().mockResolvedValueOnce(unresolved).mockRejectedValue(new Error('refresh unavailable')),
+      getCaseDetail: vi.fn(async () => {
+        reads += 1
+        if (reads === 1) return unresolved
+        if (!refreshAvailable) throw new Error('refresh unavailable')
+        return reconciled
+      }),
       recordDecision,
     }
     renderRoute('/review/case-1?field=title&subview=review', http)
@@ -506,6 +522,28 @@ describe('typed review routes', () => {
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
     expect(screen.getAllByLabelText('Reviewer facts').at(1)).toHaveTextContent('Available choices0')
     expect(recordDecision).toHaveBeenCalledOnce()
+
+    await user.click(screen.getByRole('link', { name: 'Library' }))
+    await user.click(await screen.findByRole('link', { name: 'A Book' }))
+    await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalledTimes(3))
+
+    expect(screen.getByText(status)).toHaveAttribute('role', 'alert')
+    expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    expect(screen.getAllByLabelText('Reviewer facts').at(0)).toHaveTextContent('Available choices0')
+    await user.click(screen.getByRole('button', { name: 'authors' }))
+    expect(screen.getAllByLabelText('Reviewer facts').at(1)).toHaveTextContent('Available choices0')
+
+    await user.click(screen.getByRole('link', { name: 'Library' }))
+    refreshAvailable = true
+    await user.click(await screen.findByRole('link', { name: 'A Book' }))
+
+    expect(await screen.findByText('Human decision: keep current by owner. Recorded value: Old title.')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'authors' }))
+    expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Choose proposed value 1: New title' })).toBeVisible()
+    expect(screen.getAllByLabelText('Reviewer facts').at(1)).toHaveTextContent('Available choices2')
   })
 
   it('replaces invalid detail state with the resolved canonical field and subview', async () => {

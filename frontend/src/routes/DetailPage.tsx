@@ -14,6 +14,8 @@ const reviewedSource = (value: string, index: number) => opaqueSource.test(value
 const requestKey = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `decision-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 const recordedValue = (value: unknown, current: string) => value === null ? current : typeof value === 'object' && 'value' in value ? displayValue(value.value) : displayValue(value)
 const actionable = (field: CaseDetailView['fields'][number]) => field.needsAttention && field.humanDecision === null && field.automaticDecision === null
+const reconciliationKey = (id: string) => ['decision-reconciliation', id] as const
+interface ReconciliationLock { message: string; detailUpdatedAt: number }
 // Keep the field queue stable: after a recorded decision, move forward in displayed
 // order and wrap once; terminal cases remain on the authoritative selected field.
 const nextUnresolved = (order: readonly string[], fields: CaseDetailView['fields'], destination: string) => {
@@ -30,7 +32,10 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   const navigate = useNavigate({ from: '/review/$reviewCaseId' })
   const [status, setStatus] = useState('')
   const [pending, setPending] = useState<DecisionCommand | null>(null)
-  const [reloadRequired, setReloadRequired] = useState(false)
+  const reconciliation = useQuery<ReconciliationLock | null>({ queryKey: reconciliationKey(reviewCaseId), queryFn: () => Promise.resolve(null), enabled: false, initialData: null, staleTime: Infinity, gcTime: Infinity })
+  const reloadRequired = reconciliation.data !== null
+  const detailState = queryClient.getQueryState(detailQuery(http, reviewCaseId).queryKey)
+  const lockReconciliation = (message: string) => queryClient.setQueryData(reconciliationKey(reviewCaseId), { message, detailUpdatedAt: detailState?.dataUpdatedAt ?? 0 })
   const canonicalized = useRef('')
   const submittedFieldOrder = useRef<readonly string[]>([])
   const currentSearch = useRef(search)
@@ -50,8 +55,8 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
     const refreshed = await settle()
     setPending(null)
     if (!refreshed) {
-      setReloadRequired(true)
-      setStatus('Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.')
+      lockReconciliation('Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.')
+      setStatus('')
       return
     }
     const next = nextUnresolved(submittedFieldOrder.current, refreshed.fields, command.destination)
@@ -68,10 +73,10 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
       return
     }
     if (!refreshed) {
-      setReloadRequired(true)
-      setStatus(error instanceof AmbiguousMutationError
+      lockReconciliation(error instanceof AmbiguousMutationError
         ? 'The decision outcome is uncertain and the current case could not be refreshed. Reload to reconcile it before reviewing another value.'
         : 'The current decision state could not be reconciled because the case could not be refreshed. Reload before reviewing another value.')
+      setStatus('')
       return
     }
     if (error instanceof ApiError && error.code === 'already_decided') {
@@ -87,6 +92,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   useEffect(() => { currentSearch.current = search }, [search])
   useEffect(() => { currentLocation.current = location }, [location])
   useEffect(() => () => { mounted.current = false }, [])
+  useEffect(() => { if (reconciliation.data && (detailState?.dataUpdatedAt ?? 0) > reconciliation.data.detailUpdatedAt) queryClient.setQueryData(reconciliationKey(reviewCaseId), null) }, [detailState?.dataUpdatedAt, queryClient, reconciliation.data, reviewCaseId])
   useEffect(() => { const identity = `${reviewCaseId}:${selected ?? ''}:${search.subview}`; if (canonicalized.current === identity) return; canonicalized.current = identity; void navigate({ replace: true, search: { subview: search.subview, ...(selected ? { field: selected } : {}) } }) }, [navigate, reviewCaseId, search.subview, selected])
   const pages = evidence.data?.pages.flatMap((page) => page.items) ?? []
   const submit = (field: CaseDetailView['fields'][number], outcome: DecisionOutcome, selectedValue: DecisionCommand['selectedValue'] = null, reuse = false) => {
@@ -116,6 +122,6 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
     </div> : null}
     {search.subview === 'evidence' ? <section className="progressive-panel" data-route-focus tabIndex={-1}><h2>Evidence and source ledger</h2>{evidence.isPending ? <p role="status">Loading evidence…</p> : evidence.isError ? <><p role="alert">Evidence could not be loaded.</p><button onClick={() => void evidence.refetch()}>Try again</button></> : <>{pages.map((item) => <article className="evidence-item" key={item.reference}><h3>{friendly(item.kind)}</h3><pre>{item.fact}</pre></article>)}{evidence.hasNextPage ? <button disabled={evidence.isFetchingNextPage} onClick={() => void evidence.fetchNextPage()}>Load more evidence</button> : <p>All referenced evidence is shown.</p>}</>}</section> : null}
     {search.subview === 'history' ? <section className="progressive-panel" data-route-focus tabIndex={-1}><h2>Current-case history</h2>{history.isPending ? <p role="status">Loading history…</p> : history.isError ? <><p role="alert">History could not be loaded.</p><button onClick={() => void history.refetch()}>Try again</button></> : history.data.items.map((item, index) => <p key={index}>{friendly(item.kind)} · {'destination' in item ? item.destination : ''}</p>)}</section> : null}
-    <p role={decision.isError || returnAutomatic.isError ? 'alert' : 'status'}>{status}</p>
+    <p role={decision.isError || returnAutomatic.isError || reloadRequired ? 'alert' : 'status'}>{status || reconciliation.data?.message}</p>
   </>
 }
