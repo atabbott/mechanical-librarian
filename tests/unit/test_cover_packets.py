@@ -438,6 +438,16 @@ class CoverPacketTests(unittest.TestCase):
             (b"IDAT", idat_data[split:]),
             *canonical_chunks[idat_index + 1:],
         ])
+        trailing_idat_stream = render([
+            *canonical_chunks[:idat_index],
+            (b"IDAT", idat_data + b"trailing"),
+            *canonical_chunks[idat_index + 1:],
+        ])
+        concatenated_idat_streams = render([
+            *canonical_chunks[:idat_index],
+            (b"IDAT", idat_data + idat_data),
+            *canonical_chunks[idat_index + 1:],
+        ])
         plte = (b"PLTE", b"\x00\x00\x00")
         plte_after_idat = render([*canonical_chunks[:-1], plte, canonical_chunks[-1]])
         duplicate_plte = render([
@@ -482,6 +492,8 @@ class CoverPacketTests(unittest.TestCase):
             "decompression_failure": corrupt_idat(valid),
             "decompression_bomb_dimensions": oversized_header(valid),
             "nonconsecutive_idat": nonconsecutive_idat,
+            "trailing_idat_stream": trailing_idat_stream,
+            "concatenated_idat_streams": concatenated_idat_streams,
             "plte_after_idat": plte_after_idat,
             "duplicate_plte": duplicate_plte,
             "lowercase_reserved_bit": lowercase_reserved,
@@ -547,6 +559,69 @@ class CoverPacketTests(unittest.TestCase):
             [(1, 1), (1, 1)],
         )
         self.assertEqual(len(admitted.images), 2)  # type: ignore[attr-defined]
+
+    def test_duplicate_group_aggregates_best_original_dimensions_canonically(self) -> None:
+        duplicate_payload = _preview(31)
+        other_payload = _preview(32)
+
+        def embedded(
+            token: str,
+            kind: CoverSourceKind,
+            payload: bytes,
+            width: int,
+            height: int,
+        ) -> CoverSource:
+            artifact = CoverArtifact.create(
+                ("original-" + token).encode(), payload, "image/png", width, height
+            )
+            return CoverSource(
+                cover_source_id(kind, token),
+                kind,
+                CoverSourceState.RETRIEVED,
+                artifact,
+                provenance=CoverProvenance(
+                    kind.value,
+                    CoverDesignation.WORK,
+                    "work-" + token,
+                ),
+            )
+
+        low = embedded(
+            "duplicate-low", CoverSourceKind.HARDCOVER,
+            duplicate_payload, 600, 900,
+        )
+        high = embedded(
+            "duplicate-high", CoverSourceKind.OPEN_LIBRARY,
+            duplicate_payload, 2000, 3000,
+        )
+        other = embedded(
+            "separate", CoverSourceKind.HARDCOVER,
+            other_payload, 1500, 3000,
+        )
+        by_artifact = {
+            low.artifact.artifact_id: duplicate_payload,  # type: ignore[union-attr]
+            high.artifact.artifact_id: duplicate_payload,  # type: ignore[union-attr]
+            other.artifact.artifact_id: other_payload,  # type: ignore[union-attr]
+        }
+        documents = []
+        for sources in ((low, high, other), (other, high, low), (high, low, other)):
+            packet = prepare_cover_packet(
+                _report(sources).to_json(),
+                lambda artifact, _variant: by_artifact[artifact],
+            )
+            _admit_produced(packet)
+            documents.append(packet.document)
+        self.assertEqual(documents, [documents[0]] * 3)
+
+        document = json.loads(documents[0])
+        self.assertEqual(
+            (document["candidates"][0]["width"], document["candidates"][0]["height"]),
+            (2000, 3000),
+        )
+        self.assertEqual(
+            (document["candidates"][1]["width"], document["candidates"][1]["height"]),
+            (1500, 3000),
+        )
 
     def test_digest_group_counts_every_source_kind_for_diversity(self) -> None:
         def candidate(

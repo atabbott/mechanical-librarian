@@ -62,6 +62,88 @@ class _SchemaBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class _SealedImage:
+    descriptor: int
+    invocation_path: str
+    digest: str
+
+
+@contextmanager
+def _sealed_cover_images(
+    images: tuple[_CoverReviewImage, ...],
+) -> Iterator[tuple[_SealedImage, ...]]:
+    """Copy admitted bytes into immutable sealed descriptors for sandbox bind."""
+    descriptors: list[int] = []
+    try:
+        if not images:
+            yield ()
+            return
+        if (
+            not hasattr(os, "memfd_create")
+            or not hasattr(os, "MFD_ALLOW_SEALING")
+            or not hasattr(os, "MFD_CLOEXEC")
+            or not hasattr(fcntl, "F_ADD_SEALS")
+            or not hasattr(fcntl, "F_GET_SEALS")
+            or not hasattr(fcntl, "F_SEAL_SEAL")
+            or not hasattr(fcntl, "F_SEAL_SHRINK")
+            or not hasattr(fcntl, "F_SEAL_GROW")
+            or not hasattr(fcntl, "F_SEAL_WRITE")
+        ):
+            raise ContainedReviewerProcessError("setup")
+        seals = (
+            fcntl.F_SEAL_SEAL
+            | fcntl.F_SEAL_SHRINK
+            | fcntl.F_SEAL_GROW
+            | fcntl.F_SEAL_WRITE
+        )
+        admitted: list[_SealedImage] = []
+        for image in images:
+            descriptor = os.memfd_create(  # type: ignore[attr-defined]
+                "contained-reviewer-image",
+                os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING,  # type: ignore[attr-defined]
+            )
+            descriptors.append(descriptor)
+            remaining = memoryview(image.payload)
+            while remaining:
+                written = os.write(descriptor, remaining)
+                if written <= 0:
+                    raise OSError("sealed image write failed")
+                remaining = remaining[written:]
+            os.fsync(descriptor)
+            fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, seals)
+            if fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) & seals != seals:
+                raise OSError("sealed image flags changed")
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            copied = bytearray()
+            while len(copied) < len(image.payload):
+                chunk = os.read(descriptor, min(65_536, len(image.payload) - len(copied)))
+                if not chunk:
+                    break
+                copied.extend(chunk)
+            if (
+                len(copied) != len(image.payload)
+                or hashlib.sha256(copied).hexdigest() != image.digest
+                or os.fstat(descriptor).st_size != len(image.payload)
+            ):
+                raise OSError("sealed image identity changed")
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            admitted.append(_SealedImage(
+                descriptor,
+                f"/proc/self/fd/{descriptor}",
+                image.digest,
+            ))
+        yield tuple(admitted)
+    except (OSError, ValueError) as error:
+        raise ContainedReviewerProcessError("setup") from error
+    finally:
+        for descriptor in descriptors:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+@dataclass(frozen=True, slots=True)
 class ContainedReviewerProfile:
     codex_path: Path
     sandbox_path: Path
@@ -286,7 +368,6 @@ class ContainedReviewerAdapter:
         if not sys.platform.startswith("linux"):
             raise ContainedReviewerProcessError("setup")
         job_path: Path | None = None
-        image_path: Path | None = None
         self._require_private_directory(self._profile.auth_store_path)
         self._require_private_directory(self._profile.job_root_path)
         trust_failure_path = (
@@ -302,6 +383,7 @@ class ContainedReviewerAdapter:
                 self._profile.sandbox_path,
                 self._profile.identity.sandbox_sha256,
             ) as sandbox,
+            _sealed_cover_images(images) as sealed_images,
         ):
             self._verify_sandbox(sandbox)
             with self._auth_lock():
@@ -321,18 +403,6 @@ class ContainedReviewerAdapter:
                             )
                         )
                         os.chmod(job_path, 0o700)
-                        if images:
-                            image_path = Path(
-                                tempfile.mkdtemp(
-                                    prefix="contained-reviewer-images-",
-                                    dir=self._profile.job_root_path,
-                                )
-                            )
-                            os.chmod(image_path, 0o700)
-                            for index, image in enumerate(images, start=1):
-                                target = image_path / f"{index:02d}.png"
-                                target.write_bytes(image.payload)
-                                os.chmod(target, 0o600)
                         provider_state_path = job_path / "provider-state"
                         provider_state_path.mkdir(mode=0o700)
                         with self._empty_auth_config() as empty_config:
@@ -373,8 +443,7 @@ class ContainedReviewerAdapter:
                                 self._sandbox_command(
                                     job_path,
                                     result_path,
-                                    image_path,
-                                    len(images),
+                                    tuple(value.invocation_path for value in sealed_images),
                                     provider_state_path,
                                     codex.invocation_path,
                                     sandbox.invocation_path,
@@ -387,6 +456,9 @@ class ContainedReviewerAdapter:
                                 stderr_file.fileno(),
                                 dispatched,
                                 credential_descriptor=credential.descriptor,
+                                image_descriptors=tuple(
+                                    value.descriptor for value in sealed_images
+                                ),
                             )
                             if returncode != 0:
                                 code, count, digest = _nonzero_failure(
@@ -410,7 +482,7 @@ class ContainedReviewerAdapter:
                         )
                     finally:
                         cleanup_errors: list[OSError] = []
-                        for ephemeral_path in (job_path, image_path):
+                        for ephemeral_path in (job_path,):
                             if ephemeral_path is None:
                                 continue
                             try:
@@ -745,8 +817,7 @@ class ContainedReviewerAdapter:
         self,
         job_path: Path,
         result_path: Path,
-        image_path: Path | None,
-        image_count: int,
+        image_paths: tuple[str, ...],
         provider_state_path: Path,
         codex_path: str,
         sandbox_path: str,
@@ -832,11 +903,14 @@ class ContainedReviewerAdapter:
                 "/job/" + result_path.name,
             )
         )
-        if image_path is not None:
-            command[command.index("--proc"):command.index("--proc")] = [
-                "--dir", "/images", "--ro-bind", str(image_path), "/images"
-            ]
-            for index in range(1, image_count + 1):
+        if image_paths:
+            mounts = ["--dir", "/images"]
+            for index, image_path in enumerate(image_paths, start=1):
+                mounts.extend((
+                    "--ro-bind", image_path, f"/images/{index:02d}.png",
+                ))
+            command[command.index("--proc"):command.index("--proc")] = mounts
+            for index in range(1, len(image_paths) + 1):
                 command.extend(("--image", f"/images/{index:02d}.png"))
         for value in _exact_config(self._profile.identity.reasoning):
             command.extend(("-c", value))
@@ -854,6 +928,7 @@ class ContainedReviewerAdapter:
         dispatched: Callable[[int, int, str], None],
         *,
         credential_descriptor: int,
+        image_descriptors: tuple[int, ...] = (),
     ) -> int:
         release_read, release_write = os.pipe()
         ready_read, ready_write = os.pipe()
@@ -874,6 +949,8 @@ class ContainedReviewerAdapter:
                 os.set_inheritable(codex.descriptor, True)
                 os.set_inheritable(sandbox.descriptor, True)
                 os.set_inheritable(credential_descriptor, True)
+                for descriptor in image_descriptors:
+                    os.set_inheritable(descriptor, True)
                 self._limit_child()
                 os.execve(sandbox.invocation_path, command, {})
             except BaseException:

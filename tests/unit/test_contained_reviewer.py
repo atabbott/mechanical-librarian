@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import io
 import json
@@ -9,6 +10,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -133,17 +135,19 @@ class ContainedReviewerTests(unittest.TestCase):
             root = Path(temporary)
             reviewer = adapter.ContainedReviewerAdapter(_profile(root))
             job = root / "job"
-            images = root / "images"
             provider = root / "provider"
-            for path in (job, images, provider):
+            for path in (job, provider):
                 path.mkdir()
+            image_sources = tuple(f"/proc/self/fd/{value}" for value in range(20, 25))
             command = reviewer._sandbox_command(
-                job, job / "result.json", images, 5, provider,
+                job, job / "result.json", image_sources, provider,
                 "/proc/self/fd/10", "/proc/self/fd/11", "/proc/self/fd/12",
             )
-        self.assertIn(["--ro-bind", str(images), "/images"], [
-            command[index:index + 3] for index in range(len(command) - 2)
-        ])
+        for index, source in enumerate(image_sources, start=1):
+            self.assertIn(["--ro-bind", source, f"/images/{index:02d}.png"], [
+                command[position:position + 3]
+                for position in range(len(command) - 2)
+            ])
         self.assertEqual(
             [command[index + 1] for index, value in enumerate(command[:-1]) if value == "--image"],
             [f"/images/{index:02d}.png" for index in range(1, 6)],
@@ -323,10 +327,22 @@ class ContainedReviewerTests(unittest.TestCase):
                 )
                 return 0
 
+            @contextmanager
+            def fake_sealed(images):
+                yield tuple(
+                    adapter._SealedImage(
+                        40 + index,
+                        f"/proc/self/fd/{40 + index}",
+                        image.digest,
+                    )
+                    for index, image in enumerate(images)
+                )
+
             with patch.object(adapter.sys, "platform", "linux"), \
                  patch.object(reviewer, "_verify_sandbox"), \
                  patch.object(reviewer, "_verify_codex"), \
                  patch.object(reviewer, "_require_chatgpt_auth"), \
+                 patch.object(adapter, "_sealed_cover_images", new=fake_sealed), \
                  patch.object(reviewer, "_sandbox_command", side_effect=sandbox_command), \
                  patch.object(reviewer, "_run_gated", side_effect=gated):
                 result = reviewer.run_cover(
@@ -336,6 +352,83 @@ class ContainedReviewerTests(unittest.TestCase):
             self.assertEqual(result.document, '{"summary":"safe"}')
             self.assertEqual(credential.read_bytes(), b'{"synthetic":true}')
             self.assertEqual(list(profile.job_root_path.iterdir()), [])
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux") and hasattr(os, "memfd_create"),
+        "sealed memfd proof requires Linux",
+    )
+    def test_sealed_image_copy_resists_callback_and_same_uid_mutation(self) -> None:
+        request = _cover_request()
+        with adapter._sealed_cover_images(request.images) as images:  # type: ignore[attr-defined]
+            self.assertEqual(len(images), 1)
+            image = images[0]
+            required = (
+                fcntl.F_SEAL_SEAL
+                | fcntl.F_SEAL_SHRINK
+                | fcntl.F_SEAL_GROW
+                | fcntl.F_SEAL_WRITE
+            )
+            self.assertEqual(
+                fcntl.fcntl(image.descriptor, fcntl.F_GET_SEALS) & required,
+                required,
+            )
+            with self.assertRaises(OSError):
+                os.write(image.descriptor, b"changed")
+            with self.assertRaises(OSError):
+                os.ftruncate(image.descriptor, 0)
+            attacker = os.open(image.invocation_path, os.O_WRONLY)
+            try:
+                with self.assertRaises(OSError):
+                    os.write(attacker, b"same-uid-change")
+                with self.assertRaises(OSError):
+                    os.ftruncate(attacker, 0)
+            finally:
+                os.close(attacker)
+            os.lseek(image.descriptor, 0, os.SEEK_SET)
+            payload = os.read(image.descriptor, 1_048_577)
+            self.assertEqual(hashlib.sha256(payload).hexdigest(), image.digest)
+
+            with tempfile.TemporaryDirectory() as temporary, \
+                 open("/bin/sh", "rb") as shell, \
+                 open(os.devnull, "rb") as stdin, \
+                 tempfile.TemporaryFile() as stdout, \
+                 tempfile.TemporaryFile() as stderr, \
+                 open(os.devnull, "rb") as credential:
+                reviewer = adapter.ContainedReviewerAdapter(
+                    _profile(Path(temporary))
+                )
+                executable = adapter._BoundArtifact(
+                    shell.fileno(), f"/proc/self/fd/{shell.fileno()}"
+                )
+                command = [
+                    executable.invocation_path,
+                    "-c",
+                    f'test "$(/usr/bin/sha256sum < {image.invocation_path})" '
+                    f'= "{image.digest}  -"',
+                ]
+
+                def attack_after_fork(_pid: int, _pgid: int, _token: str) -> None:
+                    attacker = os.open(image.invocation_path, os.O_WRONLY)
+                    try:
+                        with self.assertRaises(OSError):
+                            os.write(attacker, b"dispatch-callback-change")
+                        with self.assertRaises(OSError):
+                            os.ftruncate(attacker, 0)
+                    finally:
+                        os.close(attacker)
+
+                returncode = reviewer._run_gated(
+                    command,
+                    executable,
+                    executable,
+                    stdin.fileno(),
+                    stdout.fileno(),
+                    stderr.fileno(),
+                    attack_after_fork,
+                    credential_descriptor=credential.fileno(),
+                    image_descriptors=(image.descriptor,),
+                )
+                self.assertEqual(returncode, 0)
 
     def test_gated_timeout_and_cancel_kill_the_captured_process_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

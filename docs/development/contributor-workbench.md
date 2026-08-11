@@ -29,7 +29,9 @@ candidate; the inspectable incumbent is retained; other candidates are
 deterministically ordered using closed identity designation, original-cover
 technical dimensions, and source diversity, with every omission recorded. The
 decoded preview dimensions are separate exact binding facts and do not alter
-that quality order. The fixed limits are 12
+that quality order. A digest-equal group uses the canonical best observed
+original dimensions by pixel area, width, then height, independent of source
+order. The fixed limits are 12
 previews, 1 MiB each, and 8 MiB total. It is not a generic attachment surface.
 
 ## Executing a scenario
@@ -87,8 +89,8 @@ bytes. Absolute private-file references are rebound to matching owner-private
 snapshots in the execution configuration; contained-reviewer operations receive
 the admitted bytes directly. For a cover packet, the same durable attempt also
 binds the canonical ordered opaque-reference/preview-digest mapping. Exact
-preview bytes are copied to a separate ephemeral directory, mounted read-only,
-supplied as repeatable ordered `--image` arguments, and removed with the job.
+preview bytes are copied to sealed anonymous descriptors, bound read-only,
+supplied as repeatable ordered `--image` arguments, and closed with the job.
 The cover entry accepts only canonical `cover-review-packet-v1` input whose
 content-bound packet reference, every closed candidate/provenance/context and
 omission field, byte/dimension and incumbent facts, omission reasons, and limits
@@ -99,7 +101,8 @@ Every admitted preview is fully parsed and decoded through Pillow before it is
 mounted: its complete PNG structure and checksums, single-frame PNG format,
 RGBA mode, maximum 320-by-480 dimensions, and exact declared preview dimensions
 must all agree. The closed deterministic chunk profile accepts only exact IHDR,
-one or more consecutive IDAT chunks, and final IEND. ICC profiles, palette,
+one or more consecutive IDAT chunks containing exactly one completed zlib
+stream with no trailing data, and final IEND. ICC profiles, palette,
 transparency, every other ancillary, and every unknown chunk are rejected before
 mount; their bytes never cross the reviewer boundary.
 Forged signatures, corrupt or truncated streams, trailing bytes, unsafe
@@ -113,6 +116,12 @@ request and adapter method have no image member or argument. A changed,
 repeated, unknown, non-PNG, over-bound, or unbound image fails closed. Only the
 bounded Instruction is authoritative; canonical input, provider metadata,
 images, and OCR text are hostile evidence and never instructions.
+
+Admitted image bytes are copied into anonymous Linux memory descriptors, hashed
+again, and sealed against write, growth, shrink, and seal removal before process
+creation. The sandbox binds those descriptor identities directly. A dispatch
+callback or another same-UID process therefore cannot replace or mutate the
+bytes between recorded admission and child release.
 
 Duplicate omissions are finalized after selection and can reference only a
 retained representative. If byte, aggregate, or shortlist limits exclude the

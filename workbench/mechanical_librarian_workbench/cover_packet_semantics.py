@@ -159,6 +159,7 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
     width = height = 0
     saw_header = saw_data = saw_end = False
     data_closed = False
+    compressed_image = bytearray()
     while offset < len(payload):
         chunk_count += 1
         if chunk_count > _MAX_PNG_CHUNKS or len(payload) - offset < 12:
@@ -195,6 +196,7 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
             if data_closed:
                 raise ValueError
             saw_data = True
+            compressed_image.extend(payload[data_start:data_end])
         elif chunk_type == b"IEND":
             if length != 0 or not saw_data or crc_end != len(payload):
                 raise ValueError
@@ -204,6 +206,21 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
             raise ValueError
         offset = crc_end
     if not (saw_header and saw_data and saw_end):
+        raise ValueError
+    try:
+        decoder = zlib.decompressobj()
+        decoded = decoder.decompress(
+            bytes(compressed_image),
+            height * (1 + width * 4) + 1,
+        )
+    except zlib.error as error:
+        raise ValueError from error
+    if (
+        len(decoded) != height * (1 + width * 4)
+        or decoder.unconsumed_tail
+        or not decoder.eof
+        or decoder.unused_data
+    ):
         raise ValueError
     return width, height
 

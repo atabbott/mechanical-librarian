@@ -26,6 +26,10 @@ and source diversity; decoded preview dimensions bind the transported PNG but
 do not change that order. The absolute limits are 12 PNG previews, 1 MiB per
 preview, and 8 MiB in total.
 
+A digest-equal group projects the canonical best observed original dimensions
+by pixel area, width, then height; source iteration order cannot choose its
+technical-quality facts.
+
 Every canonical source kind represented by a digest-equal group contributes to
 diversity priority and counts. No single lexicographic source stands in for the
 group.
@@ -43,7 +47,8 @@ before either can mount an image, it also verifies the complete bounded,
 canonically ordered PNG chunk structure and checksums and fully decodes a
 single-frame RGBA PNG whose dimensions exactly match the distinct packet
 preview facts and do not exceed 320 by 480. The deterministic profile admits
-only exact IHDR, one consecutive IDAT run, and IEND. ICC profiles, PLTE, and
+only exact IHDR, one consecutive IDAT run containing exactly one completed zlib
+stream with no trailing bytes, and IEND. ICC profiles, PLTE, and
 every other ancillary or unknown chunk fail before mount so their bytes cannot
 cross the reviewer boundary;
 indistinguishable normalized provenance multiplicity is discarded. Duplicate
@@ -53,9 +58,11 @@ actual byte, aggregate, or shortlist omission instead. The generic
 request and generic adapter method have no image member or image argument. The
 durable pre-egress attempt binds that packet together with the
 exact reviewer profile, instruction, and output schema. The local result binds
-the request and profile identities. Preview bytes are copied into a separate
-ephemeral private directory, mounted read-only in the Linux sandbox, passed as
-repeatable ordered `codex exec --image` arguments, and removed with the job.
+the request and profile identities. Preview bytes are copied into anonymous
+Linux memory descriptors, rehashed, sealed against write, growth, shrink, and
+seal removal before process creation, bound directly into the read-only
+sandbox, and passed as repeatable ordered `codex exec --image` arguments. This
+closes callback and same-UID mutation races before gated child release.
 Unknown, repeated, changed, non-PNG, over-bound, or unbound inputs fail closed.
 Only the bounded Instruction is authoritative. Canonical input, provider
 metadata, images, and OCR text are explicitly hostile evidence, never

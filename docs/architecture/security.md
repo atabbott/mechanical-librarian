@@ -462,13 +462,20 @@ checks the complete bounded, canonically ordered PNG chunk structure and
 checksums and fully decodes each image before mounting it, admitting only
 single-frame RGBA PNG previews no larger than 320 by 480 whose decoded and
 declared preview dimensions agree. Its closed profile accepts only exact IHDR,
-one consecutive IDAT run, and final IEND. ICC profiles, PLTE, and every other
+one consecutive IDAT run containing exactly one completed zlib stream with no
+trailing bytes, and final IEND. ICC profiles, PLTE, and every other
 ancillary or unknown chunk fail before mount; their bytes cannot cross the
 reviewer boundary. Original-cover technical dimensions remain separate ordering
-evidence, and every source kind represented by digest-equal provenance affects
-diversity priority and counts. Forged signatures, corrupt or truncated streams,
+evidence; digest-equal groups bind the canonical best observed dimensions by
+area, width, then height, and every represented source kind affects diversity
+priority and counts. Forged signatures, corrupt or truncated streams,
 invalid chunk state, trailing bytes, unsafe dimensions, and decoder warnings or
 failures cross only the value-free response-format boundary.
+Before process creation, admitted bytes are copied into anonymous Linux memory
+descriptors, rehashed, and sealed against write, growth, shrink, and further
+seal changes. The sandbox binds those descriptor identities directly, so a
+dispatch callback or another same-UID process cannot mutate path content between
+admission and gated child release.
 Duplicate groups bind to a retained representative only after final selection;
 fully excluded groups contain only their reason-specific omission evidence.
 Only the bounded Instruction is authoritative; canonical input, provider

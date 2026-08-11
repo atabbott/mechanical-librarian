@@ -33,6 +33,10 @@ def _opaque_reference(report_id: str, source_id: str) -> str:
     return "cover_ref_" + digest
 
 
+def _technical_quality(width: int, height: int) -> tuple[int, int, int]:
+    return width * height, width, height
+
+
 @dataclass(frozen=True, slots=True)
 class CoverPacketImage:
     reference: str
@@ -122,6 +126,11 @@ def prepare_cover_packet(
         if existing is not None:
             existing.sources.append(source)
             existing.references.append(reference)
+            if _technical_quality(artifact.width, artifact.height) > _technical_quality(
+                existing.width, existing.height
+            ):
+                existing.width = artifact.width
+                existing.height = artifact.height
             if source.kind is CoverSourceKind.ABS:
                 existing.incumbent = True
                 existing.reference = reference
