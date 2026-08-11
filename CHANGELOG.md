@@ -7,7 +7,10 @@
   promotional text or tie-in branding and prefer minimal composition; unknown,
   unavailable, conflicting or unbound evidence abstains or fails closed. The
   operation introduces no second model, provider, runtime, persistence or write
-  authority. (#543)
+  authority. A 100-packet retained-real replay across all eight policies
+  produced the expected 800 typed unavailable-observation abstentions with zero
+  binding mismatch, violation or invented reference; semantic quality is not
+  claimed. (#543)
 
 - Add a source-only cover-observation report with one deliberately small,
   policy-neutral visual vocabulary. Each closed observation binds the exact

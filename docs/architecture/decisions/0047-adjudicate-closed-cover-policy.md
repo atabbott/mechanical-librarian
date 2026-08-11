@@ -67,7 +67,10 @@ The entire surface remains source-only and excluded from installed artifacts.
   conflict and policy exclusion, packet-order and minimal preference,
   unavailable observations, invented/mismatched references and redacted
   scenario failure.
-- Aggregate-safe retained-real replay reports admission, abstention and
-  violation counts without exposing corpus data.
+- Aggregate-safe retained-real replay admitted 100/100 frozen packets and
+  applied all eight policies: 800/800 typed
+  `observations_unavailable` abstentions, with zero mapping mismatches,
+  recommendations, policy violations, model/provider dispatches or private
+  exposure.
 - Architecture and exact-installed-artifact gates prove no runtime surface,
   persistence or write authority.
