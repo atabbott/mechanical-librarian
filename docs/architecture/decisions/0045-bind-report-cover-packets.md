@@ -64,6 +64,9 @@ seal removal before process creation, bound directly into the read-only
 sandbox, and passed as repeatable ordered `codex exec --image` arguments. This
 closes callback and same-UID mutation races before gated child release.
 Unknown, repeated, changed, non-PNG, over-bound, or unbound inputs fail closed.
+The image-capable adapter reconstructs and fully re-admits the packet and exact
+ordered image tuple at its own boundary; importing or directly constructing a
+private request shape cannot grant image-mount authority.
 Only the bounded Instruction is authoritative. Canonical input, provider
 metadata, images, and OCR text are explicitly hostile evidence, never
 instructions.

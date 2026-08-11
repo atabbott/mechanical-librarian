@@ -27,6 +27,7 @@ from mechanical_librarian_workbench.contained_reviewer_contract import (
     ContainedReviewerIdentity,
     _CoverReviewImage,
     _CoverReviewRequest,
+    admit_cover_review_request,
     canonical_json,
 )
 
@@ -355,9 +356,32 @@ class ContainedReviewerAdapter:
         request: _CoverReviewRequest,
         dispatched: Callable[[int, int, str], None],
     ) -> ContainedReviewResult:
-        if type(request) is not _CoverReviewRequest or not request._is_admitted:
+        if type(request) is not _CoverReviewRequest:
             raise ContainedReviewerProcessError("response_format")
-        return self._run(request, dispatched, request.images)
+        try:
+            instruction = request.instruction
+            input_document = request.input_document
+            output_schema = request.output_schema
+            images = tuple(
+                (image.reference, image.digest, image.payload)
+                for image in request.images
+            )
+            admitted = admit_cover_review_request(
+                instruction,
+                input_document,
+                output_schema,
+                images,
+            )
+        except (
+            AttributeError,
+            ContainedReviewerError,
+            RecursionError,
+            TypeError,
+            UnicodeError,
+            ValueError,
+        ) as error:
+            raise ContainedReviewerProcessError("response_format") from error
+        return self._run(admitted, dispatched, admitted.images)
 
     def _run(
         self,

@@ -476,6 +476,9 @@ descriptors, rehashed, and sealed against write, growth, shrink, and further
 seal changes. The sandbox binds those descriptor identities directly, so a
 dispatch callback or another same-UID process cannot mutate path content between
 admission and gated child release.
+The image-capable adapter independently reconstructs and fully re-admits the
+packet and exact ordered image tuple immediately before this path. A directly
+constructed private request object therefore has no admission authority.
 Duplicate groups bind to a retained representative only after final selection;
 fully excluded groups contain only their reason-specific omission evidence.
 Only the bounded Instruction is authoritative; canonical input, provider

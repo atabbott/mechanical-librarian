@@ -18,7 +18,6 @@ MAX_INPUT_BYTES = 1_048_576
 MAX_SCHEMA_BYTES = 65_536
 _COVER_REFERENCE = re.compile(r"^cover_ref_[0-9a-f]{64}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
-_COVER_ADMISSION = object()
 
 
 def canonical_json(value: object) -> str:
@@ -147,7 +146,6 @@ class _CoverReviewRequest:
     input_document: str
     output_schema: str
     images: tuple[_CoverReviewImage, ...]
-    _admission: object
 
     def __new__(cls) -> "_CoverReviewRequest":
         raise TypeError("cover requests require full packet admission")
@@ -163,12 +161,7 @@ class _CoverReviewRequest:
         object.__setattr__(request, "input_document", base.input_document)
         object.__setattr__(request, "output_schema", base.output_schema)
         object.__setattr__(request, "images", images)
-        object.__setattr__(request, "_admission", _COVER_ADMISSION)
         return request
-
-    @property
-    def _is_admitted(self) -> bool:
-        return self._admission is _COVER_ADMISSION
 
     @property
     def digest(self) -> str:

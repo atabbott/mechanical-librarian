@@ -122,6 +122,9 @@ again, and sealed against write, growth, shrink, and seal removal before process
 creation. The sandbox binds those descriptor identities directly. A dispatch
 callback or another same-UID process therefore cannot replace or mutate the
 bytes between recorded admission and child release.
+The image-capable adapter also reconstructs and fully re-admits the complete
+packet and exact ordered image tuple at its own boundary, so directly importing
+or constructing a private request shape cannot bypass packet validation.
 
 Duplicate omissions are finalized after selection and can reference only a
 retained representative. If byte, aggregate, or shortlist limits exclude the
