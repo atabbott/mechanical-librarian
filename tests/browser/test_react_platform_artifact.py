@@ -388,8 +388,37 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 ),
                 "fixed",
             )
+            self.assertGreaterEqual(
+                page.locator(".attention-rail").bounding_box()["y"],
+                page.locator(".masthead").bounding_box()["y"]
+                + page.locator(".masthead").bounding_box()["height"]
+                + 8,
+            )
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 884)
             page.locator(".attention-rail header button").click()
+
+            page.set_viewport_size({"width": 720, "height": 900})
+            page.goto("https://react-platform.invalid/library?lens=all")
+            expect(page).to_have_url(
+                "https://react-platform.invalid/library?lens=all&preview=case-1"
+            )
+            expect(page.locator(".library-works")).to_be_visible()
+            expect(page.locator(".workspace-detail")).to_be_visible()
+            self.assertNotEqual(
+                page.locator(".library-workspace").evaluate(
+                    "node => getComputedStyle(node).display"
+                ),
+                "block",
+            )
+            page.locator(".attention-toggle").click()
+            expect(page.locator(".attention-rail")).to_be_visible()
+            self.assertGreaterEqual(
+                page.locator(".attention-rail").bounding_box()["y"],
+                page.locator(".masthead").bounding_box()["y"]
+                + page.locator(".masthead").bounding_box()["height"]
+                + 8,
+            )
+            self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 720)
 
             page.set_viewport_size({"width": 390, "height": 844})
             page.goto("https://react-platform.invalid/library?lens=all")

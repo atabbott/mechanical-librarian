@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { SyntheticEvent } from 'react'
 
 import { displayValue } from '../api/http'
@@ -72,6 +72,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const currentSearch = useRef(search)
   const queuedSuccessor = useRef<{ id: string; destination: string } | undefined>(undefined)
   const retryButton = useRef<HTMLButtonElement>(null)
+  const [frozenFieldOrders, setFrozenFieldOrders] = useState<Readonly<Record<string, readonly string[]>>>({})
   const selectedReviewCaseId = search.preview ?? ''
   const detail = useQuery({ ...detailQuery(http, selectedReviewCaseId), enabled: Boolean(search.preview) })
   const evidence = useInfiniteQuery({
@@ -99,7 +100,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const selected = detail.data?.fields.find((field) => field.destination === search.field)
     ?? detail.data?.fields.find(actionable)
     ?? detail.data?.fields[0]
-  const actionableFields = detail.data?.fields.filter(actionable) ?? []
+  const currentActionableDestinations = detail.data?.fields.filter(actionable).map((field) => field.destination) ?? []
+  const frozenDestinations = frozenFieldOrders[selectedReviewCaseId] ?? currentActionableDestinations
+  const actionableFields = frozenDestinations
+    .map((destination) => detail.data?.fields.find((field) => field.destination === destination))
+    .filter((field): field is ReviewField => field !== undefined && actionable(field))
   const contextualFields = detail.data?.fields.filter((field) => !actionable(field)) ?? []
   const activeQueueIndex = selected
     ? attentionItems.findIndex((item) => item.id === search.preview && item.destination === selected.destination)
@@ -161,6 +166,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     } })
   }
   const choose = (field: ReviewField, outcome: DecisionCommand['outcome'], selectedValue: DecisionCommand['selectedValue'] = null) => {
+    setFrozenFieldOrders((current) => current[selectedReviewCaseId] === undefined
+      ? { ...current, [selectedReviewCaseId]: currentActionableDestinations }
+      : current)
     const afterCurrent = activeQueueIndex < 0 ? [] : attentionItems.slice(activeQueueIndex + 1)
     const successor = afterCurrent.find((item) => item.id !== search.preview)
     queuedSuccessor.current = successor ? { id: successor.id, destination: successor.destination } : undefined
@@ -187,8 +195,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const sourceCount = new Set(rows.map((row) => row.source)).size
   const sourceSupport = evidence.isPending
     ? 'supporting sources loading'
-    : `${String(sourceCount)} named source${sourceCount === 1 ? '' : 's'} below`
+    : sourceCount
+      ? `${String(sourceCount)} named source${sourceCount === 1 ? '' : 's'} below`
+      : 'no retained source records below'
   const effect = selected ? effectSummary(selected) : undefined
+  const sourceLedgerRows = rows.length ? <div className="source-ledger-table" role="table" aria-label="Evidence ledger"><div className="source-ledger-row source-ledger-head" role="row"><span role="columnheader">Source</span><span role="columnheader">Observed value</span><span role="columnheader">Basis</span></div>{rows.map((row, index) => <div className="source-ledger-row" role="row" key={`${row.source}:${row.observed}:${String(index)}`}><span role="cell"><small className="source-cell-label">Source</small><strong>{row.source}</strong></span><span role="cell"><small className="source-cell-label">Observed value</small>{row.observed}</span><span role="cell"><small className="source-cell-label">Basis</small>{row.basis}</span></div>)}</div> : null
 
   return <div className="library-page variant-m-workspace">
     <header className="library-header" tabIndex={-1} data-route-focus>
@@ -226,7 +237,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                     <div className="compact-workspace-controls"><button type="button" onClick={clearSelection}>Back to works</button><button type="button" onClick={() => void navigate({ search: (current) => ({ ...current, attention: 'open' }) })}>Attention queue</button></div>
                     <header className="selected-work-header"><span className="library-book-mark" aria-hidden="true">{initials(selectedIdentity.title)}</span><div><p>Progressive detail</p><h2>{selectedIdentity.title}</h2><p>{selectedIdentity.authors.length ? selectedIdentity.authors.join(', ') : 'Author details unavailable'} · {selectedIdentity.library} · {friendly(selectedIdentity.mediaKind).toLowerCase()}</p></div><dl className="selected-work-status"><div><dt>Needs review</dt><dd>{String(actionableFields.length)}</dd></div><div><dt>Resolved automatically</dt><dd>{String(detail.data.fields.filter((field) => field.automaticDecision !== null).length)}</dd></div></dl></header>
                     <div className="workspace-utilities"><Link className="full-review-link" to="/review/$reviewCaseId" params={{ reviewCaseId: search.preview }} search={fullReviewSearch}>Open full review</Link><Link className="full-review-link" to="/review/$reviewCaseId" params={{ reviewCaseId: search.preview }} search={{ subview: 'evidence', ...(selected ? { field: selected.destination } : {}) }}>Open all evidence</Link></div>
-                    <nav className="field-filmstrip" aria-label="Fields needing attention">{actionableFields.map((field, index) => <button key={field.destination} aria-current={selected?.destination === field.destination} onClick={() => select(selectedReviewCaseId, field.destination)}><strong>{friendly(field.destination)}</strong><small>{selected?.destination === field.destination ? `${String(index + 1)} of ${String(actionableFields.length)} · active` : `${String(index + 1)} of ${String(actionableFields.length)} · needs review`}</small><span>Current: {field.currentValue}</span></button>)}</nav>
+                    <nav className="field-filmstrip" aria-label="Fields needing attention">{actionableFields.map((field) => {
+                      const position = frozenDestinations.indexOf(field.destination) + 1
+                      const total = frozenDestinations.length
+                      return <button key={field.destination} aria-current={selected?.destination === field.destination} onClick={() => select(selectedReviewCaseId, field.destination)}><strong>{friendly(field.destination)}</strong><small>{selected?.destination === field.destination ? `${String(position)} of ${String(total)} · active` : `${String(position)} of ${String(total)} · needs review`}</small><span>Current: {field.currentValue}</span></button>
+                    })}</nav>
                     {contextualFields.length ? <details className="automatic-resolution-details"><summary><span>{String(contextualFields.length)} automatic or recorded field{contextualFields.length === 1 ? '' : 's'}</span><small>Inspect context</small></summary><div className="automatic-resolution-list">{contextualFields.map((field) => <div className="automatic-resolution-row" key={field.destination}><span className="automatic-state-mark" aria-hidden="true">✓</span><div><strong>{friendly(field.destination)}</strong><small>{fieldState(field)} · {decisionValue(field)}</small><small>{fieldReason(field)}</small></div></div>)}</div></details> : null}
                     {selected ? <article className="decision-canvas">
                       <header><div><p>Human attention</p><h2>{friendly(selected.destination)}</h2><p>{fieldReason(selected)}</p></div><dl><div><dt>Queue position</dt><dd>{activeQueueIndex >= 0 ? `${String(activeQueueIndex + 1)} of ${String(attentionItems.length)}` : 'Selected work'}</dd></div><div><dt>Choices</dt><dd>{actionable(selected) ? String(selected.proposedValues.length + 1) : '0'}</dd></div></dl></header>
@@ -234,7 +249,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       {actionable(selected) && !controller.reloadRequired ? <section className="direct-choice" aria-label={`Choose a ${friendly(selected.destination)} value`}><p className="choice-intro">Select the exact value that should remain bound to this field. Evidence informs the choice but never makes it for you.</p><div className="direct-choice-grid"><button aria-label={`Choose current value: ${selected.currentValue}`} className="value-choice current-value" disabled={controller.isPending} onClick={() => choose(selected, 'keep_current')}><small>Current value</small><strong>{selected.currentValue}</strong><span>Current catalogue value · compare {sourceSupport}</span></button>{selected.proposedValues.map((value, index) => <button aria-label={`Choose proposed value ${String(index + 1)}: ${displayValue(value.value)}`} className="value-choice proposed-value" key={`${value.kind}:${String(index)}`} disabled={controller.isPending} onClick={() => choose(selected, 'accept', value)}><small>Proposed value {String(index + 1)}</small><strong>{displayValue(value.value)}</strong><span>Eligible proposal · compare the same retained evidence</span></button>)}</div></section> : <p className="decision-recorded">{fieldState(selected)}. The recorded value remains {decisionValue(selected)}; this field has no human control.</p>}
                       {controller.canRetry && controller.pending?.destination === selected.destination ? <button ref={retryButton} className="decision-retry" type="button" onClick={controller.retry}>Try the same decision again</button> : null}
                       {effect ? <aside className="field-apply-context" aria-label="External update status"><span className="activity-state-mark" aria-hidden="true"></span><span><small>External library</small><strong>{effect.state}</strong><em>{effect.detail}</em></span></aside> : null}
-                      <details className="source-ledger" open><summary><span>Source ledger</span><small>{String(rows.length)} record{rows.length === 1 ? '' : 's'} · {String(sourceCount)} named source{sourceCount === 1 ? '' : 's'}</small></summary>{evidence.isPending ? <p role="status">Loading supporting evidence…</p> : evidence.isError ? <p role="alert">Supporting evidence could not be loaded. <button type="button" onClick={() => void evidence.refetch()}>Try again</button></p> : rows.length ? <div className="source-ledger-table" role="table" aria-label="Evidence ledger"><div className="source-ledger-row source-ledger-head" role="row"><span role="columnheader">Source</span><span role="columnheader">Observed value</span><span role="columnheader">Basis</span></div>{rows.map((row, index) => <div className="source-ledger-row" role="row" key={`${row.source}:${row.observed}:${String(index)}`}><span role="cell"><small className="source-cell-label">Source</small><strong>{row.source}</strong></span><span role="cell"><small className="source-cell-label">Observed value</small>{row.observed}</span><span role="cell"><small className="source-cell-label">Basis</small>{row.basis}</span></div>)}</div> : <p>No bounded source record is available for this field.</p>}</details>
+                      <details className="source-ledger" open><summary><span>Source ledger</span><small>{String(rows.length)} record{rows.length === 1 ? '' : 's'} · {String(sourceCount)} named source{sourceCount === 1 ? '' : 's'}</small></summary>{evidence.isPending ? <p role="status">Loading supporting evidence…</p> : <>{evidence.isError ? <p role="alert">Supplemental evidence could not be loaded. Retained case provenance remains below. <button type="button" onClick={() => void evidence.refetch()}>Try again</button></p> : null}{sourceLedgerRows ?? (evidence.isError ? null : <p>No bounded source record is available for this field.</p>)}</>}</details>
                       {controller.status || controller.message ? <p role={controller.decision.isError || controller.reloadRequired ? 'alert' : 'status'}>{controller.status || controller.message}</p> : null}
                     </article> : <p>This work has no fields requiring a decision.</p>}
                   </>}

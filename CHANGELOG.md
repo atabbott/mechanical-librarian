@@ -29,6 +29,10 @@
   Wide layouts retain Library, decision, and optional attention together;
   narrower regular layouts retain Library and decision with an attention
   drawer; phone layouts stage the same information without dropping it.
+  Original actionable-field positions do not collapse as decisions settle,
+  intermediate widths keep the work index beside selected detail, the queue
+  drawer clears the wrapped shell, and retained provenance stays visible when
+  supplemental evidence fails.
   Superseded cases never expose decision controls; work and field position carry
   into full review; direct review entry restores focus to the selected field.
   The synthetic qualification cohort contains 20 public-domain works across

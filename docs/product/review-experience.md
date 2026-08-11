@@ -205,7 +205,9 @@ single-column step while preserving Back/Forward state and task continuity.
 Every responsive composition retains the attention-only field strip's current
 value and stable position, inspectable automatic/recorded/no-change siblings,
 the external-library capability summary, and the source/observation/basis
-ledger. Its work-level field count remains complete when cursor
+ledger. A field keeps its original actionable position after an earlier field
+settles, and retained case provenance remains visible when supplemental
+evidence cannot be loaded. Its work-level field count remains complete when cursor
 pagination splits a work, and evidence context counts bounded records rather
 than claiming distinct providers. Decision preview copy promises only the
 current value and available choices until the exact case supplies its eligible

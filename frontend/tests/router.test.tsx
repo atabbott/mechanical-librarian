@@ -212,6 +212,55 @@ describe('typed review routes', () => {
     expect(screen.getByText('Series already agrees with the deterministic policy.')).toBeVisible()
   })
 
+  it('keeps retained case provenance visible when supplemental evidence fails', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [{ ...titleField, provenance: ['Local catalogue record: retained current value'] }] })),
+      getEvidence: vi.fn(async () => { throw new Error('supplemental evidence unavailable') }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    expect(await screen.findByText('Supplemental evidence could not be loaded. Retained case provenance remains below.')).toHaveAttribute('role', 'alert')
+    expect(screen.getByText('Local catalogue record')).toBeVisible()
+    expect(screen.getByText('retained current value')).toBeVisible()
+    expect(screen.getByText(/1 named source below/u)).toBeVisible()
+  })
+
+  it('keeps frozen field positions after an earlier field is decided', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const authorsField = { ...titleField, destination: 'authors', currentValue: 'Ada Example', proposalId: 'proposal-authors', targetFingerprint: 'fingerprint-authors' }
+    const initial = { ...detail, fields: [titleField, authorsField] }
+    const settled = { ...detail, fields: [{
+      ...titleField,
+      needsAttention: false,
+      humanDecision: {
+        actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1,
+        outcome: 'keep_current' as const, proposal_id: titleField.proposalId, review_case_id: 'case-1',
+        selected_value: null, target_fingerprint: titleField.targetFingerprint,
+      },
+    }, authorsField] }
+    let current: CaseDetailView = initial
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => current),
+      recordDecision: vi.fn(async () => {
+        current = settled
+        return { schema_version: 'review-decision-v1' as const, actor: 'owner' as const, decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current' as const, proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint }
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    expect((await screen.findByText('2 of 2 · needs review')).closest('button')).toHaveTextContent('Authors')
+    await user.click(screen.getByRole('button', { name: 'Choose current value: Old title' }))
+    expect(await screen.findByText('Decision recorded. Continuing with authors.')).toBeVisible()
+    expect((await screen.findByText('2 of 2 · active')).closest('button')).toHaveTextContent('Authors')
+    expect(screen.queryByText(/1 of 1/u)).toBeNull()
+  })
+
   it('retries the embedded Library decision with the exact preserved command and idempotency key', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]
