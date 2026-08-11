@@ -20,10 +20,8 @@ from mechanical_librarian.domain.cover_evidence import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     Comparison,
-    ComparisonLink,
     IdentifierRelation,
     MetadataReport,
-    PublicationDateRelation,
     ProviderCandidate,
     ProviderEvidenceKind,
     manifestation_publication_compatible,
@@ -40,7 +38,7 @@ _OUTCOMES = frozenset({
 })
 _CLASSIFIER_REFERENCE = "cover_identity_classifier_" + hashlib.sha256(
     canonical_packet_json(
-        {"schema_version": SCHEMA_VERSION, "rules": 2}
+        {"schema_version": SCHEMA_VERSION, "rules": 3}
     ).encode("utf-8")
 ).hexdigest()
 
@@ -51,13 +49,6 @@ _IDENTITY_CLAIMS = frozenset({
     ClaimKind.PUBLISHER,
     ClaimKind.PUBLICATION_DATE,
 })
-
-_INCOMPATIBLE_DATES = frozenset({
-    PublicationDateRelation.EVENT_INCOMPATIBLE,
-    PublicationDateRelation.FINER_CONFLICT,
-    PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
-})
-
 
 def _opaque_evidence_reference(report_id: str, reference: str) -> str:
     return "cover_evidence_ref_" + hashlib.sha256(
@@ -154,6 +145,7 @@ def _classify_sources(
     if not matches:
         return "unknown", ["unbound_provider_identity"], []
     evidence: list[str] = []
+    compatibility_reasons: set[str] = set()
     manifestation = False
     work = False
     for source, provider, candidate in matches:
@@ -177,11 +169,7 @@ def _classify_sources(
         if unrelated:
             return "conflict", ["unrelated_identifier"], unrelated
 
-        comparison_reasons, comparison_evidence = _comparison_contradictions(
-            candidate
-        )
-        if comparison_reasons:
-            return "conflict", comparison_reasons, comparison_evidence
+        compatibility_reasons.add(_bibliographic_compatibility(candidate))
 
         accepted = [item.reference for item in bound if item.relation is IdentifierRelation.ACCEPTED]
         associated = [item.reference for item in bound if item.relation is IdentifierRelation.ASSOCIATED]
@@ -215,49 +203,26 @@ def _classify_sources(
         return "verified_manifestation_match", ["accepted_manifestation_identifier"], evidence
     if work:
         return "verified_work_match", ["accepted_or_associated_work_identifier"], evidence
-    return "plausible_match", ["provider_identity_without_explicit_identifier"], []
-
-
-def _comparison_contradictions(
-    candidate: ProviderCandidate,
-) -> tuple[list[str], list[str]]:
-    reasons: set[str] = set()
-    evidence: set[str] = set()
-    for claim in candidate.claims:
-        if claim.kind not in _IDENTITY_CLAIMS:
-            continue
-        disagreements = tuple(
-            link for link in claim.links if _is_contradictory_link(link)
-        )
-        if not disagreements:
-            continue
-        reasons.add(f"{claim.kind.value}_contradiction")
-        evidence.add(claim.reference)
-        evidence.update(
-            link.local_reference
-            for link in disagreements
-            if link.local_reference is not None
-        )
-    for item in candidate.evidence:
-        disagreements = tuple(
-            link for link in item.links if _is_contradictory_link(link)
-        )
-        if not disagreements:
-            continue
-        reasons.add("publication_date_contradiction")
-        evidence.update(
-            link.local_reference
-            for link in disagreements
-            if link.local_reference is not None
-        )
-    return sorted(reasons), sorted(evidence)
-
-
-def _is_contradictory_link(link: ComparisonLink) -> bool:
     return (
-        link.outcome is Comparison.DISAGREEMENT
-        or link.publication_date_relation in _INCOMPATIBLE_DATES
+        "plausible_match",
+        [
+            "provider_identity_without_explicit_identifier",
+            *sorted(compatibility_reasons),
+        ],
+        [],
     )
+
+
+def _bibliographic_compatibility(candidate: ProviderCandidate) -> str:
+    outcomes: set[Comparison] = set()
+    for claim in candidate.claims:
+        if claim.kind in _IDENTITY_CLAIMS:
+            outcomes.update(link.outcome for link in claim.links)
+    if Comparison.AGREEMENT in outcomes:
+        return "retained_bibliographic_agreement"
+    if Comparison.DISAGREEMENT in outcomes:
+        return "retained_bibliographic_ambiguity"
+    return "retained_bibliographic_evidence_insufficient"
 
 
 __all__ = ["CoverIdentityReport", "SCHEMA_VERSION", "classify_cover_identity"]

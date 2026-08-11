@@ -82,8 +82,10 @@ closed identity outcome for every retained candidate:
 identity binding plus compatible accepted identifier evidence (or, for a work,
 accepted or associated evidence). Unrelated identifier evidence, retained
 edition/work contradictions, incompatible manifestation publication/format
-evidence, and closed title, creator, language, publisher, or publication-date
-comparison contradictions win over verification. The projection binds report,
+evidence win over verification. Retained title, creator, language, publisher,
+and publication-date comparisons contribute only closed agreement, ambiguity,
+or insufficient-evidence reasons; disagreement alone does not prove a different
+identity. The projection binds report,
 packet, candidate, classifier, and opaque evidence references. It emits fixed
 reason codes only, never source/provider identities, metadata values, paths,
 URLs, or credentials, and makes no visual, provider, policy, persistence, or

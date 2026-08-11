@@ -39,10 +39,12 @@ classifies every retained candidate before any aesthetic or policy experiment.
 Its five closed outcomes are `verified_manifestation_match`,
 `verified_work_match`, `plausible_match`, `unknown`, and `conflict`. The output
 contains only opaque report/packet/candidate/evidence references, classifier
-identity, and fixed reason codes. Unrelated identifiers and closed retained
-bibliographic contradictions produce `conflict` before verification; missing or
-ambiguous identity evidence remains `unknown`. The scenario neither sends a
-provider request nor reads images as identity evidence.
+identity, and fixed reason codes. Unrelated identifiers, edition/work
+contradictions, and incompatible manifestation publication/format evidence
+produce `conflict` before verification. Other retained bibliographic
+disagreements produce a fixed ambiguity reason without independently proving a
+different identity; unbound provider identity remains `unknown`. The scenario
+neither sends a provider request nor reads images as identity evidence.
 
 ## Executing a scenario
 

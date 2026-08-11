@@ -31,7 +31,6 @@ from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     IdentifierRelation,
     MetadataReport,
-    PublicationDateRelation,
     ProviderEvidenceKind,
     TargetFacts,
     default_target_fields,
@@ -1123,7 +1122,7 @@ class CoverIdentityTests(unittest.TestCase):
         conflicting = SimpleNamespace(**{**candidate.__dict__, "evidence": (contradiction,)})
         self.assertEqual(_classify_sources(SimpleNamespace(providers=(SimpleNamespace(provider=source.provenance.provider, candidates=(conflicting,)),), identifier_evidence=()), (source,))[0], "conflict")
 
-    def test_deterministic_report_contradictions_win(self) -> None:
+    def test_deterministic_contradictions_and_bibliographic_ambiguity(self) -> None:
         source = _source(3, _preview(3))
         assert source.provenance is not None
         candidate = SimpleNamespace(
@@ -1176,32 +1175,36 @@ class CoverIdentityTests(unittest.TestCase):
         self.assertEqual(
             _classify_sources(report, (source,)),
             (
-                "conflict",
-                ["title_contradiction"],
-                [disagreement.local_reference, title.reference],
+                "plausible_match",
+                [
+                    "provider_identity_without_explicit_identifier",
+                    "retained_bibliographic_ambiguity",
+                ],
+                [],
             ),
         )
 
-        incompatible_date = SimpleNamespace(
-            outcome=Comparison.NOT_COMPARABLE,
-            local_reference=None,
-            publication_date_relation=(
-                PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
-            ),
+        agreement = SimpleNamespace(
+            outcome=Comparison.AGREEMENT,
+            local_reference="local_" + "d" * 64,
         )
-        publication_date = SimpleNamespace(
-            kind=ClaimKind.PUBLICATION_DATE,
-            links=(incompatible_date,),
-            reference="provider_" + "d" * 64,
-        )
-        conflicting = SimpleNamespace(
-            **{**candidate.__dict__, "claims": (publication_date,)}
+        agreeing = SimpleNamespace(
+            **{
+                **candidate.__dict__,
+                "claims": (
+                    SimpleNamespace(
+                        kind=ClaimKind.TITLE,
+                        links=(agreement,),
+                        reference="provider_" + "e" * 64,
+                    ),
+                ),
+            }
         )
         report = SimpleNamespace(
             providers=(
                 SimpleNamespace(
                     provider=source.provenance.provider,
-                    candidates=(conflicting,),
+                    candidates=(agreeing,),
                 ),
             ),
             identifier_evidence=(),
@@ -1210,9 +1213,12 @@ class CoverIdentityTests(unittest.TestCase):
         self.assertEqual(
             _classify_sources(report, (source,)),
             (
-                "conflict",
-                ["publication_date_contradiction"],
-                [publication_date.reference],
+                "plausible_match",
+                [
+                    "provider_identity_without_explicit_identifier",
+                    "retained_bibliographic_agreement",
+                ],
+                [],
             ),
         )
 
