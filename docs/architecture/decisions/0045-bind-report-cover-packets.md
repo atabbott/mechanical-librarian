@@ -80,11 +80,14 @@ closed identity outcome for every retained candidate:
 `verified_manifestation_match`, `verified_work_match`, `plausible_match`,
 `unknown`, or `conflict`. Verification requires an exact retained provider
 identity binding plus compatible accepted identifier evidence (or, for a work,
-accepted or associated evidence); a retained edition/work contradiction wins.
-The projection binds report, packet, candidate, classifier, and opaque evidence
-references. It emits fixed reason codes only, never source/provider identities,
-metadata values, paths, URLs, or credentials, and makes no visual, provider,
-policy, persistence, or write decision.
+accepted or associated evidence). Unrelated identifier evidence, retained
+edition/work contradictions, incompatible manifestation publication/format
+evidence, and closed title, creator, language, publisher, or publication-date
+comparison contradictions win over verification. The projection binds report,
+packet, candidate, classifier, and opaque evidence references. It emits fixed
+reason codes only, never source/provider identities, metadata values, paths,
+URLs, or credentials, and makes no visual, provider, policy, persistence, or
+write decision.
 
 ## Consequences
 

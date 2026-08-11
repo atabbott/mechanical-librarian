@@ -6,8 +6,9 @@
   retained cover as verified manifestation/work, plausible, unknown, or
   conflicting from bounded retained evidence before aesthetic or policy work.
   The canonical report binds opaque report, packet, candidate, classifier, and
-  evidence references without provider calls, visual inference, persistence, or
-  write authority. (#540)
+  evidence references; retained identifier, bibliographic, publication, and
+  format contradictions win without provider calls, visual inference,
+  persistence, or write authority. (#540)
 
 - Polish the authenticated interface without changing its authority: restore
   the asymmetric book-spine shell mark and touch-safe secondary actions; make

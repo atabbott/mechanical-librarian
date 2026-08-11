@@ -450,8 +450,10 @@ identity dead; credential drift or cleanup failure blocks success. Raw streams,
 paths, prompts, credentials, and reasoning never cross the boundary. Cover
 identity classification is a local pre-review projection. It binds the exact
 report and already-admitted packet candidate identities, emits only opaque
-references and fixed outcome/reason codes, and has no image inference, provider
-dispatch, child process, persistence, policy, or write authority. Cover
+references and fixed outcome/reason codes, and gives retained identifier and
+closed bibliographic comparison contradictions precedence over verification.
+It has no image inference, provider dispatch, child process, persistence,
+policy, or write authority. Cover
 previews use opaque references, fixed 12-image/1-MiB-each/8-MiB-total limits,
 digest/order binding, a separate ephemeral read-only mount, and repeatable exact
 image arguments. The generic reviewer entry point is image-free. Its closed

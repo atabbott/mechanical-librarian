@@ -18,9 +18,15 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    Comparison,
+    ComparisonLink,
     IdentifierRelation,
     MetadataReport,
+    PublicationDateRelation,
+    ProviderCandidate,
     ProviderEvidenceKind,
+    manifestation_publication_compatible,
 )
 from mechanical_librarian_workbench.cover_packet_semantics import (
     bind_cover_packet,
@@ -34,9 +40,23 @@ _OUTCOMES = frozenset({
 })
 _CLASSIFIER_REFERENCE = "cover_identity_classifier_" + hashlib.sha256(
     canonical_packet_json(
-        {"schema_version": SCHEMA_VERSION, "rules": 1}
+        {"schema_version": SCHEMA_VERSION, "rules": 2}
     ).encode("utf-8")
 ).hexdigest()
+
+_IDENTITY_CLAIMS = frozenset({
+    ClaimKind.TITLE,
+    ClaimKind.CREATOR,
+    ClaimKind.LANGUAGE,
+    ClaimKind.PUBLISHER,
+    ClaimKind.PUBLICATION_DATE,
+})
+
+_INCOMPATIBLE_DATES = frozenset({
+    PublicationDateRelation.EVENT_INCOMPATIBLE,
+    PublicationDateRelation.FINER_CONFLICT,
+    PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+})
 
 
 def _opaque_evidence_reference(report_id: str, reference: str) -> str:
@@ -133,21 +153,36 @@ def _classify_sources(
                 matches.append((source, observation.provider, candidate))
     if not matches:
         return "unknown", ["unbound_provider_identity"], []
-    if any(any(
-        item.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
-        for item in candidate.evidence
-    ) for _, _, candidate in matches):
-        return "conflict", ["edition_work_contradiction"], []
-
     evidence: list[str] = []
     manifestation = False
     work = False
     for source, provider, candidate in matches:
+        if any(
+            item.kind
+            is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+            for item in candidate.evidence
+        ):
+            return "conflict", ["edition_work_contradiction"], []
+
         bound = [
             item for item in report.identifier_evidence
             if item.provider == provider and item.candidate_identity == candidate.identity
             and item.work_identity == candidate.work_identity
         ]
+        unrelated = [
+            item.reference
+            for item in bound
+            if item.relation is IdentifierRelation.UNRELATED
+        ]
+        if unrelated:
+            return "conflict", ["unrelated_identifier"], unrelated
+
+        comparison_reasons, comparison_evidence = _comparison_contradictions(
+            candidate
+        )
+        if comparison_reasons:
+            return "conflict", comparison_reasons, comparison_evidence
+
         accepted = [item.reference for item in bound if item.relation is IdentifierRelation.ACCEPTED]
         associated = [item.reference for item in bound if item.relation is IdentifierRelation.ASSOCIATED]
         evidence.extend(accepted)
@@ -157,6 +192,14 @@ def _classify_sources(
             and source.provenance.designation is CoverDesignation.EXACT_EDITION
             and accepted
         ):
+            if not manifestation_publication_compatible(
+                candidate, report.local_claims
+            ):
+                return (
+                    "conflict",
+                    ["manifestation_publication_incompatible"],
+                    accepted,
+                )
             manifestation = True
         if (
             source.provenance is not None
@@ -173,6 +216,48 @@ def _classify_sources(
     if work:
         return "verified_work_match", ["accepted_or_associated_work_identifier"], evidence
     return "plausible_match", ["provider_identity_without_explicit_identifier"], []
+
+
+def _comparison_contradictions(
+    candidate: ProviderCandidate,
+) -> tuple[list[str], list[str]]:
+    reasons: set[str] = set()
+    evidence: set[str] = set()
+    for claim in candidate.claims:
+        if claim.kind not in _IDENTITY_CLAIMS:
+            continue
+        disagreements = tuple(
+            link for link in claim.links if _is_contradictory_link(link)
+        )
+        if not disagreements:
+            continue
+        reasons.add(f"{claim.kind.value}_contradiction")
+        evidence.add(claim.reference)
+        evidence.update(
+            link.local_reference
+            for link in disagreements
+            if link.local_reference is not None
+        )
+    for item in candidate.evidence:
+        disagreements = tuple(
+            link for link in item.links if _is_contradictory_link(link)
+        )
+        if not disagreements:
+            continue
+        reasons.add("publication_date_contradiction")
+        evidence.update(
+            link.local_reference
+            for link in disagreements
+            if link.local_reference is not None
+        )
+    return sorted(reasons), sorted(evidence)
+
+
+def _is_contradictory_link(link: ComparisonLink) -> bool:
+    return (
+        link.outcome is Comparison.DISAGREEMENT
+        or link.publication_date_relation in _INCOMPATIBLE_DATES
+    )
 
 
 __all__ = ["CoverIdentityReport", "SCHEMA_VERSION", "classify_cover_identity"]

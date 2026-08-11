@@ -26,9 +26,12 @@ from mechanical_librarian.domain.cover_evidence import (
     cover_source_id,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    Comparison,
     FileFacts,
     IdentifierRelation,
     MetadataReport,
+    PublicationDateRelation,
     ProviderEvidenceKind,
     TargetFacts,
     default_target_fields,
@@ -1085,6 +1088,7 @@ class CoverIdentityTests(unittest.TestCase):
         candidate = SimpleNamespace(
             identity=source.provenance.edition_identity,
             work_identity=source.provenance.work_identity,
+            claims=(),
             evidence=(),
         )
         accepted = SimpleNamespace(
@@ -1097,8 +1101,16 @@ class CoverIdentityTests(unittest.TestCase):
         report = SimpleNamespace(
             providers=(SimpleNamespace(provider=source.provenance.provider, candidates=(candidate,)),),
             identifier_evidence=(accepted,),
+            local_claims=(),
         )
-        self.assertEqual(_classify_sources(report, (source,))[0], "verified_manifestation_match")
+        with mock.patch(
+            "mechanical_librarian_workbench.cover_identity.manifestation_publication_compatible",
+            return_value=True,
+        ):
+            self.assertEqual(
+                _classify_sources(report, (source,))[0],
+                "verified_manifestation_match",
+            )
         work_source = replace(
             source,
             provenance=replace(source.provenance, designation=CoverDesignation.WORK, edition_identity=None),
@@ -1110,6 +1122,118 @@ class CoverIdentityTests(unittest.TestCase):
         contradiction = SimpleNamespace(kind=ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION)
         conflicting = SimpleNamespace(**{**candidate.__dict__, "evidence": (contradiction,)})
         self.assertEqual(_classify_sources(SimpleNamespace(providers=(SimpleNamespace(provider=source.provenance.provider, candidates=(conflicting,)),), identifier_evidence=()), (source,))[0], "conflict")
+
+    def test_deterministic_report_contradictions_win(self) -> None:
+        source = _source(3, _preview(3))
+        assert source.provenance is not None
+        candidate = SimpleNamespace(
+            identity=source.provenance.edition_identity,
+            work_identity=source.provenance.work_identity,
+            claims=(),
+            evidence=(),
+        )
+        identifier = SimpleNamespace(
+            provider=source.provenance.provider,
+            candidate_identity=candidate.identity,
+            work_identity=candidate.work_identity,
+            relation=IdentifierRelation.UNRELATED,
+            reference="provider_" + "a" * 64,
+        )
+        provider = SimpleNamespace(
+            provider=source.provenance.provider,
+            candidates=(candidate,),
+        )
+        report = SimpleNamespace(
+            providers=(provider,), identifier_evidence=(identifier,), local_claims=()
+        )
+        self.assertEqual(
+            _classify_sources(report, (source,)),
+            ("conflict", ["unrelated_identifier"], [identifier.reference]),
+        )
+
+        disagreement = SimpleNamespace(
+            outcome=Comparison.DISAGREEMENT,
+            local_reference="local_" + "b" * 64,
+        )
+        title = SimpleNamespace(
+            kind=ClaimKind.TITLE,
+            links=(disagreement,),
+            reference="provider_" + "c" * 64,
+        )
+        conflicting = SimpleNamespace(
+            **{**candidate.__dict__, "claims": (title,)}
+        )
+        report = SimpleNamespace(
+            providers=(
+                SimpleNamespace(
+                    provider=source.provenance.provider,
+                    candidates=(conflicting,),
+                ),
+            ),
+            identifier_evidence=(),
+            local_claims=(),
+        )
+        self.assertEqual(
+            _classify_sources(report, (source,)),
+            (
+                "conflict",
+                ["title_contradiction"],
+                [disagreement.local_reference, title.reference],
+            ),
+        )
+
+        incompatible_date = SimpleNamespace(
+            outcome=Comparison.NOT_COMPARABLE,
+            local_reference=None,
+            publication_date_relation=(
+                PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+            ),
+        )
+        publication_date = SimpleNamespace(
+            kind=ClaimKind.PUBLICATION_DATE,
+            links=(incompatible_date,),
+            reference="provider_" + "d" * 64,
+        )
+        conflicting = SimpleNamespace(
+            **{**candidate.__dict__, "claims": (publication_date,)}
+        )
+        report = SimpleNamespace(
+            providers=(
+                SimpleNamespace(
+                    provider=source.provenance.provider,
+                    candidates=(conflicting,),
+                ),
+            ),
+            identifier_evidence=(),
+            local_claims=(),
+        )
+        self.assertEqual(
+            _classify_sources(report, (source,)),
+            (
+                "conflict",
+                ["publication_date_contradiction"],
+                [publication_date.reference],
+            ),
+        )
+
+        accepted = SimpleNamespace(
+            **{**identifier.__dict__, "relation": IdentifierRelation.ACCEPTED}
+        )
+        report = SimpleNamespace(
+            providers=(provider,), identifier_evidence=(accepted,), local_claims=()
+        )
+        with mock.patch(
+            "mechanical_librarian_workbench.cover_identity.manifestation_publication_compatible",
+            return_value=False,
+        ):
+            self.assertEqual(
+                _classify_sources(report, (source,)),
+                (
+                    "conflict",
+                    ["manifestation_publication_incompatible"],
+                    [accepted.reference],
+                ),
+            )
 
     def test_report_binds_exact_packet_candidates_and_emits_only_opaque_references(self) -> None:
         packet, images = _packet_case()
