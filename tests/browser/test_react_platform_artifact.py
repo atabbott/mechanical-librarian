@@ -214,13 +214,40 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 0,
             )
             expect(page.locator(".workspace-detail .direct-choice-grid .value-choice")).to_have_count(4)
-            workspace_evidence = page.locator(".workspace-detail .decision-canvas footer").inner_text()
+            expect(page.locator(".library-works")).to_be_visible()
+            expect(page.locator(".workspace-detail")).to_be_visible()
+            expect(page.locator(".field-filmstrip button")).to_have_count(2)
+            self.assertIn(
+                "Current: Current <script> title",
+                page.locator(".field-filmstrip").inner_text(),
+            )
+            page.locator(".automatic-resolution-details summary").click()
+            automatic_context = page.locator(".automatic-resolution-details").inner_text()
+            self.assertIn("Subtitle", automatic_context)
+            self.assertIn("Series", automatic_context)
+            self.assertIn("Resolved automatically", automatic_context)
+            self.assertIn("No eligible change", automatic_context)
+            workspace_evidence = page.locator(".workspace-detail .source-ledger").inner_text()
+            self.assertIn("Source", workspace_evidence)
+            self.assertIn("Observed value", workspace_evidence)
+            self.assertIn("Basis", workspace_evidence)
             self.assertIn("Local catalogue record", workspace_evidence)
             self.assertIn("Project Gutenberg record", workspace_evidence)
             self.assertIn("Google Books catalogue record", workspace_evidence)
+            self.assertIn("Guarded from external update", page.locator(".field-apply-context").inner_text())
+            expect(page.get_by_role("button", name="Previous")).to_be_visible()
+            expect(page.get_by_role("button", name="Next")).to_be_visible()
             page.locator(".attention-toggle").click()
             expect(page).to_have_url("https://react-platform.invalid/library?lens=all&preview=case-1&attention=open")
             expect(page.locator(".attention-rail")).to_be_visible()
+            expect(page.locator(".library-works")).to_be_visible()
+            expect(page.locator(".workspace-detail")).to_be_visible()
+            self.assertEqual(
+                page.locator(".library-workspace").evaluate(
+                    "node => getComputedStyle(node).gridTemplateColumns.split(' ').length"
+                ),
+                3,
+            )
             page.locator(".attention-rail header button").click()
             self.assertEqual(page.locator(".library-work-row").count(), 6)
             page.locator(".library-work-row").first.get_by_text(
@@ -315,6 +342,55 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             )
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 1440)
 
+            page.set_viewport_size({"width": 884, "height": 900})
+            page.goto("https://react-platform.invalid/library?lens=all")
+            expect(page).to_have_url(
+                "https://react-platform.invalid/library?lens=all&preview=case-1"
+            )
+            expect(page.locator(".library-works")).to_be_visible()
+            expect(page.locator(".workspace-detail")).to_be_visible()
+            self.assertNotEqual(
+                page.locator(".library-workspace").evaluate(
+                    "node => getComputedStyle(node).display"
+                ),
+                "block",
+            )
+            for item in page.locator(".masthead nav a").all():
+                self.assertEqual(
+                    item.evaluate("node => getComputedStyle(node).whiteSpace"),
+                    "nowrap",
+                )
+            self.assertEqual(
+                page.locator(".masthead").evaluate(
+                    "node => getComputedStyle(node).flexWrap"
+                ),
+                "wrap",
+            )
+            self.assertGreaterEqual(
+                page.locator(".masthead nav").bounding_box()["y"],
+                page.locator(".brand").bounding_box()["y"]
+                + page.locator(".brand").bounding_box()["height"],
+            )
+            self.assertEqual(
+                page.locator(".source-ledger-head").evaluate(
+                    "node => getComputedStyle(node).display"
+                ),
+                "none",
+            )
+            self.assertIn("Observed value", page.locator(".source-ledger").inner_text())
+            page.locator(".attention-toggle").click()
+            expect(page.locator(".attention-rail")).to_be_visible()
+            expect(page.locator(".library-works")).to_be_visible()
+            expect(page.locator(".workspace-detail")).to_be_visible()
+            self.assertEqual(
+                page.locator(".attention-rail").evaluate(
+                    "node => getComputedStyle(node).position"
+                ),
+                "fixed",
+            )
+            self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 884)
+            page.locator(".attention-rail header button").click()
+
             page.set_viewport_size({"width": 390, "height": 844})
             page.goto("https://react-platform.invalid/library?lens=all")
             expect(page.locator(".library-works")).to_be_visible()
@@ -326,6 +402,26 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.locator(".attention-queue-item").first.click()
             expect(page.locator(".workspace-detail")).to_be_visible()
             expect(page.locator(".library-works")).to_be_hidden()
+            expect(page.locator(".field-filmstrip button")).to_have_count(2)
+            self.assertIn(
+                "Current: Current <script> title",
+                page.locator(".field-filmstrip").inner_text(),
+            )
+            page.locator(".automatic-resolution-details summary").click()
+            compact_context = page.locator(".automatic-resolution-details").inner_text()
+            self.assertIn("Resolved automatically", compact_context)
+            self.assertIn("No eligible change", compact_context)
+            expect(page.locator(".source-ledger")).to_be_visible()
+            self.assertEqual(
+                page.locator(".source-ledger-head").evaluate(
+                    "node => getComputedStyle(node).display"
+                ),
+                "none",
+            )
+            self.assertIn("Observed value", page.locator(".source-ledger").inner_text())
+            self.assertIn("Guarded from external update", page.locator(".field-apply-context").inner_text())
+            expect(page.get_by_role("button", name="Previous")).to_be_visible()
+            expect(page.get_by_role("button", name="Next")).to_be_visible()
             expect(page.locator(".compact-workspace-controls button")).to_have_count(2)
             for control in page.locator(".compact-workspace-controls button").all():
                 self.assertGreaterEqual(control.bounding_box()["height"], 44)

@@ -1,8 +1,8 @@
 # Interface fidelity living audit
 
-Status: complete; milestone exit qualified on exact current `main`
+Status: SC-01 through SC-07 implemented and affected proof complete; delivery requires exact-main readback
 Last updated: 2026-08-11
-Current implementation baseline: `781d5658c8e9d66695a743e1be4460dd4216cb53`
+Current implementation baseline: `29cac093fc628e89e5aa49916abc3bc7e32edd8a`
 Protected review reference: Variant M at
 `026e3388c86f583af5d5a136c4bf6a4192a77af6`
 Impeccable critique baseline: 28/40 on 2026-08-11
@@ -39,10 +39,13 @@ surface:
 - recording one value advances through unresolved fields and works without a
   round trip through another top-level page.
 
-At compact widths, Library, queue, and selected detail may remain separate
-single-column views. The compact implementation must preserve task continuity,
-Back/Forward behavior, readable identity, and direct-value semantics; it need
-not squeeze the desktop composition into 390 pixels.
+At narrower regular widths, the Library index and selected detail remain
+concurrent while attention becomes a contextual drawer. At phone widths,
+Library, queue, and selected detail may become separate single-column steps,
+but they retain the same field position, current-value filmstrip, automatic and
+recorded context, source ledger, apply state, and cross-work movement. Responsive
+adaptation may change spatial composition; it must not discard useful Variant M
+information merely because the viewport is narrower.
 
 The prototype is directional rather than a source-code or pixel-copy contract,
 but its observable composition, hierarchy, density, and interaction language
@@ -50,7 +53,29 @@ are protected. A materially different replacement requires a concrete product
 or technical constraint and evidence that the replacement better preserves
 the outcome.
 
+## Reopened semantic-completeness correction
+
+The first #554 merge established the correct route and workspace architecture,
+but a direct semantic comparison found that the selected-work surface still
+compressed several protected Variant M signals. The reopened correction is one
+coherent #554 batch; none of these rows may be closed by substituting a compact
+layout or by pointing to existing safety behavior.
+
+| ID | Status | Required correction | Preserved strength |
+| --- | --- | --- | --- |
+| SC-01 | implemented; affected proof passed | Automatic, recorded, and no-eligible-change siblings are inspectable beside the attention-only strip, with their retained value and reason. | They remain subordinate to actionable fields and never expose false decisions. |
+| SC-02 | implemented; affected proof passed | Every attention-strip item shows field name, stable position, state, and current value. | URL-owned field selection, focus, and authoritative advancement remain intact. |
+| SC-03 | implemented; affected proof passed | The embedded source ledger separates source, observed value, and basis and demonstrates local, Project Gutenberg, Google Books, Open Library, and hostile provider-shaped evidence without treating record count as provider authority. | Full progressive evidence, pagination, failure recovery, bounded strings, and hostile-input safety remain available. |
+| SC-04 | implemented; affected proof passed | The selected field exposes concise external-library capability/apply context and says explicitly that deciding queues nothing. | Backup, consent, currentness, validation, application, and read-back remain separate gates. |
+| SC-05 | implemented; affected proof passed | Attention rows include ordinal, work identity, authors, library/media, field reason, and complete work count; explicit Previous/Next actions support sustained cross-work review. | Search, lenses, cursor pagination, Back/Forward, deep links, and deliberate navigation during mutation remain supported. |
+| SC-06 | implemented; affected proof passed | Embedded decision failure offers an explicit same-decision retry using the exact preserved command and idempotency key. | There is still no automatic mutation retry; stale, ambiguous, already-decided, and reconciliation-lock behavior remains fail-closed. |
+| SC-07 | implemented; affected proof passed | M's information hierarchy transfers responsively: wide three-column context, narrow concurrent master/detail plus queue drawer, and a phone task flow containing the same semantic context. Narrow shell labels do not wrap and the evidence ledger becomes labeled cards before table columns become cramped. | Existing 44px targets, focus, dark/light themes, long-value containment, and zero document overflow remain protected. |
+
 ## Current defect register
+
+The `verified on #554 merge` labels below record the first architectural pass.
+They are not current closure claims while SC-01 through SC-07 remain pending;
+the reopened correction table above is authoritative for milestone completion.
 
 | ID | Severity | Status | Defect | Required fix | Closure proof |
 | --- | --- | --- | --- | --- | --- |
@@ -157,9 +182,11 @@ critique disproved the earlier completion claim. Corrective delivery is:
    merged as `9ba487b9129e5908a29094f6e95179040e481013` after its final reviewed
    head `067a1125b9626753d6f850564cdf19fb095779fc` passed 74 frontend tests,
    hosted gates, and connector C1 remediation of all eight accepted findings.
-   It owns IF-01 through IF-06, IF-08, and IF-10. Regular-width composition
-   matches the protected reference; the compact flow remains a purpose-built
-   single-column adaptation.
+   It owns IF-01 through IF-06, IF-08, and IF-10. That merge established the
+   contextual workspace architecture, but #554 was reopened after semantic
+   comparison found the SC-01 through SC-07 gaps above. The current correction
+   must complete M's information model across wide, narrow, and phone layouts
+   without regressing the existing product safeguards.
 2. [#555 — Polish the authenticated frontend after fidelity restoration](https://github.com/atabbott/mechanical-librarian/issues/555)
    owns IF-07, IF-09, IF-11, the remaining accepted cross-surface critique
    findings, the post-remediation Impeccable critique, and final milestone
@@ -265,6 +292,7 @@ Add dated entries; do not overwrite earlier observations.
 
 | Date | Exact head | Surface/data | Width/theme/input | Result | Evidence or follow-up |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-11 | candidate tree from `29cac09` | Reopened #554 semantic-completeness audit | 1440px, 884px, and 390px; light/dark; rich 20-work cohort | affected source/browser proof passed; exact delivery receipts are recorded on the pull request | Installed comparison confirms concurrent wide and narrow master/detail, phone task continuity, attention position and movement, automatic/recorded context, five named sources with separate observations/basis, apply context, inert hostile values, and zero horizontal overflow. Fresh 884px entry selects a reviewable work and retains the concurrent workspace. The single Impeccable audit batch found narrow masthead wrapping and cramped ledger columns; both were remediated at their CSS seam and added to the browser contract. |
 | 2026-08-11 | `7fd8f8a` | Current installed Library/Attention/detail versus Variant M | regular desktop | fail | IF-01 through IF-06 confirmed by product review; current composition does not preserve the protected desktop operating model. |
 | 2026-08-11 | `7fd8f8a` | Current installed evidence cohort | local fixture | incomplete | IF-08: visible provenance does not demonstrate meaningful multi-provider behavior. |
 | 2026-08-11 | `7fd8f8a` | Current installed Activity | local fixture | fail | IF-07 reported: route cannot be loaded; exact request/console reproduction still required. |
@@ -295,6 +323,7 @@ This audit may be marked complete only when:
 - GitHub issues, project state, documentation, and completion claims agree
   with the installed result.
 
-All conditions above were achieved on exact current `main` at `781d565` before
-the final documentation reconciliation. The reconciliation changes no
-executable source, generated artifact, schema, dependency, or product authority.
+The first-pass conditions were recorded on `781d565`, but the later semantic
+comparison invalidated that completion claim for #554. This dossier returns to
+complete only after SC-01 through SC-07 are qualified on the exact reviewed
+head, merged, and read back from current `main` with tracking reconciled.
