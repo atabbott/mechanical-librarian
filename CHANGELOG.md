@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add a source-only deterministic cover-policy report over exact packet,
+  identity and closed observation evidence. Three typed booleans can avoid
+  promotional text or tie-in branding and prefer minimal composition; unknown,
+  unavailable, conflicting or unbound evidence abstains or fails closed. The
+  operation introduces no second model, provider, runtime, persistence or write
+  authority. (#543)
+
 - Add a source-only cover-observation report with one deliberately small,
   policy-neutral visual vocabulary. Each closed observation binds the exact
   report packet, candidate, preview digest/variant, taxonomy, instruction,

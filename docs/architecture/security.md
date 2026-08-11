@@ -474,6 +474,18 @@ the complete contained-reviewer execution/request/image/result bindings, and
 emits only opaque identities plus exact preview digest/variant facts. Raw model
 output is not an observation report until that validation passes.
 
+The source-only cover-policy adjudicator introduces no model or provider call.
+It re-admits the exact packet/images and requires the current classifier,
+taxonomy, observer instruction and output-schema identities before using any
+candidate facts. Its policy is three canonical booleans, never prompt text.
+Conflict candidates cannot be rescued; unknown identity or policy-relevant
+unknown observations abstain. Missing, duplicate, invented, mismatched or
+hostile references fail before output. The report contains only opaque
+acceptable references, one exact admitted recommendation or null, closed
+reason codes and content identities. Unavailable observations produce the
+fixed `observations_unavailable` abstention. No image, path, URL, free text,
+production target, persistence or write authority enters this boundary.
+
 Cover
 previews use opaque references, fixed 12-image/1-MiB-each/8-MiB-total limits,
 digest/order binding, a separate ephemeral read-only mount, and repeatable exact

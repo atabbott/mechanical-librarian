@@ -26,6 +26,7 @@ from mechanical_librarian_workbench import (  # noqa: E402
     ContainedReviewerRequest,
     CoverIdentityRequest,
     CoverObservationRequest,
+    CoverPolicyRequest,
     DecisionPreviewRequest,
     IsolatedNetworkProfile,
     ProposalRequest,
@@ -74,7 +75,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
         self.assertEqual(errors.getvalue(), "Review server failed: invalid invocation.\n")
 
     def test_workbench_catalogue_maps_every_relocated_capability(self) -> None:
-        self.assertEqual(len(CAPABILITIES), 18)
+        self.assertEqual(len(CAPABILITIES), 19)
         self.assertEqual(
             {operation for capability in CAPABILITIES for operation in capability.operations},
             set(WorkbenchOperations.__dataclass_fields__),
@@ -110,6 +111,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             ),
             CoverIdentityRequest("report"),
             CoverObservationRequest("report"),
+            CoverPolicyRequest("report"),
         )
         with WorkbenchContext.temporary() as context:
             context.network = IsolatedNetworkProfile(
@@ -127,6 +129,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             prepared = mock.Mock(document="{}", images=())
             classified = mock.Mock(document='{"ok":true}')
             observed = mock.Mock(document='{"ok":true}')
+            adjudicated = mock.Mock(document='{"ok":true}')
             with (
                 mock.patch(
                     "mechanical_librarian_workbench.scenarios.prepare_cover_packet",
@@ -139,6 +142,10 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                 mock.patch(
                     "mechanical_librarian_workbench.scenarios.observe_cover_packet",
                     return_value=observed,
+                ),
+                mock.patch(
+                    "mechanical_librarian_workbench.scenarios.adjudicate_cover_policy",
+                    return_value=adjudicated,
                 ),
             ):
                 results = tuple(execute(context, request, operations) for request in requests)
@@ -161,6 +168,29 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                     ],
                 },
             )
+
+    def test_cover_policy_scenario_redacts_invalid_evidence(self) -> None:
+        prepared = mock.Mock(document="{}", images=())
+        classified = mock.Mock(document='{"ok":true}')
+        with WorkbenchContext.temporary() as context:
+            with (
+                mock.patch(
+                    "mechanical_librarian_workbench.scenarios.prepare_cover_packet",
+                    return_value=prepared,
+                ),
+                mock.patch(
+                    "mechanical_librarian_workbench.scenarios.classify_cover_identity",
+                    return_value=classified,
+                ),
+                mock.patch(
+                    "mechanical_librarian_workbench.scenarios.adjudicate_cover_policy",
+                    side_effect=ValueError("/private/hostile"),
+                ),
+            ):
+                with self.assertRaises(WorkbenchFailure) as caught:
+                    execute(context, CoverPolicyRequest("report"), _operations())
+        self.assertEqual(caught.exception.category, "invalid")
+        self.assertNotIn("private", str(caught.exception))
 
     def test_batch_failed_completion_and_events_are_preserved(self) -> None:
         def batch(*arguments: object) -> bool:

@@ -13,6 +13,7 @@ from .context import WorkbenchContext
 from .cover_identity import classify_cover_identity
 from .cover_observation import observe_cover_packet
 from .cover_packets import PreparedCoverPacket, prepare_cover_packet
+from .cover_policy import CoverPolicy, adjudicate_cover_policy
 from .results import WorkbenchResult
 
 Operation = Callable[..., object]
@@ -278,10 +279,36 @@ class CoverObservationRequest:
         return "cover-observation-report"
 
 
+@dataclass(frozen=True)
+class CoverPolicyRequest:
+    report_id: str
+    policy: CoverPolicy = CoverPolicy()
+    observation_document: str | None = None
+    database: str = "reports.sqlite"
+    artifacts: str = "artifacts"
+
+    def __post_init__(self) -> None:
+        _required(self.report_id, "report id")
+        _required(self.database, "database")
+        _required(self.artifacts, "artifacts")
+        if type(self.policy) is not CoverPolicy:
+            raise ValueError("cover policy is invalid")
+        if self.observation_document is not None and (
+            type(self.observation_document) is not str
+            or not 2 <= len(self.observation_document.encode("utf-8")) <= 1_048_576
+        ):
+            raise ValueError("cover observation document is invalid")
+
+    @property
+    def name(self) -> str:
+        return "cover-policy-report"
+
+
 ScenarioRequest: TypeAlias = (
     ReportRequest | ProposalRequest | ReviewCaseRequest | CatalogueRequest
     | BatchRequest | DecisionPreviewRequest | ContainedReviewerRequest
     | CoverPacketRequest | CoverIdentityRequest | CoverObservationRequest
+    | CoverPolicyRequest
 )
 
 
@@ -532,6 +559,28 @@ def _execute(
             ),
             selected.run_cover_packet_reviewer,
         ).document
+    elif isinstance(request, CoverPolicyRequest):
+        database = context.path(request.database)
+        artifacts = context.path(request.artifacts)
+        report_document, packet = _prepare_report_bound_cover_packet(
+            selected, database, artifacts, request.report_id
+        )
+        images = tuple(
+            (value.reference, value.digest, value.payload)
+            for value in packet.images
+        )
+        identity = classify_cover_identity(
+            report_document,
+            packet.document,
+            images,
+        )
+        raw = adjudicate_cover_policy(
+            packet.document,
+            images,
+            identity.document,
+            request.observation_document,
+            request.policy,
+        ).document
     elif isinstance(request, ContainedReviewerRequest):
         paths = tuple(
             context.path(value) for value in
@@ -590,6 +639,7 @@ def execute(
 __all__ = [
     "BatchRequest", "CatalogueRequest", "ContainedReviewerRequest",
     "CoverIdentityRequest", "CoverObservationRequest", "CoverPacketRequest",
+    "CoverPolicyRequest",
     "DecisionPreviewRequest", "ProposalRequest",
     "ReportRequest", "ReviewCaseRequest",
     "ScenarioRequest", "WorkbenchFailure", "WorkbenchOperations", "execute",

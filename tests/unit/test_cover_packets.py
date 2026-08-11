@@ -45,12 +45,14 @@ from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa
     canonical_json,
 )
 from mechanical_librarian_workbench.cover_observation import (  # noqa: E402
+    INSTRUCTION,
     OUTPUT_SCHEMA_VERSION,
     SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
     TAXONOMY,
     TAXONOMY_DOCUMENT,
     TAXONOMY_REFERENCE,
     observe_cover_packet,
+    _output_schema,
 )
 from mechanical_librarian_workbench.cover_packets import (  # noqa: E402
     MAX_COVER_PREVIEWS,
@@ -58,8 +60,14 @@ from mechanical_librarian_workbench.cover_packets import (  # noqa: E402
 )
 from mechanical_librarian_workbench.cover_identity import (  # noqa: E402
     SCHEMA_VERSION,
+    _CLASSIFIER_REFERENCE,
+    _preview_reference,
     _classify_sources,
     classify_cover_identity,
+)
+from mechanical_librarian_workbench.cover_policy import (  # noqa: E402
+    CoverPolicy,
+    adjudicate_cover_policy,
 )
 from mechanical_librarian_workbench import cover_packets as packet_builder  # noqa: E402
 from mechanical_librarian_workbench import reviewer as reviewer_binding  # noqa: E402
@@ -1638,6 +1646,268 @@ class CoverIdentityTests(unittest.TestCase):
                 execute(context, CoverIdentityRequest(report.report_id), invalid)
             self.assertEqual(caught.exception.category, "invalid")
             self.assertNotIn("private", str(caught.exception))
+
+
+def _policy_documents(count: int = 3):
+    packet, images = _packet_case(count)
+    packet_value = json.loads(packet.document)
+    candidates = packet_value["candidates"]
+    identity = {
+        "candidates": [
+            {
+                "candidate_reference": candidate["reference"],
+                "evidence_references": [],
+                "outcome": "verified_work_match",
+                "preview_reference": _preview_reference(
+                    packet_value["packet_reference"], candidate
+                ),
+                "reasons": ["work_identity_verified"],
+            }
+            for candidate in candidates
+        ],
+        "classifier_reference": _CLASSIFIER_REFERENCE,
+        "cover_packet_reference": packet_value["packet_reference"],
+        "report_reference": "report_" + "a" * 64,
+        "schema_version": SCHEMA_VERSION,
+        "work_target_reference": "work_target_ref_" + "b" * 64,
+    }
+    references = tuple(candidate["reference"] for candidate in candidates)
+    observation = {
+        "cover_packet_reference": packet_value["packet_reference"],
+        "instruction_sha256": hashlib.sha256(INSTRUCTION.encode()).hexdigest(),
+        "observations": [
+            {
+                "candidate_reference": candidate["reference"],
+                "composition": "dense",
+                "medium": "illustrated",
+                "preview_sha256": candidate["preview_sha256"],
+                "preview_variant": candidate["preview_variant"],
+                "promotional_text": "absent",
+                "tie_in_branding": "absent",
+            }
+            for candidate in candidates
+        ],
+        "observer_reference": "cover_observer_" + "c" * 64,
+        "output_schema_sha256": hashlib.sha256(
+            _output_schema(references).encode()
+        ).hexdigest(),
+        "schema_version": OBSERVATION_SCHEMA_VERSION,
+        "taxonomy_reference": TAXONOMY_REFERENCE,
+    }
+    return (
+        packet,
+        images,
+        identity,
+        observation,
+        references,
+    )
+
+
+class CoverPolicyTests(unittest.TestCase):
+    def _adjudicate(
+        self,
+        policy: CoverPolicy = CoverPolicy(),
+        *,
+        identity_mutation: object | None = None,
+        observation_mutation: object | None = None,
+        observation_available: bool = True,
+    ) -> dict[str, object]:
+        packet, images, identity, observation, _references = _policy_documents()
+        if identity_mutation is not None:
+            assert callable(identity_mutation)
+            identity_mutation(identity)
+        if observation_mutation is not None:
+            assert callable(observation_mutation)
+            observation_mutation(observation)
+        result = adjudicate_cover_policy(
+            packet.document,
+            images,
+            canonical_json(identity),
+            canonical_json(observation) if observation_available else None,
+            policy,
+        )
+        return json.loads(result.document)
+
+    def test_closed_policy_is_content_bound_and_plain_policy_uses_packet_order(self) -> None:
+        report = self._adjudicate()
+        self.assertEqual(report["status"], "recommended")
+        self.assertEqual(
+            report["recommended_candidate_reference"],
+            report["acceptable_candidate_references"][0],
+        )
+        self.assertEqual(report["reasons"], ["policy_satisfied"])
+        self.assertEqual(report["schema_version"], "cover-policy-report-v1")
+        self.assertEqual(
+            report["observation_taxonomy_reference"], TAXONOMY_REFERENCE
+        )
+        self.assertNotEqual(
+            CoverPolicy().reference,
+            CoverPolicy(avoid_promotional_text=True).reference,
+        )
+        with self.assertRaises(ValueError):
+            CoverPolicy(avoid_promotional_text=1)  # type: ignore[arg-type]
+
+    def test_each_closed_policy_value_filters_prefers_or_abstains(self) -> None:
+        cases = (
+            (
+                "promotional present",
+                CoverPolicy(avoid_promotional_text=True),
+                lambda value: value["observations"][0].update(
+                    promotional_text="present"
+                ),
+                "recommended",
+                "promotional_text_excluded",
+                2,
+            ),
+            (
+                "promotional unknown",
+                CoverPolicy(avoid_promotional_text=True),
+                lambda value: value["observations"][0].update(
+                    promotional_text="unknown"
+                ),
+                "abstained",
+                "observations_ambiguous",
+                0,
+            ),
+            (
+                "tie-in present",
+                CoverPolicy(avoid_tie_in_branding=True),
+                lambda value: value["observations"][0].update(
+                    tie_in_branding="present"
+                ),
+                "recommended",
+                "tie_in_branding_excluded",
+                2,
+            ),
+            (
+                "tie-in unknown",
+                CoverPolicy(avoid_tie_in_branding=True),
+                lambda value: value["observations"][0].update(
+                    tie_in_branding="unknown"
+                ),
+                "abstained",
+                "observations_ambiguous",
+                0,
+            ),
+            (
+                "minimal preferred",
+                CoverPolicy(prefer_minimal_composition=True),
+                lambda value: value["observations"][2].update(
+                    composition="minimal"
+                ),
+                "recommended",
+                "preferred_minimal",
+                3,
+            ),
+            (
+                "composition unknown",
+                CoverPolicy(prefer_minimal_composition=True),
+                lambda value: value["observations"][0].update(
+                    composition="unknown"
+                ),
+                "abstained",
+                "observations_ambiguous",
+                0,
+            ),
+        )
+        for name, policy, mutation, status, reason, acceptable in cases:
+            with self.subTest(name=name):
+                report = self._adjudicate(
+                    policy, observation_mutation=mutation
+                )
+                self.assertEqual(report["status"], status)
+                self.assertIn(reason, report["reasons"])
+                self.assertEqual(
+                    len(report["acceptable_candidate_references"]), acceptable
+                )
+                if name == "minimal preferred":
+                    self.assertEqual(
+                        report["recommended_candidate_reference"],
+                        report["acceptable_candidate_references"][2],
+                    )
+
+    def test_identity_and_empty_policy_sets_fail_closed(self) -> None:
+        conflict = self._adjudicate(
+            identity_mutation=lambda value: value["candidates"][0].update(
+                outcome="conflict"
+            )
+        )
+        self.assertEqual(len(conflict["acceptable_candidate_references"]), 2)
+        self.assertIn("conflict_excluded", conflict["reasons"])
+
+        ambiguous = self._adjudicate(
+            identity_mutation=lambda value: value["candidates"][0].update(
+                outcome="unknown"
+            )
+        )
+        self.assertEqual(ambiguous["status"], "abstained")
+        self.assertEqual(ambiguous["reasons"], ["identity_ambiguous"])
+
+        none_eligible = self._adjudicate(
+            identity_mutation=lambda value: [
+                candidate.update(outcome="conflict")
+                for candidate in value["candidates"]
+            ]
+        )
+        self.assertEqual(none_eligible["status"], "abstained")
+        self.assertIn("no_eligible_candidates", none_eligible["reasons"])
+
+        none_acceptable = self._adjudicate(
+            CoverPolicy(avoid_promotional_text=True),
+            observation_mutation=lambda value: [
+                observation.update(promotional_text="present")
+                for observation in value["observations"]
+            ],
+        )
+        self.assertEqual(none_acceptable["status"], "abstained")
+        self.assertIn("no_policy_compatible_candidate", none_acceptable["reasons"])
+
+    def test_unavailable_real_observations_have_one_typed_abstention(self) -> None:
+        report = self._adjudicate(observation_available=False)
+        self.assertEqual(report["status"], "abstained")
+        self.assertEqual(report["reasons"], ["observations_unavailable"])
+        self.assertEqual(report["acceptable_candidate_references"], [])
+        self.assertIsNone(report["observation_report_sha256"])
+        self.assertIsNone(report["recommended_candidate_reference"])
+
+    def test_unknown_invented_duplicate_or_mismatched_inputs_fail_closed(self) -> None:
+        mutations = (
+            lambda _identity, observation: observation.update(
+                taxonomy_reference="cover_taxonomy_" + "0" * 64
+            ),
+            lambda _identity, observation: observation["observations"][0].update(
+                candidate_reference="cover_ref_" + "0" * 64
+            ),
+            lambda _identity, observation: observation["observations"].__setitem__(
+                1, observation["observations"][0]
+            ),
+            lambda _identity, observation: observation["observations"][0].update(
+                preview_sha256="0" * 64
+            ),
+            lambda identity, _observation: identity.update(
+                classifier_reference="cover_identity_classifier_" + "0" * 64
+            ),
+            lambda identity, _observation: identity["candidates"][0].update(
+                preview_reference="cover_preview_" + "0" * 64
+            ),
+            lambda _identity, observation: observation["observations"][0].update(
+                medium="/private/hostile"
+            ),
+        )
+        for index, mutation in enumerate(mutations):
+            with self.subTest(index=index):
+                packet, images, identity, observation, _references = (
+                    _policy_documents()
+                )
+                mutation(identity, observation)
+                with self.assertRaises(ValueError):
+                    adjudicate_cover_policy(
+                        packet.document,
+                        images,
+                        canonical_json(identity),
+                        canonical_json(observation),
+                        CoverPolicy(),
+                    )
 
 
 if __name__ == "__main__":
