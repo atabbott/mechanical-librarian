@@ -1,60 +1,99 @@
 # Semantic cover corpus readiness — 0.15.0
 
-Status: **INSUFFICIENT** (2026-08-11)
+Status: **PASS** (2026-08-11)
 
-This aggregate-only recovery record supersedes the previous readiness result for
-the frozen provider-cover corpus acquisition attempt. It deliberately excludes
-corpus and candidate identities, metadata, provider payloads and values, media,
+This aggregate-only record supersedes the prior insufficiency report for the
+best-effort provider-cover qualification proof. It deliberately excludes corpus
+and candidate identities, metadata, provider values and payloads, media,
 labels, paths, filenames, identifiers, URLs, digests, credentials, raw
-responses, and per-case results.
+responses, and per-case outcomes.
 
 ## Frozen scope and boundaries
 
-- Inputs were real source works from the approved private corpus, through a
-  disposable loopback read-only target and the existing report, provider, and
-  cover-artifact seams.
+- The proof uses real source works through a disposable loopback read-only
+  target and the existing report, provider, and cover-artifact seams.
 - Only configured Hardcover and Open Library cover lanes were used; Google
-  Books remained metadata-only. Provider request, retry, pacing, truncation,
-  gallery, decoder, and network bounds were not widened.
-- No production-library access or write, model or reviewer dispatch, or
-  holdout reuse occurred during acquisition.
-- The invalid two-controller attempt was quarantined and excluded from this
-  result.
+  Books remained metadata-only. The retained record does not establish the
+  exact acquisition-time request, retry, pacing, truncation, gallery, decoder,
+  or network bounds, so this report makes no claim about those bounds.
+- There was no production-library access, target or media write,
+  model/reviewer dispatch during acquisition, or runtime activation.
+- The final-holdout cohort remains adjudication-only and unavailable to
+  implementation and tuning. Source, work-family, edition/ISBN-family, and
+  near-duplicate split checks passed.
 
-## Recoverable acquisition inventory
+## Recoverable inventory
 
 | Measure | Aggregate result |
 | --- | ---: |
-| Corrected singleton replacement acquisition completed | 340 / 340 |
-| Report failures | 0 |
-| Distinct verified usable previews | 873 |
-| Work-family-disjoint multi-choice packets | 263 |
-| Packets with at least five previews | 62 |
-| Qualification packets with at least five previews | 45 |
-| Inspectable incumbents available | 0 |
+| Frozen source works | 340 |
+| Completed report runs | 339 |
+| Terminal report failures | 1 |
+| Retries | 0 |
+| Unreadable shared artifacts excluded | 1 |
+| Distinct verified usable provider previews | 597 |
+| Work families with usable provider previews | 315 |
+| Work-family-disjoint multi-choice packets | 224 |
+| Packets with at least five usable previews | 26 |
 
-The corrected singleton replacement acquisition completed after a
-placeholder/reference assessor bug was corrected. These transport and packet
-counts are aggregate recovery facts only. They do not establish semantic
-quality, identity qualification, or readiness for a semantic-cover decision
-workbench.
+The current-schema report store and content-addressed artifacts passed a fresh
+read, integrity, foreign-key, and digest check. The durable best-effort minimums
+and observed results are:
+
+| Proof gate | Minimum | Observed | Result |
+| --- | ---: | ---: | --- |
+| Admitted real source works | 120 | 340 | PASS |
+| Distinct usable report-bound provider previews | 300 | 597 | PASS |
+| Work families represented by usable previews | 75 | 315 | PASS |
+| Work-family-disjoint multi-choice packets | 60 | 224 | PASS |
+| Inventory packets with at least five usable previews | 10 | 26 | PASS |
+| Random candidate-to-target identity cases | 100 (50 development + 50 final holdout) | 100 (50 + 50) | PASS |
+
+The identity proof additionally requires the same 100 cases to receive
+independent first and second reviews plus evidence-only adjudication, with no
+identity-class quota. That review gate is recorded below.
+
+Historical qualification-role packet provenance, exact historical
+wheel/configuration provenance, and acquisition-time limit provenance are
+unavailable. They are not claimed as PASS evidence. This PASS is limited to the
+versioned minimums above and the verified current-schema report, artifact,
+split, review, and adjudication evidence.
+
+Provider cover outcomes are bounded aggregate observations, not semantic
+quality measurements:
+
+| Provider | Success | No result | Failure | Truncation |
+| --- | ---: | ---: | ---: | ---: |
+| Hardcover | 661 | 7 | 20 | 10 |
+| Open Library | 76 | 207 | 348 | 12 |
+
+Truncation is an overlapping bounded outcome, not an additional terminal
+category.
 
 ## Identity-review qualification
 
-Identity qualification is insufficient. The immutable pre-egress freeze did
-not contain a candidate-to-target designation or ordering rule. Packet-level
-first-review observations and candidate-level independent-second-review
-observations therefore cannot establish the required same 100 independently
-reviewed candidate cases. There is no valid sealed 100-case second ledger.
+One recorded random seed selected exactly 100 candidate-to-target comparisons:
+50 development and 50 final-holdout cases. The selected cases are
+source- and work-family-disjoint. All 100 have a first source-first review, an
+independent second packet-local review, and evidence-only final adjudication.
+There were 45 agreements and 55 disagreements; adjudication retained the
+first-review class after policy-and-evidence reconciliation.
 
-The final packet, receipt, and reviewer chain also failed restore-readiness and
-could not be uniquely recovered. Provisional or unsealed class counts, any
-provider values or counts not bound by the recoverable terminal receipt, and
-all case-level material remain deliberately unpublished.
+| Closed identity class | Development | Final holdout | Both cohorts |
+| --- | ---: | ---: | ---: |
+| Verified manifestation match | 20 | 25 | 45 |
+| Verified work match | 12 | 9 | 21 |
+| Plausible match | 11 | 11 | 22 |
+| Unknown | 4 | 3 | 7 |
+| Conflict | 3 | 2 | 5 |
 
-## Outcome and follow-on status
+This is the natural observed class distribution. It is not a statistical or
+model-quality claim, and no case was selected, moved, or relabelled to improve
+that distribution.
 
-Issue #546 is **INSUFFICIENT**: the acquisition attempt is terminally resolved
-as insufficient, not qualified. #500 and #540 remain Blocked, and #501 remains
-unpromoted. The already-merged #542 source-only machinery is non-activated and
-does not establish qualification.
+## Outcome
+
+Issue #546 passes as a best-effort general-principle proof of a bounded,
+aggregate-safe provider-cover corpus. It establishes neither semantic quality
+nor runtime activation, and it does not qualify a model or a later transport
+unit. The tracked report contains no private corpus material.
