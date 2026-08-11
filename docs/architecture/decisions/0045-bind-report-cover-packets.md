@@ -26,6 +26,10 @@ and source diversity; decoded preview dimensions bind the transported PNG but
 do not change that order. The absolute limits are 12 PNG previews, 1 MiB per
 preview, and 8 MiB in total.
 
+Every canonical source kind represented by a digest-equal group contributes to
+diversity priority and counts. No single lexicographic source stands in for the
+group.
+
 The packet's ordered reference/digest mapping is part of the canonical reviewer
 request. The generic contained-reviewer entry point is image-free; the sole
 image-capable entry point admits a distinct cover request only through one full
@@ -39,11 +43,9 @@ before either can mount an image, it also verifies the complete bounded,
 canonically ordered PNG chunk structure and checksums and fully decodes a
 single-frame RGBA PNG whose dimensions exactly match the distinct packet
 preview facts and do not exceed 320 by 480. The deterministic profile admits
-only exact IHDR, an optional single strictly bounded iCCP immediately after it,
-one consecutive IDAT run, and IEND. The iCCP name, compression method, exact
-zlib stream, decompressed bound, declared ICC size, and header signature are
-validated without exposing or trusting the profile bytes; PLTE and every other
-ancillary or unknown chunk fail closed;
+only exact IHDR, one consecutive IDAT run, and IEND. ICC profiles, PLTE, and
+every other ancillary or unknown chunk fail before mount so their bytes cannot
+cross the reviewer boundary;
 indistinguishable normalized provenance multiplicity is discarded. Duplicate
 omissions are created only after final selection and always name a retained
 representative; when a whole digest group is excluded, each member carries the

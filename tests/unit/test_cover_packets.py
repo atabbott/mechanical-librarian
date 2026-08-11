@@ -472,48 +472,6 @@ class CoverPacketTests(unittest.TestCase):
             ImageCms.createProfile("sRGB")
         ).tobytes()
         valid_icc = _preview(1, icc_profile=icc_profile)
-        icc_chunks = chunks(valid_icc)
-        self.assertEqual(icc_chunks[1][0], b"iCCP")
-        iccp_data = icc_chunks[1][1]
-        separator = iccp_data.index(b"\x00")
-        compressed_profile = iccp_data[separator + 2:]
-
-        def with_iccp(data: bytes) -> bytes:
-            return render([
-                canonical_chunks[0], (b"iCCP", data), *canonical_chunks[1:],
-            ])
-
-        wrong_size = bytearray(icc_profile)
-        wrong_size[:4] = (len(wrong_size) - 1).to_bytes(4, "big")
-        wrong_signature = bytearray(icc_profile)
-        wrong_signature[36:40] = b"nope"
-        bomb_profile = bytearray(4_194_305)
-        bomb_profile[:4] = len(bomb_profile).to_bytes(4, "big")
-        bomb_profile[36:40] = b"acsp"
-        malformed_iccp = {
-            "iccp_empty_name": with_iccp(b"\x00\x00" + compressed_profile),
-            "iccp_illegal_name": with_iccp(b"bad\x01name\x00\x00" + compressed_profile),
-            "iccp_missing_separator": with_iccp(b"profile-without-separator"),
-            "iccp_wrong_method": with_iccp(b"sRGB\x00\x01" + compressed_profile),
-            "iccp_invalid_zlib": with_iccp(b"sRGB\x00\x00not-zlib"),
-            "iccp_trailing_zlib": with_iccp(iccp_data + b"trailing"),
-            "iccp_decompression_bomb": with_iccp(
-                b"sRGB\x00\x00" + zlib.compress(bytes(bomb_profile), level=9)
-            ),
-            "iccp_declared_size": with_iccp(
-                b"sRGB\x00\x00" + zlib.compress(bytes(wrong_size), level=9)
-            ),
-            "iccp_signature": with_iccp(
-                b"sRGB\x00\x00" + zlib.compress(bytes(wrong_signature), level=9)
-            ),
-            "iccp_after_idat": render([
-                *canonical_chunks[:-1], (b"iCCP", iccp_data), canonical_chunks[-1],
-            ]),
-            "iccp_duplicate": render([
-                canonical_chunks[0], (b"iCCP", iccp_data), (b"iCCP", iccp_data),
-                *canonical_chunks[1:],
-            ]),
-        }
 
         malformed = {
             "forged_signature": b"\x89PNG\r\n\x1a\nforged",
@@ -533,7 +491,7 @@ class CoverPacketTests(unittest.TestCase):
             "iend_before_idat": iend_before_data,
             "trns_before_idat": trns_before_idat,
             "gamma_after_idat": gamma_after_idat,
-            **malformed_iccp,
+            "icc_profile": valid_icc,
         }
         for name, payload in malformed.items():
             document, images = bound(payload)
@@ -543,10 +501,6 @@ class CoverPacketTests(unittest.TestCase):
                 admit_cover_review_request("Inspect.", document, schema, images)
 
         document, images = bound(consecutive_idat)
-        admitted = admit_cover_review_request("Inspect.", document, schema, images)
-        self.assertEqual(len(admitted.images), 1)
-
-        document, images = bound(valid_icc)
         admitted = admit_cover_review_request("Inspect.", document, schema, images)
         self.assertEqual(len(admitted.images), 1)
 
@@ -593,6 +547,100 @@ class CoverPacketTests(unittest.TestCase):
             [(1, 1), (1, 1)],
         )
         self.assertEqual(len(admitted.images), 2)  # type: ignore[attr-defined]
+
+    def test_digest_group_counts_every_source_kind_for_diversity(self) -> None:
+        def candidate(
+            index: int,
+            members: tuple[tuple[CoverSourceKind, CoverDesignation | None], ...],
+        ) -> packet_builder._Candidate:
+            payload = _preview(index, size=1_048_576)
+            artifact = CoverArtifact.create(
+                f"diversity-original-{index}".encode(),
+                payload,
+                "image/png",
+                1000,
+                1000,
+            )
+            sources: list[CoverSource] = []
+            references: list[str] = []
+            for member, (kind, designation) in enumerate(members):
+                provenance = None
+                if designation is not None:
+                    provenance = CoverProvenance(
+                        kind.value,
+                        designation,
+                        f"diversity-work-{index}-{member}",
+                        (
+                            f"diversity-edition-{index}-{member}"
+                            if designation is CoverDesignation.EXACT_EDITION
+                            else None
+                        ),
+                    )
+                sources.append(CoverSource(
+                    cover_source_id(kind, f"diversity-source-{index}-{member}"),
+                    kind,
+                    CoverSourceState.RETRIEVED,
+                    artifact,
+                    provenance=provenance,
+                ))
+                references.append("cover_ref_" + f"{index * 10 + member:064x}")
+            return packet_builder._Candidate(
+                reference=references[0],
+                digest=hashlib.sha256(payload).hexdigest(),
+                payload=payload,
+                width=1000,
+                height=1000,
+                preview_width=1,
+                preview_height=1,
+                incumbent=members[0][0] is CoverSourceKind.ABS,
+                sources=sources,
+                references=references,
+            )
+
+        def candidates() -> list[packet_builder._Candidate]:
+            values = [candidate(1, (
+                (CoverSourceKind.ABS, None),
+                (CoverSourceKind.OPEN_LIBRARY, CoverDesignation.WORK),
+            ))]
+            values.extend(
+                candidate(index, ((CoverSourceKind.HARDCOVER, CoverDesignation.EXACT_EDITION),))
+                for index in range(2, 5)
+            )
+            values.extend(
+                candidate(index, ((CoverSourceKind.OPEN_LIBRARY, CoverDesignation.EXACT_EDITION),))
+                for index in range(5, 8)
+            )
+            values.extend((
+                candidate(8, ((CoverSourceKind.HARDCOVER, CoverDesignation.DEFAULT),)),
+                candidate(9, ((CoverSourceKind.OPEN_LIBRARY, CoverDesignation.WORK),)),
+            ))
+            return values
+
+        documents = []
+        for permutation in (
+            candidates(),
+            list(reversed(candidates())),
+            candidates()[3:] + candidates()[:3],
+        ):
+            packet = packet_builder._finalize_cover_packet(permutation, [])
+            _admit_produced(packet)
+            documents.append(packet.document)
+        self.assertEqual(documents, [documents[0]] * 3)
+
+        document = json.loads(documents[0])
+        incumbent_kinds = {
+            value["source_kind"]
+            for value in document["candidates"][0]["provenance"]
+        }
+        self.assertEqual(incumbent_kinds, {"abs", "open_library"})
+        self.assertEqual(
+            {value["source_kind"] for value in document["candidates"][-1]["provenance"]},
+            {"hardcover"},
+        )
+        self.assertIn(
+            "aggregate_byte_limit",
+            {value["reason"] for value in document["omissions"]},
+        )
 
     def test_cover_entry_rejects_images_bound_to_non_packet_input(self) -> None:
         payload = _preview(1)

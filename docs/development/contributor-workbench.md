@@ -99,15 +99,16 @@ Every admitted preview is fully parsed and decoded through Pillow before it is
 mounted: its complete PNG structure and checksums, single-frame PNG format,
 RGBA mode, maximum 320-by-480 dimensions, and exact declared preview dimensions
 must all agree. The closed deterministic chunk profile accepts only exact IHDR,
-an optional single strictly bounded iCCP immediately after it, one or more
-consecutive IDAT chunks, and final IEND. The iCCP name, separator, method, one
-complete zlib stream, decompressed bound, declared ICC size, and header signature
-must validate; its bytes remain hostile and non-authoritative. Palette,
-transparency, every other ancillary, and every unknown chunk are rejected.
+one or more consecutive IDAT chunks, and final IEND. ICC profiles, palette,
+transparency, every other ancillary, and every unknown chunk are rejected before
+mount; their bytes never cross the reviewer boundary.
 Forged signatures, corrupt or truncated streams, trailing bytes, unsafe
 dimensions, and decoder warnings or failures become the same value-free typed
 format failure.
-Indistinguishable normalized provenance rows collapse to one. The generic
+Indistinguishable normalized provenance rows collapse to one. Every distinct
+source kind represented by a digest-equal group participates in diversity
+priority and counts; no lexicographic representative can hide another source.
+The generic
 request and adapter method have no image member or argument. A changed,
 repeated, unknown, non-PNG, over-bound, or unbound image fails closed. Only the
 bounded Instruction is authoritative; canonical input, provider metadata,

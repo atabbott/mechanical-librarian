@@ -27,7 +27,6 @@ MAX_COVER_PREVIEW_HEIGHT = 480
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _MAX_PNG_CHUNKS = 4_096
-_MAX_ICC_PROFILE_BYTES = 4_194_304
 
 _COVER_REFERENCE = re.compile(r"^cover_ref_[0-9a-f]{64}$")
 _PACKET_REFERENCE = re.compile(r"^cover_packet_[0-9a-f]{64}$")
@@ -86,15 +85,18 @@ def normalize_provenance(
 
 def candidate_priority(
     source_counts: dict[str, int],
-    source_kind: str,
+    source_kinds: tuple[str, ...],
     identity_rank: int,
     width: int,
     height: int,
     reference: str,
 ) -> tuple[int, int, int, str, str]:
     return (
-        source_counts[source_kind], identity_rank, -(width * height),
-        source_kind, reference,
+        sum(source_counts[value] for value in source_kinds),
+        identity_rank,
+        -(width * height),
+        ",".join(source_kinds),
+        reference,
     )
 
 
@@ -155,7 +157,7 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
     offset = len(_PNG_SIGNATURE)
     chunk_count = 0
     width = height = 0
-    saw_header = saw_profile = saw_data = saw_end = False
+    saw_header = saw_data = saw_end = False
     data_closed = False
     while offset < len(payload):
         chunk_count += 1
@@ -189,11 +191,6 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
             saw_header = True
         elif chunk_type == b"IHDR" or saw_end:
             raise ValueError
-        elif chunk_type == b"iCCP":
-            if saw_profile or saw_data or chunk_count != 2:
-                raise ValueError
-            _validate_iccp(payload[data_start:data_end])
-            saw_profile = True
         elif chunk_type == b"IDAT":
             if data_closed:
                 raise ValueError
@@ -209,40 +206,6 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
     if not (saw_header and saw_data and saw_end):
         raise ValueError
     return width, height
-
-
-def _validate_iccp(data: bytes) -> None:
-    separator = data.find(b"\x00")
-    if not 1 <= separator <= 79 or separator + 2 >= len(data):
-        raise ValueError
-    name = data[:separator]
-    if (
-        name.startswith(b" ")
-        or name.endswith(b" ")
-        or b"  " in name
-        or any(
-            not (32 <= value <= 126 or 161 <= value <= 255)
-            for value in name
-        )
-        or data[separator + 1] != 0
-    ):
-        raise ValueError
-    compressed = data[separator + 2:]
-    try:
-        decoder = zlib.decompressobj()
-        profile = decoder.decompress(compressed, _MAX_ICC_PROFILE_BYTES + 1)
-    except zlib.error as error:
-        raise ValueError from error
-    if (
-        len(profile) > _MAX_ICC_PROFILE_BYTES
-        or decoder.unconsumed_tail
-        or not decoder.eof
-        or decoder.unused_data
-        or len(profile) < 132
-        or int.from_bytes(profile[:4], "big") != len(profile)
-        or profile[36:40] != b"acsp"
-    ):
-        raise ValueError
 
 
 def bind_cover_packet(
@@ -357,12 +320,12 @@ def _validate_candidate(value: object) -> tuple[str, int]:
     incumbent = any(item[0] == "abs" for item in provenance)
     if value["incumbent"] is not incumbent:
         raise ValueError
-    source_kind = min(item[0] for item in provenance)
+    source_kinds = tuple(sorted({item[0] for item in provenance}))
     rank = min(
         (designation_rank(item[2]) for item in provenance if item[2]),
         default=4,
     )
-    return source_kind, rank
+    return source_kinds, rank
 
 
 def _validate_provenance(
@@ -402,7 +365,7 @@ def _validate_context(value: object) -> tuple[str, str]:
 
 def _validate_candidate_order(
     candidates: list[dict[str, object]],
-    facts: tuple[tuple[str, int], ...],
+    facts: tuple[tuple[tuple[str, ...], int], ...],
 ) -> None:
     incumbent_positions = [
         index for index, candidate in enumerate(candidates)
@@ -417,7 +380,8 @@ def _validate_candidate_order(
         index = incumbent_positions[0]
         remaining.remove(index)
         expected.append(index)
-        source_counts[facts[index][0]] += 1
+        for source_kind in facts[index][0]:
+            source_counts[source_kind] += 1
     while remaining:
         index = min(
             remaining,
@@ -432,7 +396,8 @@ def _validate_candidate_order(
         )
         remaining.remove(index)
         expected.append(index)
-        source_counts[facts[index][0]] += 1
+        for source_kind in facts[index][0]:
+            source_counts[source_kind] += 1
     if expected != list(range(len(candidates))):
         raise ValueError
 

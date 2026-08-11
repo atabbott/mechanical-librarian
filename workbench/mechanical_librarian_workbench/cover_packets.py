@@ -71,8 +71,8 @@ class _Candidate:
         return min(ranks, default=4)
 
     @property
-    def source_kind(self) -> str:
-        return min(source.kind.value for source in self.sources)
+    def source_kinds(self) -> tuple[str, ...]:
+        return tuple(sorted({source.kind.value for source in self.sources}))
 
 
 def prepare_cover_packet(
@@ -176,13 +176,14 @@ def _finalize_cover_packet(
     remaining = [value for value in candidates if not value.incumbent]
     source_counts = {kind.value: 0 for kind in CoverSourceKind}
     for value in selected:
-        source_counts[value.source_kind] += 1
+        for source_kind in value.source_kinds:
+            source_counts[source_kind] += 1
     while remaining and len(selected) < MAX_COVER_PREVIEWS:
         candidate = min(
             remaining,
             key=lambda value: candidate_priority(
                 source_counts,
-                value.source_kind,
+                value.source_kinds,
                 value.identity_rank,
                 value.width,
                 value.height,
@@ -195,7 +196,8 @@ def _finalize_cover_packet(
             continue
         selected.append(candidate)
         selected_bytes += len(candidate.payload)
-        source_counts[candidate.source_kind] += 1
+        for source_kind in candidate.source_kinds:
+            source_counts[source_kind] += 1
     for value in remaining:
         _omit_group(omissions, value, "shortlist_limit")
     if not selected:
