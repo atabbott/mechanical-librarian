@@ -99,8 +99,11 @@ Every admitted preview is fully parsed and decoded through Pillow before it is
 mounted: its complete PNG structure and checksums, single-frame PNG format,
 RGBA mode, maximum 320-by-480 dimensions, and exact declared preview dimensions
 must all agree. The closed deterministic chunk profile accepts only exact IHDR,
-one or more consecutive IDAT chunks, and final IEND; palette, transparency,
-colour-metadata, and every other ancillary or unknown chunk are rejected.
+an optional single strictly bounded iCCP immediately after it, one or more
+consecutive IDAT chunks, and final IEND. The iCCP name, separator, method, one
+complete zlib stream, decompressed bound, declared ICC size, and header signature
+must validate; its bytes remain hostile and non-authoritative. Palette,
+transparency, every other ancillary, and every unknown chunk are rejected.
 Forged signatures, corrupt or truncated streams, trailing bytes, unsafe
 dimensions, and decoder warnings or failures become the same value-free typed
 format failure.

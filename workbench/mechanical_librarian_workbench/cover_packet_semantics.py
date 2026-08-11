@@ -27,6 +27,7 @@ MAX_COVER_PREVIEW_HEIGHT = 480
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _MAX_PNG_CHUNKS = 4_096
+_MAX_ICC_PROFILE_BYTES = 4_194_304
 
 _COVER_REFERENCE = re.compile(r"^cover_ref_[0-9a-f]{64}$")
 _PACKET_REFERENCE = re.compile(r"^cover_packet_[0-9a-f]{64}$")
@@ -154,7 +155,7 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
     offset = len(_PNG_SIGNATURE)
     chunk_count = 0
     width = height = 0
-    saw_header = saw_data = saw_end = False
+    saw_header = saw_profile = saw_data = saw_end = False
     data_closed = False
     while offset < len(payload):
         chunk_count += 1
@@ -188,6 +189,11 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
             saw_header = True
         elif chunk_type == b"IHDR" or saw_end:
             raise ValueError
+        elif chunk_type == b"iCCP":
+            if saw_profile or saw_data or chunk_count != 2:
+                raise ValueError
+            _validate_iccp(payload[data_start:data_end])
+            saw_profile = True
         elif chunk_type == b"IDAT":
             if data_closed:
                 raise ValueError
@@ -203,6 +209,40 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
     if not (saw_header and saw_data and saw_end):
         raise ValueError
     return width, height
+
+
+def _validate_iccp(data: bytes) -> None:
+    separator = data.find(b"\x00")
+    if not 1 <= separator <= 79 or separator + 2 >= len(data):
+        raise ValueError
+    name = data[:separator]
+    if (
+        name.startswith(b" ")
+        or name.endswith(b" ")
+        or b"  " in name
+        or any(
+            not (32 <= value <= 126 or 161 <= value <= 255)
+            for value in name
+        )
+        or data[separator + 1] != 0
+    ):
+        raise ValueError
+    compressed = data[separator + 2:]
+    try:
+        decoder = zlib.decompressobj()
+        profile = decoder.decompress(compressed, _MAX_ICC_PROFILE_BYTES + 1)
+    except zlib.error as error:
+        raise ValueError from error
+    if (
+        len(profile) > _MAX_ICC_PROFILE_BYTES
+        or decoder.unconsumed_tail
+        or not decoder.eof
+        or decoder.unused_data
+        or len(profile) < 132
+        or int.from_bytes(profile[:4], "big") != len(profile)
+        or profile[36:40] != b"acsp"
+    ):
+        raise ValueError
 
 
 def bind_cover_packet(

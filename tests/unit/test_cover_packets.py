@@ -12,7 +12,7 @@ import zlib
 from dataclasses import replace
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageCms
 
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -59,6 +59,7 @@ def _preview(
     width: int = 1,
     height: int = 1,
     mode: str = "RGBA",
+    icc_profile: bytes | None = None,
 ) -> bytes:
     output = io.BytesIO()
     color = (
@@ -66,9 +67,10 @@ def _preview(
         if mode == "RGBA"
         else (index % 251, (index * 3) % 251, (index * 7) % 251)
     )
-    Image.new(mode, (width, height), color).save(
-        output, "PNG", optimize=False, compress_level=9
-    )
+    save_options: dict[str, object] = {"optimize": False, "compress_level": 9}
+    if icc_profile is not None:
+        save_options["icc_profile"] = icc_profile
+    Image.new(mode, (width, height), color).save(output, "PNG", **save_options)
     payload = output.getvalue()
     if size is None:
         return payload
@@ -466,6 +468,53 @@ class CoverPacketTests(unittest.TestCase):
             canonical_chunks[-1],
         ])
 
+        icc_profile = ImageCms.ImageCmsProfile(
+            ImageCms.createProfile("sRGB")
+        ).tobytes()
+        valid_icc = _preview(1, icc_profile=icc_profile)
+        icc_chunks = chunks(valid_icc)
+        self.assertEqual(icc_chunks[1][0], b"iCCP")
+        iccp_data = icc_chunks[1][1]
+        separator = iccp_data.index(b"\x00")
+        compressed_profile = iccp_data[separator + 2:]
+
+        def with_iccp(data: bytes) -> bytes:
+            return render([
+                canonical_chunks[0], (b"iCCP", data), *canonical_chunks[1:],
+            ])
+
+        wrong_size = bytearray(icc_profile)
+        wrong_size[:4] = (len(wrong_size) - 1).to_bytes(4, "big")
+        wrong_signature = bytearray(icc_profile)
+        wrong_signature[36:40] = b"nope"
+        bomb_profile = bytearray(4_194_305)
+        bomb_profile[:4] = len(bomb_profile).to_bytes(4, "big")
+        bomb_profile[36:40] = b"acsp"
+        malformed_iccp = {
+            "iccp_empty_name": with_iccp(b"\x00\x00" + compressed_profile),
+            "iccp_illegal_name": with_iccp(b"bad\x01name\x00\x00" + compressed_profile),
+            "iccp_missing_separator": with_iccp(b"profile-without-separator"),
+            "iccp_wrong_method": with_iccp(b"sRGB\x00\x01" + compressed_profile),
+            "iccp_invalid_zlib": with_iccp(b"sRGB\x00\x00not-zlib"),
+            "iccp_trailing_zlib": with_iccp(iccp_data + b"trailing"),
+            "iccp_decompression_bomb": with_iccp(
+                b"sRGB\x00\x00" + zlib.compress(bytes(bomb_profile), level=9)
+            ),
+            "iccp_declared_size": with_iccp(
+                b"sRGB\x00\x00" + zlib.compress(bytes(wrong_size), level=9)
+            ),
+            "iccp_signature": with_iccp(
+                b"sRGB\x00\x00" + zlib.compress(bytes(wrong_signature), level=9)
+            ),
+            "iccp_after_idat": render([
+                *canonical_chunks[:-1], (b"iCCP", iccp_data), canonical_chunks[-1],
+            ]),
+            "iccp_duplicate": render([
+                canonical_chunks[0], (b"iCCP", iccp_data), (b"iCCP", iccp_data),
+                *canonical_chunks[1:],
+            ]),
+        }
+
         malformed = {
             "forged_signature": b"\x89PNG\r\n\x1a\nforged",
             "truncated": valid[:-4],
@@ -484,6 +533,7 @@ class CoverPacketTests(unittest.TestCase):
             "iend_before_idat": iend_before_data,
             "trns_before_idat": trns_before_idat,
             "gamma_after_idat": gamma_after_idat,
+            **malformed_iccp,
         }
         for name, payload in malformed.items():
             document, images = bound(payload)
@@ -493,6 +543,10 @@ class CoverPacketTests(unittest.TestCase):
                 admit_cover_review_request("Inspect.", document, schema, images)
 
         document, images = bound(consecutive_idat)
+        admitted = admit_cover_review_request("Inspect.", document, schema, images)
+        self.assertEqual(len(admitted.images), 1)
+
+        document, images = bound(valid_icc)
         admitted = admit_cover_review_request("Inspect.", document, schema, images)
         self.assertEqual(len(admitted.images), 1)
 

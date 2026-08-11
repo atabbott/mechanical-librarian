@@ -462,11 +462,14 @@ checks the complete bounded, canonically ordered PNG chunk structure and
 checksums and fully decodes each image before mounting it, admitting only
 single-frame RGBA PNG previews no larger than 320 by 480 whose decoded and
 declared preview dimensions agree. Its closed profile accepts only exact IHDR,
-one consecutive IDAT run, and final IEND; PLTE and every ancillary or unknown
-chunk fail closed. Original-cover technical dimensions remain separate ordering
-evidence. Forged signatures, corrupt or truncated streams, invalid chunk state,
-trailing bytes, unsafe dimensions, and decoder warnings or failures cross only
-the value-free response-format boundary.
+an optional single bounded iCCP immediately after it, one consecutive IDAT run,
+and final IEND. The iCCP keyword, method, strict single zlib stream, decompressed
+bound, declared ICC size, and header signature must agree; profile bytes remain
+hostile, non-authoritative, and unexposed. PLTE and every other ancillary or
+unknown chunk fail closed. Original-cover technical dimensions remain separate
+ordering evidence. Forged signatures, corrupt or truncated streams, invalid
+chunk state, trailing bytes, unsafe dimensions, and decoder warnings or
+failures cross only the value-free response-format boundary.
 Duplicate groups bind to a retained representative only after final selection;
 fully excluded groups contain only their reason-specific omission evidence.
 Only the bounded Instruction is authoritative; canonical input, provider

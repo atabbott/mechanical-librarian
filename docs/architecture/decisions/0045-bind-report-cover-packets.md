@@ -39,8 +39,11 @@ before either can mount an image, it also verifies the complete bounded,
 canonically ordered PNG chunk structure and checksums and fully decodes a
 single-frame RGBA PNG whose dimensions exactly match the distinct packet
 preview facts and do not exceed 320 by 480. The deterministic profile admits
-only exact IHDR, one consecutive IDAT run, and IEND; PLTE and all ancillary or
-unknown chunks fail closed;
+only exact IHDR, an optional single strictly bounded iCCP immediately after it,
+one consecutive IDAT run, and IEND. The iCCP name, compression method, exact
+zlib stream, decompressed bound, declared ICC size, and header signature are
+validated without exposing or trusting the profile bytes; PLTE and every other
+ancillary or unknown chunk fail closed;
 indistinguishable normalized provenance multiplicity is discarded. Duplicate
 omissions are created only after final selection and always name a retained
 representative; when a whole digest group is excluded, each member carries the
