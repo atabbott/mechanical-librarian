@@ -29,9 +29,11 @@ The initial `cover-policy-v1` has exactly three booleans:
 - prefer a qualified minimal composition.
 
 Policy is canonical typed data, never prompt text. The adjudicator re-admits
-the complete packet and images, requires the exact current identity classifier,
-observation taxonomy, instruction and output schema, and verifies every
-candidate/preview binding before deciding. Conflict candidates are excluded.
+the complete packet and images, recomputes the identity report from the exact
+retained source report instead of accepting caller-supplied outcomes, requires
+the exact current identity classifier, observation taxonomy, instruction and
+output schema, and verifies every candidate/preview binding before deciding.
+Conflict candidates are excluded.
 Unknown identity, or unknown observation evidence needed by an enabled policy,
 produces an abstention. A policy cannot rescue an excluded candidate.
 

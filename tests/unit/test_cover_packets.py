@@ -1649,7 +1649,20 @@ class CoverIdentityTests(unittest.TestCase):
 
 
 def _policy_documents(count: int = 3):
-    packet, images = _packet_case(count)
+    payloads = tuple(_preview(index) for index in range(1, count + 1))
+    sources = tuple(_source(index, payload) for index, payload in enumerate(payloads, 1))
+    report = _report(sources)
+    by_artifact = {
+        source.artifact.artifact_id: payload
+        for source, payload in zip(sources, payloads, strict=True)
+        if source.artifact is not None
+    }
+    packet = prepare_cover_packet(
+        report.to_json(), lambda artifact, _variant: by_artifact[artifact]
+    )
+    images = tuple(
+        (value.reference, value.digest, value.payload) for value in packet.images
+    )
     packet_value = json.loads(packet.document)
     candidates = packet_value["candidates"]
     identity = {
@@ -1695,6 +1708,7 @@ def _policy_documents(count: int = 3):
         "taxonomy_reference": TAXONOMY_REFERENCE,
     }
     return (
+        report.to_json(),
         packet,
         images,
         identity,
@@ -1712,20 +1726,26 @@ class CoverPolicyTests(unittest.TestCase):
         observation_mutation: object | None = None,
         observation_available: bool = True,
     ) -> dict[str, object]:
-        packet, images, identity, observation, _references = _policy_documents()
+        report_document, packet, images, identity, observation, _references = (
+            _policy_documents()
+        )
         if identity_mutation is not None:
             assert callable(identity_mutation)
             identity_mutation(identity)
         if observation_mutation is not None:
             assert callable(observation_mutation)
             observation_mutation(observation)
-        result = adjudicate_cover_policy(
-            packet.document,
-            images,
-            canonical_json(identity),
-            canonical_json(observation) if observation_available else None,
-            policy,
-        )
+        with mock.patch(
+            "mechanical_librarian_workbench.cover_policy.classify_cover_identity",
+            return_value=SimpleNamespace(document=canonical_json(identity)),
+        ):
+            result = adjudicate_cover_policy(
+                report_document,
+                packet.document,
+                images,
+                canonical_json(observation) if observation_available else None,
+                policy,
+            )
         return json.loads(result.document)
 
     def test_closed_policy_is_content_bound_and_plain_policy_uses_packet_order(self) -> None:
@@ -1903,44 +1923,58 @@ class CoverPolicyTests(unittest.TestCase):
         self.assertIsNone(report["observation_report_sha256"])
         self.assertIsNone(report["recommended_candidate_reference"])
 
+    def test_identity_is_recomputed_from_exact_report_evidence(self) -> None:
+        report_document, packet, images, _identity, observation, _references = (
+            _policy_documents()
+        )
+        report = json.loads(
+            adjudicate_cover_policy(
+                report_document,
+                packet.document,
+                images,
+                canonical_json(observation),
+                CoverPolicy(),
+            ).document
+        )
+        self.assertEqual(report["status"], "abstained")
+        self.assertEqual(report["reasons"], ["identity_ambiguous"])
+
     def test_unknown_invented_duplicate_or_mismatched_inputs_fail_closed(self) -> None:
         mutations = (
-            lambda _identity, observation: observation.update(
+            lambda observation: observation.update(
                 taxonomy_reference="cover_taxonomy_" + "0" * 64
             ),
-            lambda _identity, observation: observation["observations"][0].update(
+            lambda observation: observation["observations"][0].update(
                 candidate_reference="cover_ref_" + "0" * 64
             ),
-            lambda _identity, observation: observation["observations"].__setitem__(
+            lambda observation: observation["observations"].__setitem__(
                 1, observation["observations"][0]
             ),
-            lambda _identity, observation: observation["observations"][0].update(
+            lambda observation: observation["observations"][0].update(
                 preview_sha256="0" * 64
             ),
-            lambda identity, _observation: identity.update(
-                classifier_reference="cover_identity_classifier_" + "0" * 64
-            ),
-            lambda identity, _observation: identity["candidates"][0].update(
-                preview_reference="cover_preview_" + "0" * 64
-            ),
-            lambda _identity, observation: observation["observations"][0].update(
+            lambda observation: observation["observations"][0].update(
                 medium="/private/hostile"
             ),
         )
         for index, mutation in enumerate(mutations):
             with self.subTest(index=index):
-                packet, images, identity, observation, _references = (
+                report_document, packet, images, identity, observation, _references = (
                     _policy_documents()
                 )
-                mutation(identity, observation)
-                with self.assertRaises(ValueError):
-                    adjudicate_cover_policy(
-                        packet.document,
-                        images,
-                        canonical_json(identity),
-                        canonical_json(observation),
-                        CoverPolicy(),
-                    )
+                mutation(observation)
+                with mock.patch(
+                    "mechanical_librarian_workbench.cover_policy.classify_cover_identity",
+                    return_value=SimpleNamespace(document=canonical_json(identity)),
+                ):
+                    with self.assertRaises(ValueError):
+                        adjudicate_cover_policy(
+                            report_document,
+                            packet.document,
+                            images,
+                            canonical_json(observation),
+                            CoverPolicy(),
+                        )
 
 
 if __name__ == "__main__":

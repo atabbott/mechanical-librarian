@@ -11,6 +11,7 @@ from .cover_identity import (
     SCHEMA_VERSION as IDENTITY_SCHEMA_VERSION,
     _CLASSIFIER_REFERENCE,
     _preview_reference,
+    classify_cover_identity,
 )
 from .cover_observation import (
     INSTRUCTION,
@@ -77,15 +78,20 @@ class CoverPolicyReport:
 
 
 def adjudicate_cover_policy(
+    report_document: str,
     packet_document: str,
     image_payloads: tuple[tuple[str, str, bytes], ...],
-    identity_document: str,
     observation_document: str | None,
     policy: CoverPolicy,
 ) -> CoverPolicyReport:
     """Return one exact recommendation or a closed abstention."""
     if type(policy) is not CoverPolicy:
         raise ValueError("cover policy is invalid")
+    identity_document = classify_cover_identity(
+        report_document,
+        packet_document,
+        image_payloads,
+    ).document
     bind_cover_packet(packet_document, image_payloads)
     packet = _load_object(packet_document, "cover packet")
     candidates = packet["candidates"]

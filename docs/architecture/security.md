@@ -475,9 +475,11 @@ emits only opaque identities plus exact preview digest/variant facts. Raw model
 output is not an observation report until that validation passes.
 
 The source-only cover-policy adjudicator introduces no model or provider call.
-It re-admits the exact packet/images and requires the current classifier,
-taxonomy, observer instruction and output-schema identities before using any
-candidate facts. Its policy is three canonical booleans, never prompt text.
+It re-admits the exact packet/images, recomputes identity outcomes from the
+exact retained source report instead of trusting a caller-authored identity
+document, and requires the current classifier, taxonomy, observer instruction
+and output-schema identities before using any candidate facts. Its policy is
+three canonical booleans, never prompt text.
 Conflict candidates cannot be rescued; unknown identity or policy-relevant
 unknown observations abstain. Missing, duplicate, invented, mismatched or
 hostile references fail before output. The report contains only opaque

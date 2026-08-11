@@ -78,8 +78,10 @@ and mapping. The contained observer itself did not execute under the preserved
 #542 transport result, so this evidence proves the workbench contract rather
 than semantic label quality or runtime readiness.
 
-`cover-policy-report` is a deterministic consumer of the exact cover packet,
-local identity report, closed observation report and `cover-policy-v1`.
+`cover-policy-report` is a deterministic consumer of the exact retained
+report, cover packet, closed observation report and `cover-policy-v1`. It
+recomputes the local identity report from that retained evidence rather than
+accepting caller-supplied identity outcomes.
 Callers can avoid promotional text, avoid tie-in branding and prefer minimal
 composition through three booleans; no prompt-authored or free-form policy is
 accepted. Conflict candidates are excluded, policy-relevant unknown evidence

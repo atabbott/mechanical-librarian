@@ -569,15 +569,10 @@ def _execute(
             (value.reference, value.digest, value.payload)
             for value in packet.images
         )
-        identity = classify_cover_identity(
+        raw = adjudicate_cover_policy(
             report_document,
             packet.document,
             images,
-        )
-        raw = adjudicate_cover_policy(
-            packet.document,
-            images,
-            identity.document,
             request.observation_document,
             request.policy,
         ).document
