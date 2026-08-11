@@ -25,7 +25,12 @@ from fastapi import (
     Security,
 )
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+)
 from fastapi.security import APIKeyCookie
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from starlette.types import Message, Receive, Scope, Send
@@ -1606,12 +1611,15 @@ def _register_html_routes(
         except (OSError, ReactAssetError):
             return _react_asset_recovery_response()
 
+    @app.get("/", include_in_schema=False)
+    def root_page() -> RedirectResponse:
+        return RedirectResponse(url="/login", status_code=303)
+
     @app.get("/review/{review_case_id}", include_in_schema=False)
     def review_page(
         review_case_id: str,
         ml_session: str | None = Cookie(default=None),
     ) -> HTMLResponse:
-        _require_case_id(review_case_id)
         return shell_response(ml_session)
 
     @app.get("/library", include_in_schema=False)

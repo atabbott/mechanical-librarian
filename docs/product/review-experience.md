@@ -194,17 +194,19 @@ URL-owned. Library lenses, title links, preview actions, and pagination remain
 wrap within a bounded two-line title area so distinguishing text remains
 readable without widening the work list or document.
 
-Attention is a separate field-level queue containing only unresolved ordinary
-fields that can benefit from an owner decision. It groups fields by readable
-work identity, shows the destination plus bounded reason and outcome context,
-and links directly to the exact field in the authoritative case. Its work-level
-field count remains complete even when field cursor pagination splits a work,
-and evidence context counts bounded records rather than claiming distinct
-providers. Decision preview copy promises only the current value and available
-choices until the exact case supplies its eligible direct-value choices. An
-empty queue does not imply an empty Library: automatic-only and resolved works
-remain discoverable there. Destructive work remains outside this ordinary
-queue.
+Attention is a contextual, URL-owned field queue inside the regular-width
+Library workspace, not a peer navigation destination. It contains only
+unresolved ordinary fields that can benefit from an owner decision, groups them
+by readable work identity, and keeps the current work, active field, and queue
+position visible beside the decision canvas. At compact widths the same queue
+may become a separate single-column step while preserving Back/Forward state
+and task continuity. Its work-level field count remains complete when cursor
+pagination splits a work, and evidence context counts bounded records rather
+than claiming distinct providers. Decision preview copy promises only the
+current value and available choices until the exact case supplies its eligible
+direct-value choices. An empty queue does not imply an empty Library:
+automatic-only and resolved works remain discoverable there. Destructive work
+remains outside this ordinary queue.
 
 The queue supports cursor pagination, stable ordering, deterministic
 tie-breaking, title/author/target search, and explicit filters for:
@@ -217,6 +219,12 @@ tie-breaking, title/author/target search, and explicit filters for:
 
 The default order prioritizes unresolved human work while keeping confirmed
 siblings adjacent. Filtering cannot leave a hidden case active.
+
+The server admits authenticated client entry and refresh for every supported
+review path without treating the URL segment itself as data authority. The
+review API remains the authoritative existence and shape check, so a missing or
+invalid case renders the application's bounded recovery state rather than a raw
+server error. Root entry redirects to sign-in.
 
 The detail view presents identity and current-versus-proposed choices before
 supporting evidence. The current value and each specific eligible proposed
@@ -357,25 +365,31 @@ widths in both themes without document-level horizontal overflow. The selected
 theme is non-authoritative presentation state and cannot affect review data or
 decision authority.
 
-Activity preserves the Library, Attention and Policy hierarchy. Before consent
-it shows prepared human/automatic counts, all 14 destinations with exact
-included/excluded readiness, one mutation slot, a representative before/after
-example, backup readiness and one enable action. A partially consented library
-returns to that same disclosure when a newly eligible destination can be added;
-the action binds the exact visible subset and fails safely if it changes.
-Afterwards it shows a compact running summary and chronological ledger, with
-qualified automatic outcomes named clearly, unknown origins shown as neutral
-bounded text, and pause/resume/revoke as the only prominent controls. It does
-not expose internal jobs or rates, add a badge, or turn operational failure into
-a metadata decision.
+Activity preserves the Library workspace and Policy hierarchy. Once durable
+activity exists, its current guarded state, shared recovery, and recent outcomes
+lead the page; write-permission inventory remains reachable from that state and
+collapses to a concise summary for returning owners. Before any activity or
+consent it opens that disclosure to show prepared human/automatic counts, all
+14 destinations with exact included/excluded readiness, one mutation slot, a
+representative before/after example, backup readiness and one enable action. A
+partially consented library returns to the same disclosure when a newly eligible
+destination can be added; the action binds the exact visible subset and fails
+safely if it changes. Its collapsed ready count uses the same backup,
+capability, unconsented-destination, and prepared-work gates as the enabled
+checkbox and command; unavailable action is never summarized as readiness.
+Qualified automatic outcomes are named clearly, unknown
+origins remain neutral bounded text, and pause/resume/revoke remain the only
+prominent controls. Activity does not expose internal jobs or rates, add a
+badge, or turn operational failure into a metadata decision.
 
 The delivered F16a detail page uses a bounded horizontally scrollable field
-attention-only strip inside a non-overflowing document. Each genuinely
-unresolved field has immediate, semantically named accept/keep/reject controls
-and no redundant save step. A server acknowledgement reloads authoritative
-detail/history, preserves the strip position, announces a non-obscuring status,
-and focuses the next unresolved field. A failure preserves the original choice
-and idempotency key,
+attention-only strip inside a non-overflowing document. For each genuinely
+unresolved field, the current value and every specific eligible proposed value
+are the immediate decision controls; selecting one records that value without
+generic Accept/Keep/Reject controls or a redundant submit step. A server
+acknowledgement reloads authoritative detail/history, preserves the strip
+position, announces a non-obscuring status, and focuses the next unresolved
+field. A failure preserves the original choice and idempotency key,
 does not advance, and focuses an explicit retry. A current-case conflict reloads
 authoritative detail/history instead of re-enabling stale controls, while a
 superseded case routes back to the authoritative Library. If a response is lost

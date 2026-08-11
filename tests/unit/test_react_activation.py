@@ -142,6 +142,21 @@ class ReactActivationTests(unittest.TestCase):
         self.assertEqual(len(set(tokens)), len(paths))
         self.assertNotIn(login["csrf_token"], tokens)
 
+    def test_root_and_unknown_review_entry_preserve_client_recovery(self) -> None:
+        root = self.client.get("/", follow_redirects=False)
+        self.assertEqual(root.status_code, 303)
+        self.assertEqual(root.headers["location"], "/login")
+
+        self._login()
+        for _ in range(2):
+            page = self.client.get("/review/case-1")
+            self.assertEqual(page.status_code, 200, page.text)
+            self.assertIn(f'data-build-identity="{self.identity}"', page.text)
+
+        missing = self.client.get("/api/v1/review-cases/case-1")
+        self.assertEqual(missing.status_code, 404, missing.text)
+        self.assertEqual(missing.json()["error"]["code"], "not_found")
+
     def test_only_manifest_admitted_non_shell_assets_are_served(self) -> None:
         script = self.client.get(
             "/assets/review-app/assets/index-deadbeef.js"

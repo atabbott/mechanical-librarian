@@ -43,6 +43,18 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             parsed = urlsplit(route.request.url)
             path = parsed.path
             if path.startswith("/api/v1/"):
+                if path == "/api/v1/review-cases/missing-case":
+                    route.fulfill(
+                        status=404,
+                        content_type="application/json",
+                        body=json.dumps(
+                            {
+                                "error": {"code": "not_found"},
+                                "schema_version": "review-error-v1",
+                            }
+                        ),
+                    )
+                    return
                 if path.endswith("/decisions") and route.request.method == "POST":
                     ambiguous_decisions += 1
                     route.abort("failed")
@@ -132,6 +144,9 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertEqual(page.locator("img, script:not([src])").count(), 0)
                 self.assertIsNone(page.evaluate("() => window.__metadataExecuted"))
                 if path == "/activity":
+                    page.get_by_role(
+                        "button", name="Open write-permission details"
+                    ).click()
                     page.get_by_label("Household ebooks destination consent").get_by_text(
                         "Subtitle: Excluded · A field is unavailable"
                     ).wait_for()
@@ -159,6 +174,36 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     documents,
                     before_entry + (2 if path == "/activity" else 1),
                 )
+
+            missing_case_error_start = len(errors)
+            for _ in range(2):
+                response = page.goto(
+                    "https://react-platform.invalid/review/missing-case"
+                    "?field=title&subview=review"
+                )
+                self.assertIsNotNone(response)
+                self.assertEqual(response.status, 200)
+                page.get_by_role(
+                    "heading", name="This workspace could not be loaded."
+                ).wait_for()
+                page.get_by_role("button", name="Try again").wait_for()
+            missing_case_errors = errors[missing_case_error_start:]
+            self.assertEqual(len(missing_case_errors), 4)
+            self.assertEqual(
+                sum(
+                    "status of 404 (Not Found)" in error
+                    for error in missing_case_errors
+                ),
+                2,
+            )
+            self.assertEqual(
+                sum(
+                    "Review API request failed (404: not_found)" in error
+                    for error in missing_case_errors
+                ),
+                2,
+            )
+            del errors[missing_case_error_start:]
 
             page.set_viewport_size({"width": 1440, "height": 900})
             page.goto("https://react-platform.invalid/library?lens=all")
@@ -295,6 +340,15 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 "Three independent catalogue observations disagree on presentation.",
                 exact=True,
             ).wait_for()
+            desktop_field_rail = page.locator(".detail-layout > .field-navigation")
+            self.assertEqual(
+                desktop_field_rail.evaluate("node => getComputedStyle(node).position"),
+                "sticky",
+            )
+            self.assertEqual(
+                desktop_field_rail.evaluate("node => getComputedStyle(node).top"),
+                "82px",
+            )
             choices = page.locator("#field-title .direct-choice-grid")
             self.assertIn("Current <script> title", choices.inner_text())
             self.assertIn("The Clockmaker's Cartography", choices.inner_text())
@@ -365,6 +419,15 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             ).wait_for()
             self.assertEqual(return_automatic_requests, 1)
             page.set_viewport_size({"width": 390, "height": 844})
+            compact_field_rail = page.locator(".detail-layout > .field-navigation")
+            self.assertEqual(
+                compact_field_rail.evaluate("node => getComputedStyle(node).position"),
+                "static",
+            )
+            self.assertEqual(
+                compact_field_rail.evaluate("node => getComputedStyle(node).top"),
+                "auto",
+            )
             for control in page.locator(".masthead nav a, .shell-actions button").all():
                 self.assertGreaterEqual(control.bounding_box()["height"], 44)
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
