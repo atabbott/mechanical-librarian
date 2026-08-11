@@ -19,6 +19,9 @@
   controls record the existing exact-field decision without generic outcome
   controls or a submit step. Readable reviewer facts and secondary,
   retryable evidence/history remain available without blocking the decision.
+  When a decision response cannot be reconciled against authoritative detail,
+  every field remains blocked until reload instead of offering stale choices
+  or claiming that the case was refreshed.
   (#531)
 
 - Restore the Variant M editorial shell and complete attention-first Library.

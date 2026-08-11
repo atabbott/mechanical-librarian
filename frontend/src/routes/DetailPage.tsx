@@ -58,7 +58,29 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
     const stillReviewingSubmittedField = mounted.current && currentLocation.current.pathname === `/review/${reviewCaseId}` && currentSearch.current.subview === 'review' && currentSearch.current.field === command.destination
     setStatus(stillReviewingSubmittedField && next ? `Decision recorded. Continuing with ${friendly(next.destination)}.` : 'Decision recorded from the authoritative case.')
     if (stillReviewingSubmittedField && next) await navigate({ search: { ...currentSearch.current, field: next.destination, subview: 'review' } })
-  }, onError: async (error, command) => { const refreshed = await settle(); const refreshedField = refreshed?.fields.find((field) => field.destination === command.destination); if (refreshedField && !actionable(refreshedField)) setPending(null); if (error instanceof ApiError && error.code === 'stale') { setStatus('This case was superseded. Reopen its current replacement from Library.'); await navigate({ to: '/library', search: { lens: 'needs_attention' } }); return } if (error instanceof ApiError && error.code === 'already_decided') { setPending(null); setStatus('The authoritative decision was reloaded.'); return } setStatus(error instanceof AmbiguousMutationError ? 'The response was lost. The current case was reloaded before any retry.' : 'The decision was not recorded. Your choice is unchanged.') } })
+  }, onError: async (error, command) => {
+    const refreshed = await settle()
+    const refreshedField = refreshed?.fields.find((field) => field.destination === command.destination)
+    if (refreshedField && !actionable(refreshedField)) setPending(null)
+    if (error instanceof ApiError && error.code === 'stale') {
+      setStatus('This case was superseded. Reopen its current replacement from Library.')
+      await navigate({ to: '/library', search: { lens: 'needs_attention' } })
+      return
+    }
+    if (!refreshed) {
+      setReloadRequired(true)
+      setStatus(error instanceof AmbiguousMutationError
+        ? 'The decision outcome is uncertain and the current case could not be refreshed. Reload to reconcile it before reviewing another value.'
+        : 'The current decision state could not be reconciled because the case could not be refreshed. Reload before reviewing another value.')
+      return
+    }
+    if (error instanceof ApiError && error.code === 'already_decided') {
+      setPending(null)
+      setStatus('The authoritative decision was reloaded.')
+      return
+    }
+    setStatus(error instanceof AmbiguousMutationError ? 'The response was lost. The current case was reloaded before any retry.' : 'The decision was not recorded. Your choice is unchanged.')
+  } })
   const returnAutomatic = useMutation({ mutationFn: (destination: string) => http.returnToAutomatic(reviewCaseId, destination), retry: false, onSuccess: async () => { setStatus('Automatic policy resumes after fresh checks.'); await settle() }, onError: async () => { setStatus('Manual hold is unchanged. Try again.'); await settle() } })
   const selected = data.fields.some((field) => field.destination === search.field) ? search.field : data.fields[0]?.destination
   useRouteReadyFocus(`${search.subview}:${selected ?? ''}`)

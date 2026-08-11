@@ -464,6 +464,50 @@ describe('typed review routes', () => {
     await waitFor(() => expect(stale.router.state.location.pathname).toBe('/library'))
   })
 
+  it.each([
+    {
+      name: 'ambiguous response',
+      error: new AmbiguousMutationError(),
+      status: 'The decision outcome is uncertain and the current case could not be refreshed. Reload to reconcile it before reviewing another value.',
+    },
+    {
+      name: 'ordinary failure',
+      error: new ApiError(500, 'decision_failed'),
+      status: 'The current decision state could not be reconciled because the case could not be refreshed. Reload before reviewing another value.',
+    },
+  ])('locks every field when an $name cannot be reconciled', async ({ error, status }) => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('detail fixture requires a title field')
+    const authorsField = { ...titleField, destination: 'authors', proposalId: 'proposal-2', targetFingerprint: 'fingerprint-2' }
+    const unresolved = { ...detail, fields: [titleField, authorsField] }
+    const recordDecision = vi.fn(async () => { throw error })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn().mockResolvedValueOnce(unresolved).mockRejectedValue(new Error('refresh unavailable')),
+      recordDecision,
+    }
+    renderRoute('/review/case-1?field=title&subview=review', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+
+    expect(await screen.findByText(status)).toBeVisible()
+    expect(screen.queryByText('The response was lost. The current case was reloaded before any retry.')).toBeNull()
+    expect(screen.queryByText('The decision was not recorded. Your choice is unchanged.')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    expect(screen.getAllByLabelText('Reviewer facts').at(0)).toHaveTextContent('Available choices0')
+
+    await user.click(screen.getByRole('button', { name: 'authors' }))
+
+    expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    expect(screen.getAllByLabelText('Reviewer facts').at(1)).toHaveTextContent('Available choices0')
+    expect(recordDecision).toHaveBeenCalledOnce()
+  })
+
   it('replaces invalid detail state with the resolved canonical field and subview', async () => {
     const { router } = renderRoute('/review/case-1?field=missing&subview=hostile')
 
