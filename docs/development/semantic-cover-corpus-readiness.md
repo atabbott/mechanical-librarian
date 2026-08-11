@@ -159,6 +159,38 @@ admission boundary, not a model-quality result or runtime activation. No retry,
 profile, model, authority, limit, threshold, provider, or corpus change was
 used to manufacture a semantic result.
 
+## Cover-policy qualification — deterministic contract PASS
+
+After the deterministic adjudicator passed independent code review, it replayed
+the unchanged random 100-packet cohort from the observation proof: 50
+development and 50 final holdout. Each packet was re-admitted with its exact
+images and locally derived identity report. All eight combinations of the three
+closed policy booleans were applied to every packet.
+
+| Measure | Aggregate result |
+| --- | ---: |
+| Frozen real packets admitted | 100/100 |
+| Closed policies per packet | 8 |
+| Deterministic decisions | 800 |
+| Binding or mapping mismatches | 0 |
+| Typed `observations_unavailable` abstentions | 800 |
+| Recommendations | 0 |
+| Policy or eligibility violations | 0 |
+| Invented references | 0 |
+| Model or provider dispatches | 0 |
+
+This all-abstention result is the required honest real outcome: #541 produced
+no admitted semantic observations, so #543 did not fabricate labels or force a
+choice. Exhaustive synthetic closed-vocabulary tests separately prove exact
+acceptable sets, policy exclusions, minimal preference, combined-policy
+precedence, ambiguity and every typed abstention/failure boundary. The final
+cohort caused no implementation or tuning change.
+
+The deterministic policy contract therefore passes, while acceptable-set
+adherence and semantic policy quality remain **not established**. No second
+reviewer, retry, provider, corpus, threshold, profile, model, limit or authority
+change was used to manufacture a recommendation.
+
 ## Outcome
 
 Issue #546 passes as a best-effort general-principle proof of a bounded,
@@ -166,5 +198,7 @@ aggregate-safe provider-cover corpus. It establishes neither semantic quality
 nor runtime activation, and it does not qualify a model or a later transport
 unit. Issue #541 separately passes its bounded typed observation-contract and
 real-admission proof while preserving the negative semantic-execution result.
+Issue #543 passes its deterministic policy and real fail-closed abstention
+proof while making no semantic-quality or recommendation claim.
 The tracked report contains no private corpus material, and #501 remains
 unpromoted.
