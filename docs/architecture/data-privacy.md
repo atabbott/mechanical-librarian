@@ -16,6 +16,14 @@ Persistent `.workbench/` state is ignored
 by version control. Workbench code and state are absent from the wheel and
 production container.
 
+Cover packets retain only owner-private report-bound previews and canonical
+packet/result artifacts. Model context receives opaque candidate references,
+preview digests and dimensions, incumbent state, and bounded public provider
+provenance; it receives no target, library/service identity, path, URL,
+credential, raw provider response, provider work/edition identity, or private
+bibliographic target value. Ephemeral image copies are mounted read-only and
+removed with the reviewer job. Public qualification evidence is aggregate-only.
+
 ## Review preparation progress
 
 The authenticated preparation surface exposes only configured connection and

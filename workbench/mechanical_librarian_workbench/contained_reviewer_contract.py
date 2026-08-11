@@ -11,6 +11,9 @@ from typing import Protocol
 
 MAX_INPUT_BYTES = 1_048_576
 MAX_SCHEMA_BYTES = 65_536
+MAX_IMAGE_COUNT = 12
+MAX_IMAGE_BYTES = 1_048_576
+MAX_IMAGE_TOTAL_BYTES = 8_388_608
 
 
 def canonical_json(value: object) -> str:
@@ -67,12 +70,33 @@ class ContainedReviewerIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class ContainedReviewImage:
+    """One opaque, digest-bound PNG input; no caller path or URL is admitted."""
+
+    reference: str
+    digest: str
+    payload: bytes
+
+    def __post_init__(self) -> None:
+        if (
+            re.fullmatch(r"cover_ref_[0-9a-f]{64}", self.reference) is None
+            or re.fullmatch(r"[0-9a-f]{64}", self.digest) is None
+            or type(self.payload) is not bytes
+            or not 1 <= len(self.payload) <= MAX_IMAGE_BYTES
+            or hashlib.sha256(self.payload).hexdigest() != self.digest
+            or not self.payload.startswith(b"\x89PNG\r\n\x1a\n")
+        ):
+            raise ContainedReviewerError("response_format")
+
+
+@dataclass(frozen=True, slots=True)
 class ContainedReviewRequest:
     """Sanitized typed input and one closed JSON result schema."""
 
     instruction: str
     input_document: str
     output_schema: str
+    images: tuple[ContainedReviewImage, ...] = ()
 
     def __post_init__(self) -> None:
         try:
@@ -96,6 +120,12 @@ class ContainedReviewRequest:
                 or canonical_json(schema_value) != self.output_schema
                 or type(input_value) is not dict
                 or type(schema_value) is not dict
+                or type(self.images) is not tuple
+                or not 0 <= len(self.images) <= MAX_IMAGE_COUNT
+                or any(type(value) is not ContainedReviewImage for value in self.images)
+                or len({value.reference for value in self.images}) != len(self.images)
+                or len({value.digest for value in self.images}) != len(self.images)
+                or sum(len(value.payload) for value in self.images) > MAX_IMAGE_TOTAL_BYTES
             ):
                 raise ValueError
         except (json.JSONDecodeError, RecursionError, TypeError, UnicodeError, ValueError) as error:
@@ -106,6 +136,10 @@ class ContainedReviewRequest:
         return hashlib.sha256(canonical_json({
             "input": self.input_document,
             "instruction": self.instruction,
+            "images": [
+                {"reference": value.reference, "sha256": value.digest}
+                for value in self.images
+            ],
             "output_schema": self.output_schema,
         }).encode("utf-8")).hexdigest()
 
@@ -147,6 +181,6 @@ def _reject_json_constant(value: str) -> object:
 
 
 __all__ = [
-    "ContainedReviewRequest", "ContainedReviewResult", "ContainedReviewer",
+    "ContainedReviewImage", "ContainedReviewRequest", "ContainedReviewResult", "ContainedReviewer",
     "ContainedReviewerError", "ContainedReviewerIdentity", "canonical_json",
 ]

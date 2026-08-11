@@ -19,6 +19,16 @@ registration, and focused proof. Dynamic discovery, plugins, arbitrary module or
 shell execution, workflow languages, and general DAG execution are deliberately
 absent.
 
+The one image-capable entry is `cover-packet-review`. It accepts a report ID,
+reopens only that exact report, and reads only its bound
+`preview-320x480-rgba-png-v1` artifacts. The packet uses opaque references and
+contains no target, library, service, path, URL, credential, raw provider
+response, or provider work/edition identity. Digest duplicates collapse to one
+candidate; the inspectable incumbent is retained; other candidates are
+deterministically ordered using closed identity designation, technical quality,
+and source diversity, with every omission recorded. The fixed limits are 12
+previews, 1 MiB each, and 8 MiB total. It is not a generic attachment surface.
+
 ## Executing a scenario
 
 Call the typed API from contributor code or a focused test. For example, an
@@ -72,7 +82,12 @@ Authority files are size-bounded before decoding. Configuration and manifest
 operations execute only from owner-private snapshots of the exact admitted
 bytes. Absolute private-file references are rebound to matching owner-private
 snapshots in the execution configuration; contained-reviewer operations receive
-the admitted bytes directly.
+the admitted bytes directly. For a cover packet, the same durable attempt also
+binds the canonical ordered opaque-reference/preview-digest mapping. Exact
+preview bytes are copied to a separate ephemeral directory, mounted read-only,
+supplied as repeatable ordered `--image` arguments, and removed with the job. A
+changed, repeated, unknown, non-PNG, over-bound, or unbound image fails closed.
+Image and OCR text are hostile evidence and never instructions.
 Target/provider configuration additionally admits only loopback or `.invalid`
 origins and confines credential, TLS, password, and media paths to the workbench
 workspace. The production composition refuses every enabled fixed-origin

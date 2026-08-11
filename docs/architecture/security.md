@@ -435,7 +435,8 @@ deterministic packet and shadow decision/outcome contracts perform no model or
 provider dispatch.
 
 The repository-only contained reviewer accepts only bounded canonical sanitized
-JSON/text and a locally admitted output schema. Its private profile binds exact
+JSON/text, one locally admitted output schema, and—only for the closed cover
+packet scenario—exact report-bound PNG previews. Its private profile binds exact
 artifacts, credential store, limits, and model configuration. The isolated child
 has no repository, database, media, service configuration, target/provider
 credential, shell, tool, plugin, web, history, approval, or environment authority.
@@ -446,7 +447,12 @@ token; those process facts are deliberately not persisted. Returned JSON is
 bounded, duplicate-free, canonical, and locally validated against the bound
 schema. Timeout or cancellation kills the captured process group and proves its
 identity dead; credential drift or cleanup failure blocks success. Raw streams,
-paths, prompts, credentials, and reasoning never cross the boundary.
+paths, prompts, credentials, and reasoning never cross the boundary. Cover
+previews use opaque references, fixed 12-image/1-MiB-each/8-MiB-total limits,
+digest/order binding, a separate ephemeral read-only mount, and repeatable exact
+image arguments. Image and OCR text are hostile evidence, not instructions;
+arbitrary paths, URLs, originals, remote fetches, target/service identities, and
+generic attachments remain unavailable.
 
 Authentication actions remain adapter-owned and create no product lifecycle. The
 kernel is reachable only through the source workbench, excluded from installed

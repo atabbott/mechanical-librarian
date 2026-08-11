@@ -72,7 +72,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
         self.assertEqual(errors.getvalue(), "Review server failed: invalid invocation.\n")
 
     def test_workbench_catalogue_maps_every_relocated_capability(self) -> None:
-        self.assertEqual(len(CAPABILITIES), 15)
+        self.assertEqual(len(CAPABILITIES), 16)
         self.assertEqual(
             {operation for capability in CAPABILITIES for operation in capability.operations},
             set(WorkbenchOperations.__dataclass_fields__),
@@ -121,7 +121,10 @@ class RuntimeWorkbenchTests(unittest.TestCase):
 
             operations = replace(_operations(), run_batch=batch)
             results = tuple(execute(context, request, operations) for request in requests)
-            self.assertEqual([item.name for item in results], [item.name for item in CAPABILITIES])
+            self.assertEqual(
+                [item.name for item in results],
+                [item.name for item in CAPABILITIES if item.name != "cover-packet-review"],
+            )
             self.assertEqual(len(tuple(context.path("attempts").iterdir())), 6)
             batch_artifact = context.path("artifacts/" + results[12].artifacts[0])
             self.assertEqual(

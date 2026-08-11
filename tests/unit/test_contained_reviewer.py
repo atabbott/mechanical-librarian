@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "workbench"))
 
 from mechanical_librarian_workbench import contained_reviewer as adapter  # noqa: E402
 from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa: E402
+    ContainedReviewImage,
     ContainedReviewRequest,
     ContainedReviewerIdentity,
 )
@@ -38,6 +39,27 @@ def _profile(root: Path) -> adapter.ContainedReviewerProfile:
 
 
 class ContainedReviewerTests(unittest.TestCase):
+    def test_sandbox_binds_ordered_images_read_only_and_passes_exact_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            reviewer = adapter.ContainedReviewerAdapter(_profile(root))
+            job = root / "job"
+            images = root / "images"
+            provider = root / "provider"
+            for path in (job, images, provider):
+                path.mkdir()
+            command = reviewer._sandbox_command(
+                job, job / "result.json", images, 5, provider,
+                "/proc/self/fd/10", "/proc/self/fd/11", "/proc/self/fd/12",
+            )
+        self.assertIn(["--ro-bind", str(images), "/images"], [
+            command[index:index + 3] for index in range(len(command) - 2)
+        ])
+        self.assertEqual(
+            [command[index + 1] for index, value in enumerate(command[:-1]) if value == "--image"],
+            [f"/images/{index:02d}.png" for index in range(1, 6)],
+        )
+
     def test_profile_load_is_canonical_private_and_does_not_touch_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -100,7 +122,15 @@ class ContainedReviewerTests(unittest.TestCase):
                              "additionalProperties": False,
                              "properties": {"summary": {"type": "string"}},
                              "required": ["summary"], "type": "object"}, separators=(",", ":"), sort_keys=True)
-        request = ContainedReviewRequest("Summarize.", '{"value":"synthetic"}', schema)
+        preview = b"\x89PNG\r\n\x1a\nsynthetic"
+        request = ContainedReviewRequest(
+            "Summarize.", '{"value":"synthetic"}', schema,
+            (ContainedReviewImage(
+                "cover_ref_" + "a" * 64,
+                hashlib.sha256(preview).hexdigest(),
+                preview,
+            ),),
+        )
         self.assertRegex(request.digest, r"^[0-9a-f]{64}$")
         for document in ('{"value":NaN}', '{"value":Infinity}'):
             with self.subTest(document=document), self.assertRaisesRegex(
@@ -168,7 +198,15 @@ class ContainedReviewerTests(unittest.TestCase):
                              "additionalProperties": False,
                              "properties": {"summary": {"type": "string"}},
                              "required": ["summary"], "type": "object"}, separators=(",", ":"), sort_keys=True)
-        request = ContainedReviewRequest("Summarize.", '{"value":"synthetic"}', schema)
+        preview = b"\x89PNG\r\n\x1a\nsynthetic"
+        request = ContainedReviewRequest(
+            "Summarize.", '{"value":"synthetic"}', schema,
+            (ContainedReviewImage(
+                "cover_ref_" + "a" * 64,
+                hashlib.sha256(preview).hexdigest(),
+                preview,
+            ),),
+        )
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             profile = _profile(root)

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Admit deterministic report-bound cover packets to the source-only contained
+  reviewer with opaque digest/order identity, incumbent-preserving deduplication,
+  fixed 12-preview/1-MiB-each/8-MiB-total limits, read-only ephemeral image
+  arguments, typed cleanup, and no runtime, production-library, or write
+  authority. (#542)
+
 - Restore Activity as the calm, readable guarded-work ledger: explicit
   consent/readiness with backup explanation, readable current-report work and
   author identity, continued history during partial consent, scoped pause and
