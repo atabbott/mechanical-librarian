@@ -476,16 +476,21 @@ metadata, images, and OCR text are hostile evidence, not instructions;
 arbitrary paths, URLs, originals, remote fetches, target/service identities, and
 generic attachments remain unavailable.
 
-The sealed real five-preview qualification retained those boundaries across 17
-development and qualification-holdout packets: exact bindings and pre-review
-authority gates passed, ordered-reference mismatches were zero, and cleanup
-passed. The contained invocation nevertheless returned 17 of 17 typed
-`contained_reviewer_invocation_insufficient` failures, admitted zero image or
-reviewer-output bytes, and produced a failed sandbox aggregate (p50 129 ms; p95
-160 ms). It therefore did not qualify the required real transport bound. No
-retry or authority, limit, profile, model, or threshold widening followed; the
-implemented seam remains source-only/report-only and synthetically verified,
-not a runtime activation.
+Historical sealed-v2 five-preview qualification attempted 17 development and
+qualification-holdout packets. Its aggregate-only receipt records 17 typed
+`contained_reviewer_invocation_insufficient` failures, zero ordered-reference
+mismatches, zero admitted image or reviewer-output bytes, p50 129 ms, p95 160
+ms, successful cleanup, and a failed sandbox aggregate.
+
+The current exact-head admission-only replay has 17 packets: eight eligible and
+nine rejected before dispatch as `icc_bearing_preview_rejected`, with no other
+rejection class. No model rerun occurred. Because sealed v2 retained no
+per-packet outcome or latency mapping, the eligible subset cannot be rebound to
+historical results (`sealed_subset_mapping_insufficient`); historical latency
+must not be attributed to the current head. The required real transport bound
+therefore **DID NOT QUALIFY**. No retry or authority, limit, profile, model, or
+threshold widening followed. The seam remains source-only/report-only and
+synthetically verified, not a runtime activation.
 
 Authentication actions remain adapter-owned and create no product lifecycle. The
 kernel is reachable only through the source workbench, excluded from installed

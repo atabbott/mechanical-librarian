@@ -144,13 +144,20 @@ never relocate private outputs into a tracked path. Exact-artifact qualification
 container, invokes installed help from outside the checkout, and proves the
 workbench package cannot be imported or executed there.
 
-The sealed real five-preview qualification attempted 17 development and
-qualification-holdout packets. It observed zero ordered-reference mismatches,
-p50 129 ms and p95 160 ms end-to-end latency, and successful cleanup, but all
-17 attempts ended with the typed result
-`contained_reviewer_invocation_insufficient`; the sandbox aggregate failed and
-zero image or reviewer-output bytes were admitted. The required transport bound
-therefore **did not qualify**. There was no retry or limit, profile, model, or
-threshold change. The closed transport seam remains synthetically verified and
-source-only/report-only; this negative real invocation is report-only proof, not
-runtime activation. #501 / 0.15.1 remains unpromoted.
+Historical sealed-v2 qualification attempted 17 development and
+qualification-holdout packets. Its aggregate-only receipt records 17 typed
+`contained_reviewer_invocation_insufficient` failures, zero ordered-reference
+mismatches, zero admitted image or reviewer-output bytes, p50 129 ms, p95 160
+ms, successful cleanup, and a failed sandbox aggregate.
+
+The current exact-head admission-only replay instead examined 17 packets: eight
+were eligible and nine were rejected before dispatch with the typed
+`icc_bearing_preview_rejected` result; there were no other rejection classes.
+No model rerun occurred. Sealed v2 retained no per-packet outcome or latency
+mapping, so the eligible subset cannot be rebound to its historical outcomes or
+latencies (`sealed_subset_mapping_insufficient`). Historical latency must not be
+attributed to the current head. The required transport bound therefore **DID
+NOT QUALIFY**. There was no retry or limit, profile, model, or threshold change.
+The closed transport seam remains synthetically verified and
+source-only/report-only; this evidence is not runtime activation. #501 / 0.15.1
+remains unpromoted.

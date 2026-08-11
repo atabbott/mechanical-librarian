@@ -99,6 +99,9 @@ not represent unresolved ground-truth labels.
 All acquisition and identity-coverage gates therefore pass. The corpus is
 qualified for the bounded semantic-cover decision workbench. This does not
 claim that the separate real contained-reviewer transport qualification passed:
-that negative result is recorded in the contributor-workbench qualification
-evidence. Downstream issue and Project-state reconciliation remains a
-coordinator action. #501 / 0.15.1 remains unpromoted.
+the historical negative invocation and current admission-only replay are
+separately recorded in the contributor-workbench qualification evidence. The
+current eight eligible packets have no rebound historical latency or outcome
+mapping (`sealed_subset_mapping_insufficient`), no model rerun occurred, and the
+required transport bound **DID NOT QUALIFY**. Downstream issue and Project-state
+reconciliation remains a coordinator action. #501 / 0.15.1 remains unpromoted.
