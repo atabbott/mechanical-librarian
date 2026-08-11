@@ -147,8 +147,12 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         self.assertFalse(any(request.method == "POST" for request in self.requests))
 
     def test_tags_are_read_from_current_service_metadata_shape(self) -> None:
-        self.detail["media"].pop("tags")
+        self.detail["media"]["tags"] = None
         self.detail["media"]["metadata"]["tags"] = ["old"]
+        self.assertIsNone(
+            self.target.read(self.plan("tags", None, ["new"])).value
+        )
+        self.detail["media"].pop("tags")
         self.assertEqual(self.target.read(self.plan("tags", ["old"], ["new"])).value, ["old"])
 
     def test_empty_collections_and_service_series_shape_are_normalized(self) -> None:

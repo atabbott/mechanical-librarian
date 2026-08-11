@@ -182,6 +182,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             ("active content", "<p>Safe</p><script>unsafe()</script>", FieldState.MALFORMED),
             ("event attribute", '<p onclick="unsafe()">Text</p>', FieldState.MALFORMED),
             ("unclosed markup", "<p>Text", FieldState.MALFORMED),
+            ("incomplete opening tag", "Summary <em", FieldState.MALFORMED),
             ("empty visible text", "<p></p>", FieldState.MALFORMED),
             (
                 "over input bound",

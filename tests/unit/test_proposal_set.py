@@ -3214,6 +3214,46 @@ class ProposalSetTests(unittest.TestCase):
         )
         self.assertEqual(ProposalOutcome.KEEP, result.outcome)
 
+    def test_series_preservation_accepts_local_sequence_before_name(self) -> None:
+        claims = (
+            LocalClaim.create(
+                kind=ClaimKind.SERIES_SEQUENCE,
+                observed="2",
+                canonical="2",
+                excerpt="2",
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.WORK,
+                occurrence=0,
+            ),
+            LocalClaim.create(
+                kind=ClaimKind.SERIES,
+                observed="Reading Order",
+                canonical="Reading Order",
+                excerpt="Reading Order",
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.WORK,
+                occurrence=1,
+            ),
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(),
+                    local_claims=claims,
+                )
+            ),
+            TargetDestination.SERIES,
+        )
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
+        self.assertEqual(
+            (TargetSeries("Reading Order", "2"),),
+            result.alternatives[0].value.value,
+        )
+
     def test_series_without_sequence_remains_eligible(self) -> None:
         claims = (
             _claim(

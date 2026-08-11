@@ -1345,6 +1345,12 @@ def _series_from_claims(
     result: list[TargetSeries] = []
     index = 0
     while index < len(claims):
+        sequence_claim: LocalClaim | ProviderClaim | None = None
+        if claims[index].kind is ClaimKind.SERIES_SEQUENCE:
+            sequence_claim = claims[index]
+            index += 1
+            if index >= len(claims):
+                return None
         name_claim = claims[index]
         name = (
             name_claim.canonical
@@ -1360,10 +1366,13 @@ def _series_from_claims(
         index += 1
         sequence: str | None = None
         if (
-            index < len(claims)
+            sequence_claim is None
+            and index < len(claims)
             and claims[index].kind is ClaimKind.SERIES_SEQUENCE
         ):
             sequence_claim = claims[index]
+            index += 1
+        if sequence_claim is not None:
             sequence_value = (
                 sequence_claim.canonical
                 if type(sequence_claim) is LocalClaim
@@ -1378,7 +1387,6 @@ def _series_from_claims(
                 and sequence_value is None
             ):
                 return None
-            index += 1
         elif series_count > 1:
             # Multiple names are only safe when every source occurrence has
             # its own explicit sequence slot, including an absent one.

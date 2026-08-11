@@ -931,6 +931,15 @@ def _admitted_work_candidates(
     )
 
 
+def _edition_applicability(values: tuple[str, ...]) -> str:
+    """Reduce only the exact edition's ISBN lanes without strengthening doubt."""
+    if not values or "unknown" in values:
+        return "unknown"
+    if "ambiguous" in values or len(set(values)) != 1:
+        return "ambiguous"
+    return values[0]
+
+
 def _candidate(
     provider: str,
     edition_key: str,
@@ -1005,9 +1014,20 @@ def _candidate(
             ClaimScope.EDITION,
             applicability=provider_isbn_applicability(compact, local_claims),
         )
+    edition_applicability = _edition_applicability(
+        tuple(
+            provider_isbn_applicability(value, local_claims)
+            for value in edition_isbns
+        )
+    )
     add(ClaimKind.ASIN, None, ClaimScope.EDITION, state=FieldState.UNSUPPORTED)
     add(ClaimKind.TITLE, edition.get("title"), ClaimScope.EDITION)
-    add(ClaimKind.SUBTITLE, edition.get("subtitle"), ClaimScope.EDITION)
+    add(
+        ClaimKind.SUBTITLE,
+        edition.get("subtitle"),
+        ClaimScope.EDITION,
+        applicability=edition_applicability,
+    )
     publication_date_text: str | None = None
     publication_date = edition.get("publish_date")
     if publication_date is None:

@@ -985,6 +985,12 @@ def _visible_description(value: object) -> object:
         return value
     if len(value) > MAX_DESCRIPTION_CHARACTERS:
         return _DESCRIPTION_OVERSIZED
+    position = 0
+    while (start := value.find("<", position)) >= 0:
+        end = value.find(">", start + 1)
+        if end < 0 or value.find("<", start + 1, end) >= 0:
+            return None
+        position = end + 1
     parser = _DescriptionParser()
     try:
         parser.feed(value)

@@ -4915,6 +4915,16 @@ class AudiobookshelfItemTests(unittest.TestCase):
             json.dumps([field.to_data() for field in snapshot.fields]),
         )
 
+        payload["media"]["tags"] = None
+        explicit_null = reader.read("item-1")
+        explicit_null_tags = next(
+            field
+            for field in explicit_null.fields
+            if field.destination is TargetDestination.TAGS
+        )
+        self.assertIs(TargetFieldState.NULL, explicit_null_tags.state)
+        self.assertIsNone(explicit_null_tags.value)
+
         payload["media"].pop("tags")
         fallback = reader.read("item-1")
         self.assertEqual(

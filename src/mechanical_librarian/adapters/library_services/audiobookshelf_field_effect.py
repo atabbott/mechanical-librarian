@@ -273,8 +273,9 @@ class AudiobookshelfFieldEffectTarget:
         if type(metadata) is not dict:
             raise TargetServiceUnavailable("destination")
         if plan.destination == "tags":
-            value = detail["media"].get("tags")
-            if value is None:
+            if "tags" in detail["media"]:
+                value = detail["media"]["tags"]
+            else:
                 value = metadata.get("tags")
         else:
             value = metadata.get(plan.destination)
@@ -297,6 +298,8 @@ class AudiobookshelfFieldEffectTarget:
                     "sequence": None if sequence is None else str(sequence),
                 })
             return normalized or None
+        if plan.destination == "tags" and value is None:
+            return None
         if plan.destination in {"genres", "tags"}:
             if type(value) is not list or any(type(item) is not str for item in value):
                 raise TargetServiceUnavailable("destination")
@@ -399,7 +402,10 @@ def _capability_value_shape(detail: dict[str, Any], destination: str) -> None:
         raise ValueError("Audiobookshelf metadata capability invalid")
     if destination == "tags":
         value = media.get("tags", media["metadata"].get("tags"))
-        if type(value) is not list or any(type(item) is not str for item in value):
+        if value is not None and (
+            type(value) is not list
+            or any(type(item) is not str for item in value)
+        ):
             raise ValueError("Audiobookshelf tag capability invalid")
 
 
