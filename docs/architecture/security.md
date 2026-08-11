@@ -465,6 +465,17 @@ metadata, images, and OCR text are hostile evidence, not instructions;
 arbitrary paths, URLs, originals, remote fetches, target/service identities, and
 generic attachments remain unavailable.
 
+The sealed real five-preview qualification retained those boundaries across 17
+development and qualification-holdout packets: exact bindings and pre-review
+authority gates passed, ordered-reference mismatches were zero, and cleanup
+passed. The contained invocation nevertheless returned 17 of 17 typed
+`contained_reviewer_invocation_insufficient` failures, admitted zero image or
+reviewer-output bytes, and produced a failed sandbox aggregate (p50 129 ms; p95
+160 ms). It therefore did not qualify the required real transport bound. No
+retry or authority, limit, profile, model, or threshold widening followed; the
+implemented seam remains source-only/report-only and synthetically verified,
+not a runtime activation.
+
 Authentication actions remain adapter-owned and create no product lifecycle. The
 kernel is reachable only through the source workbench, excluded from installed
 artifacts, and receives only synthetic or irreversibly sanitized inputs.

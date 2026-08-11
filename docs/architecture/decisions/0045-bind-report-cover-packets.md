@@ -66,5 +66,11 @@ and results remain ignored owner-only workbench state.
   hard byte/count limits, hostile-text treatment, read-only sandbox arguments,
   typed failure and cleanup behavior.
 - Exact-artifact checks prove no runtime CLI/API or distribution inclusion.
-- Private qualification exercises exact five-preview packets with zero mapping
-  mismatch and records only aggregate latency and outcome evidence publicly.
+- Private qualification attempted 17 exact five-preview development and
+  qualification-holdout packets with zero mapping mismatch, p50 129 ms, p95
+  160 ms, and successful cleanup. All 17 ended
+  `contained_reviewer_invocation_insufficient`, with a failed sandbox aggregate
+  and zero admitted image or output bytes. The required real transport bound did
+  not qualify; no retry or limit, profile, model, or threshold change was made.
+  Synthetic verification of the closed seam remains valid, but this aggregate
+  negative is report-only evidence and does not activate runtime behavior.

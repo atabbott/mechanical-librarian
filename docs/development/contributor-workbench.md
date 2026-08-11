@@ -128,3 +128,14 @@ redacted. The documented persistent `.workbench/` root is repository-ignored;
 never relocate private outputs into a tracked path. Exact-artifact qualification additionally builds the wheel and
 container, invokes installed help from outside the checkout, and proves the
 workbench package cannot be imported or executed there.
+
+The sealed real five-preview qualification attempted 17 development and
+qualification-holdout packets. It observed zero ordered-reference mismatches,
+p50 129 ms and p95 160 ms end-to-end latency, and successful cleanup, but all
+17 attempts ended with the typed result
+`contained_reviewer_invocation_insufficient`; the sandbox aggregate failed and
+zero image or reviewer-output bytes were admitted. The required transport bound
+therefore **did not qualify**. There was no retry or limit, profile, model, or
+threshold change. The closed transport seam remains synthetically verified and
+source-only/report-only; this negative real invocation is report-only proof, not
+runtime activation. #501 / 0.15.1 remains unpromoted.
