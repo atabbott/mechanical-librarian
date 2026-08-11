@@ -38,7 +38,9 @@ same semantic validator runs before producer return and reviewer admission;
 before either can mount an image, it also verifies the complete bounded,
 canonically ordered PNG chunk structure and checksums and fully decodes a
 single-frame RGBA PNG whose dimensions exactly match the distinct packet
-preview facts and do not exceed 320 by 480;
+preview facts and do not exceed 320 by 480. The deterministic profile admits
+only exact IHDR, one consecutive IDAT run, and IEND; PLTE and all ancillary or
+unknown chunks fail closed;
 indistinguishable normalized provenance multiplicity is discarded. Duplicate
 omissions are created only after final selection and always name a retained
 representative; when a whole digest group is excluded, each member carries the

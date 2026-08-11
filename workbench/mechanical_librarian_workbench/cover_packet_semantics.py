@@ -154,7 +154,7 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
     offset = len(_PNG_SIGNATURE)
     chunk_count = 0
     width = height = 0
-    saw_header = saw_palette = saw_data = saw_end = False
+    saw_header = saw_data = saw_end = False
     data_closed = False
     while offset < len(payload):
         chunk_count += 1
@@ -188,15 +188,6 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
             saw_header = True
         elif chunk_type == b"IHDR" or saw_end:
             raise ValueError
-        elif chunk_type == b"PLTE":
-            if (
-                saw_palette
-                or saw_data
-                or not 1 <= length <= 768
-                or length % 3 != 0
-            ):
-                raise ValueError
-            saw_palette = True
         elif chunk_type == b"IDAT":
             if data_closed:
                 raise ValueError
@@ -207,10 +198,7 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
             data_closed = True
             saw_end = True
         else:
-            if saw_data:
-                data_closed = True
-            if chunk_type[0] & 0x20 == 0:
-                raise ValueError
+            raise ValueError
         offset = crc_end
     if not (saw_header and saw_data and saw_end):
         raise ValueError

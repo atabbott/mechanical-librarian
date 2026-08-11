@@ -72,18 +72,46 @@ def _preview(
     payload = output.getvalue()
     if size is None:
         return payload
-    padding_length = size - len(payload) - 12
-    if padding_length < 0:
-        raise ValueError("requested PNG size is too small")
-    chunk_type = b"vpAg"
-    chunk_data = bytes([index % 251]) * padding_length
-    chunk = (
-        struct.pack(">I", len(chunk_data))
-        + chunk_type
-        + chunk_data
-        + struct.pack(">I", zlib.crc32(chunk_type + chunk_data))
+    raw = b"\x00" + bytes(color)
+    # Inflate the valid zlib stream with empty stored blocks, then divide that
+    # one stream across a small consecutive IDAT run. This reaches exact byte
+    # boundaries without ancillary chunks or bytes after the zlib stream.
+    extra_idat_chunks = next(
+        value for value in range(5)
+        if (73 + 12 * value) % 5 == size % 5
     )
-    return payload[:-12] + chunk + payload[-12:]
+    fixed_bytes = 73 + 12 * extra_idat_chunks
+    empty_blocks, remainder = divmod(size - fixed_bytes, 5)
+    if empty_blocks < 0 or remainder:
+        raise ValueError("requested PNG size is too small")
+    compressed = (
+        b"\x78\x01"
+        + b"\x00\x00\x00\xff\xff" * empty_blocks
+        + b"\x01"
+        + len(raw).to_bytes(2, "little")
+        + (0xFFFF - len(raw)).to_bytes(2, "little")
+        + raw
+        + struct.pack(">I", zlib.adler32(raw))
+    )
+
+    def chunk(chunk_type: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data)) + chunk_type + data
+            + struct.pack(">I", zlib.crc32(chunk_type + data))
+        )
+
+    idat_count = extra_idat_chunks + 1
+    boundaries = [len(compressed) * value // idat_count for value in range(idat_count + 1)]
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+    result = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+    result += b"".join(
+        chunk(b"IDAT", compressed[boundaries[value]:boundaries[value + 1]])
+        for value in range(idat_count)
+    )
+    result += chunk(b"IEND", b"")
+    if len(result) != size:
+        raise AssertionError("exact PNG construction failed")
+    return result
 
 
 def _source(
@@ -402,6 +430,12 @@ class CoverPacketTests(unittest.TestCase):
             (b"IDAT", idat_data[split:]),
             *canonical_chunks[idat_index + 1:],
         ])
+        consecutive_idat = render([
+            *canonical_chunks[:idat_index],
+            (b"IDAT", idat_data[:split]),
+            (b"IDAT", idat_data[split:]),
+            *canonical_chunks[idat_index + 1:],
+        ])
         plte = (b"PLTE", b"\x00\x00\x00")
         plte_after_idat = render([*canonical_chunks[:-1], plte, canonical_chunks[-1]])
         duplicate_plte = render([
@@ -423,6 +457,14 @@ class CoverPacketTests(unittest.TestCase):
         iend_before_data = render([
             canonical_chunks[0], canonical_chunks[-1], *canonical_chunks[1:-1],
         ])
+        trns_before_idat = render([
+            *canonical_chunks[:idat_index], (b"tRNS", b"\x00"),
+            *canonical_chunks[idat_index:],
+        ])
+        gamma_after_idat = render([
+            *canonical_chunks[:-1], (b"gAMA", struct.pack(">I", 45_455)),
+            canonical_chunks[-1],
+        ])
 
         malformed = {
             "forged_signature": b"\x89PNG\r\n\x1a\nforged",
@@ -440,6 +482,8 @@ class CoverPacketTests(unittest.TestCase):
             "ihdr_not_first": ihdr_not_first,
             "duplicate_ihdr": duplicate_ihdr,
             "iend_before_idat": iend_before_data,
+            "trns_before_idat": trns_before_idat,
+            "gamma_after_idat": gamma_after_idat,
         }
         for name, payload in malformed.items():
             document, images = bound(payload)
@@ -447,6 +491,10 @@ class CoverPacketTests(unittest.TestCase):
                 Exception, "response_format"
             ):
                 admit_cover_review_request("Inspect.", document, schema, images)
+
+        document, images = bound(consecutive_idat)
+        admitted = admit_cover_review_request("Inspect.", document, schema, images)
+        self.assertEqual(len(admitted.images), 1)
 
         document, images = bound(valid, preview_width=2)
         with self.assertRaisesRegex(Exception, "response_format"):

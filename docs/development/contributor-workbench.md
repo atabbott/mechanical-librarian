@@ -98,10 +98,12 @@ privacy-safe context text, and exact ordered candidate/image equality.
 Every admitted preview is fully parsed and decoded through Pillow before it is
 mounted: its complete PNG structure and checksums, single-frame PNG format,
 RGBA mode, maximum 320-by-480 dimensions, and exact declared preview dimensions
-must all agree. Canonical chunk ordering, the reserved bit, palette position,
-and one consecutive image-data run are enforced. Forged signatures, corrupt or
-truncated streams, trailing bytes, unsafe dimensions, and decoder warnings or
-failures become the same value-free typed format failure.
+must all agree. The closed deterministic chunk profile accepts only exact IHDR,
+one or more consecutive IDAT chunks, and final IEND; palette, transparency,
+colour-metadata, and every other ancillary or unknown chunk are rejected.
+Forged signatures, corrupt or truncated streams, trailing bytes, unsafe
+dimensions, and decoder warnings or failures become the same value-free typed
+format failure.
 Indistinguishable normalized provenance rows collapse to one. The generic
 request and adapter method have no image member or argument. A changed,
 repeated, unknown, non-PNG, over-bound, or unbound image fails closed. Only the
