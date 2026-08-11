@@ -90,7 +90,12 @@ Ambiguous or insufficient retained compatibility remains `unknown`. The projecti
 packet, candidate, classifier, and opaque evidence references. It emits fixed
 reason codes only, never source/provider identities, metadata values, paths,
 URLs, or credentials, and makes no visual, provider, policy, persistence, or
-write decision.
+write decision. Candidate admission recomputes the report-bound opaque source
+reference, normalized provenance, incumbent state, original dimensions, and
+preview variant; matching preview bytes alone cannot bind a foreign packet.
+Retained date-evidence links participate in the same conservative compatibility
+result as claim links, and a provider default cover with explicit work identity
+is work-designated for verification.
 
 ## Consequences
 

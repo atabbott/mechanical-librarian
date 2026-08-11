@@ -43,9 +43,14 @@ identity, and fixed reason codes. Unrelated identifiers, edition/work
 contradictions, and incompatible manifestation publication/format evidence
 produce `conflict` before verification. Other retained bibliographic
 disagreements produce a fixed ambiguity reason without independently proving a
-different identity. Only positive retained agreement supports `plausible_match`;
-ambiguous, insufficient, or unbound provider identity remains `unknown`. The scenario
-neither sends a provider request nor reads images as identity evidence.
+different identity. Only positive retained agreement supports
+`plausible_match`; ambiguous, insufficient, or unbound provider identity
+remains `unknown`. The scenario neither sends a provider request nor reads
+images as identity evidence.
+Candidate references and normalized provenance are re-derived from the report;
+matching preview bytes cannot substitute a packet from another report. Date
+evidence links participate in compatibility, and a default provider cover with
+explicit work identity can verify only the work.
 
 ## Executing a scenario
 

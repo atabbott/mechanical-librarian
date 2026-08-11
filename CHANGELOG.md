@@ -10,7 +10,9 @@
   incompatible manifestation publication/format evidence win, while ordinary
   bibliographic agreement alone supports a plausible match and disagreement or
   insufficient compatibility remains unknown, without provider calls, visual
-  inference, persistence, or write authority. (#540)
+  inference, persistence, or write authority. Exact report-bound reference and
+  provenance checks reject digest-equal foreign packets; date-evidence links
+  and default work covers retain their conservative identity meaning. (#540)
 
 - Polish the authenticated interface without changing its authority: restore
   the asymmetric book-spine shell mark and touch-safe secondary actions; make

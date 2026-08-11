@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverSource,
+    CoverSourceKind,
     CoverSourceState,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -29,7 +30,9 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian_workbench.cover_packet_semantics import (
     bind_cover_packet,
     canonical_packet_json,
+    normalize_provenance,
 )
+from mechanical_librarian_workbench.cover_packets import cover_source_reference
 
 SCHEMA_VERSION = "cover-identity-report-v1"
 _OUTCOMES = frozenset({
@@ -37,12 +40,14 @@ _OUTCOMES = frozenset({
     "unknown", "conflict",
 })
 _CLASSIFIER_RULES = (
+    "packet-candidate-reference-and-provenance:exact-report-bound",
     "unbound-provider-identity:unknown",
     "edition-work-contradiction:conflict",
     "unrelated-identifier:conflict",
     "accepted-manifestation-with-compatible-publication:verified-manifestation",
     "accepted-manifestation-with-incompatible-publication:conflict",
-    "accepted-or-associated-work:verified-work",
+    "accepted-or-associated-work-including-default-cover:verified-work",
+    "retained-claim-and-date-evidence-comparisons:conservative-compatibility",
     "provider-identity-with-bibliographic-agreement:plausible",
     "provider-identity-with-ambiguous-or-insufficient-bibliography:unknown",
 )
@@ -115,19 +120,11 @@ def classify_cover_identity(
     if canonical_packet_json(packet) != packet_document:
         raise ValueError("identity packet is not canonical")
 
-    sources_by_digest: dict[str, tuple[CoverSource, ...]] = {}
-    for source in report.cover_sources:
-        if source.state is CoverSourceState.RETRIEVED and source.artifact is not None:
-            sources_by_digest.setdefault(source.artifact.preview_digest, ())
-            sources_by_digest[source.artifact.preview_digest] += (source,)
-
     rows: list[dict[str, object]] = []
     for candidate in packet["candidates"]:
         if type(candidate) is not dict:
             raise ValueError("identity packet candidate is invalid")
-        sources = sources_by_digest.get(candidate["preview_sha256"], ())
-        if not sources:
-            raise ValueError("identity candidate is not report-bound")
+        sources = _report_bound_candidate_sources(report, candidate)
         outcome, reasons, evidence = _classify_sources(report, sources)
         if outcome not in _OUTCOMES:
             raise ValueError("identity outcome is invalid")
@@ -152,6 +149,75 @@ def classify_cover_identity(
         "work_target_reference": _work_target_reference(report),
     }
     return CoverIdentityReport(canonical_packet_json(body))
+
+
+def _report_bound_candidate_sources(
+    report: MetadataReport, candidate: dict[str, object]
+) -> tuple[CoverSource, ...]:
+    sources = tuple(sorted(
+        (
+            source
+            for source in report.cover_sources
+            if source.state is CoverSourceState.RETRIEVED
+            and source.artifact is not None
+            and source.artifact.preview_digest == candidate["preview_sha256"]
+        ),
+        key=lambda source: source.source_id,
+    ))
+    if not sources:
+        raise ValueError("identity candidate is not report-bound")
+    references = tuple(
+        cover_source_reference(report.report_id, source.source_id)
+        for source in sources
+    )
+    incumbent_references = tuple(
+        reference
+        for source, reference in zip(sources, references, strict=True)
+        if source.kind is CoverSourceKind.ABS
+    )
+    expected_reference = (
+        incumbent_references[-1] if incumbent_references else references[0]
+    )
+    best = max(
+        sources,
+        key=lambda source: (
+            source.artifact.width * source.artifact.height,
+            source.artifact.width,
+            source.artifact.height,
+        ),
+    )
+    expected_provenance = normalize_provenance([
+        {
+            "context": (
+                []
+                if source.provenance is None
+                else [value.to_data() for value in source.provenance.context]
+            ),
+            "designation": (
+                None
+                if source.provenance is None
+                else source.provenance.designation.value
+            ),
+            "provider": (
+                None if source.provenance is None else source.provenance.provider
+            ),
+            "source_kind": source.kind.value,
+        }
+        for source in sources
+    ])
+    if (
+        candidate["reference"] != expected_reference
+        or candidate["incumbent"] != bool(incumbent_references)
+        or candidate["width"] != best.artifact.width
+        or candidate["height"] != best.artifact.height
+        or candidate["provenance"] != expected_provenance
+        or any(
+            source.artifact.preview_variant != candidate["preview_variant"]
+            for source in sources
+        )
+    ):
+        raise ValueError("identity candidate report binding is invalid")
+    return sources
 
 
 def _classify_sources(
@@ -227,6 +293,7 @@ def _classify_sources(
             source.provenance is not None
             and source.provenance.designation in {
                 CoverDesignation.EXACT_EDITION,
+                CoverDesignation.DEFAULT,
                 CoverDesignation.RELATED_EDITION,
                 CoverDesignation.WORK,
             }
@@ -256,6 +323,8 @@ def _bibliographic_compatibility(candidate: ProviderCandidate) -> str:
     for claim in candidate.claims:
         if claim.kind in _IDENTITY_CLAIMS:
             outcomes.update(link.outcome for link in claim.links)
+    for item in candidate.evidence:
+        outcomes.update(link.outcome for link in item.links)
     if Comparison.DISAGREEMENT in outcomes:
         return "retained_bibliographic_ambiguity"
     if Comparison.AGREEMENT in outcomes:

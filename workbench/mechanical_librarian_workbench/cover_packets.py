@@ -26,7 +26,7 @@ from mechanical_librarian_workbench.cover_packet_semantics import (
 )
 
 
-def _opaque_reference(report_id: str, source_id: str) -> str:
+def cover_source_reference(report_id: str, source_id: str) -> str:
     digest = hashlib.sha256(
         canonical_packet_json({"report_id": report_id, "source_id": source_id}).encode("utf-8")
     ).hexdigest()
@@ -96,7 +96,7 @@ def prepare_cover_packet(
     omissions: list[dict[str, object]] = [
         {
             "reason": "source_" + source.state.value,
-            "reference": _opaque_reference(report.report_id, source.source_id),
+            "reference": cover_source_reference(report.report_id, source.source_id),
         }
         for source in report.cover_sources
         if source.state is not CoverSourceState.RETRIEVED
@@ -121,7 +121,7 @@ def prepare_cover_packet(
             # Oversized groups are omitted before candidate emission; decoding
             # them would widen work beyond the existing byte gate.
             preview_width = preview_height = 1
-        reference = _opaque_reference(report.report_id, source.source_id)
+        reference = cover_source_reference(report.report_id, source.source_id)
         existing = candidates_by_digest.get(artifact.preview_digest)
         if existing is not None:
             existing.sources.append(source)

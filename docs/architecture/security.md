@@ -455,7 +455,11 @@ edition/work contradictions plus incompatible manifestation publication/format
 evidence precedence over verification. Other retained bibliographic comparison
 disagreements remain bounded ambiguity evidence and cannot independently prove
 a conflicting identity. Only positive retained agreement supports a plausible
-match; ambiguous or insufficient compatibility remains unknown.
+match; ambiguous or insufficient compatibility remains unknown. Admission
+recomputes exact report-bound candidate reference, provenance, incumbent,
+dimension, and variant facts, so digest-equal foreign packets fail closed.
+Retained date-evidence comparisons are included, and default provider covers
+remain work-level rather than manifestation-level evidence.
 It has no image inference, provider dispatch, child process, persistence,
 policy, or write authority. Cover
 previews use opaque references, fixed 12-image/1-MiB-each/8-MiB-total limits,

@@ -1118,6 +1118,22 @@ class CoverIdentityTests(unittest.TestCase):
         )
         associated = SimpleNamespace(**{**accepted.__dict__, "relation": IdentifierRelation.ASSOCIATED})
         self.assertEqual(_classify_sources(SimpleNamespace(providers=report.providers, identifier_evidence=(associated,)), (work_source,))[0], "verified_work_match")
+        default_source = replace(
+            work_source,
+            provenance=replace(
+                work_source.provenance, designation=CoverDesignation.DEFAULT
+            ),
+        )
+        self.assertEqual(
+            _classify_sources(
+                SimpleNamespace(
+                    providers=report.providers,
+                    identifier_evidence=(associated,),
+                ),
+                (default_source,),
+            )[0],
+            "verified_work_match",
+        )
         self.assertEqual(_classify_sources(SimpleNamespace(providers=report.providers, identifier_evidence=()), (source,))[0], "unknown")
         self.assertEqual(_classify_sources(SimpleNamespace(providers=(), identifier_evidence=()), (source,))[0], "unknown")
         contradiction = SimpleNamespace(kind=ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION)
@@ -1185,6 +1201,42 @@ class CoverIdentityTests(unittest.TestCase):
                 ["retained_bibliographic_ambiguity"],
                 [],
             ),
+        )
+
+        date_disagreement = SimpleNamespace(
+            outcome=Comparison.DISAGREEMENT,
+            local_reference="local_" + "9" * 64,
+        )
+        date_evidence = SimpleNamespace(
+            kind=ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+            links=(date_disagreement,),
+        )
+        conflicting_date = SimpleNamespace(
+            **{
+                **candidate.__dict__,
+                "claims": (
+                    SimpleNamespace(
+                        kind=ClaimKind.TITLE,
+                        links=(mixed_agreement,),
+                        reference="provider_" + "8" * 64,
+                    ),
+                ),
+                "evidence": (date_evidence,),
+            }
+        )
+        report = SimpleNamespace(
+            providers=(
+                SimpleNamespace(
+                    provider=source.provenance.provider,
+                    candidates=(conflicting_date,),
+                ),
+            ),
+            identifier_evidence=(),
+            local_claims=(),
+        )
+        self.assertEqual(
+            _classify_sources(report, (source,)),
+            ("unknown", ["retained_bibliographic_ambiguity"], []),
         )
 
         agreement = SimpleNamespace(
@@ -1264,6 +1316,24 @@ class CoverIdentityTests(unittest.TestCase):
         )
         self.assertNotIn("Synthetic title", document)
         self.assertNotIn("source-", document)
+
+        shared_payload = _preview(9)
+        foreign_source = _source(9, shared_payload)
+        current_source = _source(10, shared_payload)
+        foreign_report = _report((foreign_source,))
+        current_report = _report((current_source,))
+        assert foreign_source.artifact is not None
+        foreign_packet = prepare_cover_packet(
+            foreign_report.to_json(), lambda *_: shared_payload
+        )
+        foreign_images = tuple(
+            (item.reference, item.digest, item.payload)
+            for item in foreign_packet.images
+        )
+        with self.assertRaisesRegex(ValueError, "report binding"):
+            classify_cover_identity(
+                current_report.to_json(), foreign_packet.document, foreign_images
+            )
 
     def test_typed_scenario_executes_and_redacts_invalid_report(self) -> None:
         payloads = tuple(_preview(index) for index in range(1, 3))
