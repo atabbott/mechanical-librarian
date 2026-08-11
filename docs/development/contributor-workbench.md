@@ -71,6 +71,13 @@ plus opaque taxonomy, instruction, output-schema, and observer identities. It
 contains no title, creator, source identity, provider value, owner policy,
 eligibility, ranking, preference, or winner.
 
+The 0.15.0 qualification admitted the exact instruction, schema, packets, and
+ordered images for 100 randomly selected real candidates with zero binding
+mismatches; a shuffled 20-case development repeat reproduced the exact request
+and mapping. The contained observer itself did not execute under the preserved
+#542 transport result, so this evidence proves the workbench contract rather
+than semantic label quality or runtime readiness.
+
 ## Executing a scenario
 
 Call the typed API from contributor code or a focused test. For example, an

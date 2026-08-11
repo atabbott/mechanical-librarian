@@ -76,6 +76,10 @@ owner-private storage. Installed artifacts contain none of this capability.
   redacted typed scenario failure.
 - Architecture and installed-artifact checks prove the workbench remains
   outside the runtime distribution.
-- The aggregate-only best-effort receipt records sample size, natural label
-  counts, unavailable/failure counts, exact repeat agreement, leakage status,
-  and the final qualified or negative result.
+- The aggregate-only best-effort receipt records 100 random real candidates,
+  the 50/50 development/final split, 100 exact admissions, zero binding
+  mismatches, and 20/20 shuffled deterministic request/mapping repeats.
+- The existing contained semantic observer did not execute under #542's
+  `contained_reviewer_invocation_insufficient` result. Semantic label counts,
+  semantic repeat agreement, and model quality are therefore not claimed; no
+  reviewer retry or authority widening was used to manufacture them.
