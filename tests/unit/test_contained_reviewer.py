@@ -389,7 +389,7 @@ class ContainedReviewerTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(payload).hexdigest(), image.digest)
 
             with tempfile.TemporaryDirectory() as temporary, \
-                 open("/bin/sh", "rb") as shell, \
+                 open(sys.executable, "rb") as interpreter, \
                  open(os.devnull, "rb") as stdin, \
                  tempfile.TemporaryFile() as stdout, \
                  tempfile.TemporaryFile() as stderr, \
@@ -398,13 +398,16 @@ class ContainedReviewerTests(unittest.TestCase):
                     _profile(Path(temporary))
                 )
                 executable = adapter._BoundArtifact(
-                    shell.fileno(), f"/proc/self/fd/{shell.fileno()}"
+                    interpreter.fileno(),
+                    f"/proc/self/fd/{interpreter.fileno()}",
                 )
                 command = [
                     executable.invocation_path,
                     "-c",
-                    f'test "$(/usr/bin/sha256sum < {image.invocation_path})" '
-                    f'= "{image.digest}  -"',
+                    "import hashlib,sys;"
+                    f" payload=open('{image.invocation_path}','rb').read();"
+                    " raise SystemExit("
+                    f"hashlib.sha256(payload).hexdigest()!='{image.digest}')",
                 ]
 
                 def attack_after_fork(_pid: int, _pgid: int, _token: str) -> None:
@@ -417,17 +420,18 @@ class ContainedReviewerTests(unittest.TestCase):
                     finally:
                         os.close(attacker)
 
-                returncode = reviewer._run_gated(
-                    command,
-                    executable,
-                    executable,
-                    stdin.fileno(),
-                    stdout.fileno(),
-                    stderr.fileno(),
-                    attack_after_fork,
-                    credential_descriptor=credential.fileno(),
-                    image_descriptors=(image.descriptor,),
-                )
+                with patch.object(reviewer, "_limit_child"):
+                    returncode = reviewer._run_gated(
+                        command,
+                        executable,
+                        executable,
+                        stdin.fileno(),
+                        stdout.fileno(),
+                        stderr.fileno(),
+                        attack_after_fork,
+                        credential_descriptor=credential.fileno(),
+                        image_descriptors=(image.descriptor,),
+                    )
                 self.assertEqual(returncode, 0)
 
     def test_gated_timeout_and_cancel_kill_the_captured_process_identity(self) -> None:
