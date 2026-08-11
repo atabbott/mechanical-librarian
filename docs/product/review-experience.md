@@ -189,7 +189,10 @@ covers bounded title, author, library, item, and media values with literal
 wildcard handling. The
 supported needs-attention and no-attention lenses, bounded search, cursor
 pagination, selected-work preview, deep links, and browser history remain
-URL-owned.
+URL-owned. Library lenses, title links, preview actions, and pagination remain
+44px touch-safe at desktop and compact widths. Long and unbroken work titles
+wrap within a bounded two-line title area so distinguishing text remains
+readable without widening the work list or document.
 
 Attention is a separate field-level queue containing only unresolved ordinary
 fields that can benefit from an owner decision. It groups fields by readable
