@@ -185,10 +185,14 @@ def _group_candidate(
     *,
     size: int | None = None,
     duplicates: int = 1,
-    width: int = 1,
-    height: int = 1,
+    width: int = 1000,
+    height: int = 1000,
+    preview_width: int = 1,
+    preview_height: int = 1,
 ):
-    payload = _preview(index, size=size, width=width, height=height)
+    payload = _preview(
+        index, size=size, width=preview_width, height=preview_height
+    )
     first = _source(index, payload, embedded=True)
     sources = [first]
     references = ["cover_ref_" + f"{index * 10:064x}"]
@@ -201,8 +205,16 @@ def _group_candidate(
         ))
         references.append("cover_ref_" + f"{index * 10 + member:064x}")
     return packet_builder._Candidate(
-        references[0], hashlib.sha256(payload).hexdigest(), payload,
-        width, height, False, sources, references,
+        reference=references[0],
+        digest=hashlib.sha256(payload).hexdigest(),
+        payload=payload,
+        width=width,
+        height=height,
+        preview_width=preview_width,
+        preview_height=preview_height,
+        incumbent=False,
+        sources=sources,
+        references=references,
     )
 
 
@@ -320,15 +332,15 @@ class CoverPacketTests(unittest.TestCase):
         valid = _preview(1)
 
         def bound(
-            payload: bytes, *, width: int = 1, height: int = 1
+            payload: bytes, *, preview_width: int = 1, preview_height: int = 1
         ) -> tuple[str, tuple[tuple[str, str, bytes], ...]]:
             value = json.loads(json.dumps(original))
             digest = hashlib.sha256(payload).hexdigest()
             value["candidates"][0].update({
-                "height": height,
                 "preview_bytes": len(payload),
+                "preview_height": preview_height,
                 "preview_sha256": digest,
-                "width": width,
+                "preview_width": preview_width,
             })
             return _rebind_packet(value), ((reference, digest, payload),)
 
@@ -355,6 +367,63 @@ class CoverPacketTests(unittest.TestCase):
             changed[29:33] = struct.pack(">I", zlib.crc32(changed[12:29]))
             return bytes(changed)
 
+        def chunks(payload: bytes) -> list[tuple[bytes, bytes]]:
+            values: list[tuple[bytes, bytes]] = []
+            offset = 8
+            while offset < len(payload):
+                length = struct.unpack(">I", payload[offset:offset + 4])[0]
+                chunk_type = payload[offset + 4:offset + 8]
+                data_start = offset + 8
+                data_end = data_start + length
+                values.append((chunk_type, payload[data_start:data_end]))
+                offset = data_end + 4
+            return values
+
+        def render(values: list[tuple[bytes, bytes]]) -> bytes:
+            result = bytearray(b"\x89PNG\r\n\x1a\n")
+            for chunk_type, data in values:
+                result.extend(struct.pack(">I", len(data)))
+                result.extend(chunk_type)
+                result.extend(data)
+                result.extend(struct.pack(">I", zlib.crc32(chunk_type + data)))
+            return bytes(result)
+
+        canonical_chunks = chunks(valid)
+        idat_index = next(
+            index for index, value in enumerate(canonical_chunks)
+            if value[0] == b"IDAT"
+        )
+        idat_data = canonical_chunks[idat_index][1]
+        split = max(1, len(idat_data) // 2)
+        nonconsecutive_idat = render([
+            *canonical_chunks[:idat_index],
+            (b"IDAT", idat_data[:split]),
+            (b"vpAg", b"bounded"),
+            (b"IDAT", idat_data[split:]),
+            *canonical_chunks[idat_index + 1:],
+        ])
+        plte = (b"PLTE", b"\x00\x00\x00")
+        plte_after_idat = render([*canonical_chunks[:-1], plte, canonical_chunks[-1]])
+        duplicate_plte = render([
+            *canonical_chunks[:idat_index], plte, plte,
+            *canonical_chunks[idat_index:],
+        ])
+        lowercase_reserved = render([
+            *canonical_chunks[:idat_index], (b"vpag", b"bounded"),
+            *canonical_chunks[idat_index:],
+        ])
+        unknown_critical = render([
+            *canonical_chunks[:idat_index], (b"ABCD", b"bounded"),
+            *canonical_chunks[idat_index:],
+        ])
+        ihdr_not_first = render([(b"vpAg", b"bounded"), *canonical_chunks])
+        duplicate_ihdr = render([
+            canonical_chunks[0], canonical_chunks[0], *canonical_chunks[1:],
+        ])
+        iend_before_data = render([
+            canonical_chunks[0], canonical_chunks[-1], *canonical_chunks[1:-1],
+        ])
+
         malformed = {
             "forged_signature": b"\x89PNG\r\n\x1a\nforged",
             "truncated": valid[:-4],
@@ -363,6 +432,14 @@ class CoverPacketTests(unittest.TestCase):
             "wrong_mode": _preview(1, mode="RGB"),
             "decompression_failure": corrupt_idat(valid),
             "decompression_bomb_dimensions": oversized_header(valid),
+            "nonconsecutive_idat": nonconsecutive_idat,
+            "plte_after_idat": plte_after_idat,
+            "duplicate_plte": duplicate_plte,
+            "lowercase_reserved_bit": lowercase_reserved,
+            "unknown_critical_chunk": unknown_critical,
+            "ihdr_not_first": ihdr_not_first,
+            "duplicate_ihdr": duplicate_ihdr,
+            "iend_before_idat": iend_before_data,
         }
         for name, payload in malformed.items():
             document, images = bound(payload)
@@ -371,7 +448,7 @@ class CoverPacketTests(unittest.TestCase):
             ):
                 admit_cover_review_request("Inspect.", document, schema, images)
 
-        document, images = bound(valid, width=2)
+        document, images = bound(valid, preview_width=2)
         with self.assertRaisesRegex(Exception, "response_format"):
             admit_cover_review_request("Inspect.", document, schema, images)
 
@@ -381,8 +458,39 @@ class CoverPacketTests(unittest.TestCase):
                 admitted_document["candidates"][0]["width"],
                 admitted_document["candidates"][0]["height"],
             ),
+            (301, 451),
+        )
+        self.assertEqual(
+            (
+                admitted_document["candidates"][0]["preview_width"],
+                admitted_document["candidates"][0]["preview_height"],
+            ),
             (1, 1),
         )
+
+    def test_original_dimensions_retain_technical_quality_order(self) -> None:
+        packet = packet_builder._finalize_cover_packet(
+            [
+                _group_candidate(1, width=100, height=100),
+                _group_candidate(2, width=1000, height=1000),
+            ],
+            [],
+        )
+        admitted = _admit_produced(packet)
+        document = json.loads(packet.document)
+
+        self.assertEqual(
+            [(value["width"], value["height"]) for value in document["candidates"]],
+            [(1000, 1000), (100, 100)],
+        )
+        self.assertEqual(
+            [
+                (value["preview_width"], value["preview_height"])
+                for value in document["candidates"]
+            ],
+            [(1, 1), (1, 1)],
+        )
+        self.assertEqual(len(admitted.images), 2)  # type: ignore[attr-defined]
 
     def test_cover_entry_rejects_images_bound_to_non_packet_input(self) -> None:
         payload = _preview(1)

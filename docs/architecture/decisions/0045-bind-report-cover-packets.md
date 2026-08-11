@@ -15,14 +15,16 @@ or remote fetches would create broader authority than this experiment requires.
 Add one closed `cover-packet-review` workbench scenario. It reopens one exact
 metadata report and reads previews only through the existing report-bound cover
 reader. It projects opaque references, exact preview digests and variant,
-dimensions, incumbent state, bounded provider provenance, deterministic
+separate original technical and decoded preview dimensions, incumbent state,
+bounded provider provenance, deterministic
 eligibility and omission reasons, and no target or service identity.
 
 Digest-equal previews are one candidate. The inspectable Audiobookshelf
 incumbent is retained when present. Remaining candidates are selected
-deterministically by identity designation, technical dimensions, and source
-diversity. The absolute limits are 12 PNG previews, 1 MiB per preview, and 8 MiB
-in total.
+deterministically by identity designation, original-cover technical dimensions,
+and source diversity; decoded preview dimensions bind the transported PNG but
+do not change that order. The absolute limits are 12 PNG previews, 1 MiB per
+preview, and 8 MiB in total.
 
 The packet's ordered reference/digest mapping is part of the canonical reviewer
 request. The generic contained-reviewer entry point is image-free; the sole
@@ -33,9 +35,10 @@ reference, media/variant, preview byte and dimension facts, incumbent state,
 canonical producer candidate order, reason-specific omission preconditions,
 domain privacy-safe context text, limits, and exact ordered image mapping. The
 same semantic validator runs before producer return and reviewer admission;
-before either can mount an image, it also verifies the complete bounded PNG
-chunk structure and checksums and fully decodes a single-frame RGBA PNG whose
-dimensions exactly match the packet and do not exceed 320 by 480;
+before either can mount an image, it also verifies the complete bounded,
+canonically ordered PNG chunk structure and checksums and fully decodes a
+single-frame RGBA PNG whose dimensions exactly match the distinct packet
+preview facts and do not exceed 320 by 480;
 indistinguishable normalized provenance multiplicity is discarded. Duplicate
 omissions are created only after final selection and always name a retained
 representative; when a whole digest group is excluded, each member carries the

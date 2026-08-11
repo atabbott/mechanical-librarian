@@ -55,6 +55,8 @@ class _Candidate:
     payload: bytes
     width: int
     height: int
+    preview_width: int
+    preview_height: int
     incumbent: bool
     sources: list[CoverSource]
     references: list[str]
@@ -128,8 +130,10 @@ def prepare_cover_packet(
             reference=reference,
             digest=artifact.preview_digest,
             payload=payload,
-            width=preview_width,
-            height=preview_height,
+            width=artifact.width,
+            height=artifact.height,
+            preview_width=preview_width,
+            preview_height=preview_height,
             incumbent=source.kind is CoverSourceKind.ABS,
             sources=[source],
             references=[reference],
@@ -222,8 +226,10 @@ def _finalize_cover_packet(
             "incumbent": candidate.incumbent,
             "media_type": "image/png",
             "preview_bytes": len(candidate.payload),
+            "preview_height": candidate.preview_height,
             "preview_sha256": candidate.digest,
             "preview_variant": PREVIEW_VARIANT,
+            "preview_width": candidate.preview_width,
             "provenance": provenance,
             "reference": candidate.reference,
             "width": candidate.width,

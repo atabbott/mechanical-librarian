@@ -26,8 +26,10 @@ reopens only that exact report, and reads only its bound
 contains no target, library, service, path, URL, credential, raw provider
 response, or provider work/edition identity. Digest duplicates collapse to one
 candidate; the inspectable incumbent is retained; other candidates are
-deterministically ordered using closed identity designation, technical quality,
-and source diversity, with every omission recorded. The fixed limits are 12
+deterministically ordered using closed identity designation, original-cover
+technical dimensions, and source diversity, with every omission recorded. The
+decoded preview dimensions are separate exact binding facts and do not alter
+that quality order. The fixed limits are 12
 previews, 1 MiB each, and 8 MiB total. It is not a generic attachment surface.
 
 ## Executing a scenario
@@ -95,10 +97,11 @@ canonical candidate order, reason-specific omission preconditions, domain
 privacy-safe context text, and exact ordered candidate/image equality.
 Every admitted preview is fully parsed and decoded through Pillow before it is
 mounted: its complete PNG structure and checksums, single-frame PNG format,
-RGBA mode, maximum 320-by-480 dimensions, and exact declared dimensions must
-all agree. Forged signatures, corrupt or truncated streams, trailing bytes,
-unsafe dimensions, and decoder warnings or failures become the same value-free
-typed format failure.
+RGBA mode, maximum 320-by-480 dimensions, and exact declared preview dimensions
+must all agree. Canonical chunk ordering, the reserved bit, palette position,
+and one consecutive image-data run are enforced. Forged signatures, corrupt or
+truncated streams, trailing bytes, unsafe dimensions, and decoder warnings or
+failures become the same value-free typed format failure.
 Indistinguishable normalized provenance rows collapse to one. The generic
 request and adapter method have no image member or argument. A changed,
 repeated, unknown, non-PNG, over-bound, or unbound image fails closed. Only the

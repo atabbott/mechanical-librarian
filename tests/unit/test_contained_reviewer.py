@@ -56,8 +56,10 @@ def _cover_request() -> object:
         "incumbent": True,
         "media_type": "image/png",
         "preview_bytes": len(preview),
+        "preview_height": 1,
         "preview_sha256": digest,
         "preview_variant": "preview-320x480-rgba-png-v1",
+        "preview_width": 1,
         "provenance": [{
             "context": [], "designation": None, "provider": None,
             "source_kind": "abs",

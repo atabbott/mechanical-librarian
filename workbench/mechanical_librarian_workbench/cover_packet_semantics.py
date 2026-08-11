@@ -154,7 +154,8 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
     offset = len(_PNG_SIGNATURE)
     chunk_count = 0
     width = height = 0
-    saw_header = saw_data = saw_end = False
+    saw_header = saw_palette = saw_data = saw_end = False
+    data_closed = False
     while offset < len(payload):
         chunk_count += 1
         if chunk_count > _MAX_PNG_CHUNKS or len(payload) - offset < 12:
@@ -166,6 +167,7 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
         crc_end = data_end + 4
         if (
             not all(65 <= value <= 90 or 97 <= value <= 122 for value in chunk_type)
+            or chunk_type[2] & 0x20 != 0
             or data_end < data_start
             or crc_end > len(payload)
         ):
@@ -180,19 +182,35 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
             if (
                 not 1 <= width <= MAX_COVER_PREVIEW_WIDTH
                 or not 1 <= height <= MAX_COVER_PREVIEW_HEIGHT
+                or payload[data_start + 8:data_end] != b"\x08\x06\x00\x00\x00"
             ):
                 raise ValueError
             saw_header = True
         elif chunk_type == b"IHDR" or saw_end:
             raise ValueError
+        elif chunk_type == b"PLTE":
+            if (
+                saw_palette
+                or saw_data
+                or not 1 <= length <= 768
+                or length % 3 != 0
+            ):
+                raise ValueError
+            saw_palette = True
         elif chunk_type == b"IDAT":
+            if data_closed:
+                raise ValueError
             saw_data = True
         elif chunk_type == b"IEND":
             if length != 0 or not saw_data or crc_end != len(payload):
                 raise ValueError
+            data_closed = True
             saw_end = True
-        elif chunk_type[0] & 0x20 == 0 and chunk_type != b"PLTE":
-            raise ValueError
+        else:
+            if saw_data:
+                data_closed = True
+            if chunk_type[0] & 0x20 == 0:
+                raise ValueError
         offset = crc_end
     if not (saw_header and saw_data and saw_end):
         raise ValueError
@@ -247,8 +265,8 @@ def bind_cover_packet(
                 raise ValueError
             validate_cover_preview(
                 payload,
-                expected_width=candidate["width"],
-                expected_height=candidate["height"],
+                expected_width=candidate["preview_width"],
+                expected_height=candidate["preview_height"],
             )
             total += len(payload)
         if total > MAX_COVER_PACKET_BYTES:
@@ -282,7 +300,8 @@ def _validate_candidate(value: object) -> tuple[str, int]:
         type(value) is not dict
         or set(value) != {
             "height", "incumbent", "media_type", "preview_bytes",
-            "preview_sha256", "preview_variant", "provenance", "reference", "width",
+            "preview_height", "preview_sha256", "preview_variant", "preview_width",
+            "provenance", "reference", "width",
         }
         or _COVER_REFERENCE.fullmatch(value["reference"]) is None
         or _DIGEST.fullmatch(value["preview_sha256"]) is None
@@ -292,8 +311,13 @@ def _validate_candidate(value: object) -> tuple[str, int]:
         or not 1 <= value["preview_bytes"] <= MAX_COVER_PREVIEW_BYTES
         or type(value["width"]) is not int
         or type(value["height"]) is not int
-        or not 1 <= value["width"] <= MAX_COVER_PREVIEW_WIDTH
-        or not 1 <= value["height"] <= MAX_COVER_PREVIEW_HEIGHT
+        or not 1 <= value["width"] <= 8192
+        or not 1 <= value["height"] <= 8192
+        or value["width"] * value["height"] > 16_777_216
+        or type(value["preview_width"]) is not int
+        or type(value["preview_height"]) is not int
+        or not 1 <= value["preview_width"] <= MAX_COVER_PREVIEW_WIDTH
+        or not 1 <= value["preview_height"] <= MAX_COVER_PREVIEW_HEIGHT
         or type(value["incumbent"]) is not bool
         or type(value["provenance"]) is not list
         or not value["provenance"]
