@@ -1,10 +1,10 @@
 # Interface fidelity living audit
 
-Status: active; material gaps remain  
-Last updated: 2026-08-11  
-Current implementation baseline: `7fd8f8a1226b98dc4d725db2aabe604c4722b824`  
+Status: active; material gaps remain
+Last updated: 2026-08-11
+Current implementation baseline: `7fd8f8a1226b98dc4d725db2aabe604c4722b824`
 Protected review reference: Variant M at
-`026e3388c86f583af5d5a136c4bf6a4192a77af6`  
+`026e3388c86f583af5d5a136c4bf6a4192a77af6`
 Impeccable critique baseline: 28/40 on 2026-08-11
 
 ## Purpose
