@@ -34,6 +34,24 @@ original dimensions by pixel area, width, then height, independent of source
 order. The fixed limits are 12
 previews, 1 MiB each, and 8 MiB total. It is not a generic attachment surface.
 
+`cover-identity-report` replays that same exact report and packet locally and
+classifies every retained candidate before any aesthetic or policy experiment.
+Its five closed outcomes are `verified_manifestation_match`,
+`verified_work_match`, `plausible_match`, `unknown`, and `conflict`. The output
+contains only opaque report/packet/candidate/evidence references, classifier
+identity, and fixed reason codes. Unrelated identifiers, edition/work
+contradictions, and incompatible manifestation publication/format evidence
+produce `conflict` before verification. Other retained bibliographic
+disagreements produce a fixed ambiguity reason without independently proving a
+different identity. Only positive retained agreement supports
+`plausible_match`; ambiguous, insufficient, or unbound provider identity
+remains `unknown`. The scenario neither sends a provider request nor reads
+images as identity evidence.
+Candidate references and normalized provenance are re-derived from the report;
+matching preview bytes cannot substitute a packet from another report. Date
+evidence links participate in compatibility, and a default provider cover with
+explicit work identity can verify only the work.
+
 ## Executing a scenario
 
 Call the typed API from contributor code or a focused test. For example, an

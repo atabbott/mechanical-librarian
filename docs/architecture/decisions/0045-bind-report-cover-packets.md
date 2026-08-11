@@ -74,6 +74,29 @@ instructions.
 This narrowly supersedes ADR-0041's statement that the source-only kernel has
 no cover transport. All other ADR-0041 constraints remain current.
 
+`cover-identity-report` is a separate local inspector, not a packet extension
+or reviewer input. It replays the exact report-bound packet and reports one
+closed identity outcome for every retained candidate:
+`verified_manifestation_match`, `verified_work_match`, `plausible_match`,
+`unknown`, or `conflict`. Verification requires an exact retained provider
+identity binding plus compatible accepted identifier evidence (or, for a work,
+accepted or associated evidence). Unrelated identifier evidence, retained
+edition/work contradictions, incompatible manifestation publication/format
+evidence win over verification. Retained title, creator, language, publisher,
+and publication-date comparisons contribute only closed agreement, ambiguity,
+or insufficient-evidence reasons; disagreement alone does not prove a different
+identity, and only positive retained agreement supports `plausible_match`.
+Ambiguous or insufficient retained compatibility remains `unknown`. The projection binds report,
+packet, candidate, classifier, and opaque evidence references. It emits fixed
+reason codes only, never source/provider identities, metadata values, paths,
+URLs, or credentials, and makes no visual, provider, policy, persistence, or
+write decision. Candidate admission recomputes the report-bound opaque source
+reference, normalized provenance, incumbent state, original dimensions, and
+preview variant; matching preview bytes alone cannot bind a foreign packet.
+Retained date-evidence links participate in the same conservative compatibility
+result as claim links, and a provider default cover with explicit work identity
+is work-designated for verification.
+
 ## Consequences
 
 Real cover transport can be qualified without a runtime API, CLI, persistence

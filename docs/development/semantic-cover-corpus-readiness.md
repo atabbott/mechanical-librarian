@@ -91,6 +91,43 @@ This is the natural observed class distribution. It is not a statistical or
 model-quality claim, and no case was selected, moved, or relabelled to improve
 that distribution.
 
+## Identity-classifier qualification — PASS
+
+The source-only classifier was run against the unchanged 50-case development
+cohort before the final holdout was opened. Forty-nine cases had an exact
+report-bound cover source; one retained case was typed unavailable instead of
+being replaced. After the implementation and its exact artifact passed review
+and validation, the unchanged 50-case final holdout was opened. The later C1
+connector review required three structural correctness fixes and therefore
+invalidated the exact head; one blind aggregate requalification was performed
+under the milestone rule to rerun invalidated evidence. It exposed no identity,
+per-case result, or tuning signal, and every aggregate result remained
+unchanged.
+
+| Measure | Development | Final holdout | Combined |
+| --- | ---: | ---: | ---: |
+| Verified manifestation predictions | 20 | 25 | 45 |
+| Verified work predictions | 12 | 9 | 21 |
+| Plausible predictions | 0 | 0 | 0 |
+| Unknown predictions | 14 | 14 | 28 |
+| Conflict predictions | 3 | 2 | 5 |
+| Typed unavailable cases | 1 | 0 | 1 |
+| Exact matches / evaluable cases | 39/49 | 39/50 | 78/99 |
+| Verified precision | 32/32 | 34/34 | 66/66 |
+| Reviewed conflicts retained | 3/3 | 2/2 | 5/5 |
+
+Ten development and eleven final reviewed `plausible` cases were
+conservatively projected as `unknown` because the retained report evidence was
+ambiguous; the remaining reviewed plausible development case was the typed
+unavailable case. All reviewed unknown cases remained unknown. This is an
+honest precision-first negative recall result, not a semantic-quality or
+production-activation claim. No case was tuned, moved, relabelled, or replaced.
+
+Both runs made zero provider or model calls and performed zero production
+access or writes. The final holdout was unavailable to implementation and
+tuning before qualification and remained unavailable during the blind
+post-review requalification.
+
 ## Outcome
 
 Issue #546 passes as a best-effort general-principle proof of a bounded,

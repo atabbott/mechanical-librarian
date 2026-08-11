@@ -11,6 +11,8 @@ import unittest
 import zlib
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from PIL import Image, ImageCms
 
@@ -24,8 +26,12 @@ from mechanical_librarian.domain.cover_evidence import (
     cover_source_id,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    Comparison,
     FileFacts,
+    IdentifierRelation,
     MetadataReport,
+    ProviderEvidenceKind,
     TargetFacts,
     default_target_fields,
 )
@@ -41,12 +47,19 @@ from mechanical_librarian_workbench.cover_packets import (  # noqa: E402
     MAX_COVER_PREVIEWS,
     prepare_cover_packet,
 )
+from mechanical_librarian_workbench.cover_identity import (  # noqa: E402
+    SCHEMA_VERSION,
+    _classify_sources,
+    classify_cover_identity,
+)
 from mechanical_librarian_workbench import cover_packets as packet_builder  # noqa: E402
 from mechanical_librarian_workbench import reviewer as reviewer_binding  # noqa: E402
 from mechanical_librarian_workbench import (  # noqa: E402
+    CoverIdentityRequest,
     CoverPacketRequest,
     IsolatedNetworkProfile,
     WorkbenchContext,
+    WorkbenchFailure,
     WorkbenchOperations,
     execute,
 )
@@ -1066,6 +1079,311 @@ class CoverPacketTests(unittest.TestCase):
             ["shortlist_limit", "shortlist_limit"],
         )
         self.assertNotIn("duplicate_preview", packet.document)
+
+
+class CoverIdentityTests(unittest.TestCase):
+    def test_every_outcome_is_closed_and_does_not_project_hostile_values(self) -> None:
+        payload = _preview(3)
+        source = _source(3, payload)
+        assert source.provenance is not None
+        candidate = SimpleNamespace(
+            identity=source.provenance.edition_identity,
+            work_identity=source.provenance.work_identity,
+            claims=(),
+            evidence=(),
+        )
+        accepted = SimpleNamespace(
+            provider=source.provenance.provider,
+            candidate_identity=candidate.identity,
+            work_identity=candidate.work_identity,
+            relation=IdentifierRelation.ACCEPTED,
+            reference="provider_" + "a" * 64,
+        )
+        report = SimpleNamespace(
+            providers=(SimpleNamespace(provider=source.provenance.provider, candidates=(candidate,)),),
+            identifier_evidence=(accepted,),
+            local_claims=(),
+        )
+        with mock.patch(
+            "mechanical_librarian_workbench.cover_identity.manifestation_publication_compatible",
+            return_value=True,
+        ):
+            self.assertEqual(
+                _classify_sources(report, (source,))[0],
+                "verified_manifestation_match",
+            )
+        work_source = replace(
+            source,
+            provenance=replace(source.provenance, designation=CoverDesignation.WORK, edition_identity=None),
+        )
+        associated = SimpleNamespace(**{**accepted.__dict__, "relation": IdentifierRelation.ASSOCIATED})
+        self.assertEqual(_classify_sources(SimpleNamespace(providers=report.providers, identifier_evidence=(associated,)), (work_source,))[0], "verified_work_match")
+        default_source = replace(
+            work_source,
+            provenance=replace(
+                work_source.provenance, designation=CoverDesignation.DEFAULT
+            ),
+        )
+        self.assertEqual(
+            _classify_sources(
+                SimpleNamespace(
+                    providers=report.providers,
+                    identifier_evidence=(associated,),
+                ),
+                (default_source,),
+            )[0],
+            "verified_work_match",
+        )
+        self.assertEqual(_classify_sources(SimpleNamespace(providers=report.providers, identifier_evidence=()), (source,))[0], "unknown")
+        self.assertEqual(_classify_sources(SimpleNamespace(providers=(), identifier_evidence=()), (source,))[0], "unknown")
+        contradiction = SimpleNamespace(kind=ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION)
+        conflicting = SimpleNamespace(**{**candidate.__dict__, "evidence": (contradiction,)})
+        self.assertEqual(_classify_sources(SimpleNamespace(providers=(SimpleNamespace(provider=source.provenance.provider, candidates=(conflicting,)),), identifier_evidence=()), (source,))[0], "conflict")
+
+    def test_deterministic_contradictions_and_bibliographic_ambiguity(self) -> None:
+        source = _source(3, _preview(3))
+        assert source.provenance is not None
+        candidate = SimpleNamespace(
+            identity=source.provenance.edition_identity,
+            work_identity=source.provenance.work_identity,
+            claims=(),
+            evidence=(),
+        )
+        identifier = SimpleNamespace(
+            provider=source.provenance.provider,
+            candidate_identity=candidate.identity,
+            work_identity=candidate.work_identity,
+            relation=IdentifierRelation.UNRELATED,
+            reference="provider_" + "a" * 64,
+        )
+        provider = SimpleNamespace(
+            provider=source.provenance.provider,
+            candidates=(candidate,),
+        )
+        report = SimpleNamespace(
+            providers=(provider,), identifier_evidence=(identifier,), local_claims=()
+        )
+        self.assertEqual(
+            _classify_sources(report, (source,)),
+            ("conflict", ["unrelated_identifier"], [identifier.reference]),
+        )
+
+        disagreement = SimpleNamespace(
+            outcome=Comparison.DISAGREEMENT,
+            local_reference="local_" + "b" * 64,
+        )
+        mixed_agreement = SimpleNamespace(
+            outcome=Comparison.AGREEMENT,
+            local_reference="local_" + "f" * 64,
+        )
+        title = SimpleNamespace(
+            kind=ClaimKind.TITLE,
+            links=(disagreement, mixed_agreement),
+            reference="provider_" + "c" * 64,
+        )
+        conflicting = SimpleNamespace(
+            **{**candidate.__dict__, "claims": (title,)}
+        )
+        report = SimpleNamespace(
+            providers=(
+                SimpleNamespace(
+                    provider=source.provenance.provider,
+                    candidates=(conflicting,),
+                ),
+            ),
+            identifier_evidence=(),
+            local_claims=(),
+        )
+        self.assertEqual(
+            _classify_sources(report, (source,)),
+            (
+                "unknown",
+                ["retained_bibliographic_ambiguity"],
+                [],
+            ),
+        )
+
+        date_disagreement = SimpleNamespace(
+            outcome=Comparison.DISAGREEMENT,
+            local_reference="local_" + "9" * 64,
+        )
+        date_evidence = SimpleNamespace(
+            kind=ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+            links=(date_disagreement,),
+        )
+        conflicting_date = SimpleNamespace(
+            **{
+                **candidate.__dict__,
+                "claims": (
+                    SimpleNamespace(
+                        kind=ClaimKind.TITLE,
+                        links=(mixed_agreement,),
+                        reference="provider_" + "8" * 64,
+                    ),
+                ),
+                "evidence": (date_evidence,),
+            }
+        )
+        report = SimpleNamespace(
+            providers=(
+                SimpleNamespace(
+                    provider=source.provenance.provider,
+                    candidates=(conflicting_date,),
+                ),
+            ),
+            identifier_evidence=(),
+            local_claims=(),
+        )
+        self.assertEqual(
+            _classify_sources(report, (source,)),
+            ("unknown", ["retained_bibliographic_ambiguity"], []),
+        )
+
+        agreement = SimpleNamespace(
+            outcome=Comparison.AGREEMENT,
+            local_reference="local_" + "d" * 64,
+        )
+        agreeing = SimpleNamespace(
+            **{
+                **candidate.__dict__,
+                "claims": (
+                    SimpleNamespace(
+                        kind=ClaimKind.TITLE,
+                        links=(agreement,),
+                        reference="provider_" + "e" * 64,
+                    ),
+                ),
+            }
+        )
+        report = SimpleNamespace(
+            providers=(
+                SimpleNamespace(
+                    provider=source.provenance.provider,
+                    candidates=(agreeing,),
+                ),
+            ),
+            identifier_evidence=(),
+            local_claims=(),
+        )
+        self.assertEqual(
+            _classify_sources(report, (source,)),
+            (
+                "plausible_match",
+                [
+                    "provider_identity_without_explicit_identifier",
+                    "retained_bibliographic_agreement",
+                ],
+                [],
+            ),
+        )
+
+        accepted = SimpleNamespace(
+            **{**identifier.__dict__, "relation": IdentifierRelation.ACCEPTED}
+        )
+        report = SimpleNamespace(
+            providers=(provider,), identifier_evidence=(accepted,), local_claims=()
+        )
+        with mock.patch(
+            "mechanical_librarian_workbench.cover_identity.manifestation_publication_compatible",
+            return_value=False,
+        ):
+            self.assertEqual(
+                _classify_sources(report, (source,)),
+                (
+                    "conflict",
+                    ["manifestation_publication_incompatible"],
+                    [accepted.reference],
+                ),
+            )
+
+    def test_report_binds_exact_packet_candidates_and_emits_only_opaque_references(self) -> None:
+        packet, images = _packet_case()
+        report_document = _report(tuple(_source(index, _preview(index)) for index in range(1, 3))).to_json()
+        report = MetadataReport.from_json(report_document)
+        with mock.patch("mechanical_librarian_workbench.cover_identity.MetadataReport.from_json", return_value=report):
+            document = classify_cover_identity(report_document, packet.document, images).document
+        value = json.loads(document)
+        self.assertEqual(value["schema_version"], SCHEMA_VERSION)
+        self.assertEqual(value["cover_packet_reference"], json.loads(packet.document)["packet_reference"])
+        self.assertTrue(value["work_target_reference"].startswith("work_target_ref_"))
+        self.assertEqual(len(value["candidates"]), 2)
+        self.assertTrue(all(row["outcome"] == "unknown" for row in value["candidates"]))
+        self.assertTrue(
+            all(
+                row["preview_reference"].startswith("cover_preview_ref_")
+                for row in value["candidates"]
+            )
+        )
+        self.assertNotIn("Synthetic title", document)
+        self.assertNotIn("source-", document)
+
+        shared_payload = _preview(9)
+        foreign_source = _source(9, shared_payload)
+        current_source = _source(10, shared_payload)
+        foreign_report = _report((foreign_source,))
+        current_report = _report((current_source,))
+        assert foreign_source.artifact is not None
+        foreign_packet = prepare_cover_packet(
+            foreign_report.to_json(), lambda *_: shared_payload
+        )
+        foreign_images = tuple(
+            (item.reference, item.digest, item.payload)
+            for item in foreign_packet.images
+        )
+        with self.assertRaisesRegex(ValueError, "report binding"):
+            classify_cover_identity(
+                current_report.to_json(), foreign_packet.document, foreign_images
+            )
+
+    def test_typed_scenario_executes_and_redacts_invalid_report(self) -> None:
+        payloads = tuple(_preview(index) for index in range(1, 3))
+        sources = tuple(
+            _source(index, payload)
+            for index, payload in enumerate(payloads, start=1)
+        )
+        report = _report(sources)
+        by_artifact = {
+            source.artifact.artifact_id: payload
+            for source, payload in zip(sources, payloads, strict=True)
+            if source.artifact is not None
+        }
+
+        def operation(*_args: object) -> str:
+            return '{"ok":true}'
+
+        operations = WorkbenchOperations(
+            *(operation for _ in WorkbenchOperations.__dataclass_fields__)
+        )
+        operations = replace(
+            operations,
+            reopen_metadata_report=lambda *_: report.to_json(),
+            reopen_cover_preview=(
+                lambda _db, _artifacts, _report, artifact, _variant:
+                by_artifact[artifact]
+            ),
+        )
+        with WorkbenchContext.temporary() as context:
+            result = execute(
+                context, CoverIdentityRequest(report.report_id), operations
+            )
+            document = json.loads(
+                context.path("artifacts/" + result.artifacts[0]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(result.name, "cover-identity-report")
+            self.assertEqual(len(document["candidates"]), 2)
+
+            invalid = replace(
+                operations,
+                reopen_metadata_report=(
+                    lambda *_: '{"private":"/untrusted/private/value"}'
+                ),
+            )
+            with self.assertRaises(WorkbenchFailure) as caught:
+                execute(context, CoverIdentityRequest(report.report_id), invalid)
+            self.assertEqual(caught.exception.category, "invalid")
+            self.assertNotIn("private", str(caught.exception))
 
 
 if __name__ == "__main__":

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Add a source-only, report-local cover identity projection that classifies each
+  retained cover as verified manifestation/work, plausible, unknown, or
+  conflicting from bounded retained evidence before aesthetic or policy work.
+  The canonical report binds opaque report, packet, candidate, classifier, and
+  evidence references; explicit identifier and edition/work contradictions plus
+  incompatible manifestation publication/format evidence win, while ordinary
+  bibliographic agreement alone supports a plausible match and disagreement or
+  insufficient compatibility remains unknown, without provider calls, visual
+  inference, persistence, or write authority. Exact report-bound reference and
+  provenance checks reject digest-equal foreign packets; date-evidence links
+  and default work covers retain their conservative identity meaning. (#540)
+
 - Polish the authenticated interface without changing its authority: restore
   the asymmetric book-spine shell mark and touch-safe secondary actions; make
   Policy a one-chapter-at-a-time notebook with changed-field emphasis and an
@@ -34,10 +46,10 @@
   drawer clears the wrapped shell, and retained provenance stays visible when
   supplemental evidence fails.
   Superseded cases never expose decision controls; work and field position carry
-  into full review; direct review entry restores focus to the selected field.
-  The synthetic qualification cohort contains 20 public-domain works across
-  local, Project Gutenberg, Google Books, and Open Library shaped evidence.
-  (#554)
+   into full review; direct review entry restores focus to the selected field.
+   The synthetic qualification cohort contains 20 public-domain works across
+   local, Project Gutenberg, Google Books, and Open Library shaped evidence.
+   (#554)
 
 - Admit deterministic report-bound cover packets to the source-only contained
   reviewer with opaque digest/order identity, incumbent-preserving deduplication,
