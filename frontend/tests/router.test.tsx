@@ -277,7 +277,7 @@ describe('typed review routes', () => {
     const { router } = renderRoute('/review/case-1')
 
     expect(await screen.findByRole('heading', { name: 'Current review case', level: 1 })).toBeVisible()
-    await waitFor(() => expect(screen.getByRole('main')).toHaveFocus())
+    await waitFor(() => expect(document.querySelector('#field-title')).toHaveFocus())
     expect(screen.getByText('Review case loaded')).toHaveAttribute('role', 'status')
     await waitFor(() => expect(router.state.location.search).toEqual({ field: 'title', subview: 'review' }))
   })

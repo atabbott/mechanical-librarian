@@ -375,14 +375,15 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
                 ]
             ).casefold()
         ]
-    page = 1 if query.get("cursor", [""])[0] != "page-2" else 2
+    cursor = query.get("cursor", [""])[0]
+    page = {"page-2": 2, "page-3": 3, "page-4": 4}.get(cursor, 1)
     start = (page - 1) * 6
     end = start + 6
     return {
         "schema_version": "review.v1",
         "lens": lens,
         "query": needle or None,
-        "next_cursor": "page-2" if len(works) > end else None,
+        "next_cursor": f"page-{page + 1}" if len(works) > end else None,
         "counts": {
             "needs_attention": sum(
                 int(item["attention_count"]) > 0 for item in LIBRARY_WORKS
@@ -655,7 +656,9 @@ class RichFidelityApiMiddleware(BaseHTTPMiddleware):
         rewrite_library_page = (
             request.method == "GET"
             and original_path == "/api/v1/library"
-            and rich_cursor == ["page-2"]
+            and rich_cursor is not None
+            and len(rich_cursor) == 1
+            and rich_cursor[0] in {"page-2", "page-3", "page-4"}
         )
         if rewrite_alias:
             installed_path = installed_prefix + (f"/{suffix}" if suffix else "")

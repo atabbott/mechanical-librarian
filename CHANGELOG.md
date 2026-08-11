@@ -6,6 +6,7 @@
   destination with a URL-owned Attention queue, direct current-or-specific
   value decisions, authoritative shared settlement and reconciliation, bounded
   readable evidence, cross-work continuation, and a compact single-task flow.
+  Direct review entry restores focus to the selected decision field.
   The synthetic qualification cohort contains 20 public-domain works across
   local, Project Gutenberg, Google Books, and Open Library shaped evidence.
   (#554)

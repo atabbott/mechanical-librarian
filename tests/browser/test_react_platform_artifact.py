@@ -380,55 +380,41 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             before_navigation = documents
             page.get_by_role("link", name="Library", exact=True).click()
             page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
-            page.get_by_role("link", name="Attention", exact=True).click()
-            page.get_by_role("heading", name="Needs your attention").wait_for()
-            self.assertEqual(page.locator(".attention-field-row").count(), 6)
-            page.locator(".attention-work").first.get_by_text(
-                "2 fields", exact=True
-            ).wait_for()
-            attention_header = page.locator(".attention-work > header").first
-            self.assertEqual(
-                attention_header.evaluate("node => getComputedStyle(node).flexDirection"),
-                "column",
-            )
-            self.assertEqual(
-                attention_header.locator(":scope > span").evaluate(
-                    "node => getComputedStyle(node).whiteSpace"
-                ),
-                "nowrap",
-            )
+            page.locator(".attention-toggle").click()
+            page.locator(".attention-rail h2").get_by_text("Attention", exact=True).wait_for()
+            self.assertEqual(page.locator(".attention-queue-item").count(), 6)
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
-            attention_link = page.locator(".attention-field-row").first
-            self.assertIn("field=title", attention_link.get_attribute("href") or "")
-            self.assertIn("/review/case-1", attention_link.get_attribute("href") or "")
-            self.assertNotIn("item-1", page.locator(".attention-groups").inner_text())
+            attention_link = page.locator(".attention-queue-item").first
+            self.assertNotIn("item-1", page.locator(".attention-rail").inner_text())
             page.evaluate(
                 "() => document.body.dataset.persistentDocument = 'rich-attention'"
             )
             before_detail = documents
             attention_link.click()
-            page.get_by_role("heading", name="Current review case").wait_for()
+            page.locator(".workspace-detail .decision-canvas").wait_for()
             self.assertEqual(
                 page.evaluate("() => document.body.dataset.persistentDocument"),
                 "rich-attention",
             )
             self.assertEqual(documents, before_detail)
-            linked_choices = page.locator("#field-title .direct-choice-grid")
+            linked_choices = page.locator(
+                ".workspace-detail .direct-choice-grid"
+            )
             self.assertIn("Current <script> title", linked_choices.inner_text())
             self.assertEqual(linked_choices.locator("button").count(), 4)
             page.go_back()
-            page.get_by_role("heading", name="Needs your attention").wait_for()
+            page.locator(".attention-rail").wait_for()
             page.go_back()
             page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
             for control in page.locator(
-                ".lenses a, .preview-button, .library-pager a, .library-work-copy h3 a"
+                ".lenses a, .library-pager a, .work-select"
             ).all():
                 self.assertGreaterEqual(control.bounding_box()["height"], 44)
             for lens in page.locator(".lenses a").all():
                 self.assertGreaterEqual(lens.bounding_box()["width"], 44)
             compact_title = page.locator(".library-work-row").filter(
                 has_text=LONG_TITLE
-            ).locator(".library-work-copy h3 a")
+            ).locator(".library-work-copy .work-select")
             self.assertEqual(compact_title.inner_text(), LONG_TITLE)
             self.assertIn(UNBROKEN_TITLE_SEGMENT, compact_title.inner_text())
             self.assertLessEqual(
