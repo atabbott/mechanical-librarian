@@ -47,6 +47,8 @@ from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa
 from mechanical_librarian_workbench.cover_observation import (  # noqa: E402
     OUTPUT_SCHEMA_VERSION,
     SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
+    TAXONOMY,
+    TAXONOMY_DOCUMENT,
     TAXONOMY_REFERENCE,
     observe_cover_packet,
 )
@@ -1189,9 +1191,26 @@ class CoverObservationTests(unittest.TestCase):
     def test_closed_observations_bind_every_exact_preview_and_hide_source_values(self) -> None:
         packet, images = _packet_case(3)
         profile = b"synthetic-profile"
-        report = observe_cover_packet(profile, packet.document.encode(), images, _observer_result)
+        instructions: list[str] = []
+
+        def reviewer(*args: object) -> str:
+            instruction = args[1]
+            assert isinstance(instruction, bytes)
+            instructions.append(instruction.decode())
+            return _observer_result(*args)
+
+        report = observe_cover_packet(profile, packet.document.encode(), images, reviewer)
         value = json.loads(report.document)
 
+        self.assertIn(TAXONOMY_DOCUMENT, instructions[0])
+        self.assertTrue(
+            isinstance(TAXONOMY, tuple)
+            and all(
+                isinstance(values, tuple)
+                and all(isinstance(item, tuple) for item in values)
+                for _name, values in TAXONOMY
+            )
+        )
         self.assertEqual(value["schema_version"], OBSERVATION_SCHEMA_VERSION)
         self.assertEqual(value["taxonomy_reference"], TAXONOMY_REFERENCE)
         self.assertEqual(value["cover_packet_reference"], json.loads(packet.document)["packet_reference"])
