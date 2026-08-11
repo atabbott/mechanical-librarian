@@ -35,9 +35,26 @@ per-case outcomes.
 | Packets with at least five exact previews | 16 |
 | Packets with at least six exact previews | 1 |
 
-The 2026-08-11 revision from six to five exact previews passes the revised
-packet-scale acquisition gate: at least ten packets are available, with sixteen
-observed. The prior six-preview minimum does not pass.
+The 2026-08-11 packet-readiness contract requires at least ten packets with
+five previews across the sealed inventory, including at least one in the
+pre-frozen qualification-holdout role. It passes with sixteen and three,
+respectively. This is exploratory transport readiness, not a statistical yield
+or semantic-quality claim. Exact five-candidate transport remains subject to a
+later zero-mismatch and p95-at-most-180-seconds qualification.
+
+| Qualification-holdout measure | Aggregate result |
+| --- | ---: |
+| Assigned source works | 98 |
+| Completed report runs | 98 |
+| Work families | 95 |
+| Work families with a usable preview | 77 |
+| Work-family-disjoint multi-choice packets | 74 |
+| Packets with at least five exact previews | 3 |
+| Maximum exact previews per packet | 5 |
+
+Its packet distribution is 0: 18, 1: 3, 2: 30, 3: 21, 4: 20, 5: 3. The role
+assignments, acquisition behavior, and sealed inventory were reused unchanged;
+no cases were moved to meet the readiness gate.
 
 Provider outcomes are bounded aggregate counts:
 
@@ -71,7 +88,7 @@ the revised minimums.
 | Independent second reviews completed | 100 |
 | First-review corrections accepted | 38 |
 | Second-review corrections accepted | 47 |
-| Unresolved disagreements | 47 |
+| Adjudications ending in closed unknown/conflict outcomes | 47 |
 | Split/leakage status | passed |
 | Product-prediction and score-impact blinding | passed |
 | Second-review answer blinding | passed |
@@ -84,6 +101,11 @@ the revised minimums.
 | Plausible match | 3 | 5 | 8 |
 | Unknown | 8 | 15 | 23 |
 | Conflict | 19 | 16 | 35 |
+
+Every case has a sealed final adjudicated class: no final label is unresolved.
+The `unknown` and `conflict` classes are closed policy outcomes that preserve
+insufficient evidence or deterministic contradiction, respectively; they do
+not represent unresolved ground-truth labels.
 
 All acquisition and identity-coverage gates therefore pass. The corpus is
 qualified for the bounded semantic-cover decision workbench; downstream issue
