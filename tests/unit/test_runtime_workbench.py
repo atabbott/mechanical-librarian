@@ -81,7 +81,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
     def test_default_bindings_are_the_shared_application_composition(self) -> None:
         operations = WorkbenchOperations.production_operations()
         for name in WorkbenchOperations.__dataclass_fields__:
-            if name == "run_contained_reviewer":
+            if name in {"run_contained_reviewer", "run_cover_packet_reviewer"}:
                 self.assertEqual(getattr(operations, name).__module__, "mechanical_librarian_workbench.reviewer")
             else:
                 self.assertIs(getattr(operations, name), getattr(composition, name))

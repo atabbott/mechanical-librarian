@@ -25,13 +25,18 @@ diversity. The absolute limits are 12 PNG previews, 1 MiB per preview, and 8 MiB
 in total.
 
 The packet's ordered reference/digest mapping is part of the canonical reviewer
-request. The durable pre-egress attempt binds that packet together with the
+request. The generic contained-reviewer entry point is image-free; the sole
+image-capable entry point accepts only canonical `cover-review-packet-v1` input
+whose candidate mapping exactly equals the ordered image mapping. The durable
+pre-egress attempt binds that packet together with the
 exact reviewer profile, instruction, and output schema. The local result binds
 the request and profile identities. Preview bytes are copied into a separate
 ephemeral private directory, mounted read-only in the Linux sandbox, passed as
 repeatable ordered `codex exec --image` arguments, and removed with the job.
 Unknown, repeated, changed, non-PNG, over-bound, or unbound inputs fail closed.
-Image and OCR text are explicitly untrusted evidence, never instructions.
+Only the bounded Instruction is authoritative. Canonical input, provider
+metadata, images, and OCR text are explicitly hostile evidence, never
+instructions.
 
 This narrowly supersedes ADR-0041's statement that the source-only kernel has
 no cover transport. All other ADR-0041 constraints remain current.

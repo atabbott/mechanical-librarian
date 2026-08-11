@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import sys
 import tempfile
@@ -35,6 +36,7 @@ from mechanical_librarian_workbench.cover_packets import (  # noqa: E402
     MAX_COVER_PREVIEWS,
     prepare_cover_packet,
 )
+from mechanical_librarian_workbench import reviewer as reviewer_binding  # noqa: E402
 from mechanical_librarian_workbench import (  # noqa: E402
     CoverPacketRequest,
     IsolatedNetworkProfile,
@@ -112,7 +114,7 @@ class CoverPacketTests(unittest.TestCase):
             operations,
             reopen_metadata_report=lambda *_: report.to_json(),
             reopen_cover_preview=lambda _db, _artifacts, _report, artifact, _variant: by_artifact[artifact],
-            run_contained_reviewer=lambda *args: observed.append(args) or '{"status":"completed"}',
+            run_cover_packet_reviewer=lambda *args: observed.append(args) or '{"status":"completed"}',
         )
         with WorkbenchContext.temporary() as context:
             files = {
@@ -136,8 +138,8 @@ class CoverPacketTests(unittest.TestCase):
             self.assertEqual(result.name, "cover-packet-review")
             self.assertEqual(len(tuple(context.path("attempts").iterdir())), 1)
         self.assertEqual(len(observed), 1)
-        self.assertEqual(observed[0][3], packet.document.encode())
-        image_arguments = observed[0][5]
+        self.assertEqual(observed[0][2], packet.document.encode())
+        image_arguments = observed[0][4]
         self.assertIsInstance(image_arguments, tuple)
         assert isinstance(image_arguments, tuple)
         self.assertEqual(
@@ -145,6 +147,66 @@ class CoverPacketTests(unittest.TestCase):
             [(value.reference, value.digest) for value in packet.images],
         )
         self.assertEqual(len(image_arguments), 5)
+
+    def test_only_cover_entry_accepts_exact_packet_bound_images(self) -> None:
+        payloads = (_preview(1), _preview(2))
+        report = _report(tuple(_source(index, payload) for index, payload in enumerate(payloads, 1)))
+        by_artifact = {
+            source.artifact.artifact_id: payload
+            for source, payload in zip(report.cover_sources, payloads, strict=True)
+            if source.artifact is not None
+        }
+        packet = prepare_cover_packet(
+            report.to_json(), lambda artifact, _variant: by_artifact[artifact]
+        )
+        exact = tuple(
+            (value.reference, value.digest, value.payload) for value in packet.images
+        )
+
+        self.assertNotIn(
+            "image_payloads",
+            inspect.signature(reviewer_binding.run_contained_reviewer).parameters,
+        )
+        with self.assertRaises(TypeError):
+            reviewer_binding.run_contained_reviewer(
+                b"", "invoke", b"instruction", b"{}", b"{}", exact  # type: ignore[call-arg]
+            )
+        admitted = reviewer_binding._validate_cover_packet_images(
+            packet.document.encode(), exact
+        )
+        self.assertEqual(
+            [(value.reference, value.digest) for value in admitted],
+            [(value.reference, value.digest) for value in packet.images],
+        )
+        mismatches = (
+            exact[:-1],
+            tuple(reversed(exact)),
+            ((exact[0][0], exact[1][1], exact[0][2]), exact[1]),
+            exact + (("cover_ref_" + "f" * 64, hashlib.sha256(_preview(3)).hexdigest(), _preview(3)),),
+        )
+        for mismatch in mismatches:
+            with self.subTest(binding=[value[:2] for value in mismatch]), self.assertRaisesRegex(
+                ValueError, "binding is invalid"
+            ):
+                reviewer_binding.run_cover_packet_reviewer(
+                    b"", b"instruction", packet.document.encode(), b"{}", mismatch
+                )
+
+    def test_cover_entry_rejects_images_bound_to_non_packet_input(self) -> None:
+        payload = _preview(1)
+        binding = ((
+            "cover_ref_" + "a" * 64,
+            hashlib.sha256(payload).hexdigest(),
+            payload,
+        ),)
+        forged = json.dumps(
+            {"schema_version": "some-other-input-v1"},
+            separators=(",", ":"), sort_keys=True,
+        ).encode()
+        with self.assertRaisesRegex(ValueError, "binding is invalid"):
+            reviewer_binding.run_cover_packet_reviewer(
+                b"", b"instruction", forged, b"{}", binding
+            )
 
     def test_packet_retains_incumbent_deduplicates_and_shortlists_deterministically(self) -> None:
         payloads = [_preview(index) for index in range(10)]

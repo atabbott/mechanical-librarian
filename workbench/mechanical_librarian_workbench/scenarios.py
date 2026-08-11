@@ -264,16 +264,20 @@ class WorkbenchOperations:
     run_batch: Operation
     preview_shadow_decision_case: Operation
     run_contained_reviewer: Operation
+    run_cover_packet_reviewer: Operation
 
     @classmethod
     def production_operations(cls) -> "WorkbenchOperations":
         """Bind source workbench scenarios to the same application composition seams."""
         from mechanical_librarian.bootstrap import composition
 
-        from .reviewer import run_contained_reviewer
+        from .reviewer import run_contained_reviewer, run_cover_packet_reviewer
 
         return cls(**{
-            name: run_contained_reviewer if name == "run_contained_reviewer"
+            name: {
+                "run_contained_reviewer": run_contained_reviewer,
+                "run_cover_packet_reviewer": run_cover_packet_reviewer,
+            }[name] if name.startswith("run_") and name.endswith("_reviewer")
             else getattr(composition, name)
             for name in cls.__dataclass_fields__
         })
@@ -464,8 +468,8 @@ def _execute(
             packet_snapshot,
         )
         bound = context.require_network(*paths, private_first=True, private_tail=1)
-        raw = selected.run_contained_reviewer(
-            bound[0], "invoke", bound[1], bound[3], bound[2],
+        raw = selected.run_cover_packet_reviewer(
+            bound[0], bound[1], bound[3], bound[2],
             tuple((value.reference, value.digest, value.payload) for value in packet.images),
         )
     elif isinstance(request, ContainedReviewerRequest):

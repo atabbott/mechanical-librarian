@@ -450,7 +450,11 @@ identity dead; credential drift or cleanup failure blocks success. Raw streams,
 paths, prompts, credentials, and reasoning never cross the boundary. Cover
 previews use opaque references, fixed 12-image/1-MiB-each/8-MiB-total limits,
 digest/order binding, a separate ephemeral read-only mount, and repeatable exact
-image arguments. Image and OCR text are hostile evidence, not instructions;
+image arguments. The generic reviewer entry point is image-free. Its closed
+cover entry point accepts only canonical `cover-review-packet-v1` input whose
+ordered candidate references and digests exactly equal the supplied images.
+Only the bounded Instruction is authoritative; canonical input, provider
+metadata, images, and OCR text are hostile evidence, not instructions;
 arbitrary paths, URLs, originals, remote fetches, target/service identities, and
 generic attachments remain unavailable.
 

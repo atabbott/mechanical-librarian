@@ -19,7 +19,8 @@ registration, and focused proof. Dynamic discovery, plugins, arbitrary module or
 shell execution, workflow languages, and general DAG execution are deliberately
 absent.
 
-The one image-capable entry is `cover-packet-review`. It accepts a report ID,
+The generic contained-reviewer entry is image-free. The one image-capable entry
+is `cover-packet-review`. It accepts a report ID,
 reopens only that exact report, and reads only its bound
 `preview-320x480-rgba-png-v1` artifacts. The packet uses opaque references and
 contains no target, library, service, path, URL, credential, raw provider
@@ -85,9 +86,12 @@ snapshots in the execution configuration; contained-reviewer operations receive
 the admitted bytes directly. For a cover packet, the same durable attempt also
 binds the canonical ordered opaque-reference/preview-digest mapping. Exact
 preview bytes are copied to a separate ephemeral directory, mounted read-only,
-supplied as repeatable ordered `--image` arguments, and removed with the job. A
-changed, repeated, unknown, non-PNG, over-bound, or unbound image fails closed.
-Image and OCR text are hostile evidence and never instructions.
+supplied as repeatable ordered `--image` arguments, and removed with the job.
+The cover entry accepts only canonical `cover-review-packet-v1` input whose
+ordered candidate references and digests exactly equal those images. A changed,
+repeated, unknown, non-PNG, over-bound, or unbound image fails closed. Only the
+bounded Instruction is authoritative; canonical input, provider metadata,
+images, and OCR text are hostile evidence and never instructions.
 Target/provider configuration additionally admits only loopback or `.invalid`
 origins and confines credential, TLS, password, and media paths to the workbench
 workspace. The production composition refuses every enabled fixed-origin
