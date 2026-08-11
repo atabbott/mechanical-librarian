@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -11,6 +12,8 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
+
+from PIL import Image
 
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
@@ -41,7 +44,11 @@ def _profile(root: Path) -> adapter.ContainedReviewerProfile:
 
 
 def _cover_request() -> object:
-    preview = b"\x89PNG\r\n\x1a\nsynthetic"
+    output = io.BytesIO()
+    Image.new("RGBA", (1, 1), (1, 2, 3, 255)).save(
+        output, "PNG", optimize=False, compress_level=9
+    )
+    preview = output.getvalue()
     reference = "cover_ref_" + "a" * 64
     digest = hashlib.sha256(preview).hexdigest()
     candidate = {

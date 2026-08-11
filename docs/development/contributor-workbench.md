@@ -93,6 +93,12 @@ omission field, byte/dimension and incumbent facts, omission reasons, and limits
 have passed one shared producer/admission validator. It also enforces the
 canonical candidate order, reason-specific omission preconditions, domain
 privacy-safe context text, and exact ordered candidate/image equality.
+Every admitted preview is fully parsed and decoded through Pillow before it is
+mounted: its complete PNG structure and checksums, single-frame PNG format,
+RGBA mode, maximum 320-by-480 dimensions, and exact declared dimensions must
+all agree. Forged signatures, corrupt or truncated streams, trailing bytes,
+unsafe dimensions, and decoder warnings or failures become the same value-free
+typed format failure.
 Indistinguishable normalized provenance rows collapse to one. The generic
 request and adapter method have no image member or argument. A changed,
 repeated, unknown, non-PNG, over-bound, or unbound image fails closed. Only the

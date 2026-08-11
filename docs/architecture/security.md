@@ -457,7 +457,13 @@ validates all closed fields and invariants, a content-bound packet reference,
 preview byte/dimension facts, incumbent/provenance/omission facts and limits,
 canonical candidate order, reason-specific omission preconditions, domain
 privacy-safe context text, and exact ordered reference/digest equality with the
-supplied images. Producer and admission use that same semantic validator.
+supplied images. Producer and admission use that same semantic validator. It
+checks the complete bounded PNG chunk structure and checksums and fully decodes
+each image before mounting it, admitting only single-frame RGBA PNG previews no
+larger than 320 by 480 whose decoded and declared dimensions agree. Forged
+signatures, corrupt or truncated streams, trailing bytes, unsafe dimensions,
+and decoder warnings or failures cross only the value-free response-format
+boundary.
 Duplicate groups bind to a retained representative only after final selection;
 fully excluded groups contain only their reason-specific omission evidence.
 Only the bounded Instruction is authoritative; canonical input, provider

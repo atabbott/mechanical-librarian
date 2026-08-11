@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import inspect
 import json
+import struct
 import sys
 import tempfile
 import unittest
+import zlib
 from dataclasses import replace
 from pathlib import Path
+
+from PIL import Image
 
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -47,9 +52,38 @@ from mechanical_librarian_workbench import (  # noqa: E402
 )
 
 
-def _preview(index: int, *, size: int = 32) -> bytes:
-    prefix = b"\x89PNG\r\n\x1a\n" + index.to_bytes(2, "big")
-    return prefix + bytes([index % 251]) * (size - len(prefix))
+def _preview(
+    index: int,
+    *,
+    size: int | None = None,
+    width: int = 1,
+    height: int = 1,
+    mode: str = "RGBA",
+) -> bytes:
+    output = io.BytesIO()
+    color = (
+        (index % 251, (index * 3) % 251, (index * 7) % 251, 255)
+        if mode == "RGBA"
+        else (index % 251, (index * 3) % 251, (index * 7) % 251)
+    )
+    Image.new(mode, (width, height), color).save(
+        output, "PNG", optimize=False, compress_level=9
+    )
+    payload = output.getvalue()
+    if size is None:
+        return payload
+    padding_length = size - len(payload) - 12
+    if padding_length < 0:
+        raise ValueError("requested PNG size is too small")
+    chunk_type = b"vpAg"
+    chunk_data = bytes([index % 251]) * padding_length
+    chunk = (
+        struct.pack(">I", len(chunk_data))
+        + chunk_type
+        + chunk_data
+        + struct.pack(">I", zlib.crc32(chunk_type + chunk_data))
+    )
+    return payload[:-12] + chunk + payload[-12:]
 
 
 def _source(
@@ -123,7 +157,7 @@ def _rebind_packet(value: dict[str, object]) -> str:
     )
 
 
-def _expanded_packet(packet: str, count: int, *, size: int = 32):
+def _expanded_packet(packet: str, count: int, *, size: int | None = None):
     value = json.loads(packet)
     template = value["candidates"][0]
     candidates = []
@@ -149,12 +183,12 @@ def _expanded_packet(packet: str, count: int, *, size: int = 32):
 def _group_candidate(
     index: int,
     *,
-    size: int = 32,
+    size: int | None = None,
     duplicates: int = 1,
-    width: int = 1000,
-    height: int = 1000,
+    width: int = 1,
+    height: int = 1,
 ):
-    payload = _preview(index, size=size)
+    payload = _preview(index, size=size, width=width, height=height)
     first = _source(index, payload, embedded=True)
     sources = [first]
     references = ["cover_ref_" + f"{index * 10:064x}"]
@@ -277,6 +311,78 @@ class CoverPacketTests(unittest.TestCase):
                 reviewer_binding.run_cover_packet_reviewer(
                     b"", b"instruction", packet.document.encode(), b"{}", mismatch
                 )
+
+    def test_admission_fully_decodes_exact_rgba_png_preview(self) -> None:
+        packet, _ = _packet_case(1)
+        original = json.loads(packet.document)
+        reference = original["candidates"][0]["reference"]
+        schema = '{"additionalProperties":false,"properties":{},"type":"object"}'
+        valid = _preview(1)
+
+        def bound(
+            payload: bytes, *, width: int = 1, height: int = 1
+        ) -> tuple[str, tuple[tuple[str, str, bytes], ...]]:
+            value = json.loads(json.dumps(original))
+            digest = hashlib.sha256(payload).hexdigest()
+            value["candidates"][0].update({
+                "height": height,
+                "preview_bytes": len(payload),
+                "preview_sha256": digest,
+                "width": width,
+            })
+            return _rebind_packet(value), ((reference, digest, payload),)
+
+        def corrupt_idat(payload: bytes) -> bytes:
+            changed = bytearray(payload)
+            offset = 8
+            while offset < len(changed):
+                length = struct.unpack(">I", changed[offset:offset + 4])[0]
+                chunk_type = bytes(changed[offset + 4:offset + 8])
+                data_start = offset + 8
+                data_end = data_start + length
+                if chunk_type == b"IDAT":
+                    changed[data_start] ^= 0xFF
+                    changed[data_end:data_end + 4] = struct.pack(
+                        ">I", zlib.crc32(chunk_type + changed[data_start:data_end])
+                    )
+                    return bytes(changed)
+                offset = data_end + 4
+            raise AssertionError("test PNG has no IDAT")
+
+        def oversized_header(payload: bytes) -> bytes:
+            changed = bytearray(payload)
+            changed[16:20] = struct.pack(">I", 321)
+            changed[29:33] = struct.pack(">I", zlib.crc32(changed[12:29]))
+            return bytes(changed)
+
+        malformed = {
+            "forged_signature": b"\x89PNG\r\n\x1a\nforged",
+            "truncated": valid[:-4],
+            "corrupt_crc": valid[:29] + bytes([valid[29] ^ 1]) + valid[30:],
+            "trailing_bytes": valid + b"trailing",
+            "wrong_mode": _preview(1, mode="RGB"),
+            "decompression_failure": corrupt_idat(valid),
+            "decompression_bomb_dimensions": oversized_header(valid),
+        }
+        for name, payload in malformed.items():
+            document, images = bound(payload)
+            with self.subTest(case=name), self.assertRaisesRegex(
+                Exception, "response_format"
+            ):
+                admit_cover_review_request("Inspect.", document, schema, images)
+
+        document, images = bound(valid, width=2)
+        with self.assertRaisesRegex(Exception, "response_format"):
+            admit_cover_review_request("Inspect.", document, schema, images)
+
+        admitted_document = json.loads(packet.document)
+        self.assertEqual(
+            (
+                admitted_document["candidates"][0]["width"],
+                admitted_document["candidates"][0]["height"],
+            ),
+            (1, 1),
+        )
 
     def test_cover_entry_rejects_images_bound_to_non_packet_input(self) -> None:
         payload = _preview(1)

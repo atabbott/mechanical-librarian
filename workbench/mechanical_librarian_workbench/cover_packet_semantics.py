@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import re
+import struct
+import warnings
+import zlib
 from dataclasses import dataclass
+
+from PIL import Image, UnidentifiedImageError
 
 from mechanical_librarian.domain.cover_evidence import PREVIEW_VARIANT
 from mechanical_librarian.domain.evidence_bounds import (
@@ -16,6 +22,11 @@ from mechanical_librarian.domain.evidence_bounds import (
 MAX_COVER_PREVIEWS = 12
 MAX_COVER_PREVIEW_BYTES = 1_048_576
 MAX_COVER_PACKET_BYTES = 8_388_608
+MAX_COVER_PREVIEW_WIDTH = 320
+MAX_COVER_PREVIEW_HEIGHT = 480
+
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_MAX_PNG_CHUNKS = 4_096
 
 _COVER_REFERENCE = re.compile(r"^cover_ref_[0-9a-f]{64}$")
 _PACKET_REFERENCE = re.compile(r"^cover_packet_[0-9a-f]{64}$")
@@ -90,6 +101,104 @@ def designation_rank(value: str | None) -> int:
     return _DESIGNATION_RANK.get(value, 4)
 
 
+def validate_cover_preview(
+    payload: bytes,
+    *,
+    expected_width: int | None = None,
+    expected_height: int | None = None,
+) -> tuple[int, int]:
+    """Fully verify one bounded deterministic RGBA PNG preview."""
+    try:
+        if (
+            type(payload) is not bytes
+            or not 1 <= len(payload) <= MAX_COVER_PREVIEW_BYTES
+        ):
+            raise ValueError
+        structural_width, structural_height = _validate_png_structure(payload)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(payload)) as image:
+                if (
+                    image.format != "PNG"
+                    or image.mode != "RGBA"
+                    or getattr(image, "n_frames", 1) != 1
+                    or image.size != (structural_width, structural_height)
+                ):
+                    raise ValueError
+                image.load()
+                if image.size != (structural_width, structural_height):
+                    raise ValueError
+        if (
+            expected_width is not None
+            and structural_width != expected_width
+        ) or (
+            expected_height is not None
+            and structural_height != expected_height
+        ):
+            raise ValueError
+        return structural_width, structural_height
+    except (
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        OSError,
+        SyntaxError,
+        UnidentifiedImageError,
+        ValueError,
+    ) as error:
+        raise ValueError("cover preview is invalid") from error
+
+
+def _validate_png_structure(payload: bytes) -> tuple[int, int]:
+    if not payload.startswith(_PNG_SIGNATURE):
+        raise ValueError
+    offset = len(_PNG_SIGNATURE)
+    chunk_count = 0
+    width = height = 0
+    saw_header = saw_data = saw_end = False
+    while offset < len(payload):
+        chunk_count += 1
+        if chunk_count > _MAX_PNG_CHUNKS or len(payload) - offset < 12:
+            raise ValueError
+        length = struct.unpack(">I", payload[offset:offset + 4])[0]
+        chunk_type = payload[offset + 4:offset + 8]
+        data_start = offset + 8
+        data_end = data_start + length
+        crc_end = data_end + 4
+        if (
+            not all(65 <= value <= 90 or 97 <= value <= 122 for value in chunk_type)
+            or data_end < data_start
+            or crc_end > len(payload)
+        ):
+            raise ValueError
+        expected_crc = struct.unpack(">I", payload[data_end:crc_end])[0]
+        if zlib.crc32(chunk_type + payload[data_start:data_end]) != expected_crc:
+            raise ValueError
+        if chunk_count == 1:
+            if chunk_type != b"IHDR" or length != 13:
+                raise ValueError
+            width, height = struct.unpack(">II", payload[data_start:data_start + 8])
+            if (
+                not 1 <= width <= MAX_COVER_PREVIEW_WIDTH
+                or not 1 <= height <= MAX_COVER_PREVIEW_HEIGHT
+            ):
+                raise ValueError
+            saw_header = True
+        elif chunk_type == b"IHDR" or saw_end:
+            raise ValueError
+        elif chunk_type == b"IDAT":
+            saw_data = True
+        elif chunk_type == b"IEND":
+            if length != 0 or not saw_data or crc_end != len(payload):
+                raise ValueError
+            saw_end = True
+        elif chunk_type[0] & 0x20 == 0 and chunk_type != b"PLTE":
+            raise ValueError
+        offset = crc_end
+    if not (saw_header and saw_data and saw_end):
+        raise ValueError
+    return width, height
+
+
 def bind_cover_packet(
     packet_document: str,
     image_payloads: tuple[tuple[str, str, bytes], ...],
@@ -132,11 +241,15 @@ def bind_cover_packet(
                 or type(digest) is not str
                 or type(payload) is not bytes
                 or not 1 <= len(payload) <= MAX_COVER_PREVIEW_BYTES
-                or not payload.startswith(b"\x89PNG\r\n\x1a\n")
                 or hashlib.sha256(payload).hexdigest() != digest
                 or len(payload) != candidate["preview_bytes"]
             ):
                 raise ValueError
+            validate_cover_preview(
+                payload,
+                expected_width=candidate["width"],
+                expected_height=candidate["height"],
+            )
             total += len(payload)
         if total > MAX_COVER_PACKET_BYTES:
             raise ValueError
@@ -179,9 +292,8 @@ def _validate_candidate(value: object) -> tuple[str, int]:
         or not 1 <= value["preview_bytes"] <= MAX_COVER_PREVIEW_BYTES
         or type(value["width"]) is not int
         or type(value["height"]) is not int
-        or not 1 <= value["width"] <= 8192
-        or not 1 <= value["height"] <= 8192
-        or value["width"] * value["height"] > 16_777_216
+        or not 1 <= value["width"] <= MAX_COVER_PREVIEW_WIDTH
+        or not 1 <= value["height"] <= MAX_COVER_PREVIEW_HEIGHT
         or type(value["incumbent"]) is not bool
         or type(value["provenance"]) is not list
         or not value["provenance"]

@@ -33,6 +33,9 @@ reference, media/variant, preview byte and dimension facts, incumbent state,
 canonical producer candidate order, reason-specific omission preconditions,
 domain privacy-safe context text, limits, and exact ordered image mapping. The
 same semantic validator runs before producer return and reviewer admission;
+before either can mount an image, it also verifies the complete bounded PNG
+chunk structure and checksums and fully decodes a single-frame RGBA PNG whose
+dimensions exactly match the packet and do not exceed 320 by 480;
 indistinguishable normalized provenance multiplicity is discarded. Duplicate
 omissions are created only after final selection and always name a retained
 representative; when a whole digest group is excluded, each member carries the
@@ -63,8 +66,9 @@ and results remain ignored owner-only workbench state.
 
 - Synthetic tests prove exact report binding, digest and order identity,
   incumbent retention, deduplication, deterministic selection and omissions,
-  hard byte/count limits, hostile-text treatment, read-only sandbox arguments,
-  typed failure and cleanup behavior.
+  hard byte/count limits, complete PNG decoding and dimension/mode agreement,
+  hostile-text treatment, read-only sandbox arguments, typed failure and
+  cleanup behavior.
 - Exact-artifact checks prove no runtime CLI/API or distribution inclusion.
 - Private qualification attempted 17 exact five-preview development and
   qualification-holdout packets with zero mapping mismatch, p50 129 ms, p95

@@ -22,6 +22,7 @@ from mechanical_librarian_workbench.cover_packet_semantics import (
     canonical_packet_json,
     designation_rank,
     normalize_provenance,
+    validate_cover_preview,
 )
 
 
@@ -108,6 +109,12 @@ def prepare_cover_packet(
         payload = artifact_payloads[key]
         if hashlib.sha256(payload).hexdigest() != artifact.preview_digest:
             raise ValueError("cover packet preview digest changed")
+        if len(payload) <= MAX_COVER_PREVIEW_BYTES:
+            preview_width, preview_height = validate_cover_preview(payload)
+        else:
+            # Oversized groups are omitted before candidate emission; decoding
+            # them would widen work beyond the existing byte gate.
+            preview_width = preview_height = 1
         reference = _opaque_reference(report.report_id, source.source_id)
         existing = candidates_by_digest.get(artifact.preview_digest)
         if existing is not None:
@@ -121,8 +128,8 @@ def prepare_cover_packet(
             reference=reference,
             digest=artifact.preview_digest,
             payload=payload,
-            width=artifact.width,
-            height=artifact.height,
+            width=preview_width,
+            height=preview_height,
             incumbent=source.kind is CoverSourceKind.ABS,
             sources=[source],
             references=[reference],
