@@ -9,29 +9,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from mechanical_librarian_workbench.cover_packet_semantics import (
+    MAX_COVER_PREVIEW_BYTES as MAX_IMAGE_BYTES,
+    bind_cover_packet,
+)
+
 MAX_INPUT_BYTES = 1_048_576
 MAX_SCHEMA_BYTES = 65_536
-MAX_IMAGE_COUNT = 12
-MAX_IMAGE_BYTES = 1_048_576
-MAX_IMAGE_TOTAL_BYTES = 8_388_608
 _COVER_REFERENCE = re.compile(r"^cover_ref_[0-9a-f]{64}$")
-_PACKET_REFERENCE = re.compile(r"^cover_packet_[0-9a-f]{64}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
-_PROVIDER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
-_SOURCE_KINDS = frozenset({"abs", "epub", "hardcover", "open_library"})
-_DESIGNATIONS = frozenset({"exact_edition", "related_edition", "work", "default"})
-_CONTEXT_FIELDS = frozenset({
-    "country", "format", "isbn", "language", "publication_date",
-    "publication_place", "publisher",
-})
-_OMISSION_REASONS = frozenset({
-    "aggregate_byte_limit", "duplicate_preview", "preview_byte_limit",
-    "shortlist_limit", "source_absent", "source_animated_or_multiframe",
-    "source_decode_failed", "source_invalid_declaration", "source_oversized",
-    "source_rejected", "source_source_changed", "source_timeout",
-    "source_truncated", "source_unavailable", "source_unsafe_remote",
-    "source_unsupported_format",
-})
 _COVER_ADMISSION = object()
 
 
@@ -206,153 +192,11 @@ def admit_cover_review_request(
     """Fully validate one exact cover-review-packet-v1 and its image mapping."""
     try:
         base = ContainedReviewRequest(instruction, packet_document, output_schema)
-        packet = json.loads(
-            packet_document,
-            object_pairs_hook=_unique_object,
-            parse_constant=_reject_json_constant,
-        )
-        if (
-            type(packet) is not dict
-            or set(packet) != {"candidates", "omissions", "packet_reference", "schema_version"}
-            or packet["schema_version"] != "cover-review-packet-v1"
-            or type(packet["candidates"]) is not list
-            or not 1 <= len(packet["candidates"]) <= MAX_IMAGE_COUNT
-            or type(packet["omissions"]) is not list
-            or _PACKET_REFERENCE.fullmatch(packet["packet_reference"]) is None
-            or type(image_payloads) is not tuple
-            or any(type(value) is not tuple or len(value) != 3 for value in image_payloads)
-        ):
-            raise ValueError
-        candidates = packet["candidates"]
-        candidate_bindings = tuple(_validate_candidate(value) for value in candidates)
-        supplied_bindings = tuple((value[0], value[1]) for value in image_payloads)
-        if (
-            supplied_bindings != tuple(value[:2] for value in candidate_bindings)
-            or len(set(supplied_bindings)) != len(supplied_bindings)
-            or len({value[0] for value in supplied_bindings}) != len(supplied_bindings)
-            or len({value[1] for value in supplied_bindings}) != len(supplied_bindings)
-        ):
-            raise ValueError
-        images = tuple(_CoverReviewImage(*value) for value in image_payloads)
-        if (
-            any(len(image.payload) != candidate[2] for image, candidate in zip(images, candidate_bindings, strict=True))
-            or sum(len(value.payload) for value in images) > MAX_IMAGE_TOTAL_BYTES
-        ):
-            raise ValueError
-        _validate_candidate_set(candidates)
-        _validate_omissions(packet["omissions"], {value[0] for value in candidate_bindings})
-        packet_body = canonical_json({
-            "candidates": packet["candidates"],
-            "omissions": packet["omissions"],
-            "schema_version": packet["schema_version"],
-        })
-        if packet["packet_reference"] != "cover_packet_" + hashlib.sha256(packet_body.encode()).hexdigest():
-            raise ValueError
+        admitted = bind_cover_packet(packet_document, image_payloads)
+        images = tuple(_CoverReviewImage(*value) for value in admitted.images)
         return _CoverReviewRequest._admit(base, images)
     except (json.JSONDecodeError, RecursionError, TypeError, UnicodeError, ValueError) as error:
         raise ContainedReviewerError("response_format") from error
-
-
-def _validate_candidate(value: object) -> tuple[str, str, int]:
-    if (
-        type(value) is not dict
-        or set(value) != {
-            "height", "incumbent", "media_type", "preview_bytes",
-            "preview_sha256", "preview_variant", "provenance", "reference", "width",
-        }
-        or _COVER_REFERENCE.fullmatch(value["reference"]) is None
-        or _DIGEST.fullmatch(value["preview_sha256"]) is None
-        or value["media_type"] != "image/png"
-        or value["preview_variant"] != "preview-320x480-rgba-png-v1"
-        or type(value["preview_bytes"]) is not int
-        or not 1 <= value["preview_bytes"] <= MAX_IMAGE_BYTES
-        or type(value["width"]) is not int
-        or type(value["height"]) is not int
-        or not 1 <= value["width"] <= 8192
-        or not 1 <= value["height"] <= 8192
-        or value["width"] * value["height"] > 16_777_216
-        or type(value["incumbent"]) is not bool
-        or type(value["provenance"]) is not list
-        or not value["provenance"]
-    ):
-        raise ValueError
-    provenance = tuple(_validate_provenance(item) for item in value["provenance"])
-    if provenance != tuple(sorted(set(provenance))):
-        raise ValueError
-    has_incumbent = any(item[0] == "abs" for item in provenance)
-    if value["incumbent"] is not has_incumbent:
-        raise ValueError
-    return value["reference"], value["preview_sha256"], value["preview_bytes"]
-
-
-def _validate_provenance(value: object) -> tuple[str, str, str, tuple[tuple[str, str], ...]]:
-    if (
-        type(value) is not dict
-        or set(value) != {"context", "designation", "provider", "source_kind"}
-        or value["source_kind"] not in _SOURCE_KINDS
-        or type(value["context"]) is not list
-        or len(value["context"]) > 16
-    ):
-        raise ValueError
-    source_kind = value["source_kind"]
-    local = source_kind in {"abs", "epub"}
-    if local:
-        if value["provider"] is not None or value["designation"] is not None or value["context"]:
-            raise ValueError
-        return source_kind, "", "", ()
-    if (
-        type(value["provider"]) is not str
-        or _PROVIDER.fullmatch(value["provider"]) is None
-        or value["designation"] not in _DESIGNATIONS
-    ):
-        raise ValueError
-    context = tuple(_validate_context(item) for item in value["context"])
-    if context != tuple(sorted(set(context))):
-        raise ValueError
-    return source_kind, value["provider"], value["designation"], context
-
-
-def _validate_context(value: object) -> tuple[str, str]:
-    if (
-        type(value) is not dict
-        or set(value) != {"field", "value"}
-        or value["field"] not in _CONTEXT_FIELDS
-        or type(value["value"]) is not str
-        or not 1 <= len(value["value"].encode("utf-8")) <= 280
-        or value["value"].strip() != value["value"]
-        or any(ord(character) < 32 or ord(character) == 127 for character in value["value"])
-    ):
-        raise ValueError
-    return value["field"], value["value"]
-
-
-def _validate_candidate_set(candidates: list[object]) -> None:
-    incumbent_positions = [
-        index for index, candidate in enumerate(candidates)
-        if type(candidate) is dict and candidate["incumbent"] is True
-    ]
-    if len(incumbent_positions) > 1 or incumbent_positions not in ([], [0]):
-        raise ValueError
-
-
-def _validate_omissions(omissions: list[object], retained: set[str]) -> None:
-    normalized: list[tuple[str, str]] = []
-    omitted_references: set[str] = set()
-    for omission in omissions:
-        if type(omission) is not dict or omission.get("reason") not in _OMISSION_REASONS:
-            raise ValueError
-        reason = omission["reason"]
-        expected = {"reason", "reference", "retained_reference"} if reason == "duplicate_preview" else {"reason", "reference"}
-        if set(omission) != expected or _COVER_REFERENCE.fullmatch(omission["reference"]) is None:
-            raise ValueError
-        if omission["reference"] in retained or omission["reference"] in omitted_references:
-            raise ValueError
-        omitted_references.add(omission["reference"])
-        if reason == "duplicate_preview" and omission["retained_reference"] not in retained:
-            raise ValueError
-        normalized.append((omission["reference"], reason))
-    if normalized != sorted(normalized):
-        raise ValueError
 
 
 @dataclass(frozen=True, slots=True)

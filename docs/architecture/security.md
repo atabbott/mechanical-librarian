@@ -455,7 +455,9 @@ request and adapter method have no image member or image argument. A distinct
 cover request is created only by one full `cover-review-packet-v1` parser that
 validates all closed fields and invariants, a content-bound packet reference,
 preview byte/dimension facts, incumbent/provenance/omission facts and limits,
-and exact ordered reference/digest equality with the supplied images.
+canonical candidate order, reason-specific omission preconditions, domain
+privacy-safe context text, and exact ordered reference/digest equality with the
+supplied images. Producer and admission use that same semantic validator.
 Only the bounded Instruction is authoritative; canonical input, provider
 metadata, images, and OCR text are hostile evidence, not instructions;
 arbitrary paths, URLs, originals, remote fetches, target/service identities, and

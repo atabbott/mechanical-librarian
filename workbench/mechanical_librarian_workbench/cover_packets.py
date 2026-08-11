@@ -3,51 +3,33 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from mechanical_librarian.domain.cover_evidence import (
     PREVIEW_VARIANT,
-    CoverDesignation,
     CoverSource,
     CoverSourceKind,
     CoverSourceState,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
-
-MAX_COVER_PREVIEWS = 12
-MAX_COVER_PREVIEW_BYTES = 1_048_576
-MAX_COVER_PACKET_BYTES = 8_388_608
-
-_DESIGNATION_RANK = {
-    CoverDesignation.EXACT_EDITION: 0,
-    CoverDesignation.RELATED_EDITION: 1,
-    CoverDesignation.WORK: 2,
-    CoverDesignation.DEFAULT: 3,
-}
-
-
-def _canonical(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+from mechanical_librarian_workbench.cover_packet_semantics import (
+    MAX_COVER_PACKET_BYTES,
+    MAX_COVER_PREVIEW_BYTES,
+    MAX_COVER_PREVIEWS,
+    bind_cover_packet,
+    candidate_priority,
+    canonical_packet_json,
+    designation_rank,
+    normalize_provenance,
+)
 
 
 def _opaque_reference(report_id: str, source_id: str) -> str:
     digest = hashlib.sha256(
-        _canonical({"report_id": report_id, "source_id": source_id}).encode("utf-8")
+        canonical_packet_json({"report_id": report_id, "source_id": source_id}).encode("utf-8")
     ).hexdigest()
     return "cover_ref_" + digest
-
-
-def _provenance_key(value: dict[str, object]) -> tuple[object, ...]:
-    context = value["context"]
-    assert isinstance(context, list)
-    return (
-        value["source_kind"],
-        value["provider"] or "",
-        value["designation"] or "",
-        tuple((item["field"], item["value"]) for item in context),
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +60,7 @@ class _Candidate:
     @property
     def identity_rank(self) -> int:
         ranks = [
-            _DESIGNATION_RANK.get(source.provenance.designation, 4)
+            designation_rank(source.provenance.designation.value)
             for source in self.sources
             if source.provenance is not None
         ]
@@ -103,7 +85,7 @@ def prepare_cover_packet(
         raise ValueError("cover packet has no retrieved previews")
 
     candidates_by_digest: dict[str, _Candidate] = {}
-    omissions: list[dict[str, str]] = [
+    omissions: list[dict[str, object]] = [
         {
             "reason": "source_" + source.state.value,
             "reference": _opaque_reference(report.report_id, source.source_id),
@@ -133,6 +115,7 @@ def prepare_cover_packet(
                 existing.incumbent = True
                 existing.reference = reference
             omissions.append({
+                "preview_sha256": artifact.preview_digest,
                 "reason": "duplicate_preview",
                 "reference": reference,
                 "retained_reference": existing.reference,
@@ -153,7 +136,11 @@ def prepare_cover_packet(
     if any(value.incumbent for value in oversize):
         raise ValueError("cover packet incumbent exceeds the preview limit")
     for value in oversize:
-        omissions.append({"reason": "preview_byte_limit", "reference": value.reference})
+        omissions.append({
+            "preview_bytes": len(value.payload),
+            "reason": "preview_byte_limit",
+            "reference": value.reference,
+        })
     candidates = [value for value in candidates if len(value.payload) <= MAX_COVER_PREVIEW_BYTES]
 
     incumbents = [value for value in candidates if value.incumbent]
@@ -168,25 +155,32 @@ def prepare_cover_packet(
     while remaining and len(selected) < MAX_COVER_PREVIEWS:
         candidate = min(
             remaining,
-            key=lambda value: (
-                source_counts[value.source_kind],
-                value.identity_rank,
-                -(value.width * value.height),
+            key=lambda value: candidate_priority(
+                source_counts,
                 value.source_kind,
+                value.identity_rank,
+                value.width,
+                value.height,
                 value.reference,
             ),
         )
         remaining.remove(candidate)
         if selected_bytes + len(candidate.payload) > MAX_COVER_PACKET_BYTES:
             omissions.append({
-                "reason": "aggregate_byte_limit", "reference": candidate.reference
+                "preview_bytes": len(candidate.payload),
+                "reason": "aggregate_byte_limit",
+                "reference": candidate.reference,
             })
             continue
         selected.append(candidate)
         selected_bytes += len(candidate.payload)
         source_counts[candidate.source_kind] += 1
     for value in remaining:
-        omissions.append({"reason": "shortlist_limit", "reference": value.reference})
+        omissions.append({
+            "preview_bytes": len(value.payload),
+            "reason": "shortlist_limit",
+            "reference": value.reference,
+        })
     if not selected:
         raise ValueError("cover packet has no eligible previews")
 
@@ -202,7 +196,7 @@ def prepare_cover_packet(
                 "provider": None if detail is None else detail.provider,
                 "source_kind": source.kind.value,
             })
-        provenance.sort(key=_provenance_key)
+        provenance = normalize_provenance(provenance)
         candidate_data.append({
             "height": candidate.height,
             "incumbent": candidate.incumbent,
@@ -225,10 +219,14 @@ def prepare_cover_packet(
     packet = {
         **packet_body,
         "packet_reference": "cover_packet_" + hashlib.sha256(
-            _canonical(packet_body).encode()
+            canonical_packet_json(packet_body).encode()
         ).hexdigest(),
     }
-    document = _canonical(packet)
+    document = canonical_packet_json(packet)
+    bound_images = tuple(
+        (value.reference, value.digest, value.payload) for value in images
+    )
+    bind_cover_packet(document, bound_images)
     return PreparedCoverPacket(
         document=document,
         images=tuple(images),

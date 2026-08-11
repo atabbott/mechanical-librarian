@@ -30,7 +30,10 @@ image-capable entry point admits a distinct cover request only through one full
 `cover-review-packet-v1` parser. That parser closes every packet, candidate,
 provenance, context, and omission field; validates the content-bound packet
 reference, media/variant, preview byte and dimension facts, incumbent state,
-closed omission reasons, limits, and exact ordered image mapping. The generic
+canonical producer candidate order, reason-specific omission preconditions,
+domain privacy-safe context text, limits, and exact ordered image mapping. The
+same semantic validator runs before producer return and reviewer admission;
+indistinguishable normalized provenance multiplicity is discarded. The generic
 request and generic adapter method have no image member or image argument. The
 durable pre-egress attempt binds that packet together with the
 exact reviewer profile, instruction, and output schema. The local result binds

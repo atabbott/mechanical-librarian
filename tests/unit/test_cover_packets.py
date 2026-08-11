@@ -113,9 +113,13 @@ def _rebind_packet(value: dict[str, object]) -> str:
         "schema_version": value["schema_version"],
     }
     value["packet_reference"] = "cover_packet_" + hashlib.sha256(
-        json.dumps(body, separators=(",", ":"), sort_keys=True).encode()
+        json.dumps(
+            body, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
     ).hexdigest()
-    return json.dumps(value, separators=(",", ":"), sort_keys=True)
+    return json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
 
 
 def _expanded_packet(packet: str, count: int, *, size: int = 32):
@@ -359,6 +363,168 @@ class CoverPacketTests(unittest.TestCase):
             )
             with self.subTest(field=name), self.assertRaisesRegex(Exception, "response_format"):
                 admit_cover_review_request("Inspect.", document, schema, images)
+
+    def test_context_projection_uses_exact_domain_privacy_and_unicode_policy(self) -> None:
+        packet, images = _packet_case()
+        schema = '{"additionalProperties":false,"properties":{},"type":"object"}'
+
+        def with_context(value: str) -> str:
+            document = json.loads(packet.document)
+            document["candidates"][0]["provenance"][0]["context"] = [
+                {"field": "publisher", "value": value}
+            ]
+            return _rebind_packet(document)
+
+        admitted = admit_cover_review_request(
+            "Inspect.", with_context("Éditions 東京"), schema, images
+        )
+        self.assertIn("Éditions 東京", admitted.input_document)
+        invalid = {
+            "private_path": "/private/library/title.epub",
+            "credential": "api_key=privatevalue",
+            "bidi": "safe\u202eunsafe",
+            "semantic_separator": "safe\u2028unsafe",
+            "forbidden_unicode": "safe\ufdd0unsafe",
+        }
+        for name, value in invalid.items():
+            with self.subTest(value=name), self.assertRaisesRegex(
+                Exception, "response_format"
+            ):
+                admit_cover_review_request(
+                    "Inspect.", with_context(value), schema, images
+                )
+
+    def test_conjoint_candidate_and_image_reorder_is_rejected(self) -> None:
+        packet, images = _packet_case(3)
+        document = json.loads(packet.document)
+        document["candidates"].reverse()
+        reordered = tuple(reversed(images))
+        with self.assertRaisesRegex(Exception, "response_format"):
+            admit_cover_review_request(
+                "Inspect.", _rebind_packet(document),
+                '{"additionalProperties":false,"properties":{},"type":"object"}',
+                reordered,
+            )
+
+    def test_omission_reasons_require_and_accept_reachable_preconditions(self) -> None:
+        schema = '{"additionalProperties":false,"properties":{},"type":"object"}'
+        packet, images = _packet_case()
+        retained = json.loads(packet.document)["candidates"][0]
+        omitted_reference = "cover_ref_" + "f" * 64
+
+        def document_with(base: str, omission: dict[str, object]) -> str:
+            value = json.loads(base)
+            value["omissions"] = [omission]
+            return _rebind_packet(value)
+
+        source_reasons = (
+            "source_absent", "source_animated_or_multiframe", "source_decode_failed",
+            "source_invalid_declaration", "source_oversized", "source_rejected",
+            "source_source_changed", "source_timeout", "source_truncated",
+            "source_unavailable", "source_unsafe_remote", "source_unsupported_format",
+        )
+        for reason in source_reasons:
+            admitted = admit_cover_review_request(
+                "Inspect.",
+                document_with(packet.document, {
+                    "reason": reason, "reference": omitted_reference,
+                }),
+                schema,
+                images,
+            )
+            self.assertEqual(admitted.images[0].digest, images[0][1])
+
+        reachable = (
+            (packet.document, images, {
+                "preview_sha256": retained["preview_sha256"],
+                "reason": "duplicate_preview",
+                "reference": omitted_reference,
+                "retained_reference": retained["reference"],
+            }),
+            (packet.document, images, {
+                "preview_bytes": 1_048_577,
+                "reason": "preview_byte_limit",
+                "reference": omitted_reference,
+            }),
+        )
+        for base, bound_images, omission in reachable:
+            admit_cover_review_request(
+                "Inspect.", document_with(base, omission), schema, bound_images
+            )
+
+        full_document, full_images = _expanded_packet(
+            packet.document, 8, size=1_048_576
+        )
+        admit_cover_review_request(
+            "Inspect.",
+            document_with(full_document, {
+                "preview_bytes": 1,
+                "reason": "aggregate_byte_limit",
+                "reference": omitted_reference,
+            }),
+            schema,
+            full_images,
+        )
+        capped_document, capped_images = _expanded_packet(packet.document, 12)
+        admit_cover_review_request(
+            "Inspect.",
+            document_with(capped_document, {
+                "preview_bytes": 32,
+                "reason": "shortlist_limit",
+                "reference": omitted_reference,
+            }),
+            schema,
+            capped_images,
+        )
+
+        impossible = (
+            {"preview_bytes": 32, "reason": "shortlist_limit", "reference": omitted_reference},
+            {"preview_bytes": 32, "reason": "aggregate_byte_limit", "reference": omitted_reference},
+            {"preview_bytes": 32, "reason": "preview_byte_limit", "reference": omitted_reference},
+            {
+                "preview_sha256": "0" * 64,
+                "reason": "duplicate_preview",
+                "reference": omitted_reference,
+                "retained_reference": retained["reference"],
+            },
+        )
+        for omission in impossible:
+            with self.subTest(reason=omission["reason"]), self.assertRaisesRegex(
+                Exception, "response_format"
+            ):
+                admit_cover_review_request(
+                    "Inspect.", document_with(packet.document, omission), schema, images
+                )
+
+    def test_digest_equal_indistinguishable_provenance_is_emitted_once(self) -> None:
+        payload = _preview(7)
+        first = _source(7, payload)
+        second = CoverSource(
+            cover_source_id(first.kind, "same-semantics-other-source"),
+            first.kind,
+            first.state,
+            first.artifact,
+            provenance=first.provenance,
+        )
+        report = _report((first, second))
+        assert first.artifact is not None
+        packet = prepare_cover_packet(
+            report.to_json(), lambda *_: payload
+        )
+        document = json.loads(packet.document)
+        self.assertEqual(len(document["candidates"]), 1)
+        self.assertEqual(len(document["candidates"][0]["provenance"]), 1)
+        self.assertEqual(document["omissions"][0]["reason"], "duplicate_preview")
+        admitted = admit_cover_review_request(
+            "Inspect.",
+            packet.document,
+            '{"additionalProperties":false,"properties":{},"type":"object"}',
+            tuple(
+                (value.reference, value.digest, value.payload)
+                for value in packet.images
+            ),
+        )
+        self.assertEqual(len(admitted.images), 1)
 
 
 if __name__ == "__main__":
