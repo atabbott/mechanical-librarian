@@ -1862,6 +1862,39 @@ class CoverPolicyTests(unittest.TestCase):
         self.assertEqual(none_acceptable["status"], "abstained")
         self.assertIn("no_policy_compatible_candidate", none_acceptable["reasons"])
 
+    def test_combined_avoid_policy_resolves_exclusion_before_ambiguity(self) -> None:
+        policy = CoverPolicy(
+            avoid_promotional_text=True,
+            avoid_tie_in_branding=True,
+        )
+        for promotional in ("absent", "present", "unknown"):
+            for tie_in in ("absent", "present", "unknown"):
+                with self.subTest(promotional=promotional, tie_in=tie_in):
+                    report = self._adjudicate(
+                        policy,
+                        observation_mutation=lambda value, promotional=promotional, tie_in=tie_in: value[
+                            "observations"
+                        ][0].update(
+                            promotional_text=promotional,
+                            tie_in_branding=tie_in,
+                        ),
+                    )
+                    if "present" in {promotional, tie_in}:
+                        self.assertEqual(report["status"], "recommended")
+                        self.assertEqual(
+                            len(report["acceptable_candidate_references"]), 2
+                        )
+                    elif "unknown" in {promotional, tie_in}:
+                        self.assertEqual(report["status"], "abstained")
+                        self.assertEqual(
+                            report["reasons"], ["observations_ambiguous"]
+                        )
+                    else:
+                        self.assertEqual(report["status"], "recommended")
+                        self.assertEqual(
+                            len(report["acceptable_candidate_references"]), 3
+                        )
+
     def test_unavailable_real_observations_have_one_typed_abstention(self) -> None:
         report = self._adjudicate(observation_available=False)
         self.assertEqual(report["status"], "abstained")

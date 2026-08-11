@@ -22,13 +22,13 @@ from .cover_packet_semantics import bind_cover_packet, canonical_packet_json
 
 SCHEMA_VERSION = "cover-policy-report-v1"
 POLICY_SCHEMA_VERSION = "cover-policy-v1"
-_IDENTITY_OUTCOMES = {
+_IDENTITY_OUTCOMES = frozenset({
     "conflict",
     "plausible_match",
     "unknown",
     "verified_manifestation_match",
     "verified_work_match",
-}
+})
 _REFERENCE = re.compile(r"[a-z][a-z0-9_]{0,63}_[0-9a-f]{64}")
 
 
@@ -161,18 +161,29 @@ def adjudicate_cover_policy(
     acceptable: list[str] = []
     for reference in eligible:
         value = by_reference[reference]
-        if policy.avoid_promotional_text:
-            if value["promotional_text"] == "unknown":
-                ambiguous = True
-            elif value["promotional_text"] == "present":
-                reasons.add("promotional_text_excluded")
-                continue
-        if policy.avoid_tie_in_branding:
-            if value["tie_in_branding"] == "unknown":
-                ambiguous = True
-            elif value["tie_in_branding"] == "present":
-                reasons.add("tie_in_branding_excluded")
-                continue
+        excluded = False
+        if (
+            policy.avoid_promotional_text
+            and value["promotional_text"] == "present"
+        ):
+            reasons.add("promotional_text_excluded")
+            excluded = True
+        if (
+            policy.avoid_tie_in_branding
+            and value["tie_in_branding"] == "present"
+        ):
+            reasons.add("tie_in_branding_excluded")
+            excluded = True
+        if excluded:
+            continue
+        if (
+            policy.avoid_promotional_text
+            and value["promotional_text"] == "unknown"
+        ) or (
+            policy.avoid_tie_in_branding
+            and value["tie_in_branding"] == "unknown"
+        ):
+            ambiguous = True
         acceptable.append(reference)
     if policy.prefer_minimal_composition and any(
         by_reference[reference]["composition"] == "unknown"
