@@ -55,4 +55,8 @@ CAPABILITIES = (
         "cover-observation-report", "scenario", "run_cover_packet_reviewer",
         ("reopen_metadata_report", "reopen_cover_preview"),
     ),
+    Capability(
+        "cover-policy-report", "inspector", "reopen_metadata_report",
+        ("reopen_cover_preview",),
+    ),
 )
