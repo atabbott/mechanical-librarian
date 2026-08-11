@@ -42,6 +42,15 @@ sys.path.insert(0, str(ROOT / "workbench"))
 from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa: E402
     ContainedReviewRequest,
     admit_cover_review_request,
+    canonical_json,
+)
+from mechanical_librarian_workbench.cover_observation import (  # noqa: E402
+    OUTPUT_SCHEMA_VERSION,
+    SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
+    TAXONOMY,
+    TAXONOMY_DOCUMENT,
+    TAXONOMY_REFERENCE,
+    observe_cover_packet,
 )
 from mechanical_librarian_workbench.cover_packets import (  # noqa: E402
     MAX_COVER_PREVIEWS,
@@ -56,6 +65,7 @@ from mechanical_librarian_workbench import cover_packets as packet_builder  # no
 from mechanical_librarian_workbench import reviewer as reviewer_binding  # noqa: E402
 from mechanical_librarian_workbench import (  # noqa: E402
     CoverIdentityRequest,
+    CoverObservationRequest,
     CoverPacketRequest,
     IsolatedNetworkProfile,
     WorkbenchContext,
@@ -270,6 +280,62 @@ def _admit_produced(packet) -> object:
             (value.reference, value.digest, value.payload)
             for value in packet.images
         ),
+    )
+
+
+def _observer_result(
+    profile: bytes,
+    instruction: bytes,
+    packet: bytes,
+    schema: bytes,
+    images: tuple[tuple[str, str, bytes], ...],
+    *,
+    mutate: object | None = None,
+) -> str:
+    admitted = admit_cover_review_request(
+        instruction.decode(), packet.decode(), schema.decode(), images
+    )
+    candidates = json.loads(packet)["candidates"]
+    result: dict[str, object] = {
+        "observations": [
+            {
+                "candidate_reference": value["reference"],
+                "composition": "minimal" if index % 2 else "dense",
+                "medium": "illustrated" if index % 2 else "photographic",
+                "promotional_text": "absent",
+                "tie_in_branding": "unknown",
+            }
+            for index, value in enumerate(candidates, start=1)
+        ],
+        "schema_version": OUTPUT_SCHEMA_VERSION,
+    }
+    if mutate is not None:
+        assert callable(mutate)
+        mutate(result)
+    image_binding = canonical_json(
+        [
+            {"reference": reference, "sha256": digest}
+            for reference, digest, _payload in images
+        ]
+    )
+    execution_identity = canonical_json(
+        {
+            "profile_sha256": hashlib.sha256(profile).hexdigest(),
+            "request_sha256": admitted.digest,
+        }
+    )
+    return canonical_json(
+        {
+            "execution_sha256": hashlib.sha256(execution_identity.encode()).hexdigest(),
+            "image_binding_sha256": hashlib.sha256(image_binding.encode()).hexdigest(),
+            "image_count": len(images),
+            "input_sha256": hashlib.sha256(packet).hexdigest(),
+            "request_sha256": admitted.digest,
+            "result": result,
+            "result_sha256": hashlib.sha256(canonical_json(result).encode()).hexdigest(),
+            "schema_version": "contained-reviewer-workbench-result-v2",
+            "status": "completed",
+        }
     )
 
 
@@ -1079,6 +1145,194 @@ class CoverPacketTests(unittest.TestCase):
             ["shortlist_limit", "shortlist_limit"],
         )
         self.assertNotIn("duplicate_preview", packet.document)
+
+
+class CoverObservationTests(unittest.TestCase):
+    def test_every_closed_value_is_admitted_without_policy_projection(self) -> None:
+        packet, images = _packet_case(5)
+
+        def all_values(value: dict[str, object]) -> None:
+            observations = value["observations"]
+            assert isinstance(observations, list)
+            media = ("photographic", "illustrated", "typographic", "mixed", "unknown")
+            for index, observation in enumerate(observations):
+                observation["medium"] = media[index]
+                observation["composition"] = ("minimal", "dense", "unknown")[index % 3]
+                observation["promotional_text"] = ("present", "absent", "unknown")[index % 3]
+                observation["tie_in_branding"] = ("absent", "unknown", "present")[index % 3]
+
+        report = observe_cover_packet(
+            b"synthetic-profile",
+            packet.document.encode(),
+            images,
+            lambda *args: _observer_result(*args, mutate=all_values),
+        )
+        observations = json.loads(report.document)["observations"]
+        self.assertEqual(
+            {value["medium"] for value in observations},
+            {"photographic", "illustrated", "typographic", "mixed", "unknown"},
+        )
+        self.assertTrue(
+            all(
+                set(value)
+                == {
+                    "candidate_reference",
+                    "composition",
+                    "medium",
+                    "preview_sha256",
+                    "preview_variant",
+                    "promotional_text",
+                    "tie_in_branding",
+                }
+                for value in observations
+            )
+        )
+
+    def test_closed_observations_bind_every_exact_preview_and_hide_source_values(self) -> None:
+        packet, images = _packet_case(3)
+        profile = b"synthetic-profile"
+        instructions: list[str] = []
+
+        def reviewer(*args: object) -> str:
+            instruction = args[1]
+            assert isinstance(instruction, bytes)
+            instructions.append(instruction.decode())
+            return _observer_result(*args)
+
+        report = observe_cover_packet(profile, packet.document.encode(), images, reviewer)
+        value = json.loads(report.document)
+
+        self.assertIn(TAXONOMY_DOCUMENT, instructions[0])
+        self.assertTrue(
+            isinstance(TAXONOMY, tuple)
+            and all(
+                isinstance(values, tuple)
+                and all(isinstance(item, tuple) for item in values)
+                for _name, values in TAXONOMY
+            )
+        )
+        self.assertEqual(value["schema_version"], OBSERVATION_SCHEMA_VERSION)
+        self.assertEqual(value["taxonomy_reference"], TAXONOMY_REFERENCE)
+        self.assertEqual(value["cover_packet_reference"], json.loads(packet.document)["packet_reference"])
+        self.assertEqual(len(value["observations"]), 3)
+        packet_candidates = {
+            item["reference"]: item for item in json.loads(packet.document)["candidates"]
+        }
+        for observation in value["observations"]:
+            candidate = packet_candidates[observation["candidate_reference"]]
+            self.assertEqual(observation["preview_sha256"], candidate["preview_sha256"])
+            self.assertEqual(observation["preview_variant"], candidate["preview_variant"])
+            self.assertIn(observation["composition"], {"minimal", "dense", "unknown"})
+        self.assertNotIn("Synthetic title", report.document)
+        self.assertNotIn("source-", report.document)
+        self.assertRegex(value["observer_reference"], r"^cover_observer_[0-9a-f]{64}$")
+
+    def test_invented_duplicate_hostile_and_unbound_results_fail_closed(self) -> None:
+        packet, images = _packet_case()
+        profile = b"synthetic-profile"
+
+        def invented(value: dict[str, object]) -> None:
+            observations = value["observations"]
+            assert isinstance(observations, list)
+            observations[0]["candidate_reference"] = "cover_ref_" + "f" * 64
+
+        def duplicate(value: dict[str, object]) -> None:
+            observations = value["observations"]
+            assert isinstance(observations, list)
+            observations[1]["candidate_reference"] = observations[0]["candidate_reference"]
+
+        def hostile(value: dict[str, object]) -> None:
+            observations = value["observations"]
+            assert isinstance(observations, list)
+            observations[0]["medium"] = "/private/hostile-value"
+
+        for mutation in (invented, duplicate, hostile):
+            with self.subTest(mutation=mutation.__name__), self.assertRaises(ValueError):
+                observe_cover_packet(
+                    profile,
+                    packet.document.encode(),
+                    images,
+                    lambda *args, mutation=mutation: _observer_result(
+                        *args, mutate=mutation
+                    ),
+                )
+
+        def unbound(*args: object) -> str:
+            value = json.loads(_observer_result(*args))
+            value["input_sha256"] = "0" * 64
+            return canonical_json(value)
+
+        with self.assertRaisesRegex(ValueError, "binding"):
+            observe_cover_packet(profile, packet.document.encode(), images, unbound)
+
+    def test_typed_scenario_uses_only_closed_inputs_and_redacts_failure(self) -> None:
+        payloads = tuple(_preview(index) for index in range(1, 3))
+        sources = tuple(
+            _source(index, payload) for index, payload in enumerate(payloads, start=1)
+        )
+        report = _report(sources)
+        by_artifact = {
+            source.artifact.artifact_id: payload
+            for source, payload in zip(sources, payloads, strict=True)
+            if source.artifact is not None
+        }
+        packet = prepare_cover_packet(
+            report.to_json(), lambda artifact, _variant: by_artifact[artifact]
+        )
+
+        def operation(*_args: object) -> str:
+            return '{"ok":true}'
+
+        operations = WorkbenchOperations(
+            *(operation for _ in WorkbenchOperations.__dataclass_fields__)
+        )
+        operations = replace(
+            operations,
+            reopen_metadata_report=lambda *_: report.to_json(),
+            reopen_cover_preview=(
+                lambda _db, _artifacts, _report, artifact, _variant:
+                by_artifact[artifact]
+            ),
+            run_cover_packet_reviewer=_observer_result,
+        )
+        with WorkbenchContext.temporary() as context:
+            profile = context.path("contained-reviewer-profile.json")
+            profile.write_bytes(b"synthetic-profile")
+            profile.chmod(0o600)
+            context.network = IsolatedNetworkProfile(
+                "isolated-test",
+                True,
+                True,
+                tuple(
+                    sorted(
+                        {
+                            hashlib.sha256(b"synthetic-profile").hexdigest(),
+                            packet.packet_digest,
+                        }
+                    )
+                ),
+            )
+            result = execute(
+                context, CoverObservationRequest(report.report_id), operations
+            )
+            document = json.loads(
+                context.path("artifacts/" + result.artifacts[0]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(result.name, "cover-observation-report")
+            self.assertEqual(len(document["observations"]), 2)
+
+            invalid = replace(
+                operations,
+                run_cover_packet_reviewer=(
+                    lambda *_: '{"private":"/untrusted/private/value"}'
+                ),
+            )
+            with self.assertRaises(WorkbenchFailure) as caught:
+                execute(context, CoverObservationRequest(report.report_id), invalid)
+            self.assertEqual(caught.exception.category, "invalid")
+            self.assertNotIn("private", str(caught.exception))
 
 
 class CoverIdentityTests(unittest.TestCase):

@@ -52,6 +52,32 @@ matching preview bytes cannot substitute a packet from another report. Date
 evidence links participate in compatibility, and a default provider cover with
 explicit work identity can verify only the work.
 
+`cover-observation-report` reuses the same exact report-bound packet and sole
+image-capable reviewer entry, but asks only for four visible, policy-neutral
+properties. Its closed vocabulary is:
+
+- medium: `photographic`, `illustrated`, `typographic`, `mixed`, `unknown`;
+- composition: `minimal`, `dense`, `unknown`;
+- promotional text: `present`, `absent`, `unknown`;
+- tie-in branding: `present`, `absent`, `unknown`.
+
+Definitions are fixed in
+[ADR-0046](../architecture/decisions/0046-observe-report-bound-covers.md).
+The reviewer must return exactly one row for every admitted candidate. Local
+validation rejects missing, repeated, invented, extra, or non-vocabulary
+values and rechecks the complete contained-reviewer result envelope. The
+immutable report binds the packet and exact candidate preview digest/variant,
+plus opaque taxonomy, instruction, output-schema, and observer identities. It
+contains no title, creator, source identity, provider value, owner policy,
+eligibility, ranking, preference, or winner.
+
+The 0.15.0 qualification admitted the exact instruction, schema, packets, and
+ordered images for 100 randomly selected real candidates with zero binding
+mismatches; a shuffled 20-case development repeat reproduced the exact request
+and mapping. The contained observer itself did not execute under the preserved
+#542 transport result, so this evidence proves the workbench contract rather
+than semantic label quality or runtime readiness.
+
 ## Executing a scenario
 
 Call the typed API from contributor code or a focused test. For example, an
@@ -134,6 +160,9 @@ request and adapter method have no image member or argument. A changed,
 repeated, unknown, non-PNG, over-bound, or unbound image fails closed. Only the
 bounded Instruction is authoritative; canonical input, provider metadata,
 images, and OCR text are hostile evidence and never instructions.
+The cover observer additionally requires visible properties only and uses
+`unknown` rather than inferring identity, policy, quality, preference,
+eligibility, ranking, or a winner.
 
 Admitted image bytes are copied into anonymous Linux memory descriptors, hashed
 again, and sealed against write, growth, shrink, and seal removal before process

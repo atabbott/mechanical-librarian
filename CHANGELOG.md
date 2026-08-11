@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Add a source-only cover-observation report with one deliberately small,
+  policy-neutral visual vocabulary. Each closed observation binds the exact
+  report packet, candidate, preview digest/variant, taxonomy, instruction,
+  schema, and contained observer identity; invented, duplicate, hostile, or
+  unbound results fail closed. The workbench-only proof adds no runtime,
+  provider, production-library, persistence, ranking, or write authority. A
+  random 100-case real-corpus replay proves exact packet admission and a 20-case
+  deterministic repeat, while honestly retaining the unavailable contained
+  semantic execution result rather than claiming model quality.
+  (#541)
+
 - Add a source-only, report-local cover identity projection that classifies each
   retained cover as verified manifestation/work, plausible, unknown, or
   conflicting from bounded retained evidence before aesthetic or policy work.

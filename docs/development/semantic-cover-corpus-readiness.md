@@ -128,9 +128,43 @@ access or writes. The final holdout was unavailable to implementation and
 tuning before qualification and remained unavailable during the blind
 post-review requalification.
 
+## Cover-observation qualification — bounded contract PASS
+
+After the observation contract and taxonomy binding passed independent code
+review, one recorded random seed selected 100 real report-bound preview
+candidates: 50 development and 50 final holdout. The sample contains 100
+distinct reports and 100 distinct selected preview digests. No case was
+selected by label, and the final holdout remained sealed until the development
+admission replay was complete.
+
+| Measure | Development | Final holdout | Combined |
+| --- | ---: | ---: | ---: |
+| Randomly selected cases | 50 | 50 | 100 |
+| Exact packet/image/request admissions | 50 | 50 | 100 |
+| Binding or mapping mismatches | 0 | 0 | 0 |
+| Shuffled deterministic repeat admissions | 20/20 | — | 20/20 |
+| Contained observer dispatches | 0 | 0 | 0 |
+| Admitted semantic observation results | 0 | 0 | 0 |
+
+The real admission replay proves the closed instruction, taxonomy, output
+schema, packet, ordered-image, candidate, and byte bindings on the retained
+corpus. The final holdout caused no implementation or tuning change.
+
+The contained semantic observer **did not execute**. The inherited #542
+qualification result remains `contained_reviewer_invocation_insufficient`, so
+natural label counts, semantic repeat agreement, and semantic quality are not
+available. Historical #542 latency cannot be attributed to this head. This is
+an honest general-principle PASS for the deterministic typed contract and real
+admission boundary, not a model-quality result or runtime activation. No retry,
+profile, model, authority, limit, threshold, provider, or corpus change was
+used to manufacture a semantic result.
+
 ## Outcome
 
 Issue #546 passes as a best-effort general-principle proof of a bounded,
 aggregate-safe provider-cover corpus. It establishes neither semantic quality
 nor runtime activation, and it does not qualify a model or a later transport
-unit. The tracked report contains no private corpus material.
+unit. Issue #541 separately passes its bounded typed observation-contract and
+real-admission proof while preserving the negative semantic-execution result.
+The tracked report contains no private corpus material, and #501 remains
+unpromoted.

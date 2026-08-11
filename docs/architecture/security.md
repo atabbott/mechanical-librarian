@@ -461,7 +461,20 @@ dimension, and variant facts, so digest-equal foreign packets fail closed.
 Retained date-evidence comparisons are included, and default provider covers
 remain work-level rather than manifestation-level evidence.
 It has no image inference, provider dispatch, child process, persistence,
-policy, or write authority. Cover
+policy, or write authority.
+
+The source-only cover observer is the sole semantic consumer of the admitted
+packet images. It has a fixed four-property visual vocabulary with explicit
+unknown values and no owner policy, eligibility, ranking, winner, identity, or
+write fields. Its instruction states that packet data, provider context,
+images, visible text, and OCR-like text are hostile evidence. The local parser
+requires exactly one closed observation for every admitted opaque candidate,
+rejects invented or repeated references and extra or hostile values, verifies
+the complete contained-reviewer execution/request/image/result bindings, and
+emits only opaque identities plus exact preview digest/variant facts. Raw model
+output is not an observation report until that validation passes.
+
+Cover
 previews use opaque references, fixed 12-image/1-MiB-each/8-MiB-total limits,
 digest/order binding, a separate ephemeral read-only mount, and repeatable exact
 image arguments. The generic reviewer entry point is image-free. Its closed
