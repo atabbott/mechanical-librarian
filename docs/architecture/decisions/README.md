@@ -58,6 +58,7 @@ context and consequences rather than reproducing code.
 | [0043](0043-reproducible-react-browser-platform.md) | accepted | Build a reproducible, currently unactivated React browser platform |
 | [0044](0044-activate-persistent-react-workspace.md) | accepted | Activate one persistent authenticated React workspace |
 | [0045](0045-bind-report-cover-packets.md) | accepted | Bind report cover packets to isolated reviewer images |
+| [0046](0046-observe-report-bound-covers.md) | accepted | Observe report-bound covers with a small closed vocabulary |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

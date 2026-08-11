@@ -11,6 +11,7 @@ from typing import TypeAlias
 
 from .context import WorkbenchContext
 from .cover_identity import classify_cover_identity
+from .cover_observation import observe_cover_packet
 from .cover_packets import PreparedCoverPacket, prepare_cover_packet
 from .results import WorkbenchResult
 
@@ -259,10 +260,28 @@ class CoverIdentityRequest:
         return "cover-identity-report"
 
 
+@dataclass(frozen=True)
+class CoverObservationRequest:
+    report_id: str
+    database: str = "reports.sqlite"
+    artifacts: str = "artifacts"
+    profile: str = "contained-reviewer-profile.json"
+
+    def __post_init__(self) -> None:
+        _required(self.report_id, "report id")
+        _required(self.database, "database")
+        _required(self.artifacts, "artifacts")
+        _required(self.profile, "reviewer profile")
+
+    @property
+    def name(self) -> str:
+        return "cover-observation-report"
+
+
 ScenarioRequest: TypeAlias = (
     ReportRequest | ProposalRequest | ReviewCaseRequest | CatalogueRequest
     | BatchRequest | DecisionPreviewRequest | ContainedReviewerRequest
-    | CoverPacketRequest | CoverIdentityRequest
+    | CoverPacketRequest | CoverIdentityRequest | CoverObservationRequest
 )
 
 
@@ -491,6 +510,28 @@ def _execute(
                 for value in packet.images
             ),
         ).document
+    elif isinstance(request, CoverObservationRequest):
+        database = context.path(request.database)
+        artifacts = context.path(request.artifacts)
+        _report_document, packet = _prepare_report_bound_cover_packet(
+            selected, database, artifacts, request.report_id
+        )
+        packet_snapshot = context.authority_snapshot(packet.document.encode("utf-8"))
+        bound = context.require_network(
+            context.path(request.profile),
+            packet_snapshot,
+            private_first=True,
+            private_tail=1,
+        )
+        raw = observe_cover_packet(
+            bound[0],
+            bound[1],
+            tuple(
+                (value.reference, value.digest, value.payload)
+                for value in packet.images
+            ),
+            selected.run_cover_packet_reviewer,
+        ).document
     elif isinstance(request, ContainedReviewerRequest):
         paths = tuple(
             context.path(value) for value in
@@ -548,7 +589,8 @@ def execute(
 
 __all__ = [
     "BatchRequest", "CatalogueRequest", "ContainedReviewerRequest",
-    "CoverIdentityRequest", "DecisionPreviewRequest", "ProposalRequest",
+    "CoverIdentityRequest", "CoverObservationRequest", "CoverPacketRequest",
+    "DecisionPreviewRequest", "ProposalRequest",
     "ReportRequest", "ReviewCaseRequest",
     "ScenarioRequest", "WorkbenchFailure", "WorkbenchOperations", "execute",
 ]

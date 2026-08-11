@@ -25,6 +25,7 @@ from mechanical_librarian_workbench import (  # noqa: E402
     CatalogueRequest,
     ContainedReviewerRequest,
     CoverIdentityRequest,
+    CoverObservationRequest,
     DecisionPreviewRequest,
     IsolatedNetworkProfile,
     ProposalRequest,
@@ -73,7 +74,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
         self.assertEqual(errors.getvalue(), "Review server failed: invalid invocation.\n")
 
     def test_workbench_catalogue_maps_every_relocated_capability(self) -> None:
-        self.assertEqual(len(CAPABILITIES), 17)
+        self.assertEqual(len(CAPABILITIES), 18)
         self.assertEqual(
             {operation for capability in CAPABILITIES for operation in capability.operations},
             set(WorkbenchOperations.__dataclass_fields__),
@@ -108,6 +109,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                 output_schema="reviewer-output-schema.json",
             ),
             CoverIdentityRequest("report"),
+            CoverObservationRequest("report"),
         )
         with WorkbenchContext.temporary() as context:
             context.network = IsolatedNetworkProfile(
@@ -124,6 +126,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             operations = replace(_operations(), run_batch=batch)
             prepared = mock.Mock(document="{}", images=())
             classified = mock.Mock(document='{"ok":true}')
+            observed = mock.Mock(document='{"ok":true}')
             with (
                 mock.patch(
                     "mechanical_librarian_workbench.scenarios.prepare_cover_packet",
@@ -132,6 +135,10 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                 mock.patch(
                     "mechanical_librarian_workbench.scenarios.classify_cover_identity",
                     return_value=classified,
+                ),
+                mock.patch(
+                    "mechanical_librarian_workbench.scenarios.observe_cover_packet",
+                    return_value=observed,
                 ),
             ):
                 results = tuple(execute(context, request, operations) for request in requests)
@@ -142,7 +149,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                     if item.name != "cover-packet-review"
                 ],
             )
-            self.assertEqual(len(tuple(context.path("attempts").iterdir())), 6)
+            self.assertEqual(len(tuple(context.path("attempts").iterdir())), 7)
             batch_artifact = context.path("artifacts/" + results[12].artifacts[0])
             self.assertEqual(
                 json.loads(batch_artifact.read_text(encoding="utf-8")),
