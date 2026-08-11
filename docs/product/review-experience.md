@@ -198,9 +198,16 @@ Attention is a contextual, URL-owned field queue inside the regular-width
 Library workspace, not a peer navigation destination. It contains only
 unresolved ordinary fields that can benefit from an owner decision, groups them
 by readable work identity, and keeps the current work, active field, and queue
-position visible beside the decision canvas. At compact widths the same queue
-may become a separate single-column step while preserving Back/Forward state
-and task continuity. Its work-level field count remains complete when cursor
+position visible beside the decision canvas. At narrower regular widths the
+work index and selected detail remain concurrent while attention opens as a
+contextual drawer. At phone widths the queue may become a separate
+single-column step while preserving Back/Forward state and task continuity.
+Every responsive composition retains the attention-only field strip's current
+value and stable position, inspectable automatic/recorded/no-change siblings,
+the external-library capability summary, and the source/observation/basis
+ledger. A field keeps its original actionable position after an earlier field
+settles, and retained case provenance remains visible when supplemental
+evidence cannot be loaded. Its work-level field count remains complete when cursor
 pagination splits a work, and evidence context counts bounded records rather
 than claiming distinct providers. Decision preview copy promises only the
 current value and available choices until the exact case supplies its eligible
@@ -233,6 +240,12 @@ records the existing exact-field decision immediately, without generic
 Accept/Keep/Reject controls or a separate submit step. Irrelevant panels are
 absent. Evidence explanations, source rows, policy versions, and diagnostics
 are progressively disclosed.
+
+The embedded Library decision surface follows the same command semantics as
+full review. An ordinary failed command may expose one explicit same-decision
+retry using the exact preserved command and idempotency key; mutations are
+never retried automatically. An ambiguous or unreconciled outcome remains
+locked until a later authoritative current-case read proves a safe state.
 
 An unresolved field with no eligible proposal still presents its current value
 as the one direct choice; automatic, resolved, and stale fields never present a

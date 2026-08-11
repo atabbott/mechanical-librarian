@@ -24,6 +24,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   const canonicalized = useRef('')
   const currentSearch = useRef(search)
   const currentLocation = useRef(location)
+  const retryButton = useRef<HTMLButtonElement>(null)
   const evidence = useInfiniteQuery({ queryKey: ['review-case', reviewCaseId, 'evidence'], initialPageParam: undefined as string | undefined, queryFn: ({ pageParam, signal }) => http.getEvidence(reviewCaseId, pageParam, signal), getNextPageParam: (page: EvidenceView) => page.next_cursor ?? undefined, staleTime: 30_000, retry: false })
   const history = useQuery({ queryKey: ['review-case', reviewCaseId, 'history'], queryFn: ({ signal }) => http.getHistory(reviewCaseId, signal), staleTime: 30_000, retry: false })
   const controller = useReviewDecisionController({ reviewCaseId, fields: data.fields, active: (command) => currentLocation.current.pathname === `/review/${reviewCaseId}` && currentSearch.current.subview === 'review' && currentSearch.current.field === command.destination, onAdvance: async (field) => { await navigate({ search: { ...currentSearch.current, field, subview: 'review' } }) }, onStale: async () => { await navigate({ to: '/library', search: { lens: 'needs_attention' } }) } })
@@ -32,12 +33,10 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   useRouteReadyFocus(`${search.subview}:${selected ?? ''}`)
   useEffect(() => { currentSearch.current = search }, [search])
   useEffect(() => { currentLocation.current = location }, [location])
+  useEffect(() => { if (controller.canRetry) retryButton.current?.focus() }, [controller.canRetry])
   useEffect(() => { const identity = `${reviewCaseId}:${selected ?? ''}:${search.subview}`; if (canonicalized.current === identity) return; canonicalized.current = identity; void navigate({ replace: true, search: { subview: search.subview, ...(selected ? { field: selected } : {}) } }) }, [navigate, reviewCaseId, search.subview, selected])
   const pages = evidence.data?.pages.flatMap((page) => page.items) ?? []
-  const submit = (field: CaseDetailView['fields'][number], outcome: DecisionOutcome, selectedValue: DecisionCommand['selectedValue'] = null, reuse = false) => {
-    const command: DecisionCommand = reuse && controller.pending ? controller.pending : { destination: field.destination, outcome, proposalId: field.proposalId, selectedValue, targetFingerprint: field.targetFingerprint, idempotencyKey: requestKey() }
-    controller.submit(command)
-  }
+  const submit = (field: CaseDetailView['fields'][number], outcome: DecisionOutcome, selectedValue: DecisionCommand['selectedValue'] = null) => controller.submit({ destination: field.destination, outcome, proposalId: field.proposalId, selectedValue, targetFingerprint: field.targetFingerprint, idempotencyKey: requestKey() })
   if (!data.current) return <section className="route-state" data-route-focus tabIndex={-1}><h1>Case superseded</h1><p role="alert">Failed or superseded cases are never treated as current.</p><Link to="/library" search={{ lens: 'needs_attention' }}>Return to library</Link></section>
   return <>
     <header className="page-heading"><div><p className="eyebrow">Exact-current review</p><h1>Current review case</h1><p><strong>{data.title}</strong> · {data.authors.length ? data.authors.join(', ') : 'Author details unavailable'} · {data.subtitle}</p></div><span className="badge">Current</span></header>
@@ -54,7 +53,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
           {field.notices.length || field.provenance.length ? <section className="field-notices" aria-label="Reviewer notes">{field.notices.map((notice) => <p key={notice}>{readable(notice)}</p>)}{field.provenance.map((source, index) => <p key={source}><small>Reviewed source {String(index + 1)}</small> {reviewedSource(source, index)}</p>)}</section> : null}
           {field.humanDecision ? <p className="decision-recorded">Human decision: {friendly(field.humanDecision.outcome)} by {field.humanDecision.actor}. Recorded value: {recordedValue(field.humanDecision.selected_value, field.currentValue)}.</p> : field.automaticDecision ? <p className="decision-recorded">Handled automatically: {friendly(field.automaticDecision.outcome)} · policy origin.</p> : null}
           {field.manualHold ? <button disabled={returnAutomatic.isPending} onClick={() => returnAutomatic.mutate(field.destination)}>Return to automatic handling</button> : null}
-          {controller.decision.isError && choicesVisible && controller.pending?.destination === field.destination ? <button onClick={() => { const pending = controller.pending; if (pending) submit(field, pending.outcome, pending.selectedValue, true) }}>Try again</button> : null}
+          {controller.canRetry && choicesVisible && controller.pending?.destination === field.destination ? <button ref={retryButton} onClick={controller.retry}>Try again</button> : null}
         </article>
       })}</section>
     </div> : null}

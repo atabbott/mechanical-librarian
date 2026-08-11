@@ -21,7 +21,18 @@
 - Restore the Variant M Library review workspace: one permanent Library
   destination with a paginated, recoverable URL-owned Attention queue, direct
   current-or-specific value decisions, authoritative shared settlement, bounded
-  readable evidence, cross-work continuation, and a compact single-task flow.
+  readable evidence, cross-work continuation, and a responsive task flow.
+  Complete the selected-work semantics with current-value field position,
+  inspectable automatic and recorded siblings, a structured multi-provider
+  source/observation/basis ledger, explicit external-library capability context,
+  richer queue rows, Previous/Next movement, and exact-command explicit retry.
+  Wide layouts retain Library, decision, and optional attention together;
+  narrower regular layouts retain Library and decision with an attention
+  drawer; phone layouts stage the same information without dropping it.
+  Original actionable-field positions do not collapse as decisions settle,
+  intermediate widths keep the work index beside selected detail, the queue
+  drawer clears the wrapped shell, and retained provenance stays visible when
+  supplemental evidence fails.
   Superseded cases never expose decision controls; work and field position carry
   into full review; direct review entry restores focus to the selected field.
   The synthetic qualification cohort contains 20 public-domain works across

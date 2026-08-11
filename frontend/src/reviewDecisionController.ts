@@ -50,5 +50,11 @@ export const useReviewDecisionController = ({ reviewCaseId, fields, active, onAd
   } })
   useEffect(() => () => { mounted.current = false }, [])
   useEffect(() => { if (reconciliation.data && (detailState?.dataUpdatedAt ?? 0) > reconciliation.data.detailUpdatedAt) queryClient.setQueryData(reconciliationKey(reviewCaseId), null) }, [detailState?.dataUpdatedAt, queryClient, reconciliation.data, reviewCaseId])
-  return { status: status.caseId === reviewCaseId ? (status.text ?? durableStatus.data ?? '') : durableStatus.data ?? '', pending: pending?.caseId === reviewCaseId ? pending.command : null, isPending: decision.isPending && pending?.caseId === reviewCaseId, reloadRequired: reconciliation.data !== null, message: reconciliation.data?.message, decision, settle, announce: (text: string) => announce(reviewCaseId, text), submit: (command: DecisionCommand) => { order.current = fields.map((field) => field.destination); setPending({ caseId: reviewCaseId, command }); announce(reviewCaseId, `Recording ${command.outcome.replaceAll('_', ' ')}…`); decision.mutate(command) } }
+  const currentPending = pending?.caseId === reviewCaseId ? pending.command : null
+  const retry = () => {
+    if (!currentPending || reconciliation.data !== null || decision.isPending) return
+    announce(reviewCaseId, `Retrying ${currentPending.outcome.replaceAll('_', ' ')}…`)
+    decision.mutate(currentPending)
+  }
+  return { status: status.caseId === reviewCaseId ? (status.text ?? durableStatus.data ?? '') : durableStatus.data ?? '', pending: currentPending, isPending: decision.isPending && currentPending !== null, canRetry: decision.isError && currentPending !== null && reconciliation.data === null, retry, reloadRequired: reconciliation.data !== null, message: reconciliation.data?.message, decision, settle, announce: (text: string) => announce(reviewCaseId, text), submit: (command: DecisionCommand) => { order.current = fields.map((field) => field.destination); setPending({ caseId: reviewCaseId, command }); announce(reviewCaseId, `Recording ${command.outcome.replaceAll('_', ' ')}…`); decision.mutate(command) } }
 }
