@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Polish the authenticated interface without changing its authority: restore
+  the asymmetric book-spine shell mark and touch-safe secondary actions; make
+  Policy a one-chapter-at-a-time notebook with changed-field emphasis and an
+  explicit validate, preview, impact, and activation cadence; give the full
+  current-review route a compact field rail and dominant two-column decision
+  canvas; and lead Activity with current recovery and recent outcomes while
+  keeping write consent in a reachable disclosure. Direct and native Activity
+  entry remain inspectable in the installed application. Root entry now routes
+  to sign-in, while authenticated review deep links and refreshes render the
+  application shell so its bounded missing-case recovery can run.
+  (#555)
+
 - Restore the Variant M Library review workspace: one permanent Library
   destination with a paginated, recoverable URL-owned Attention queue, direct
   current-or-specific value decisions, authoritative shared settlement, bounded

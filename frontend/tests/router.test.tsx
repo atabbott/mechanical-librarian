@@ -773,13 +773,17 @@ describe('typed review routes', () => {
     const isbn = screen.getByRole('group', { name: /ISBN/ })
     expect(within(isbn).getByRole('button', { name: 'Automatic' })).toBeDisabled()
     expect(within(isbn).getByText(/Automatic is not qualified/)).toBeVisible()
+    expect(screen.queryByRole('group', { name: /Title and subtitle/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Open identity/i })).toBeVisible()
 
     await user.clear(screen.getByRole('textbox', { name: 'Policy name' }))
     await user.click(screen.getByRole('button', { name: 'Check draft' }))
     expect(await screen.findByText('The draft is not valid. Review the highlighted policy intent and try again.')).toBeVisible()
     await user.type(screen.getByRole('textbox', { name: 'Policy name' }), 'Qualified draft')
+    await user.click(screen.getByRole('button', { name: /Open identity/i }))
     const titleLayout = screen.getByRole('group', { name: /Title and subtitle/ })
     await user.selectOptions(within(titleLayout).getByRole('combobox', { name: 'Title and subtitle representation' }), 'preserve')
+    expect(within(titleLayout).getByText('Draft changed')).toBeVisible()
     expect(screen.getAllByText('Draft has unreviewed changes').length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: 'Check draft' }))
     expect(await screen.findByText('Draft is valid. The active policy is unchanged.')).toBeVisible()
@@ -960,6 +964,8 @@ describe('typed review routes', () => {
     }
     renderRoute('/activity', http)
 
+    expect(await screen.findByRole('heading', { name: 'Ready for new work' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Open write-permission details' }))
     const disclosure = await screen.findByRole('list', { name: 'fiction destination consent' })
     expect(disclosure).toHaveTextContent('Authors: Included · consent requested')
     expect(disclosure).toHaveTextContent('Subtitle: Excluded · A field is unavailable')
@@ -1181,6 +1187,7 @@ describe('typed review routes', () => {
   })
 
   it('explains why backup readiness disables consent while retaining existing history', async () => {
+    const user = userEvent.setup()
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
       backup_ready: false,
       configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 1, human: 0, total: 1 } }],
@@ -1189,12 +1196,14 @@ describe('typed review routes', () => {
     })) }
     renderRoute('/activity', http)
 
+    expect(await screen.findByText('Recorded work')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Open write-permission details' }))
     expect(await screen.findByText(/A verified backup is required/)).toBeVisible()
     expect(screen.getByRole('button', { name: 'Enable guarded writes' })).toBeDisabled()
-    expect(screen.getByText('Recorded work')).toBeVisible()
   })
 
   it('returns a revoked library with history to consent readiness instead of a false pause control', async () => {
+    const user = userEvent.setup()
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
       configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 0, human: 0, total: 0 } }],
       capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false }] }],
@@ -1202,9 +1211,10 @@ describe('typed review routes', () => {
     })) }
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
-    expect(screen.getByText('Recorded work')).toBeVisible()
+    expect(await screen.findByText('Recorded work')).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Completed work is up to date' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Open write-permission details' }))
+    expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
     expect(screen.queryByRole('button', { name: /pause new work|resume new work/i })).toBeNull()
   })
 

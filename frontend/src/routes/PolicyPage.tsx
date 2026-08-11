@@ -47,11 +47,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const { http, queryClient } = useReviewContext()
   const search = policyRoute.useSearch()
   const navigate = useNavigate({ from: '/policy' })
-  const initialChapter = useRef(search.section)
-  const chapterInteracted = useRef(false)
-  const chapterRestored = useRef(false)
   const activationTrigger = useRef<HTMLButtonElement>(null)
-  const [activeChapter, setActiveChapter] = useState<PolicySection>(search.section)
+  const activeChapter = search.section
   const [draft, setDraft] = useState<PolicyDraft>(() => ({ name: data.state.profile.name, options: { ...data.state.profile.options }, destinations: { ...data.state.profile.destinations } }))
   const [draftId, setDraftId] = useState<string>()
   const [reviewedId, setReviewedId] = useState<string>()
@@ -70,60 +67,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     if (action === 'activate') return http.policyCommand<PolicyActivationView>('activate', body)
     return http.policyCommand<PolicyTransitionView | ShadowPostureView>(action, body)
   }, retry: false, onSettled: refresh })
-
-  useEffect(() => {
-    chapterRestored.current = false
-    const restoreChapter = () => {
-      if (chapterInteracted.current) return
-      chapterRestored.current = false
-      const section = initialChapter.current
-      const target = document.getElementById(`policy-${section}`)
-      target?.scrollIntoView({ block: 'start' })
-      target?.focus({ preventScroll: true })
-      setActiveChapter(section)
-    }
-    if (document.getElementById('main-content')?.dataset.restoredPath === '/policy') restoreChapter()
-    else addEventListener('ml:route-restored', restoreChapter, { once: true })
-    return () => removeEventListener('ml:route-restored', restoreChapter)
-  }, [])
-  useEffect(() => {
-    const enableTracking = () => { chapterRestored.current = true }
-    const enableKeyboardTracking = (event: globalThis.KeyboardEvent) => {
-      if (['ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp', ' '].includes(event.key)) enableTracking()
-    }
-    addEventListener('wheel', enableTracking, { passive: true })
-    addEventListener('pointerdown', enableTracking, { passive: true })
-    addEventListener('touchstart', enableTracking, { passive: true })
-    addEventListener('keydown', enableKeyboardTracking)
-    return () => {
-      removeEventListener('wheel', enableTracking)
-      removeEventListener('pointerdown', enableTracking)
-      removeEventListener('touchstart', enableTracking)
-      removeEventListener('keydown', enableKeyboardTracking)
-    }
-  }, [])
-  useEffect(() => {
-    let frame = 0
-    const trackChapter = () => {
-      cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(() => {
-        if (!chapterRestored.current) return
-        const threshold = innerWidth <= 760 ? 190 : Math.min(180, innerHeight * .28)
-        let current = chapters[0]?.key ?? 'identity'
-        for (const chapter of chapters) if ((document.getElementById(`policy-${chapter.key}`)?.getBoundingClientRect().top ?? Infinity) <= threshold) current = chapter.key
-        if (current !== activeChapter) {
-          setActiveChapter(current)
-          if (window.location.pathname === '/policy') {
-            const url = new URL(window.location.href)
-            url.searchParams.set('section', current)
-            window.history.replaceState(window.history.state, '', url)
-          }
-        }
-      })
-    }
-    addEventListener('scroll', trackChapter, { passive: true })
-    return () => { removeEventListener('scroll', trackChapter); cancelAnimationFrame(frame) }
-  }, [activeChapter])
 
   const editDraft = (next: PolicyDraft) => {
     setDraft(next)
@@ -176,9 +119,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     }
   }
   const openChapter = async (section: PolicySection) => {
-    chapterInteracted.current = true
-    chapterRestored.current = false
-    setActiveChapter(section)
     await navigate({ search: { section }, replace: true })
     requestAnimationFrame(() => {
       const target = document.getElementById(`policy-${section}`)
@@ -188,6 +128,13 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   }
   const automaticAllowed = shadow.posture === 'preview' || shadow.posture === 'automatic'
   const draftDisplay = derivePolicyDraftDisplay(data.state, draft)
+  const fieldChanged = (field: FieldDefinition) => {
+    const activeOption = data.state.profile.options[field.key] ?? field.options[0] ?? ''
+    const activeDestination = data.state.profile.destinations[field.key] ?? (field.unsupported ? 'unsupported' : 'ask')
+    const option = draft.options[field.key] ?? field.options[0] ?? ''
+    const destination = draft.destinations[field.key] ?? (field.unsupported ? 'unsupported' : 'ask')
+    return activeOption !== option || activeDestination !== destination
+  }
   const impactTotals = useMemo(() => preview ? { libraries: preview.libraries.length, items: preview.libraries.reduce((total, item) => total + item.current_unapplied_count, 0) } : undefined, [preview])
   const readyToReview = Boolean(draftId && reviewedId === draftId && preview)
   const transitionCopy = transition.data && !transition.data.acknowledged
@@ -196,6 +143,13 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       : `${transition.data.failed ? 'Completed with failures' : 'Policy update complete'} · ${String(transition.data.completed)} of ${String(transition.data.total)}`
     : undefined
 
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`policy-${activeChapter}`)?.focus({ preventScroll: true })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [activeChapter])
+
   return <>
     <section className="policy-notebook" data-route-focus tabIndex={-1}>
       <aside className="policy-index">
@@ -203,21 +157,22 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           <p className="eyebrow">Policy notebook</p>
           <div className="policy-profile-state"><span>Active policy</span><strong>{data.state.profile.name}</strong><small className={draftDisplay.changed ? 'draft-changed' : ''}>{draftDisplay.changed ? 'Draft has unreviewed changes' : 'Draft matches active policy'}</small></div>
           {transitionCopy ? <p className="policy-transition" role="status">{transitionCopy}</p> : null}
-          <nav aria-label="Policy chapters">{chapters.map((chapter) => <button type="button" key={chapter.key} aria-current={activeChapter === chapter.key} onClick={() => void openChapter(chapter.key)}>{chapter.label}</button>)}</nav>
+          <nav aria-label="Policy chapters">{chapters.map((chapter) => { const chapterFields = fields.filter((field) => field.chapter === chapter.key); const changed = chapterFields.filter(fieldChanged).length; return <button type="button" key={chapter.key} aria-current={activeChapter === chapter.key} onClick={() => void openChapter(chapter.key)}><span>{chapter.label}</span><small>{changed ? `${String(changed)} changed` : `${String(chapterFields.length)} field${chapterFields.length === 1 ? '' : 's'}`}</small></button> })}</nav>
           <label className="policy-chapter-picker">Policy chapter<select aria-label="Policy chapter" value={activeChapter} onChange={(event) => void openChapter(event.target.value as PolicySection)}>{chapters.map((chapter) => <option value={chapter.key} key={chapter.key}>{chapter.label}</option>)}</select></label>
         </div>
       </aside>
       <div className="policy-pages">
         <header><p className="eyebrow">Global policy draft</p><h1>Choose meaning before automation.</h1><p>Start from the complete active policy. Change only the representation or attention posture that matters; every other field keeps its current intent.</p><label className="policy-name">Policy name<input aria-label="Policy name" value={draft.name} maxLength={80} onChange={(event) => editDraft({ ...draft, name: event.target.value })}/></label></header>
-        {chapters.map((chapter) => <section className="policy-chapter" id={`policy-${chapter.key}`} key={chapter.key} tabIndex={-1}>
+        {chapters.map((chapter) => { const chapterFields = fields.filter((field) => field.chapter === chapter.key); const changedCount = chapterFields.filter(fieldChanged).length; const expanded = activeChapter === chapter.key; return <section className={`policy-chapter ${expanded ? 'expanded' : 'collapsed'}`} id={`policy-${chapter.key}`} key={chapter.key} tabIndex={-1}>
           <div><h2>{chapter.label}</h2><p>{chapter.description}</p></div>
-          <div className="policy-chapter-controls">{fields.filter((field) => field.chapter === chapter.key).map((field) => {
+          {expanded ? <div className="policy-chapter-controls">{chapterFields.map((field) => {
             const option = draft.options[field.key] ?? field.options[0] ?? ''
             const destination = draft.destinations[field.key] ?? (field.unsupported ? 'unsupported' : 'ask')
             const qualified = automaticQualified(field, option)
             const automaticExplanation = !qualified ? 'Automatic is not qualified for this field and representation.' : !automaticAllowed ? 'Enter Preview mode before choosing qualified Automatic.' : 'Qualified, decision-only Automatic is available.'
-            return <fieldset className="policy-field" key={field.key}>
-              <legend><strong>{field.label}</strong><small>{field.meaning}</small></legend>
+            const changed = fieldChanged(field)
+            return <fieldset className={`policy-field ${changed ? 'changed' : ''} ${field.unsupported ? 'unsafe' : ''}`} key={field.key}>
+              <legend><strong>{field.label}</strong>{changed || field.unsupported ? <span className="policy-field-state">{field.unsupported ? 'Unavailable' : 'Draft changed'}</span> : null}<small>{field.meaning}</small></legend>
               {field.unsupported ? <div className="policy-unavailable"><span className="badge">Not currently supported</span><p>No policy choice is available for this content yet.</p></div> : <>
                 <span className="policy-posture" aria-label={`${field.label} attention posture`}>
                   <button type="button" aria-pressed={destination === 'automatic'} disabled={!qualified || !automaticAllowed || command.isPending} title={automaticExplanation} onClick={() => editDraft({ ...draft, destinations: { ...draft.destinations, [field.key]: 'automatic' } })}>Automatic</button>
@@ -228,11 +183,12 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 {field.options.length > 1 ? <label>Representation<select aria-label={`${field.label} representation`} value={option} disabled={command.isPending} onChange={(event) => { const nextOption = event.target.value; const nextDestination = destination === 'automatic' && !automaticQualified(field, nextOption) ? 'ask' : destination; editDraft({ ...draft, options: { ...draft.options, [field.key]: nextOption }, destinations: { ...draft.destinations, [field.key]: nextDestination } }) }}>{field.options.map((value) => <option value={value} key={value}>{field.optionLabels[value]}</option>)}</select></label> : <p className="fixed-representation">Representation: {field.optionLabels[option]}</p>}
               </>}
             </fieldset>
-          })}</div>
-        </section>)}
+          })}</div> : <button className="policy-chapter-summary" type="button" onClick={() => void openChapter(chapter.key)}><span>{changedCount ? `${String(changedCount)} changed field${changedCount === 1 ? '' : 's'}` : `${String(chapterFields.length)} unchanged field${chapterFields.length === 1 ? '' : 's'}`}</span><strong>Open {chapter.label.toLowerCase()}</strong></button>}
+        </section> })}
         <section className="policy-impact" aria-label="Policy impact and activation">
           <div><strong className={draftDisplay.changed ? 'draft-changed' : ''}>{draftDisplay.changed ? 'Draft differs from active policy' : 'Draft matches active policy'}</strong><small>No target or media writes occur while editing or previewing.</small></div>
           {preview ? <div className="policy-impact-summary"><strong>{String(impactTotals?.libraries ?? 0)} {impactTotals?.libraries === 1 ? 'library' : 'libraries'} · {String(impactTotals?.items ?? 0)} current unapplied {impactTotals?.items === 1 ? 'item' : 'items'}</strong>{preview.libraries.length ? preview.libraries.map((item) => <p key={item.library}><span>{item.library}</span><small>{item.affected_categories.length ? item.affected_categories.map(readableCategory).join(', ') : 'No changed fields'} · {String(item.current_unapplied_count)} current unapplied</small></p>) : <p>No libraries are affected by this draft.</p>}</div> : <p className="policy-impact-empty">Preview the draft to see affected fields and libraries.</p>}
+          <ol className="policy-cadence" aria-label="Policy activation steps"><li data-complete={Boolean(draftId)}><span>1</span><small>Validate</small></li><li data-complete={Boolean(preview)}><span>2</span><small>Preview</small></li><li data-complete={readyToReview}><span>3</span><small>Inspect impact</small></li><li><span>4</span><small>Activate</small></li></ol>
           <div className="policy-workflow-actions"><button disabled={command.isPending} onClick={() => void run('validate', draft)}>Check draft</button><button disabled={command.isPending} onClick={() => void run('drafts', draft)}>Save draft</button><button disabled={command.isPending || !draftId} onClick={() => void run('preview', draft)}>Preview impact</button><button ref={activationTrigger} className="primary-action" disabled={command.isPending || !readyToReview} onClick={() => setActivationReview(true)}>Review activation</button></div>
         </section>
         <p className={`policy-status ${status.tone}`} role={status.tone === 'error' ? 'alert' : 'status'}>{status.message}</p>
