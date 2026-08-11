@@ -16,8 +16,12 @@ candidate is not trusted merely because it has a familiar name or path.
 
 ## Tracked public gate
 
-`.github/workflows/public-gate.yml` runs for every pull request and every push
-to `main`. It has read-only repository contents permission and:
+`.github/workflows/public-gate.yml` runs when a pull request is opened,
+reopened, or receives a new head. It does not run for a ready-for-review state
+change or for the resulting push to `main`. Delivery therefore publishes one
+converged draft candidate wherever possible, then requests review explicitly
+after the exact-head jobs pass. The workflow has read-only repository contents
+permission and:
 
 1. checks out the exact event revision without persisting credentials;
 2. uses commit-pinned GitHub Actions and a version-pinned `uv` installation;
@@ -37,13 +41,13 @@ to `main`. It has read-only repository contents permission and:
    binds the event source SHA and wheel, payload, and command output SHA-256
    values.
 
-The concurrency key distinguishes pull-request work from `main` push events. A
-new head may cancel obsolete work for the same pull request. Each push event
-creates one non-cancelled run bound to that event's tip SHA; a later push cannot
-cancel it. A batched multi-commit push does not create one run per included
-commit and is outside the autonomous transaction contract. Autonomous merges
-are emitted as individual pushes, and the local controller requires the
-resulting merge SHA's post-`main` `public-gate` result before terminal success.
+The concurrency key is scoped to the pull request. A new head cancels obsolete
+work for that pull request. The three independent jobs remain separate because
+the earlier serial exact-installed workflow exhausted its own 825-second
+subprocess deadline on four consecutive candidates, including after internal
+sharding. No aggregate runner is maintained: the local controller requires
+passing `fast-source`, `exact-installed`, and `protected-browser` check runs on
+the exact candidate SHA.
 
 Public CI contains no service credential, private corpus, merge permission, or
 branch-protection override. Private qualification remains local and may expose
@@ -62,8 +66,10 @@ expected-head merge guard. It must not offer an administrator, bypass, force,
 or protection-weakening path.
 
 After mutation, the local terminal control must prove that the returned merge
-commit has the qualified base as its sole parent, is contained by remote
-`main`, and is the tip SHA qualified by its own post-`main` `public-gate` run.
+commit has the qualified base as its sole parent, has exactly the qualified
+head's tree, and is contained by remote `main`. This proves the delivered tree
+is the tree already qualified by all three pull-request jobs without spending a
+second full Actions run on an equivalent squash-merge tree.
 Ambiguous responses and post-mutation failures remain explicit recovery states;
 they are not reported as success and are not automatically rolled back.
 
@@ -98,7 +104,7 @@ preflight and immediate conditional `sha=<expected-head>` squash merge. The
 terminal receipt binds that dry-run by digest and exact request, evidence,
 controller, controls, and a trusted mutation-attempt timestamp captured beside
 the merge call. The 300-second freshness window ends at mutation, not terminal
-completion, so longer post-merge CI and reconciliation remain valid;
+completion, so longer post-merge verification and reconciliation remain valid;
 outcome-specific schemas reject extra receipt fields.
 The controller also starts a trusted monotonic 300-second deadline before the
 internal dry-run wall timestamp is assigned or the receipt is persisted, so
@@ -106,10 +112,10 @@ timestamping, persistence, and fsync time count. Immediately after the repeated
 live preflight it captures the mutation-attempt timestamp; then
 that deadline guard is the only controller-local operation before the merge
 call; expiry produces a typed no-mutation failure.
-It then verifies the returned merge has the qualified base as its sole parent
-and is contained by
-authoritative `main`, waits for main CI, requires the complete native closing
-set to exactly match the bounded expected set, reconciles tracking, and deletes
+It then verifies the returned merge has the qualified base as its sole parent,
+has the qualified head's exact tree, and is contained by authoritative `main`;
+requires the complete native closing set to exactly match the bounded expected
+set; reconciles tracking; and deletes
 the delivery branch with an exact lease. A base race therefore becomes a typed
 post-merge recovery failure, never implicit success.
 The complete closing-set proof is capped by its GraphQL query: activation may
