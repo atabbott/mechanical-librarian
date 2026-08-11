@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError } from '../src/api/http'
 import type { ActivityDisplayView, ActivityView, AttentionView, CaseDetailView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
-import { createApplicationRouter, normalizeLibrarySearch, normalizePolicySearch } from '../src/router'
+import { createApplicationRouter, detailQuery, normalizeLibrarySearch, normalizePolicySearch } from '../src/router'
 import { activityEventKeys, activityOutcome } from '../src/activityState'
 
 const library: LibraryView = {
@@ -544,6 +544,58 @@ describe('typed review routes', () => {
     expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Choose proposed value 1: New title' })).toBeVisible()
     expect(screen.getAllByLabelText('Reviewer facts').at(1)).toHaveTextContent('Available choices2')
+  })
+
+  it('binds an ambiguous reconciliation lock after a pending background detail refresh', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('detail fixture requires a title field')
+    const authorsField = { ...titleField, destination: 'authors', proposalId: 'proposal-2', targetFingerprint: 'fingerprint-2' }
+    const unresolved = { ...detail, fields: [titleField, authorsField] }
+    const background = { ...unresolved, title: 'Background authoritative detail' }
+    let rejectDecision: ((error: unknown) => void) | undefined
+    const decisionResult = new Promise<never>((_resolve, reject) => { rejectDecision = reject })
+    let reads = 0
+    let postLockRefreshAvailable = false
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => {
+        reads += 1
+        if (reads === 1) return unresolved
+        if (reads === 2) return background
+        if (postLockRefreshAvailable) return unresolved
+        throw new Error('refresh unavailable')
+      }),
+      recordDecision: vi.fn(() => decisionResult),
+    }
+    const { queryClient } = renderRoute('/review/case-1?field=title&subview=review', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    await act(async () => { await queryClient.fetchQuery({ ...detailQuery(http, 'case-1'), staleTime: 0 }) })
+    expect(await screen.findByText('Background authoritative detail')).toBeVisible()
+    await act(async () => { rejectDecision?.(new AmbiguousMutationError()) })
+
+    const locked = 'The decision outcome is uncertain and the current case could not be refreshed. Reload to reconcile it before reviewing another value.'
+    expect(await screen.findByText(locked)).toHaveAttribute('role', 'alert')
+    expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+
+    await user.click(screen.getByRole('link', { name: 'Library' }))
+    await user.click(await screen.findByRole('link', { name: 'A Book' }))
+    await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalledTimes(4))
+    expect(screen.getByText(locked)).toHaveAttribute('role', 'alert')
+    expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'authors' }))
+    expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
+
+    await user.click(screen.getByRole('link', { name: 'Library' }))
+    postLockRefreshAvailable = true
+    await user.click(await screen.findByRole('link', { name: 'A Book' }))
+    await user.click(await screen.findByRole('button', { name: 'authors' }))
+    expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Choose proposed value 1: New title' })).toBeVisible()
+    expect(screen.queryByText(locked)).toBeNull()
   })
 
   it('replaces invalid detail state with the resolved canonical field and subview', async () => {

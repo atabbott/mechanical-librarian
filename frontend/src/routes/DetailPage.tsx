@@ -34,8 +34,9 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   const [pending, setPending] = useState<DecisionCommand | null>(null)
   const reconciliation = useQuery<ReconciliationLock | null>({ queryKey: reconciliationKey(reviewCaseId), queryFn: () => Promise.resolve(null), enabled: false, initialData: null, staleTime: Infinity, gcTime: Infinity })
   const reloadRequired = reconciliation.data !== null
-  const detailState = queryClient.getQueryState(detailQuery(http, reviewCaseId).queryKey)
-  const lockReconciliation = (message: string) => queryClient.setQueryData(reconciliationKey(reviewCaseId), { message, detailUpdatedAt: detailState?.dataUpdatedAt ?? 0 })
+  const detailQueryKey = detailQuery(http, reviewCaseId).queryKey
+  const detailState = queryClient.getQueryState(detailQueryKey)
+  const lockReconciliation = (message: string) => queryClient.setQueryData(reconciliationKey(reviewCaseId), { message, detailUpdatedAt: queryClient.getQueryState(detailQueryKey)?.dataUpdatedAt ?? 0 })
   const canonicalized = useRef('')
   const submittedFieldOrder = useRef<readonly string[]>([])
   const currentSearch = useRef(search)
