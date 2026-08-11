@@ -1,0 +1,259 @@
+# Interface fidelity living audit
+
+Status: active; material gaps remain  
+Last updated: 2026-08-11  
+Current implementation baseline: `7fd8f8a1226b98dc4d725db2aabe604c4722b824`  
+Protected review reference: Variant M at
+`026e3388c86f583af5d5a136c4bf6a4192a77af6`  
+Impeccable critique baseline: 28/40 on 2026-08-11
+
+## Purpose
+
+This is the working defect-and-remediation record for the authenticated owner
+interface. It exists because passing route, responsive, and synthetic browser
+checks does not prove that the installed application preserves Variant M's
+desktop operating model, information hierarchy, or usefulness with
+representative evidence.
+
+The document is deliberately a living audit rather than a completion report.
+A row moves to **verified** only when the exact installed application has been
+directly exercised with representative data and compared with the governing
+reference. A green unit test or an assertion that the page has no horizontal
+overflow is supporting evidence, not a substitute for that comparison.
+
+## Governing outcome
+
+At regular desktop widths the normal review experience is one coherent work
+surface:
+
+- the complete Library remains visible and searchable;
+- attention is an in-context queue or drawer, not a competing top-level
+  destination;
+- the selected work retains readable identity and status context;
+- an attention-only field filmstrip makes the remaining work and position
+  obvious;
+- the current value and every eligible proposed value are the direct decision
+  controls;
+- reviewer facts, evidence provenance, and bounded apply state support the
+  decision without displacing it; and
+- recording one value advances through unresolved fields and works without a
+  round trip through another top-level page.
+
+At compact widths, Library, queue, and selected detail may remain separate
+single-column views. The compact implementation must preserve task continuity,
+Back/Forward behavior, readable identity, and direct-value semantics; it need
+not squeeze the desktop composition into 390 pixels.
+
+The prototype is directional rather than a source-code or pixel-copy contract,
+but its observable composition, hierarchy, density, and interaction language
+are protected. A materially different replacement requires a concrete product
+or technical constraint and evidence that the replacement better preserves
+the outcome.
+
+## Current defect register
+
+| ID | Severity | Status | Defect | Required fix | Closure proof |
+| --- | --- | --- | --- | --- | --- |
+| IF-01 | P0 | confirmed | **Library and Attention are separate permanent navigation destinations.** Variant M keeps Library as the normal workspace and opens its field-level attention queue in context. The current split changes the mental model and forces avoidable page changes. | Remove Attention as a peer desktop destination. Provide one Library workspace with an attention count/control and an independently openable, URL-addressable queue/drawer. Preserve the current separated compact flow below the agreed breakpoint. | Wide installed app shows Library, queue, and selected work in one document; queue open/close, deep links, refresh, and Back/Forward are deterministic; 390px retains a coherent separate-surface flow. |
+| IF-02 | P0 | confirmed | **The desktop workspace is materially less informative and less useful than Variant M.** Large widths are spent on sparse cards and route-level framing instead of concurrent work identity, field position, decision context, and evidence. | Restore an intentional wide composition: bounded searchable work index, selected-work context, attention-only field filmstrip, primary decision canvas, and supporting context. Use the available width for comparison and navigation rather than enlarging empty space. | Direct comparison at 1440px and a narrower desktop width demonstrates equivalent information hierarchy and task throughput with long, hostile, empty, loading, failure, stale, and resolved states. |
+| IF-03 | P0 | confirmed | **Moving between works that need attention is too costly.** The owner can fall out of the review flow and has to return to Library or Attention to select the next work. | Keep the unresolved queue and work position available while reviewing. After a decision, advance through the frozen visible unresolved order; also provide explicit previous/next work or queue selection without losing list position or filters. | Keyboard-only and pointer journeys process fields across at least four works without revisiting a top-level Library/Attention destination; deliberate navigation during a pending mutation is preserved. |
+| IF-04 | P1 | confirmed | **The field navigator is weaker than Variant M's attention-only filmstrip.** The current detail route gives insufficient at-a-glance information about other unresolved fields, automatic/resolved siblings, and the owner's place in the queue. | Add the protected attention-only field strip on wide layouts, with field name, state, current selection, and unambiguous active position. Keep automatic/resolved siblings inspectable through a subordinate disclosure rather than mixing them into the action queue. | A work with several actionable, current-only, automatic, and resolved fields remains scannable; strip position is stable after a decision and is keyboard operable. |
+| IF-05 | P1 | confirmed | **Direct-value choices are semantically correct but visually and informationally underpowered.** The cards do not yet provide the prototype's strong comparison hierarchy or enough bounded reason/provenance context at desktop width. | Preserve value-as-action with no generic Accept/Keep/Reject or submit step. Strengthen current/proposed distinction, value typography, supporting reason, corroboration/conflict summary, and source diversity without turning evidence into an authority claim. | Current plus several scalar and structured proposals can be compared without opening another page; long values wrap; recorded, automatic, stale, no-proposal, and ambiguous states never expose false controls. |
+| IF-06 | P1 | confirmed | **Selected-work context is too thin.** The current composition does not match Variant M's richer bibliographic identity, work-level attention status, field progress, automatic-resolution disclosure, and compact apply context. | Restore a concise work header and work-level summary adjacent to the decision. Show readable title, authors, library/media destination, actionable-field progress, and calm automatic/apply status. Keep opaque identifiers and internal codes subordinate or absent. | Representative ebook and audiobook works with long/multiple authors, several libraries, mixed field states, and hostile content remain readable in light and dark themes. |
+| IF-07 | P0 | reported; reproduction required | **Activity does not load in the locally hosted installed application.** This prevents direct evaluation of the protected Activity surface and invalidates any claim that all primary routes are inspectable. | Reproduce against the exact installed head, capture the failing request and rendered error, and fix the smallest owning seam. Do not mask a production transport/mapping defect with fixture substitution. | Native navigation and direct URL load Activity after authenticated sign-in with zero unexpected console/page/network errors; loading, empty, partial consent, history, recovery, and failure states remain reachable. |
+| IF-08 | P1 | qualification gap | **Evidence data does not demonstrate multiple providers.** The visible cohort appears dominated by Project Gutenberg, so provider diversity, corroboration, contradiction, missing-provider, and mixed-provenance layouts have not been meaningfully inspected. | Extend the safe fixture with several provider identities and roles, including local evidence, Project Gutenberg, Google Books, Open Library, and an unavailable/unknown provider state. Include corroborating and conflicting values, repeated records from one provider, long provider labels, and evidence distributed over multiple pages. Provider count must not be inferred from evidence-record count. | Installed detail shows at least three providers on one work and different provider combinations across works; source labels remain readable and neutral; conflicts, duplicates, missing data, pagination, and hostile provider text are exercised at desktop and 390px. |
+| IF-09 | P2 | critique complete; refinement required | **Policy is closest to the intended visual world, but its notebook can become cognitively dense at scale.** Simultaneous field choices, sticky impact, chapter navigation, safety disclosure, and activation review can make policy authoring feel more intimidating than necessary. | Preserve Refined Policy B's semantic notebook and guarded activation model. Make changed and unsafe fields primary, let unchanged chapter content collapse to a scannable summary, and clarify the sequential preview → impact → activation cadence. | Desktop and 390px light/dark direct inspection, keyboard/modal focus proof, hostile/long content, and all validation/preview/activation/currentness/failure states pass with no unresolved material critique finding. |
+| IF-10 | P2 | confirmed | **Library Preview and title-link actions have weakly differentiated consequences.** One opens a shallow selected-work preview while the other enters the review route, but their labels and visual hierarchy do not make that difference sufficiently predictable. | Either unify both entry points around one selected-work action or give each an explicit purpose-based label and supporting state. Do not make the title behave like an ambiguous hidden shortcut. | First-time and keyboard-only users can predict each action before invoking it; Back/Forward restores the same Library selection, filters, and scroll position. |
+| IF-11 | P3 | confirmed | **The circular `ML` brand mark discards Prototype M's distinctive asymmetric book-spine identity.** This does not block review, but it weakens the authored catalogue character while retaining a more generic application badge. | Restore or reinterpret the asymmetric book-spine mark in the production shell, with sufficient contrast and no fabricated cover-art implication. | The mark remains legible in light/dark and compact/desktop shells, has an appropriate accessible treatment, and does not displace primary navigation. |
+
+## Impeccable critique baseline
+
+The first independent dual-assessment critique of `frontend/src` scored the
+Operate experience **28/40**. The result is a baseline for comparison, not a
+numeric release gate. The archived maintainer snapshot is
+`.impeccable/critique/2026-08-11T06-31-42Z__frontend-src.md`.
+
+| # | Nielsen heuristic | Score | Owning finding |
+| --- | --- | --- | --- |
+| 1 | Visibility of system status | 3/4 | Guarded states are strong; cross-work and remaining-field position are not persistent (IF-03, IF-04). |
+| 2 | Match between system and real world | 3/4 | Bibliographic language fits; Attention as a top-level place weakens the workbench model (IF-01). |
+| 3 | User control and freedom | 2/4 | Leaving review loses contextual queue and position (IF-03). |
+| 4 | Consistency and standards | 3/4 | Visual patterns are coherent; the information architecture contradicts Variant M (IF-01, IF-02). |
+| 5 | Error prevention | 4/4 | Exact-current decisions, reconciliation lockout, and guarded commands are exemplary and must not regress. |
+| 6 | Recognition rather than recall | 2/4 | Separate routes require the owner to remember work, field, evidence, and queue state (IF-01–IF-04). |
+| 7 | Flexibility and efficiency | 2/4 | Search and lenses exist, but cross-work review pays a route-change tax (IF-03). |
+| 8 | Aesthetic and minimalist design | 3/4 | The visual system is calm; route framing consumes desktop space needed for comparison (IF-02, IF-05, IF-06). |
+| 9 | Error recovery | 4/4 | Stale, ambiguous, failed, and reconciling states are unusually responsible and must not regress. |
+| 10 | Help and documentation | 2/4 | Safety copy is strong; provenance, conflict, and policy consequences are fragmented across views (IF-05, IF-08, IF-09). |
+
+The critique's five priority findings map directly to IF-01/IF-02, IF-03,
+IF-07, IF-04, and IF-05/IF-08. It also added IF-10 and IF-11 rather than
+duplicating them under the broader workspace findings.
+
+The deterministic design scan reported five warnings in
+`frontend/src/styles.css`: four semantic three-pixel left rules and the use of
+Inter. These are documented design-system choices, not accepted defects. The
+left rules mark notices, status, recovery, and current ledger events; Inter is
+the operating typeface paired with Georgia. No detector warning is being used
+as a substitute for the structural findings above.
+
+### Cognitive-load and emotional findings
+
+- Four permanent destinations and three review subviews divide one continuous
+  review task.
+- Queue position, selected work, remaining fields, values, and evidence cannot
+  remain visible together on desktop.
+- Evidence and History disclose at the wrong level by replacing the decision
+  rather than supporting it.
+- Policy and Activity can legitimately expose more than four choices, but need
+  stronger grouping and sequencing as libraries, fields, and proposals scale.
+- The opening experience feels private and trustworthy, and direct decisions
+  remain reassuring. The emotional valley is the navigation between modules;
+  the system's defensive explanation currently peaks more strongly than the
+  owner's productive flow.
+
+### Persona findings
+
+- A technically capable self-hoster sees a tool optimized for explaining its
+  safety architecture more than clearing exceptions.
+- A first-time owner must infer the relationship among Library Preview, title
+  links, Attention, Review, Evidence, History, Policy, and Activity before a
+  stable mental model emerges.
+- A power reviewer benefits from fast direct-value commands but pays a recall
+  and navigation tax after every cross-work decision.
+
+## Delivery tracking
+
+Milestone [#19, 0.14.1 — Interface fidelity restoration](https://github.com/atabbott/mechanical-librarian/milestone/19)
+was reopened on 2026-08-11 after the installed-interface review and Impeccable
+critique disproved the earlier completion claim. Corrective delivery is:
+
+1. [#554 — Match the Library and Attention workspace to protected Variant M](https://github.com/atabbott/mechanical-librarian/issues/554)
+   owns IF-01 through IF-06, IF-08, and IF-10. Regular-width composition must
+   match the protected reference; the compact flow may remain a purpose-built
+   single-column adaptation.
+2. [#555 — Polish the authenticated frontend after fidelity restoration](https://github.com/atabbott/mechanical-librarian/issues/555)
+   owns IF-07, IF-09, IF-11, the remaining accepted cross-surface critique
+   findings, the post-remediation Impeccable critique, and final milestone
+   reconciliation. GitHub records #555 as blocked by #554.
+
+Closed #499 remains the historical tracker for the completed first pass. It is
+not evidence that the corrective defects are resolved and is not reopened by
+this follow-up ledger.
+
+## Previously corrected findings that must not regress
+
+These six delivered corrections remain part of the audit baseline. They are not
+evidence that the open defects above are complete.
+
+| Baseline | Correction to preserve | Existing tracking |
+| --- | --- | --- |
+| B-01 | Rich authenticated interface fixture and direct-route proof instead of a single narrow case. | [#532](https://github.com/atabbott/mechanical-librarian/issues/532) / [PR #551](https://github.com/atabbott/mechanical-librarian/pull/551) |
+| B-02 | Touch-safe Library lenses, title links, Preview controls, pagination, and bounded long-title wrapping. | [#535](https://github.com/atabbott/mechanical-librarian/issues/535) / [PR #549](https://github.com/atabbott/mechanical-librarian/pull/549) |
+| B-03 | Direct current-or-specific-value decisions with no generic decision controls or separate submit step. | [#531](https://github.com/atabbott/mechanical-librarian/issues/531) |
+| B-04 | Case-wide reconciliation lock after an ambiguous or failed mutation when authoritative refresh is unavailable. | [#531](https://github.com/atabbott/mechanical-librarian/issues/531) / [PR #553](https://github.com/atabbott/mechanical-librarian/pull/553) |
+| B-05 | Semantic Policy notebook with guarded validate, preview, review, activation, and currentness states. | [#536](https://github.com/atabbott/mechanical-librarian/issues/536) |
+| B-06 | Readable Activity consent, state, history, and grouped recovery ledger with a closed transport projection. | [#533](https://github.com/atabbott/mechanical-librarian/issues/533) / [PR #547](https://github.com/atabbott/mechanical-librarian/pull/547) |
+
+If an open defect is caused by regression inside one of these owning outcomes,
+reopen that constituent rather than creating a replacement ticket. Create a
+new ticket only when the defect is genuinely outside the earlier acceptance
+boundary.
+
+## Target desktop composition
+
+The intended desktop arrangement is a responsive operating workspace, not
+three unrelated pages placed beside one another:
+
+```text
+Library workspace
+├── Work index
+│   ├── search, lenses, page context
+│   └── complete attention-first work list
+├── Selected work
+│   ├── readable identity and work-level status
+│   ├── attention-only field filmstrip
+│   └── current value + specific proposed-value actions
+└── Contextual queue/support
+    ├── unresolved fields across works
+    ├── reviewer facts and progressive evidence
+    └── bounded automatic/apply context
+```
+
+The queue may be a drawer, rail, or other production-quality composition, but
+it must be independently addressable and must not become a fifth permanent
+destination. Evidence and automatic history are progressive support; they must
+not push the active decision below an avoidable wall of metadata.
+
+## Representative-data matrix
+
+The audit fixture uses real public-domain works and irreversibly sanitized or
+synthetic provider-shaped evidence. It must not contain private library data,
+credentials, source paths, raw provider responses, or copied production
+databases.
+
+| Dimension | Minimum useful cohort |
+| --- | --- |
+| Works | At least 20 real public-domain works across ebook and audiobook libraries, with enough unresolved work to require queue navigation and pagination. |
+| Identity | Short, long, Unicode, hostile-looking, edition-qualified, anthology, multi-author, no-author, series, and same-title/different-author works. |
+| Fields | Title, structured authors, series, sequence, publication date, publisher, language, description, and cover state where supported by the current interface. |
+| Decisions | Current-only, one proposal, several proposals, structured proposals, automatic, resolved human, no-attention, stale, and indeterminate post-mutation states. |
+| Evidence | Local plus at least Project Gutenberg, Google Books, and Open Library; corroboration, contradiction, duplicates, unavailable provider, unknown future provider code, long labels, and multi-page evidence. |
+| Runtime | Loading, empty, partial, one-time failure/retry, persistent failure, stale/currentness conflict, ambiguous mutation, and recovery. |
+| Presentation | 1440px, narrower desktop, 390px, light, dark, keyboard, visible focus, long content, no document overflow, and no hidden critical controls. |
+
+Provider names in this matrix describe safe fixture provenance identities, not
+authorization to call live services during UI tests.
+
+## Delivery plan
+
+1. **Restore inspectability.** Reproduce and fix IF-07 so every primary route
+   can be audited in the installed application.
+2. **Freeze the wide workspace contract.** Capture annotated Variant M and
+   current-application screenshots at the same desktop widths. Record which
+   existing URLs, API projections, currentness rules, and query state can be
+   composed without widening authority.
+3. **Deliver one desktop review workspace.** Address IF-01 through IF-06 as a
+   coherent interaction outcome. Do not split the composition into cosmetic
+   tickets that individually leave the workflow weaker.
+4. **Qualify representative provenance.** Address IF-08 in the durable fixture
+   and use it to inspect the new workspace, not merely to add assertions.
+5. **Clarify Library entry actions.** Address IF-10 within the unified desktop
+   workspace rather than preserving two ambiguous routes into the old model.
+6. **Refine Policy.** Address IF-09 only after the primary review workflow is
+   stable, so Policy polish does not conceal a broken core task. IF-11 may be
+   included only when the owning shell is already changing.
+7. **Reconcile tracking and documentation.** Reopen predecessor issues where
+   their protected acceptance was not met, link exact fixes and proof here,
+   and remove any completion claim contradicted by the installed application.
+
+## Verification record
+
+Add dated entries; do not overwrite earlier observations.
+
+| Date | Exact head | Surface/data | Width/theme/input | Result | Evidence or follow-up |
+| --- | --- | --- | --- | --- | --- |
+| 2026-08-11 | `7fd8f8a` | Current installed Library/Attention/detail versus Variant M | regular desktop | fail | IF-01 through IF-06 confirmed by product review; current composition does not preserve the protected desktop operating model. |
+| 2026-08-11 | `7fd8f8a` | Current installed evidence cohort | local fixture | incomplete | IF-08: visible provenance does not demonstrate meaningful multi-provider behavior. |
+| 2026-08-11 | `7fd8f8a` | Current installed Activity | local fixture | fail | IF-07 reported: route cannot be loaded; exact request/console reproduction still required. |
+| 2026-08-11 | `7fd8f8a` | Full frontend Impeccable critique | source, protected references, and bounded browser evidence | 28/40 | Dual independent assessments confirmed IF-01–IF-05 and IF-07/IF-08, advanced IF-09 to refinement, and added IF-10/IF-11. Browser overlay injection failed, so no overlay evidence is claimed. |
+| 2026-08-11 | `7fd8f8a` | Current installed Policy | desktop and compact | provisional pass | Semantics broadly accepted; critique found bounded density and activation-cadence refinement under IF-09. |
+| 2026-08-11 | candidate pending commit | Variant M Library workspace source build | frontend unit fixture | source-qualified only | Direct-value canvas, filmstrip, and URL-owned attention rail are implemented; matched-width installed comparison remains required before any verified closure claim. |
+
+## Definition of done
+
+This audit may be marked complete only when:
+
+- every P0 and P1 row is verified on exact current `main`;
+- no desktop claim relies on the compact layout as justification;
+- all five primary surfaces load in the real installed application;
+- the review workflow is directly compared with Variant M at matched widths;
+- the representative-data matrix is exercised, including multi-provider
+  evidence and cross-work queue navigation;
+- accepted Impeccable, accessibility, functional, security, and review
+  findings are resolved with exact-head proof; and
+- a post-remediation independent critique is recorded against the exact
+  installed head, improves on the 28/40 baseline, and leaves no material P0 or
+  P1 critique finding; and
+- GitHub issues, project state, documentation, and completion claims agree
+  with the installed result.

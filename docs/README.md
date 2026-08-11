@@ -53,6 +53,7 @@ listed above.
 
 - [Vision](product/vision.md)
 - [Scope](product/scope.md)
+- [Interface fidelity living audit](product/interface-fidelity-living-audit.md)
 - [Roadmap](product/roadmap.md)
 - [Delivery slices](product/delivery-slices.md)
 - [0.7.0 metadata qualification scope](product/0-7-metadata-qualification.md)
