@@ -55,9 +55,11 @@ from mechanical_librarian_workbench.cover_identity import (  # noqa: E402
 from mechanical_librarian_workbench import cover_packets as packet_builder  # noqa: E402
 from mechanical_librarian_workbench import reviewer as reviewer_binding  # noqa: E402
 from mechanical_librarian_workbench import (  # noqa: E402
+    CoverIdentityRequest,
     CoverPacketRequest,
     IsolatedNetworkProfile,
     WorkbenchContext,
+    WorkbenchFailure,
     WorkbenchOperations,
     execute,
 )
@@ -1116,7 +1118,7 @@ class CoverIdentityTests(unittest.TestCase):
         )
         associated = SimpleNamespace(**{**accepted.__dict__, "relation": IdentifierRelation.ASSOCIATED})
         self.assertEqual(_classify_sources(SimpleNamespace(providers=report.providers, identifier_evidence=(associated,)), (work_source,))[0], "verified_work_match")
-        self.assertEqual(_classify_sources(SimpleNamespace(providers=report.providers, identifier_evidence=()), (source,))[0], "plausible_match")
+        self.assertEqual(_classify_sources(SimpleNamespace(providers=report.providers, identifier_evidence=()), (source,))[0], "unknown")
         self.assertEqual(_classify_sources(SimpleNamespace(providers=(), identifier_evidence=()), (source,))[0], "unknown")
         contradiction = SimpleNamespace(kind=ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION)
         conflicting = SimpleNamespace(**{**candidate.__dict__, "evidence": (contradiction,)})
@@ -1154,9 +1156,13 @@ class CoverIdentityTests(unittest.TestCase):
             outcome=Comparison.DISAGREEMENT,
             local_reference="local_" + "b" * 64,
         )
+        mixed_agreement = SimpleNamespace(
+            outcome=Comparison.AGREEMENT,
+            local_reference="local_" + "f" * 64,
+        )
         title = SimpleNamespace(
             kind=ClaimKind.TITLE,
-            links=(disagreement,),
+            links=(disagreement, mixed_agreement),
             reference="provider_" + "c" * 64,
         )
         conflicting = SimpleNamespace(
@@ -1175,11 +1181,8 @@ class CoverIdentityTests(unittest.TestCase):
         self.assertEqual(
             _classify_sources(report, (source,)),
             (
-                "plausible_match",
-                [
-                    "provider_identity_without_explicit_identifier",
-                    "retained_bibliographic_ambiguity",
-                ],
+                "unknown",
+                ["retained_bibliographic_ambiguity"],
                 [],
             ),
         )
@@ -1250,10 +1253,67 @@ class CoverIdentityTests(unittest.TestCase):
         value = json.loads(document)
         self.assertEqual(value["schema_version"], SCHEMA_VERSION)
         self.assertEqual(value["cover_packet_reference"], json.loads(packet.document)["packet_reference"])
+        self.assertTrue(value["work_target_reference"].startswith("work_target_ref_"))
         self.assertEqual(len(value["candidates"]), 2)
         self.assertTrue(all(row["outcome"] == "unknown" for row in value["candidates"]))
+        self.assertTrue(
+            all(
+                row["preview_reference"].startswith("cover_preview_ref_")
+                for row in value["candidates"]
+            )
+        )
         self.assertNotIn("Synthetic title", document)
         self.assertNotIn("source-", document)
+
+    def test_typed_scenario_executes_and_redacts_invalid_report(self) -> None:
+        payloads = tuple(_preview(index) for index in range(1, 3))
+        sources = tuple(
+            _source(index, payload)
+            for index, payload in enumerate(payloads, start=1)
+        )
+        report = _report(sources)
+        by_artifact = {
+            source.artifact.artifact_id: payload
+            for source, payload in zip(sources, payloads, strict=True)
+            if source.artifact is not None
+        }
+
+        def operation(*_args: object) -> str:
+            return '{"ok":true}'
+
+        operations = WorkbenchOperations(
+            *(operation for _ in WorkbenchOperations.__dataclass_fields__)
+        )
+        operations = replace(
+            operations,
+            reopen_metadata_report=lambda *_: report.to_json(),
+            reopen_cover_preview=(
+                lambda _db, _artifacts, _report, artifact, _variant:
+                by_artifact[artifact]
+            ),
+        )
+        with WorkbenchContext.temporary() as context:
+            result = execute(
+                context, CoverIdentityRequest(report.report_id), operations
+            )
+            document = json.loads(
+                context.path("artifacts/" + result.artifacts[0]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(result.name, "cover-identity-report")
+            self.assertEqual(len(document["candidates"]), 2)
+
+            invalid = replace(
+                operations,
+                reopen_metadata_report=(
+                    lambda *_: '{"private":"/untrusted/private/value"}'
+                ),
+            )
+            with self.assertRaises(WorkbenchFailure) as caught:
+                execute(context, CoverIdentityRequest(report.report_id), invalid)
+            self.assertEqual(caught.exception.category, "invalid")
+            self.assertNotIn("private", str(caught.exception))
 
 
 if __name__ == "__main__":

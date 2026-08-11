@@ -8,7 +8,8 @@
   The canonical report binds opaque report, packet, candidate, classifier, and
   evidence references; explicit identifier and edition/work contradictions plus
   incompatible manifestation publication/format evidence win, while ordinary
-  bibliographic disagreement remains ambiguity, without provider calls, visual
+  bibliographic agreement alone supports a plausible match and disagreement or
+  insufficient compatibility remains unknown, without provider calls, visual
   inference, persistence, or write authority. (#540)
 
 - Polish the authenticated interface without changing its authority: restore

@@ -24,6 +24,7 @@ from mechanical_librarian_workbench import (  # noqa: E402
     BatchRequest,
     CatalogueRequest,
     ContainedReviewerRequest,
+    CoverIdentityRequest,
     DecisionPreviewRequest,
     IsolatedNetworkProfile,
     ProposalRequest,
@@ -106,6 +107,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                 input_document="reviewer-input.json",
                 output_schema="reviewer-output-schema.json",
             ),
+            CoverIdentityRequest("report"),
         )
         with WorkbenchContext.temporary() as context:
             context.network = IsolatedNetworkProfile(
@@ -120,12 +122,24 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                 return True
 
             operations = replace(_operations(), run_batch=batch)
-            results = tuple(execute(context, request, operations) for request in requests)
+            prepared = mock.Mock(document="{}", images=())
+            classified = mock.Mock(document='{"ok":true}')
+            with (
+                mock.patch(
+                    "mechanical_librarian_workbench.scenarios.prepare_cover_packet",
+                    return_value=prepared,
+                ),
+                mock.patch(
+                    "mechanical_librarian_workbench.scenarios.classify_cover_identity",
+                    return_value=classified,
+                ),
+            ):
+                results = tuple(execute(context, request, operations) for request in requests)
             self.assertEqual(
                 [item.name for item in results],
                 [
                     item.name for item in CAPABILITIES
-                    if item.name not in {"cover-packet-review", "cover-identity-report"}
+                    if item.name != "cover-packet-review"
                 ],
             )
             self.assertEqual(len(tuple(context.path("attempts").iterdir())), 6)

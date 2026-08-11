@@ -36,9 +36,19 @@ _OUTCOMES = frozenset({
     "verified_manifestation_match", "verified_work_match", "plausible_match",
     "unknown", "conflict",
 })
+_CLASSIFIER_RULES = (
+    "unbound-provider-identity:unknown",
+    "edition-work-contradiction:conflict",
+    "unrelated-identifier:conflict",
+    "accepted-manifestation-with-compatible-publication:verified-manifestation",
+    "accepted-manifestation-with-incompatible-publication:conflict",
+    "accepted-or-associated-work:verified-work",
+    "provider-identity-with-bibliographic-agreement:plausible",
+    "provider-identity-with-ambiguous-or-insufficient-bibliography:unknown",
+)
 _CLASSIFIER_REFERENCE = "cover_identity_classifier_" + hashlib.sha256(
     canonical_packet_json(
-        {"schema_version": SCHEMA_VERSION, "rules": 3}
+        {"schema_version": SCHEMA_VERSION, "rules": _CLASSIFIER_RULES}
     ).encode("utf-8")
 ).hexdigest()
 
@@ -53,6 +63,26 @@ _IDENTITY_CLAIMS = frozenset({
 def _opaque_evidence_reference(report_id: str, reference: str) -> str:
     return "cover_evidence_ref_" + hashlib.sha256(
         canonical_packet_json({"report_id": report_id, "reference": reference}).encode("utf-8")
+    ).hexdigest()
+
+
+def _work_target_reference(report: MetadataReport) -> str:
+    return "work_target_ref_" + hashlib.sha256(
+        canonical_packet_json(
+            {"report_id": report.report_id, "target": report.target.fingerprint}
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _preview_reference(packet_reference: str, candidate: dict[str, object]) -> str:
+    return "cover_preview_ref_" + hashlib.sha256(
+        canonical_packet_json(
+            {
+                "candidate_reference": candidate["reference"],
+                "packet_reference": packet_reference,
+                "preview_sha256": candidate["preview_sha256"],
+            }
+        ).encode("utf-8")
     ).hexdigest()
 
 
@@ -108,6 +138,9 @@ def classify_cover_identity(
                 for item in evidence
             }),
             "outcome": outcome,
+            "preview_reference": _preview_reference(
+                packet["packet_reference"], candidate
+            ),
             "reasons": sorted(set(reasons)),
         })
     body = {
@@ -116,6 +149,7 @@ def classify_cover_identity(
         "cover_packet_reference": packet["packet_reference"],
         "report_reference": report.report_id,
         "schema_version": SCHEMA_VERSION,
+        "work_target_reference": _work_target_reference(report),
     }
     return CoverIdentityReport(canonical_packet_json(body))
 
@@ -203,6 +237,10 @@ def _classify_sources(
         return "verified_manifestation_match", ["accepted_manifestation_identifier"], evidence
     if work:
         return "verified_work_match", ["accepted_or_associated_work_identifier"], evidence
+    if "retained_bibliographic_ambiguity" in compatibility_reasons:
+        return "unknown", sorted(compatibility_reasons), []
+    if "retained_bibliographic_agreement" not in compatibility_reasons:
+        return "unknown", sorted(compatibility_reasons), []
     return (
         "plausible_match",
         [
@@ -218,10 +256,10 @@ def _bibliographic_compatibility(candidate: ProviderCandidate) -> str:
     for claim in candidate.claims:
         if claim.kind in _IDENTITY_CLAIMS:
             outcomes.update(link.outcome for link in claim.links)
-    if Comparison.AGREEMENT in outcomes:
-        return "retained_bibliographic_agreement"
     if Comparison.DISAGREEMENT in outcomes:
         return "retained_bibliographic_ambiguity"
+    if Comparison.AGREEMENT in outcomes:
+        return "retained_bibliographic_agreement"
     return "retained_bibliographic_evidence_insufficient"
 
 

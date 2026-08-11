@@ -11,7 +11,7 @@ from typing import TypeAlias
 
 from .context import WorkbenchContext
 from .cover_identity import classify_cover_identity
-from .cover_packets import prepare_cover_packet
+from .cover_packets import PreparedCoverPacket, prepare_cover_packet
 from .results import WorkbenchResult
 
 Operation = Callable[..., object]
@@ -462,21 +462,8 @@ def _execute(
     elif isinstance(request, CoverPacketRequest):
         database = context.path(request.database)
         artifacts = context.path(request.artifacts)
-        report_document = selected.reopen_metadata_report(database, request.report_id)
-        if type(report_document) is not str:
-            raise ValueError("cover packet report is invalid")
-
-        def read_preview(artifact_id: str, variant: str) -> bytes:
-            preview = selected.reopen_cover_preview(
-                database, artifacts, request.report_id, artifact_id, variant
-            )
-            if type(preview) is not bytes:
-                raise ValueError("cover packet preview is invalid")
-            return preview
-
-        packet = prepare_cover_packet(
-            report_document,
-            read_preview,
+        report_document, packet = _prepare_report_bound_cover_packet(
+            selected, database, artifacts, request.report_id
         )
         packet_snapshot = context.authority_snapshot(packet.document.encode("utf-8"))
         paths = (
@@ -493,19 +480,9 @@ def _execute(
     elif isinstance(request, CoverIdentityRequest):
         database = context.path(request.database)
         artifacts = context.path(request.artifacts)
-        report_document = selected.reopen_metadata_report(database, request.report_id)
-        if type(report_document) is not str:
-            raise ValueError("cover identity report is invalid")
-
-        def read_preview(artifact_id: str, variant: str) -> bytes:
-            preview = selected.reopen_cover_preview(
-                database, artifacts, request.report_id, artifact_id, variant
-            )
-            if type(preview) is not bytes:
-                raise ValueError("cover identity preview is invalid")
-            return preview
-
-        packet = prepare_cover_packet(report_document, read_preview)
+        report_document, packet = _prepare_report_bound_cover_packet(
+            selected, database, artifacts, request.report_id
+        )
         raw = classify_cover_identity(
             report_document,
             packet.document,
@@ -530,6 +507,27 @@ def _execute(
     else:
         raise TypeError("unsupported workbench request")
     return _complete(context, request.name, raw, status=result_status)
+
+
+def _prepare_report_bound_cover_packet(
+    operations: WorkbenchOperations,
+    database: Path,
+    artifacts: Path,
+    report_id: str,
+) -> tuple[str, PreparedCoverPacket]:
+    report_document = operations.reopen_metadata_report(database, report_id)
+    if type(report_document) is not str:
+        raise ValueError("cover report is invalid")
+
+    def read_preview(artifact_id: str, variant: str) -> bytes:
+        preview = operations.reopen_cover_preview(
+            database, artifacts, report_id, artifact_id, variant
+        )
+        if type(preview) is not bytes:
+            raise ValueError("cover preview is invalid")
+        return preview
+
+    return report_document, prepare_cover_packet(report_document, read_preview)
 
 
 def execute(

@@ -85,7 +85,8 @@ edition/work contradictions, incompatible manifestation publication/format
 evidence win over verification. Retained title, creator, language, publisher,
 and publication-date comparisons contribute only closed agreement, ambiguity,
 or insufficient-evidence reasons; disagreement alone does not prove a different
-identity. The projection binds report,
+identity, and only positive retained agreement supports `plausible_match`.
+Ambiguous or insufficient retained compatibility remains `unknown`. The projection binds report,
 packet, candidate, classifier, and opaque evidence references. It emits fixed
 reason codes only, never source/provider identities, metadata values, paths,
 URLs, or credentials, and makes no visual, provider, policy, persistence, or
