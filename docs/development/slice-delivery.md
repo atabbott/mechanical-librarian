@@ -136,8 +136,12 @@ receipt, repeats the full live preflight immediately before the conditional
 merge, and binds the final receipt to the same request, evidence, controller,
 controls, fresh dry-run digest, and trusted mutation-attempt time. Freshness is
 measured from dry-run to that mutation-adjacent instant, not terminal
-completion, so bounded post-merge CI and reconciliation may take longer than
-five minutes. A monotonic 300-second deadline starts before the internal receipt
+completion, so bounded post-merge verification and reconciliation may take
+longer than five minutes. That verification requires the merge commit to have
+the qualified base as its sole parent, to have the qualified head's exact tree,
+and to be contained by authoritative `main`; it does not trigger a second
+Actions qualification of the equivalent tree. A monotonic 300-second deadline
+starts before the internal receipt
 wall timestamp is assigned or persisted, so timestamping, persistence, and fsync
 time count. After the second preflight the mutation-attempt timestamp is captured;
 the deadline guard is then the only subsequent local operation before merge,

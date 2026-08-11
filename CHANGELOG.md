@@ -12,6 +12,12 @@
   binding mismatch, violation or invented reference; semantic quality is not
   claimed. (#543)
 
+- Reduce private Actions consumption without recombining the qualification
+  suites that previously timed out: run the three exact-head pull-request jobs
+  only for candidate commits, remove the runner-only aggregate and post-merge
+  duplicate, and retire the remote linked-issue runner in favour of the trusted
+  controller's exact closing-reference and merged-tree proof. (#571)
+
 - Add a source-only cover-observation report with one deliberately small,
   policy-neutral visual vocabulary. Each closed observation binds the exact
   report packet, candidate, preview digest/variant, taxonomy, instruction,

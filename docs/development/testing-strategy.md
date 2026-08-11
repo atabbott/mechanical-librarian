@@ -180,9 +180,12 @@ wheel, and test setup. These measurements are a compact baseline, not a
 machine-specific pass threshold. On the tiered candidate, fast source took
 74.07 seconds, browser 17.92 seconds, and the unchanged slow resource proof
 37.16 seconds locally; the two routine source jobs can run independently. The
-tiered gate runs fast source, installed
-smoke, and protected browser as independent required jobs while retaining the
-stable aggregate `public-gate` result.
+tiered gate runs fast source, installed smoke, and protected browser as three
+independent required jobs. They remain separate because the earlier serial
+exact-installed workflow exhausted its 825-second subprocess deadline on four
+consecutive candidates, including after internal test sharding. No runner-only
+aggregate job is maintained; the trusted delivery controller must observe all
+three named results at the exact candidate head.
 
 A test may move out of routine qualification only when its expensive property
 is scale, endurance, exhaustive breadth, or resource measurement and a smaller

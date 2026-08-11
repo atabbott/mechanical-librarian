@@ -3,8 +3,11 @@
 Quality means the supported outcome is understandable, bounded, secure,
 recoverable within its documented envelope, and backed by exact evidence.
 
-Every pull request runs independent required fast-source, exact-installed, and
-protected-browser jobs plus a stable aggregate gate. The exact-artifact
+Every pull-request candidate runs independent required `fast-source`,
+`exact-installed`, and `protected-browser` jobs. The three jobs are deliberately
+not recombined because the former serial qualification repeatedly timed out.
+There is no runner-only aggregate job: the trusted delivery controller requires
+all three exact-head results. The exact-artifact
 qualifier validates a newly built wheel before installation, seeds a new
 environment from all locked dependency groups, installs the explicit wheel
 without dependency resolution, validates archive and installed `RECORD`
