@@ -16,6 +16,11 @@ from mechanical_librarian.interfaces.web.react_assets import (
 
 _BUILD_IDENTITY = "a" * 64
 _HOSTILE = "Hostile <img src=x onerror=window.__metadataExecuted=true>"
+_LONG_HOSTILE_TITLE = (
+    "The Cartographer's Archive: "
+    + "UnbrokenHostileCatalogueTitle" * 12
+    + " <script> remains readable"
+)
 
 
 def _payload(path: str) -> object:
@@ -24,7 +29,7 @@ def _payload(path: str) -> object:
     if path == "/api/v1/review-preparation":
         return {"schema_version": "review-preparation-v1", "active": True, "actionable": False, "paused": False, "libraries": [{"blocked": 0, "checked": 1, "connection": "primary", "library": "Synthetic library", "library_id": "library-1", "ready": 0, "rescan_requested": False, "scan_id": "scan-1", "state": "scanning", "total": 2}]}
     if path == "/api/v1/library":
-        return {"schema_version": "review.v1", "lens": "all", "query": None, "next_cursor": None, "counts": {"needs_attention": 1, "all": 3, "no_attention_needed": 2}, "items": [{"work_id": "library_work_" + "1" * 64, "review_case_id": "case-1", "title": _HOSTILE, "authors": ["Synthetic Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-1", "attention_count": 1, "attention_state": "needs_attention", "detail_url": "/review/case-1", "dispositions": ["unresolved_choice"]}, {"work_id": "library_work_" + "2" * 64, "review_case_id": None, "title": "Catalogue-only work", "authors": ["Catalogue Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-2", "attention_count": 0, "attention_state": "no_attention_needed", "detail_url": None, "dispositions": []}, {"work_id": "library_work_" + "3" * 64, "review_case_id": "case-3", "title": "Resolved work", "authors": ["Resolved Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-3", "attention_count": 0, "attention_state": "no_attention_needed", "detail_url": "/review/case-3", "dispositions": ["ineligible"]}]}
+        return {"schema_version": "review.v1", "lens": "all", "query": None, "next_cursor": "cursor-2", "counts": {"needs_attention": 1, "all": 3, "no_attention_needed": 2}, "items": [{"work_id": "library_work_" + "1" * 64, "review_case_id": "case-1", "title": _LONG_HOSTILE_TITLE, "authors": ["Synthetic Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-1", "attention_count": 1, "attention_state": "needs_attention", "detail_url": "/review/case-1", "dispositions": ["unresolved_choice"]}, {"work_id": "library_work_" + "2" * 64, "review_case_id": None, "title": "Catalogue-only work", "authors": ["Catalogue Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-2", "attention_count": 0, "attention_state": "no_attention_needed", "detail_url": None, "dispositions": []}, {"work_id": "library_work_" + "3" * 64, "review_case_id": "case-3", "title": "Resolved work", "authors": ["Resolved Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-3", "attention_count": 0, "attention_state": "no_attention_needed", "detail_url": "/review/case-3", "dispositions": ["ineligible"]}]}
     if path == "/api/v1/attention":
         return {"schema_version": "attention-v1", "query": None, "next_cursor": None, "total": 1, "items": [{"review_case_id": "case-1", "destination": "title", "title": _HOSTILE, "authors": ["Synthetic Author"], "library": "Synthetic library", "media_kind": "epub", "item": "item-1", "detail_url": "/review/case-1?field=title", "notices": [], "provenance": [], "work_attention_count": 3}]}
     if path == "/api/v1/review-cases/case-1":
@@ -188,6 +193,47 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertEqual(no_case_row.get_by_role("button", name="Preview").count(), 0)
             for control in page.locator(".masthead nav a, .shell-actions button").all():
                 self.assertGreaterEqual(control.bounding_box()["height"], 44)
+            for control in page.locator(
+                ".lenses a, .preview-button, .library-pager a, .library-work-copy h3 a"
+            ).all():
+                self.assertGreaterEqual(control.bounding_box()["height"], 44)
+            long_title = page.locator(".library-work-copy h3 a").first
+            self.assertLessEqual(
+                long_title.evaluate("node => node.scrollWidth"),
+                long_title.evaluate("node => node.parentElement.clientWidth"),
+            )
+            self.assertLessEqual(long_title.bounding_box()["height"], 44)
+            self.assertEqual(long_title.evaluate("node => getComputedStyle(node).whiteSpace"), "normal")
+            self.assertEqual(long_title.evaluate("node => getComputedStyle(node).webkitLineClamp"), "2")
+            self.assertEqual(
+                long_title.evaluate("node => getComputedStyle(node.parentElement).overflow"),
+                "visible",
+            )
+            page.evaluate("() => document.activeElement.blur()")
+            for _ in range(20):
+                page.keyboard.press("Tab")
+                if page.evaluate("() => document.activeElement.matches('.lenses a')"):
+                    break
+            self.assertTrue(page.evaluate("() => document.activeElement.matches('.lenses a')"))
+            self.assertEqual(
+                page.evaluate("() => getComputedStyle(document.activeElement).outlineStyle"),
+                "solid",
+            )
+            self.assertEqual(
+                page.evaluate("() => getComputedStyle(document.activeElement).outlineOffset"),
+                "3px",
+            )
+            for _ in range(10):
+                page.keyboard.press("Tab")
+                if page.evaluate("() => document.activeElement.matches('.library-work-copy h3 a')"):
+                    break
+            self.assertTrue(
+                page.evaluate("() => document.activeElement.matches('.library-work-copy h3 a')")
+            )
+            self.assertEqual(
+                page.evaluate("() => getComputedStyle(document.activeElement).outlineStyle"),
+                "solid",
+            )
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 1440)
             page.goto("https://react-platform.invalid/review/case-1?field=title&subview=review")
             page.get_by_text("Synthetic reviewer fact", exact=True).wait_for()
@@ -233,6 +279,25 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertNotIn("item-1", page.locator(".attention-groups").inner_text())
             page.go_back()
             page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
+            for control in page.locator(
+                ".lenses a, .preview-button, .library-pager a, .library-work-copy h3 a"
+            ).all():
+                self.assertGreaterEqual(control.bounding_box()["height"], 44)
+            compact_title = page.locator(".library-work-copy h3 a").first
+            self.assertLessEqual(
+                compact_title.evaluate("node => node.scrollWidth"),
+                compact_title.evaluate("node => node.parentElement.clientWidth"),
+            )
+            self.assertLessEqual(compact_title.bounding_box()["height"], 44)
+            self.assertEqual(
+                compact_title.evaluate("node => getComputedStyle(node).whiteSpace"),
+                "normal",
+            )
+            self.assertEqual(
+                compact_title.evaluate("node => getComputedStyle(node).webkitLineClamp"),
+                "2",
+            )
+            self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
             self.assertEqual(documents, before_navigation)
             page.get_by_role("link", name="Policy", exact=True).click()
             page.get_by_role(

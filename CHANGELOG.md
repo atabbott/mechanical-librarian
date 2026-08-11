@@ -28,8 +28,9 @@
   Library discovery includes current work before or without review admission,
   and bounded search covers readable author and media identity. Persistent
   routing, 44px shell controls, bounded search,
-  lenses, pagination, compact single-surface flow, light/dark themes, and
-  hostile-text safety remain intact. (#535)
+  44px Library lenses, title links, preview and pagination actions, readable
+  bounded long-title wrapping, compact single-surface flow, light/dark themes,
+  and hostile-text safety remain intact. (#535)
 
 - Reconcile the exact 0.14.0 application contract and finite deflation
   inventory, remove duplicated retired-asset assertions, and record that the
