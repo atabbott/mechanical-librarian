@@ -991,11 +991,14 @@ describe('typed review routes', () => {
     await user.click(screen.getByRole('button', { name: 'Review activation' }))
     expect(step('Inspect impact')).toHaveAttribute('data-complete', 'true')
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review activation' })).toHaveFocus())
 
     await user.type(screen.getByRole('textbox', { name: 'Policy name' }), ' revised')
-    for (const name of ['Validate', 'Preview', 'Inspect impact', 'Activate']) {
-      expect(step(name)).toHaveAttribute('data-complete', 'false')
-    }
+    await waitFor(() => {
+      for (const name of ['Validate', 'Preview', 'Inspect impact', 'Activate']) {
+        expect(step(name)).toHaveAttribute('data-complete', 'false')
+      }
+    })
     expect(step('Preview')).toHaveTextContent('Not started')
     expect(screen.getByRole('button', { name: 'Review activation' })).toBeDisabled()
   })
