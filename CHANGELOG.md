@@ -9,6 +9,43 @@
   evidence references without provider calls, visual inference, persistence, or
   write authority. (#540)
 
+- Polish the authenticated interface without changing its authority: restore
+  the asymmetric book-spine shell mark and touch-safe secondary actions; make
+  Policy a one-chapter-at-a-time notebook with changed-field emphasis and an
+  explicit validate, preview, impact, and activation cadence; give the full
+  current-review route a compact field rail and dominant two-column decision
+  canvas; and lead Activity with current recovery and recent outcomes while
+  keeping write consent in a reachable disclosure. Direct and native Activity
+  entry remain inspectable in the installed application. Root entry now routes
+  to sign-in, while authenticated review deep links and refreshes render the
+  application shell so its bounded missing-case recovery can run. Policy's
+  cadence now reports checked, saved, previewed, inspected, and activated state
+  truthfully; compact review navigation cannot remain sticky beneath a wrapped
+  masthead; and collapsed Activity consent counts only libraries whose exact
+  backup, capability, destination, and prepared-work gates permit action.
+  (#555)
+
+- Restore the Variant M Library review workspace: one permanent Library
+  destination with a paginated, recoverable URL-owned Attention queue, direct
+  current-or-specific value decisions, authoritative shared settlement, bounded
+  readable evidence, cross-work continuation, and a responsive task flow.
+  Complete the selected-work semantics with current-value field position,
+  inspectable automatic and recorded siblings, a structured multi-provider
+  source/observation/basis ledger, explicit external-library capability context,
+  richer queue rows, Previous/Next movement, and exact-command explicit retry.
+  Wide layouts retain Library, decision, and optional attention together;
+  narrower regular layouts retain Library and decision with an attention
+  drawer; phone layouts stage the same information without dropping it.
+  Original actionable-field positions do not collapse as decisions settle,
+  intermediate widths keep the work index beside selected detail, the queue
+  drawer clears the wrapped shell, and retained provenance stays visible when
+  supplemental evidence fails.
+  Superseded cases never expose decision controls; work and field position carry
+   into full review; direct review entry restores focus to the selected field.
+   The synthetic qualification cohort contains 20 public-domain works across
+   local, Project Gutenberg, Google Books, and Open Library shaped evidence.
+   (#554)
+
 - Admit deterministic report-bound cover packets to the source-only contained
   reviewer with opaque digest/order identity, incumbent-preserving deduplication,
   fixed 12-preview/1-MiB-each/8-MiB-total limits, read-only ephemeral image

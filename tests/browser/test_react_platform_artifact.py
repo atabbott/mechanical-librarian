@@ -43,6 +43,18 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             parsed = urlsplit(route.request.url)
             path = parsed.path
             if path.startswith("/api/v1/"):
+                if path == "/api/v1/review-cases/missing-case":
+                    route.fulfill(
+                        status=404,
+                        content_type="application/json",
+                        body=json.dumps(
+                            {
+                                "error": {"code": "not_found"},
+                                "schema_version": "review-error-v1",
+                            }
+                        ),
+                    )
+                    return
                 if path.endswith("/decisions") and route.request.method == "POST":
                     ambiguous_decisions += 1
                     route.abort("failed")
@@ -132,6 +144,9 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertEqual(page.locator("img, script:not([src])").count(), 0)
                 self.assertIsNone(page.evaluate("() => window.__metadataExecuted"))
                 if path == "/activity":
+                    page.get_by_role(
+                        "button", name="Open write-permission details"
+                    ).click()
                     page.get_by_label("Household ebooks destination consent").get_by_text(
                         "Subtitle: Excluded · A field is unavailable"
                     ).wait_for()
@@ -160,9 +175,80 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     before_entry + (2 if path == "/activity" else 1),
                 )
 
+            missing_case_error_start = len(errors)
+            for _ in range(2):
+                response = page.goto(
+                    "https://react-platform.invalid/review/missing-case"
+                    "?field=title&subview=review"
+                )
+                self.assertIsNotNone(response)
+                self.assertEqual(response.status, 200)
+                page.get_by_role(
+                    "heading", name="This workspace could not be loaded."
+                ).wait_for()
+                page.get_by_role("button", name="Try again").wait_for()
+            missing_case_errors = errors[missing_case_error_start:]
+            self.assertEqual(len(missing_case_errors), 4)
+            self.assertEqual(
+                sum(
+                    "status of 404 (Not Found)" in error
+                    for error in missing_case_errors
+                ),
+                2,
+            )
+            self.assertEqual(
+                sum(
+                    "Review API request failed (404: not_found)" in error
+                    for error in missing_case_errors
+                ),
+                2,
+            )
+            del errors[missing_case_error_start:]
+
             page.set_viewport_size({"width": 1440, "height": 900})
             page.goto("https://react-platform.invalid/library?lens=all")
             page.get_by_text("Catalogue-only work", exact=True).wait_for()
+            expect(page).to_have_url("https://react-platform.invalid/library?lens=all&preview=case-1")
+            self.assertEqual(
+                page.locator(".masthead nav").get_by_text("Attention", exact=True).count(),
+                0,
+            )
+            expect(page.locator(".workspace-detail .direct-choice-grid .value-choice")).to_have_count(4)
+            expect(page.locator(".library-works")).to_be_visible()
+            expect(page.locator(".workspace-detail")).to_be_visible()
+            expect(page.locator(".field-filmstrip button")).to_have_count(2)
+            self.assertIn(
+                "Current: Current <script> title",
+                page.locator(".field-filmstrip").inner_text(),
+            )
+            page.locator(".automatic-resolution-details summary").click()
+            automatic_context = page.locator(".automatic-resolution-details").inner_text()
+            self.assertIn("Subtitle", automatic_context)
+            self.assertIn("Series", automatic_context)
+            self.assertIn("Resolved automatically", automatic_context)
+            self.assertIn("No eligible change", automatic_context)
+            workspace_evidence = page.locator(".workspace-detail .source-ledger").inner_text()
+            self.assertIn("Source", workspace_evidence)
+            self.assertIn("Observed value", workspace_evidence)
+            self.assertIn("Basis", workspace_evidence)
+            self.assertIn("Local catalogue record", workspace_evidence)
+            self.assertIn("Project Gutenberg record", workspace_evidence)
+            self.assertIn("Google Books catalogue record", workspace_evidence)
+            self.assertIn("Guarded from external update", page.locator(".field-apply-context").inner_text())
+            expect(page.get_by_role("button", name="Previous")).to_be_visible()
+            expect(page.get_by_role("button", name="Next")).to_be_visible()
+            page.locator(".attention-toggle").click()
+            expect(page).to_have_url("https://react-platform.invalid/library?lens=all&preview=case-1&attention=open")
+            expect(page.locator(".attention-rail")).to_be_visible()
+            expect(page.locator(".library-works")).to_be_visible()
+            expect(page.locator(".workspace-detail")).to_be_visible()
+            self.assertEqual(
+                page.locator(".library-workspace").evaluate(
+                    "node => getComputedStyle(node).gridTemplateColumns.split(' ').length"
+                ),
+                3,
+            )
+            page.locator(".attention-rail header button").click()
             self.assertEqual(page.locator(".library-work-row").count(), 6)
             page.locator(".library-work-row").first.get_by_text(
                 "Mara Venn", exact=False
@@ -173,9 +259,9 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             )
             no_case_row = page.locator(".library-work-row").filter(has_text="Catalogue-only work")
             self.assertEqual(no_case_row.get_by_role("link").count(), 0)
-            self.assertEqual(no_case_row.get_by_role("button", name="Preview").count(), 0)
+            self.assertEqual(no_case_row.locator(".work-select").count(), 0)
             page.get_by_role("link", name="Needs attention", exact=True).click()
-            expect(page.locator(".library-work-row")).to_have_count(4)
+            expect(page.locator(".library-work-row")).to_have_count(5)
             page.get_by_role("link", name="No attention needed", exact=True).click()
             expect(page.locator(".library-work-row")).to_have_count(6)
             page.get_by_role("link", name="All", exact=True).click()
@@ -204,14 +290,14 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             for control in page.locator(".masthead nav a, .shell-actions button").all():
                 self.assertGreaterEqual(control.bounding_box()["height"], 44)
             for control in page.locator(
-                ".lenses a, .preview-button, .library-pager a, .library-work-copy h3 a"
+                ".lenses a, .work-select, .library-pager a"
             ).all():
                 self.assertGreaterEqual(control.bounding_box()["height"], 44)
             for lens in page.locator(".lenses a").all():
                 self.assertGreaterEqual(lens.bounding_box()["width"], 44)
             long_title = page.locator(".library-work-row").filter(
                 has_text=LONG_TITLE
-            ).locator(".library-work-copy h3 a")
+            ).locator(".library-work-copy .work-select")
             self.assertEqual(long_title.inner_text(), LONG_TITLE)
             self.assertIn(UNBROKEN_TITLE_SEGMENT, long_title.inner_text())
             self.assertLessEqual(
@@ -245,21 +331,149 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             )
             for _ in range(10):
                 page.keyboard.press("Tab")
-                if page.evaluate("() => document.activeElement.matches('.library-work-copy h3 a')"):
+                if page.evaluate("() => document.activeElement.matches('.library-work-copy .work-select')"):
                     break
             self.assertTrue(
-                page.evaluate("() => document.activeElement.matches('.library-work-copy h3 a')")
+                page.evaluate("() => document.activeElement.matches('.library-work-copy .work-select')")
             )
             self.assertEqual(
                 page.evaluate("() => getComputedStyle(document.activeElement).outlineStyle"),
                 "solid",
             )
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 1440)
+
+            page.set_viewport_size({"width": 884, "height": 900})
+            page.goto("https://react-platform.invalid/library?lens=all")
+            expect(page).to_have_url(
+                "https://react-platform.invalid/library?lens=all&preview=case-1"
+            )
+            expect(page.locator(".library-works")).to_be_visible()
+            expect(page.locator(".workspace-detail")).to_be_visible()
+            self.assertNotEqual(
+                page.locator(".library-workspace").evaluate(
+                    "node => getComputedStyle(node).display"
+                ),
+                "block",
+            )
+            for item in page.locator(".masthead nav a").all():
+                self.assertEqual(
+                    item.evaluate("node => getComputedStyle(node).whiteSpace"),
+                    "nowrap",
+                )
+            self.assertEqual(
+                page.locator(".masthead").evaluate(
+                    "node => getComputedStyle(node).flexWrap"
+                ),
+                "wrap",
+            )
+            self.assertGreaterEqual(
+                page.locator(".masthead nav").bounding_box()["y"],
+                page.locator(".brand").bounding_box()["y"]
+                + page.locator(".brand").bounding_box()["height"],
+            )
+            self.assertEqual(
+                page.locator(".source-ledger-head").evaluate(
+                    "node => getComputedStyle(node).display"
+                ),
+                "none",
+            )
+            self.assertIn("Observed value", page.locator(".source-ledger").inner_text())
+            page.locator(".attention-toggle").click()
+            expect(page.locator(".attention-rail")).to_be_visible()
+            expect(page.locator(".library-works")).to_be_visible()
+            expect(page.locator(".workspace-detail")).to_be_visible()
+            self.assertEqual(
+                page.locator(".attention-rail").evaluate(
+                    "node => getComputedStyle(node).position"
+                ),
+                "fixed",
+            )
+            self.assertGreaterEqual(
+                page.locator(".attention-rail").bounding_box()["y"],
+                page.locator(".masthead").bounding_box()["y"]
+                + page.locator(".masthead").bounding_box()["height"]
+                + 8,
+            )
+            self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 884)
+            page.locator(".attention-rail header button").click()
+
+            page.set_viewport_size({"width": 720, "height": 900})
+            page.goto("https://react-platform.invalid/library?lens=all")
+            expect(page).to_have_url(
+                "https://react-platform.invalid/library?lens=all&preview=case-1"
+            )
+            expect(page.locator(".library-works")).to_be_visible()
+            expect(page.locator(".workspace-detail")).to_be_visible()
+            self.assertNotEqual(
+                page.locator(".library-workspace").evaluate(
+                    "node => getComputedStyle(node).display"
+                ),
+                "block",
+            )
+            page.locator(".attention-toggle").click()
+            expect(page.locator(".attention-rail")).to_be_visible()
+            self.assertGreaterEqual(
+                page.locator(".attention-rail").bounding_box()["y"],
+                page.locator(".masthead").bounding_box()["y"]
+                + page.locator(".masthead").bounding_box()["height"]
+                + 8,
+            )
+            self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 720)
+
+            page.set_viewport_size({"width": 390, "height": 844})
+            page.goto("https://react-platform.invalid/library?lens=all")
+            expect(page.locator(".library-works")).to_be_visible()
+            expect(page.locator(".workspace-detail")).to_be_hidden()
+            page.locator(".attention-toggle").click()
+            expect(page.locator(".attention-rail")).to_be_visible()
+            expect(page.locator(".library-works")).to_be_hidden()
+            expect(page.locator(".workspace-detail")).to_be_hidden()
+            page.locator(".attention-queue-item").first.click()
+            expect(page.locator(".workspace-detail")).to_be_visible()
+            expect(page.locator(".library-works")).to_be_hidden()
+            expect(page.locator(".field-filmstrip button")).to_have_count(2)
+            self.assertIn(
+                "Current: Current <script> title",
+                page.locator(".field-filmstrip").inner_text(),
+            )
+            page.locator(".automatic-resolution-details summary").click()
+            compact_context = page.locator(".automatic-resolution-details").inner_text()
+            self.assertIn("Resolved automatically", compact_context)
+            self.assertIn("No eligible change", compact_context)
+            expect(page.locator(".source-ledger")).to_be_visible()
+            self.assertEqual(
+                page.locator(".source-ledger-head").evaluate(
+                    "node => getComputedStyle(node).display"
+                ),
+                "none",
+            )
+            self.assertIn("Observed value", page.locator(".source-ledger").inner_text())
+            self.assertIn("Guarded from external update", page.locator(".field-apply-context").inner_text())
+            expect(page.get_by_role("button", name="Previous")).to_be_visible()
+            expect(page.get_by_role("button", name="Next")).to_be_visible()
+            expect(page.locator(".compact-workspace-controls button")).to_have_count(2)
+            for control in page.locator(".compact-workspace-controls button").all():
+                self.assertGreaterEqual(control.bounding_box()["height"], 44)
+            page.get_by_role("button", name="Back to works").click()
+            expect(page.locator(".library-works")).to_be_visible()
+            expect(page.locator(".workspace-detail")).to_be_hidden()
+            page.set_viewport_size({"width": 1440, "height": 900})
+            expect(page).to_have_url("https://react-platform.invalid/library?lens=all&preview=case-1")
+            expect(page.locator(".workspace-detail")).to_be_visible()
             page.goto("https://react-platform.invalid/review/case-1?field=title&subview=review")
             page.get_by_text(
                 "Three independent catalogue observations disagree on presentation.",
                 exact=True,
             ).wait_for()
+            desktop_field_rail = page.locator(".detail-layout > .field-navigation")
+            self.assertEqual(
+                desktop_field_rail.evaluate("node => getComputedStyle(node).position"),
+                "sticky",
+            )
+            self.assertEqual(
+                desktop_field_rail.evaluate("node => getComputedStyle(node).top"),
+                "82px",
+            )
             choices = page.locator("#field-title .direct-choice-grid")
             self.assertIn("Current <script> title", choices.inner_text())
             self.assertIn("The Clockmaker's Cartography", choices.inner_text())
@@ -268,7 +482,10 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertEqual(page.get_by_role("button", name="Reject proposed change").count(), 0)
             self.assertEqual(page.get_by_role("button", name="Keep current value").count(), 0)
             title_notices = page.locator("#field-title .field-notices")
-            self.assertIn("Evidence record 1", title_notices.inner_text())
+            self.assertIn("Local catalogue record", title_notices.inner_text())
+            self.assertIn("Project Gutenberg record", title_notices.inner_text())
+            self.assertIn("Google Books catalogue record", title_notices.inner_text())
+            self.assertIn("Open Library record", title_notices.inner_text())
             self.assertNotIn("provider_", title_notices.inner_text())
             page.locator("#field-title .proposed-value").first.click()
             page.get_by_text(
@@ -327,6 +544,15 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             ).wait_for()
             self.assertEqual(return_automatic_requests, 1)
             page.set_viewport_size({"width": 390, "height": 844})
+            compact_field_rail = page.locator(".detail-layout > .field-navigation")
+            self.assertEqual(
+                compact_field_rail.evaluate("node => getComputedStyle(node).position"),
+                "static",
+            )
+            self.assertEqual(
+                compact_field_rail.evaluate("node => getComputedStyle(node).top"),
+                "auto",
+            )
             for control in page.locator(".masthead nav a, .shell-actions button").all():
                 self.assertGreaterEqual(control.bounding_box()["height"], 44)
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
@@ -342,55 +568,41 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             before_navigation = documents
             page.get_by_role("link", name="Library", exact=True).click()
             page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
-            page.get_by_role("link", name="Attention", exact=True).click()
-            page.get_by_role("heading", name="Needs your attention").wait_for()
-            self.assertEqual(page.locator(".attention-field-row").count(), 6)
-            page.locator(".attention-work").first.get_by_text(
-                "2 fields", exact=True
-            ).wait_for()
-            attention_header = page.locator(".attention-work > header").first
-            self.assertEqual(
-                attention_header.evaluate("node => getComputedStyle(node).flexDirection"),
-                "column",
-            )
-            self.assertEqual(
-                attention_header.locator(":scope > span").evaluate(
-                    "node => getComputedStyle(node).whiteSpace"
-                ),
-                "nowrap",
-            )
+            page.locator(".attention-toggle").click()
+            page.locator(".attention-rail h2").get_by_text("Attention", exact=True).wait_for()
+            self.assertEqual(page.locator(".attention-queue-item").count(), 6)
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
-            attention_link = page.locator(".attention-field-row").first
-            self.assertIn("field=title", attention_link.get_attribute("href") or "")
-            self.assertIn("/review/case-1", attention_link.get_attribute("href") or "")
-            self.assertNotIn("item-1", page.locator(".attention-groups").inner_text())
+            attention_link = page.locator(".attention-queue-item").first
+            self.assertNotIn("item-1", page.locator(".attention-rail").inner_text())
             page.evaluate(
                 "() => document.body.dataset.persistentDocument = 'rich-attention'"
             )
             before_detail = documents
             attention_link.click()
-            page.get_by_role("heading", name="Current review case").wait_for()
+            page.locator(".workspace-detail .decision-canvas").wait_for()
             self.assertEqual(
                 page.evaluate("() => document.body.dataset.persistentDocument"),
                 "rich-attention",
             )
             self.assertEqual(documents, before_detail)
-            linked_choices = page.locator("#field-title .direct-choice-grid")
+            linked_choices = page.locator(
+                ".workspace-detail .direct-choice-grid"
+            )
             self.assertIn("Current <script> title", linked_choices.inner_text())
             self.assertEqual(linked_choices.locator("button").count(), 4)
             page.go_back()
-            page.get_by_role("heading", name="Needs your attention").wait_for()
+            page.locator(".attention-rail").wait_for()
             page.go_back()
             page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
             for control in page.locator(
-                ".lenses a, .preview-button, .library-pager a, .library-work-copy h3 a"
+                ".lenses a, .library-pager a, .work-select"
             ).all():
                 self.assertGreaterEqual(control.bounding_box()["height"], 44)
             for lens in page.locator(".lenses a").all():
                 self.assertGreaterEqual(lens.bounding_box()["width"], 44)
             compact_title = page.locator(".library-work-row").filter(
                 has_text=LONG_TITLE
-            ).locator(".library-work-copy h3 a")
+            ).locator(".library-work-copy .work-select")
             self.assertEqual(compact_title.inner_text(), LONG_TITLE)
             self.assertIn(UNBROKEN_TITLE_SEGMENT, compact_title.inner_text())
             self.assertLessEqual(

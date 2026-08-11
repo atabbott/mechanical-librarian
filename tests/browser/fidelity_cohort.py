@@ -170,6 +170,16 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         attention=0,
         dispositions=["resolved"],
     ),
+    # Public-domain catalogue examples keep the installed visual cohort broad
+    # without drawing on a contributor's library or a live provider response.
+    _work(13, "Frankenstein; or, The Modern Prometheus", ["Mary Shelley"], "Local collection", "ebook", case="case-13", attention=1, dispositions=["unresolved_choice", "duplicate"]),
+    _work(14, "Pride and Prejudice", ["Jane Austen"], "Project Gutenberg", "audiobook", case="case-14", attention=0, dispositions=["automatic"]),
+    _work(15, "Moby-Dick; or, The Whale", ["Herman Melville"], "Google Books catalogue", "ebook", case="case-15", attention=0, dispositions=["corroborated"]),
+    _work(16, "Dracula", ["Bram Stoker"], "Open Library catalogue", "audiobook", case="case-16", attention=0, dispositions=["missing"]),
+    _work(17, "The Time Machine", ["H. G. Wells"], "Local collection", "ebook", case="case-17", attention=0, dispositions=["conflict"]),
+    _work(18, "The Adventures of Sherlock Holmes", ["Arthur Conan Doyle"], "Project Gutenberg", "audiobook", case="case-18", attention=0, dispositions=["duplicate"]),
+    _work(19, "The Republic", ["Plato"], "Google Books catalogue", "ebook", case="case-19", attention=0, dispositions=["unknown"]),
+    _work(20, "The Odyssey", ["Homer"], "Open Library catalogue", "audiobook", case="case-20", attention=0, dispositions=["pagination"]),
 )
 
 
@@ -226,6 +236,12 @@ def _case(case_id: str) -> dict[str, object]:
     resolved = case_id in {"case-7", "case-12"}
     automatic = case_id in {"case-5", "case-8"}
     current_only = case_id == "case-11"
+    provider_evidence = [
+        "Local catalogue record: current field value",
+        "Project Gutenberg record: title and contributor corroboration",
+        "Google Books catalogue record: conflicting presentation",
+        "Open Library record: duplicate edition candidate",
+    ]
     fields = [
         _field(
             "title",
@@ -265,10 +281,7 @@ def _case(case_id: str) -> dict[str, object]:
                 "Three independent catalogue observations disagree on presentation.",
                 "Punctuation and subtitle boundaries remain an owner choice.",
             ],
-            provenance=[
-                "provider_" + "a" * 64,
-                HOSTILE_TEXT + " · " + "bounded long evidence " * 45,
-            ],
+            provenance=provider_evidence,
         ),
         _field(
             "authors",
@@ -362,14 +375,15 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
                 ]
             ).casefold()
         ]
-    page = 1 if query.get("cursor", [""])[0] != "page-2" else 2
+    cursor = query.get("cursor", [""])[0]
+    page = {"page-2": 2, "page-3": 3, "page-4": 4}.get(cursor, 1)
     start = (page - 1) * 6
     end = start + 6
     return {
         "schema_version": "review.v1",
         "lens": lens,
         "query": needle or None,
-        "next_cursor": "page-2" if len(works) > end else None,
+        "next_cursor": f"page-{page + 1}" if len(works) > end else None,
         "counts": {
             "needs_attention": sum(
                 int(item["attention_count"]) > 0 for item in LIBRARY_WORKS
@@ -642,7 +656,9 @@ class RichFidelityApiMiddleware(BaseHTTPMiddleware):
         rewrite_library_page = (
             request.method == "GET"
             and original_path == "/api/v1/library"
-            and rich_cursor == ["page-2"]
+            and rich_cursor is not None
+            and len(rich_cursor) == 1
+            and rich_cursor[0] in {"page-2", "page-3", "page-4"}
         )
         if rewrite_alias:
             installed_path = installed_prefix + (f"/{suffix}" if suffix else "")

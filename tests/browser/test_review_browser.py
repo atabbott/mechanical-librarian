@@ -195,8 +195,8 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
 
                     page.on("request", count_document)
                     initial_documents = documents
-                    page.get_by_role("link", name="Attention", exact=True).click()
-                    page.get_by_role("heading", name="Needs your attention").wait_for()
+                    page.locator(".attention-toggle").click()
+                    page.locator(".attention-rail").wait_for()
                     page.get_by_role("link", name="Policy", exact=True).click()
                     page.get_by_role(
                         "heading", name="Choose meaning before automation."

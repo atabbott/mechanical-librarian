@@ -33,7 +33,7 @@ class RichFidelityCohortTests(unittest.TestCase):
         self.assertIsInstance(items, list)
         expected_attention = sum(
             int(work["attention_count"])
-            for work in LIBRARY_WORKS
+            for work in LIBRARY_WORKS[:4]
             if int(work["attention_count"]) > 0
         )
         self.assertEqual(attention["total"], expected_attention)
@@ -156,9 +156,21 @@ class RichFidelityCohortTests(unittest.TestCase):
                 self.assertEqual(library_page_2.status_code, 200)
                 library_payload = library_page_2.json()
                 self.assertEqual(len(library_payload["items"]), 6)
-                self.assertIsNone(library_payload["next_cursor"])
+                self.assertEqual(library_payload["next_cursor"], "page-3")
                 self.assertEqual(
                     library_payload["items"][-1]["title"],
+                    LIBRARY_WORKS[11]["title"],
+                )
+
+                library_page_4 = client.get(
+                    "/api/v1/library?lens=all&cursor=page-4"
+                )
+                self.assertEqual(library_page_4.status_code, 200)
+                final_library_payload = library_page_4.json()
+                self.assertEqual(len(final_library_payload["items"]), 2)
+                self.assertIsNone(final_library_payload["next_cursor"])
+                self.assertEqual(
+                    final_library_payload["items"][-1]["title"],
                     LIBRARY_WORKS[-1]["title"],
                 )
 
