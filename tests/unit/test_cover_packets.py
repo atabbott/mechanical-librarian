@@ -11,6 +11,8 @@ import unittest
 import zlib
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from PIL import Image, ImageCms
 
@@ -25,7 +27,9 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
+    IdentifierRelation,
     MetadataReport,
+    ProviderEvidenceKind,
     TargetFacts,
     default_target_fields,
 )
@@ -40,6 +44,11 @@ from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa
 from mechanical_librarian_workbench.cover_packets import (  # noqa: E402
     MAX_COVER_PREVIEWS,
     prepare_cover_packet,
+)
+from mechanical_librarian_workbench.cover_identity import (  # noqa: E402
+    SCHEMA_VERSION,
+    _classify_sources,
+    classify_cover_identity,
 )
 from mechanical_librarian_workbench import cover_packets as packet_builder  # noqa: E402
 from mechanical_librarian_workbench import reviewer as reviewer_binding  # noqa: E402
@@ -1066,6 +1075,55 @@ class CoverPacketTests(unittest.TestCase):
             ["shortlist_limit", "shortlist_limit"],
         )
         self.assertNotIn("duplicate_preview", packet.document)
+
+
+class CoverIdentityTests(unittest.TestCase):
+    def test_every_outcome_is_closed_and_does_not_project_hostile_values(self) -> None:
+        payload = _preview(3)
+        source = _source(3, payload)
+        assert source.provenance is not None
+        candidate = SimpleNamespace(
+            identity=source.provenance.edition_identity,
+            work_identity=source.provenance.work_identity,
+            evidence=(),
+        )
+        accepted = SimpleNamespace(
+            provider=source.provenance.provider,
+            candidate_identity=candidate.identity,
+            work_identity=candidate.work_identity,
+            relation=IdentifierRelation.ACCEPTED,
+            reference="provider_" + "a" * 64,
+        )
+        report = SimpleNamespace(
+            providers=(SimpleNamespace(provider=source.provenance.provider, candidates=(candidate,)),),
+            identifier_evidence=(accepted,),
+        )
+        self.assertEqual(_classify_sources(report, (source,))[0], "verified_manifestation_match")
+        work_source = replace(
+            source,
+            provenance=replace(source.provenance, designation=CoverDesignation.WORK, edition_identity=None),
+        )
+        associated = SimpleNamespace(**{**accepted.__dict__, "relation": IdentifierRelation.ASSOCIATED})
+        self.assertEqual(_classify_sources(SimpleNamespace(providers=report.providers, identifier_evidence=(associated,)), (work_source,))[0], "verified_work_match")
+        self.assertEqual(_classify_sources(SimpleNamespace(providers=report.providers, identifier_evidence=()), (source,))[0], "plausible_match")
+        self.assertEqual(_classify_sources(SimpleNamespace(providers=(), identifier_evidence=()), (source,))[0], "unknown")
+        contradiction = SimpleNamespace(kind=ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION)
+        conflicting = SimpleNamespace(**{**candidate.__dict__, "evidence": (contradiction,)})
+        self.assertEqual(_classify_sources(SimpleNamespace(providers=(SimpleNamespace(provider=source.provenance.provider, candidates=(conflicting,)),), identifier_evidence=()), (source,))[0], "conflict")
+
+    def test_report_binds_exact_packet_candidates_and_emits_only_opaque_references(self) -> None:
+        packet, images = _packet_case()
+        report_document = _report(tuple(_source(index, _preview(index)) for index in range(1, 3))).to_json()
+        report = MetadataReport.from_json(report_document)
+        with mock.patch("mechanical_librarian_workbench.cover_identity.MetadataReport.from_json", return_value=report):
+            document = classify_cover_identity(report_document, packet.document, images).document
+        value = json.loads(document)
+        self.assertEqual(value["schema_version"], SCHEMA_VERSION)
+        self.assertEqual(value["cover_packet_reference"], json.loads(packet.document)["packet_reference"])
+        self.assertEqual(len(value["candidates"]), 2)
+        self.assertTrue(all(row["outcome"] == "unknown" for row in value["candidates"]))
+        self.assertNotIn("Synthetic title", document)
+        self.assertNotIn("source-", document)
 
 
 if __name__ == "__main__":

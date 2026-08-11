@@ -7,6 +7,7 @@ from .scenarios import (
     BatchRequest,
     CatalogueRequest,
     ContainedReviewerRequest,
+    CoverIdentityRequest,
     CoverPacketRequest,
     DecisionPreviewRequest,
     ProposalRequest,
@@ -20,7 +21,7 @@ from .scenarios import (
 
 __all__ = [
     "BatchRequest", "CAPABILITIES", "Capability", "CatalogueRequest", "ContainedReviewerRequest",
-    "CoverPacketRequest",
+    "CoverIdentityRequest", "CoverPacketRequest",
     "DecisionPreviewRequest", "IsolatedNetworkProfile", "ProposalRequest",
     "ReportRequest", "ReviewCaseRequest",
     "ScenarioRequest", "WorkbenchContext", "WorkbenchFailure", "WorkbenchOperations", "WorkbenchResult",

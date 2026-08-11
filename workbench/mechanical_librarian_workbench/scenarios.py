@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 from .context import WorkbenchContext
+from .cover_identity import classify_cover_identity
 from .cover_packets import prepare_cover_packet
 from .results import WorkbenchResult
 
@@ -242,9 +243,26 @@ class CoverPacketRequest:
         return "cover-packet-review"
 
 
+@dataclass(frozen=True)
+class CoverIdentityRequest:
+    report_id: str
+    database: str = "reports.sqlite"
+    artifacts: str = "artifacts"
+
+    def __post_init__(self) -> None:
+        _required(self.report_id, "report id")
+        _required(self.database, "database")
+        _required(self.artifacts, "artifacts")
+
+    @property
+    def name(self) -> str:
+        return "cover-identity-report"
+
+
 ScenarioRequest: TypeAlias = (
     ReportRequest | ProposalRequest | ReviewCaseRequest | CatalogueRequest
-    | BatchRequest | DecisionPreviewRequest | ContainedReviewerRequest | CoverPacketRequest
+    | BatchRequest | DecisionPreviewRequest | ContainedReviewerRequest
+    | CoverPacketRequest | CoverIdentityRequest
 )
 
 
@@ -472,6 +490,30 @@ def _execute(
             bound[0], bound[1], bound[3], bound[2],
             tuple((value.reference, value.digest, value.payload) for value in packet.images),
         )
+    elif isinstance(request, CoverIdentityRequest):
+        database = context.path(request.database)
+        artifacts = context.path(request.artifacts)
+        report_document = selected.reopen_metadata_report(database, request.report_id)
+        if type(report_document) is not str:
+            raise ValueError("cover identity report is invalid")
+
+        def read_preview(artifact_id: str, variant: str) -> bytes:
+            preview = selected.reopen_cover_preview(
+                database, artifacts, request.report_id, artifact_id, variant
+            )
+            if type(preview) is not bytes:
+                raise ValueError("cover identity preview is invalid")
+            return preview
+
+        packet = prepare_cover_packet(report_document, read_preview)
+        raw = classify_cover_identity(
+            report_document,
+            packet.document,
+            tuple(
+                (value.reference, value.digest, value.payload)
+                for value in packet.images
+            ),
+        ).document
     elif isinstance(request, ContainedReviewerRequest):
         paths = tuple(
             context.path(value) for value in
@@ -507,7 +549,8 @@ def execute(
 
 
 __all__ = [
-    "BatchRequest", "CatalogueRequest", "ContainedReviewerRequest", "DecisionPreviewRequest", "ProposalRequest",
+    "BatchRequest", "CatalogueRequest", "ContainedReviewerRequest",
+    "CoverIdentityRequest", "DecisionPreviewRequest", "ProposalRequest",
     "ReportRequest", "ReviewCaseRequest",
     "ScenarioRequest", "WorkbenchFailure", "WorkbenchOperations", "execute",
 ]

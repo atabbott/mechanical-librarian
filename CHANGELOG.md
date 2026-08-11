@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add a source-only, report-local cover identity projection that classifies each
+  retained cover as verified manifestation/work, plausible, unknown, or
+  conflicting from bounded retained evidence before aesthetic or policy work.
+  The canonical report binds opaque report, packet, candidate, classifier, and
+  evidence references without provider calls, visual inference, persistence, or
+  write authority. (#540)
+
 - Admit deterministic report-bound cover packets to the source-only contained
   reviewer with opaque digest/order identity, incumbent-preserving deduplication,
   fixed 12-preview/1-MiB-each/8-MiB-total limits, read-only ephemeral image

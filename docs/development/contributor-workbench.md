@@ -34,6 +34,14 @@ original dimensions by pixel area, width, then height, independent of source
 order. The fixed limits are 12
 previews, 1 MiB each, and 8 MiB total. It is not a generic attachment surface.
 
+`cover-identity-report` replays that same exact report and packet locally and
+classifies every retained candidate before any aesthetic or policy experiment.
+Its five closed outcomes are `verified_manifestation_match`,
+`verified_work_match`, `plausible_match`, `unknown`, and `conflict`. The output
+contains only opaque report/packet/candidate/evidence references, classifier
+identity, and fixed reason codes; it neither sends a provider request nor reads
+images as identity evidence.
+
 ## Executing a scenario
 
 Call the typed API from contributor code or a focused test. For example, an
