@@ -13,6 +13,9 @@ responses, and per-case results.
 - Inputs were real source works from the approved private corpus, through a
   disposable loopback read-only target and the existing report, provider, and
   cover-artifact seams.
+- Only configured Hardcover and Open Library cover lanes were used; Google
+  Books remained metadata-only. Provider request, retry, pacing, truncation,
+  gallery, decoder, and network bounds were not widened.
 - No production-library access or write, model or reviewer dispatch, or
   holdout reuse occurred during acquisition.
 - The invalid two-controller attempt was quarantined and excluded from this
