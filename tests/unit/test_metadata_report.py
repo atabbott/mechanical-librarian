@@ -1100,9 +1100,9 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v22", report.schema_version)
+        self.assertEqual("metadata-report-v23", report.schema_version)
         previous = report.to_data()
-        previous["schema_version"] = "metadata-report-v13"
+        previous["schema_version"] = "metadata-report-v22"
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(previous))
 

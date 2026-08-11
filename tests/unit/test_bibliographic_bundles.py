@@ -97,6 +97,7 @@ def _source(
                 subtitle,
                 scope=ClaimScope.EDITION,
                 order=len(claims),
+                applicability="ebook",
             )
         )
     if series is not None:

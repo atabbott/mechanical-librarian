@@ -137,6 +137,92 @@ class _HostileEncodedStream(httpx.SyncByteStream):
 
 
 class GoogleBooksMetadataTests(unittest.TestCase):
+    def test_html_description_is_rendered_and_bound_to_versioned_evidence(self) -> None:
+        volume = _volume()
+        info = volume["volumeInfo"]
+        assert type(info) is dict
+        info["description"] = (
+            "<p>One &amp; <em>two</em></p><br/><span>Three</span>"
+            "<hr>2 &lt; 3"
+        )
+        observation = GoogleBooksMetadataProvider(
+            "google_books", httpx.Client(transport=httpx.MockTransport(
+                lambda _: httpx.Response(200, headers={"content-type": "application/json"}, json={"totalItems": 1, "items": [volume]})
+            )), 65_536,
+        ).observe(_lookup())
+        candidate = observation.candidates[0]
+        self.assertEqual(
+            "One & two • Three • 2 < 3",
+            next(
+                c.value
+                for c in candidate.claims
+                if c.kind is ClaimKind.DESCRIPTION
+            ),
+        )
+        self.assertIn(
+            (ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION, "google-books-html-visible-text-v1"),
+            {(e.kind, e.value) for e in candidate.evidence},
+        )
+        qualified = qualify_provider_observation(
+            observation,
+            MetadataLookup(
+                ProviderQueryKind.WORK,
+                (),
+                title="Example Book",
+                authors=("Ada Example",),
+            ),
+        )
+        self.assertIn(
+            ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
+            {value.kind for value in qualified.candidates[0].evidence},
+        )
+
+    def test_html_description_abstains_on_hostile_ambiguous_or_oversized_input(self) -> None:
+        cases = (
+            ("active content", "<p>Safe</p><script>unsafe()</script>", FieldState.MALFORMED),
+            ("event attribute", '<p onclick="unsafe()">Text</p>', FieldState.MALFORMED),
+            ("unclosed markup", "<p>Text", FieldState.MALFORMED),
+            ("empty visible text", "<p></p>", FieldState.MALFORMED),
+            (
+                "over input bound",
+                "<p>" + "x" * MAX_DESCRIPTION_CHARACTERS + "</p>",
+                FieldState.OVERSIZED,
+            ),
+        )
+        for label, description, expected in cases:
+            volume = _volume()
+            info = volume["volumeInfo"]
+            assert type(info) is dict
+            info["description"] = description
+            observation = GoogleBooksMetadataProvider(
+                "google_books",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _, value=volume: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            json={"totalItems": 1, "items": [value]},
+                        )
+                    )
+                ),
+                65_536,
+            ).observe(_lookup())
+            claim = next(
+                value
+                for value in observation.candidates[0].claims
+                if value.kind is ClaimKind.DESCRIPTION
+            )
+            with self.subTest(label=label):
+                self.assertIs(expected, claim.state)
+                self.assertIsNone(claim.value)
+                self.assertNotIn(
+                    ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
+                    {
+                        value.kind
+                        for value in observation.candidates[0].evidence
+                    },
+                )
+
     def test_optional_occurrences_keep_source_order_duplicates_and_replay(self) -> None:
         volume = _volume()
         info = volume["volumeInfo"]

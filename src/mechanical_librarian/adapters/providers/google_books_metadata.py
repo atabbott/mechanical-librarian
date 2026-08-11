@@ -9,6 +9,7 @@ import re
 import time
 from dataclasses import replace
 from decimal import Decimal
+from html.parser import HTMLParser
 from typing import Any, Callable
 
 import httpx
@@ -72,6 +73,8 @@ _MAX_VALUES = 8
 _MAX_AGGREGATE_RESPONSE_BYTES = 2_097_152
 _MAX_ATTEMPTS_PER_QUERY = 6
 _MAX_ATTEMPTS_PER_OBSERVATION = 54
+GOOGLE_BOOKS_HTML_VISIBLE_TEXT_VERSION = "google-books-html-visible-text-v1"
+_DESCRIPTION_OVERSIZED = object()
 _FIELDS = (
     "totalItems,items(id,volumeInfo(title,subtitle,authors,publisher,"
     "publishedDate,description,industryIdentifiers,pageCount,"
@@ -748,11 +751,22 @@ def _candidate(
     if not authors:
         add(ClaimKind.CREATOR, None, ClaimScope.WORK, role="author")
     add(ClaimKind.PUBLISHER, info.get("publisher"), ClaimScope.EDITION)
-    add(
-        ClaimKind.DESCRIPTION,
-        info.get("description"),
-        ClaimScope.WORK,
+    description = info.get("description")
+    transformed_description = _visible_description(description)
+    description_transformed = (
+        type(description) is str
+        and ("<" in description or ">" in description)
+        and type(transformed_description) is str
     )
+    if description_transformed:
+        add(ClaimKind.DESCRIPTION, transformed_description, ClaimScope.WORK)
+    elif transformed_description is _DESCRIPTION_OVERSIZED:
+        add(ClaimKind.DESCRIPTION, "x" * (MAX_DESCRIPTION_CHARACTERS + 1), ClaimScope.WORK)
+    elif type(description) is str and ("<" in description or ">" in description):
+        # Do not turn hostile markup into an apparent absence.
+        add(ClaimKind.DESCRIPTION, description if len(description) > MAX_DESCRIPTION_CHARACTERS else object(), ClaimScope.WORK)
+    else:
+        add(ClaimKind.DESCRIPTION, description, ClaimScope.WORK)
     add(ClaimKind.LANGUAGE, info.get("language"), ClaimScope.EDITION)
 
     evidence = [
@@ -762,6 +776,14 @@ def _candidate(
             ClaimScope.EDITION,
         )
     ]
+    if description_transformed:
+        evidence.append(
+            ProviderEvidence(
+                ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
+                GOOGLE_BOOKS_HTML_VISIBLE_TEXT_VERSION,
+                ClaimScope.WORK,
+            )
+        )
     for field, kind in (
         ("contentVersion", ProviderEvidenceKind.REVISION),
         ("publishedDate", ProviderEvidenceKind.PUBLICATION_DATE_TEXT),
@@ -901,6 +923,80 @@ def _field(
             else FieldState.MALFORMED,
             None,
         )
+
+
+class _DescriptionParser(HTMLParser):
+    _BLOCKS = frozenset({"p", "div", "br", "hr", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6"})
+    _REJECT = frozenset({"script", "style", "iframe", "object", "embed", "svg", "math", "template"})
+    _VOID = frozenset(
+        {
+            "area",
+            "base",
+            "br",
+            "col",
+            "embed",
+            "hr",
+            "img",
+            "input",
+            "link",
+            "meta",
+            "param",
+            "source",
+            "track",
+            "wbr",
+        }
+    )
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.safe = True
+        self.open_tags: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._REJECT or any(name.casefold().startswith("on") for name, _ in attrs):
+            self.safe = False
+        if tag in self._BLOCKS:
+            self.parts.append("\n")
+        if tag not in self._VOID:
+            self.open_tags.append(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._REJECT:
+            self.safe = False
+        if not self.open_tags or self.open_tags.pop() != tag:
+            self.safe = False
+        if tag in self._BLOCKS:
+            self.parts.append("\n")
+
+    def handle_startendtag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        self.handle_starttag(tag, attrs)
+        if tag not in self._VOID:
+            self.handle_endtag(tag)
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+
+def _visible_description(value: object) -> object:
+    if type(value) is not str or ("<" not in value and ">" not in value):
+        return value
+    if len(value) > MAX_DESCRIPTION_CHARACTERS:
+        return _DESCRIPTION_OVERSIZED
+    parser = _DescriptionParser()
+    try:
+        parser.feed(value)
+        parser.close()
+    except (ValueError, OverflowError):
+        return None
+    # Claims intentionally exclude control characters.  A visible bullet is a
+    # stable plain-text boundary for each source paragraph/list item.
+    rendered = " • ".join(" ".join(line.split()) for line in "".join(parser.parts).splitlines() if line.split())
+    if len(rendered) > MAX_DESCRIPTION_CHARACTERS:
+        return _DESCRIPTION_OVERSIZED
+    return rendered if parser.safe and not parser.open_tags and rendered else None
 
 
 def _text(value: object, maximum: int = MAX_SCALAR_CHARACTERS) -> str:

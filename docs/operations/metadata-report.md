@@ -145,9 +145,19 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v22`. Every earlier report discriminator,
-including `metadata-report-v21`, remains offline and requires a clean current
+discriminator is `metadata-report-v23`. Every earlier report discriminator,
+including `metadata-report-v22`, remains offline and requires a clean current
 database under ADR-0013.
+
+Google Books descriptions use one inert, bounded
+`google-books-html-visible-text-v1` projection. Its report-bound transformation
+evidence is retained only when rendering succeeds; scripts, styles, event
+attributes, malformed markup, empty output, and bound failures remain
+non-usable typed field states. The renderer fetches nothing and adds no
+automatic authority. Hardcover taxonomy retains the exact upstream type and
+source ordinal alongside any existing manual selection projection. Item-snapshot
+tags prefer `media.tags`, including when `media.metadata` is unloaded, and fall
+back to metadata tags only when that current ABS field is absent.
 
 Every valid local publication or typed date-event claim retains its exact
 observed lexical and binds it to the canonical value and precision produced by

@@ -2,7 +2,7 @@
 
 **Canonical report**
 The exact compact, key-sorted UTF-8 JSON document validated by the closed
-`metadata-report-v22` model. It carries the closed ordered local-field results,
+`metadata-report-v23` model. It carries the closed ordered local-field results,
 source capabilities, bounded claim occurrence, and (when present) rear-spine
 provenance as well as the report's scope and evidence.
 

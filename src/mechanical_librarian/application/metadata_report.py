@@ -828,6 +828,8 @@ def qualify_provider_observation(
         ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
         ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
         ProviderEvidenceKind.WORK_COVER_ID,
+        ProviderEvidenceKind.TAXONOMY,
+        ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
     }
     filtered_claims = tuple(
         claim

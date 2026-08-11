@@ -13,6 +13,9 @@
   semantic execution result rather than claiming model quality.
   (#541)
 
+- Preserve bounded rich metadata evidence for manual review without widening
+  automatic authority. (#563)
+
 - Add a source-only, report-local cover identity projection that classifies each
   retained cover as verified manifestation/work, plausible, unknown, or
   conflicting from bounded retained evidence before aesthetic or policy work.
