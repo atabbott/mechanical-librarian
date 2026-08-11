@@ -97,7 +97,12 @@ The source-only classifier was run against the unchanged 50-case development
 cohort before the final holdout was opened. Forty-nine cases had an exact
 report-bound cover source; one retained case was typed unavailable instead of
 being replaced. After the implementation and its exact artifact passed review
-and validation, the unchanged 50-case final holdout was opened once.
+and validation, the unchanged 50-case final holdout was opened. The later C1
+connector review required three structural correctness fixes and therefore
+invalidated the exact head; one blind aggregate requalification was performed
+under the milestone rule to rerun invalidated evidence. It exposed no identity,
+per-case result, or tuning signal, and every aggregate result remained
+unchanged.
 
 | Measure | Development | Final holdout | Combined |
 | --- | ---: | ---: | ---: |
@@ -120,7 +125,8 @@ production-activation claim. No case was tuned, moved, relabelled, or replaced.
 
 Both runs made zero provider or model calls and performed zero production
 access or writes. The final holdout was unavailable to implementation and
-tuning before its one-shot aggregate qualification.
+tuning before qualification and remained unavailable during the blind
+post-review requalification.
 
 ## Outcome
 
