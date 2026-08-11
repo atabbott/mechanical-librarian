@@ -173,13 +173,13 @@ class ContainedReviewerTests(unittest.TestCase):
             provider = root / "provider"
             for path in (job, provider):
                 path.mkdir()
-            image_sources = tuple(f"/proc/self/fd/{value}" for value in range(20, 25))
+            image_descriptors = tuple(range(20, 25))
             command = reviewer._sandbox_command(
-                job, job / "result.json", image_sources, provider,
+                job, job / "result.json", image_descriptors, provider,
                 "/proc/self/fd/10", "/proc/self/fd/11", "/proc/self/fd/12",
             )
-        for index, source in enumerate(image_sources, start=1):
-            self.assertIn(["--ro-bind", source, f"/images/{index:02d}.png"], [
+        for index, descriptor in enumerate(image_descriptors, start=1):
+            self.assertIn(["--ro-bind-data", str(descriptor), f"/images/{index:02d}.png"], [
                 command[position:position + 3]
                 for position in range(len(command) - 2)
             ])
@@ -407,6 +407,7 @@ class ContainedReviewerTests(unittest.TestCase):
                 fcntl.fcntl(image.descriptor, fcntl.F_GET_SEALS) & required,
                 required,
             )
+            self.assertEqual(os.lseek(image.descriptor, 0, os.SEEK_CUR), 0)
             with self.assertRaises(OSError):
                 os.write(image.descriptor, b"changed")
             with self.assertRaises(OSError):

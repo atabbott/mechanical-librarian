@@ -60,9 +60,11 @@ durable pre-egress attempt binds that packet together with the
 exact reviewer profile, instruction, and output schema. The local result binds
 the request and profile identities. Preview bytes are copied into anonymous
 Linux memory descriptors, rehashed, sealed against write, growth, shrink, and
-seal removal before process creation, bound directly into the read-only
-sandbox, and passed as repeatable ordered `codex exec --image` arguments. This
-closes callback and same-UID mutation races before gated child release.
+seal removal before process creation, rewound, and copied through Bubblewrap's
+descriptor-data mount into private read-only sandbox files before being passed
+as repeatable ordered `codex exec --image` arguments. This closes callback and
+same-UID mutation races before gated child release without depending on a
+`/proc` path mount.
 Unknown, repeated, changed, non-PNG, over-bound, or unbound inputs fail closed.
 The image-capable adapter reconstructs and fully re-admits the packet and exact
 ordered image tuple at its own boundary; importing or directly constructing a
@@ -118,12 +120,16 @@ and results remain ignored owner-only workbench state.
   records 17 `contained_reviewer_invocation_insufficient` failures, zero mapping
   mismatches, zero admitted image or output bytes, p50 129 ms, p95 160 ms,
   successful cleanup, and a failed sandbox aggregate.
-- The current exact-head admission-only replay has 17 packets: eight eligible,
-  nine typed `icc_bearing_preview_rejected` before dispatch, and no other
-  rejection. No model rerun occurred. Sealed v2 has no per-packet outcome or
-  latency mapping, so the eligible subset cannot be rebound
-  (`sealed_subset_mapping_insufficient`), and its historical latency must not be
-  attributed to the current head. The required real transport bound **DID NOT
-  QUALIFY**. No retry or limit, profile, model, or threshold change was made.
-  Synthetic verification remains report-only evidence and does not activate
-  runtime behavior.
+- Diagnosis proved that the historic attempt never reached reviewer execution:
+  Bubblewrap could not resolve sealed image `/proc` paths. The corrected adapter
+  uses rewound sealed descriptors as descriptor-data mounts. A five-image
+  no-model Linux proof reproduced exact bytes inside the sandbox.
+- Authentication-only success had also hidden an under-sized private inference
+  envelope. A bounded 512 MiB memory and 32-task isolated profile completed a
+  structured reviewer probe without widening model, prompt, network, image,
+  output, provider, corpus, or production authority.
+- The corrected exact implementation **QUALIFIED** one retained real
+  five-preview development packet with five admitted ordered observations, zero
+  reference mismatch, 16.263-second end-to-end latency, and successful cleanup.
+  This remains report-only transport/schema evidence and does not activate
+  runtime behavior or establish semantic quality.

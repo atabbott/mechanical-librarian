@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fix source-only contained cover-reviewer image transport so the Linux sandbox
+  receives each rehashed, sealed preview through a descriptor-data mount instead
+  of a `/proc` path mount. The correction preserves the existing image bounds,
+  read-only sandbox files, gated dispatch, and absence of production authority.
+  One retained real five-preview packet produced five admitted observations with
+  zero mapping mismatch in 16.263 seconds under a bounded isolated profile.
+  (#542)
+
 - Add a source-only deterministic cover-policy report over exact packet,
   identity and closed observation evidence. Three typed booleans can avoid
   promotional text or tie-in branding and prefer minimal composition; unknown,

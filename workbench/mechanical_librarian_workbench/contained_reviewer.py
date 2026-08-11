@@ -467,7 +467,7 @@ class ContainedReviewerAdapter:
                                 self._sandbox_command(
                                     job_path,
                                     result_path,
-                                    tuple(value.invocation_path for value in sealed_images),
+                                    tuple(value.descriptor for value in sealed_images),
                                     provider_state_path,
                                     codex.invocation_path,
                                     sandbox.invocation_path,
@@ -841,7 +841,7 @@ class ContainedReviewerAdapter:
         self,
         job_path: Path,
         result_path: Path,
-        image_paths: tuple[str, ...],
+        image_descriptors: tuple[int, ...],
         provider_state_path: Path,
         codex_path: str,
         sandbox_path: str,
@@ -927,14 +927,14 @@ class ContainedReviewerAdapter:
                 "/job/" + result_path.name,
             )
         )
-        if image_paths:
+        if image_descriptors:
             mounts = ["--dir", "/images"]
-            for index, image_path in enumerate(image_paths, start=1):
+            for index, descriptor in enumerate(image_descriptors, start=1):
                 mounts.extend((
-                    "--ro-bind", image_path, f"/images/{index:02d}.png",
+                    "--ro-bind-data", str(descriptor), f"/images/{index:02d}.png",
                 ))
             command[command.index("--proc"):command.index("--proc")] = mounts
-            for index in range(1, len(image_paths) + 1):
+            for index in range(1, len(image_descriptors) + 1):
                 command.extend(("--image", f"/images/{index:02d}.png"))
         for value in _exact_config(self._profile.identity.reasoning):
             command.extend(("-c", value))

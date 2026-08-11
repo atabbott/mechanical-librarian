@@ -128,6 +128,24 @@ access or writes. The final holdout was unavailable to implementation and
 tuning before qualification and remained unavailable during the blind
 post-review requalification.
 
+## Contained cover transport — PASS
+
+The historical contained-reviewer attempt failed before reviewer execution.
+Diagnosis isolated two independent local causes: sealed image `/proc` path
+mounts were not resolvable by Bubblewrap, and an authentication-capable private
+profile was too small for inference. The corrected adapter uses rewound sealed
+descriptor-data mounts. A no-model five-image Linux proof reproduced the exact
+bytes inside the sandbox, and a bounded 512 MiB memory and 32-task isolated
+profile completed a structured reviewer probe.
+
+The corrected exact implementation then admitted one retained real development
+packet with five exact previews. It returned five ordered observations with zero
+reference mismatch in 16.263 seconds and cleaned the ephemeral job. This passes
+the issue's five-candidate, zero-mismatch, p95-at-most-180-second transport bound.
+It is not yet the 100-case semantic-quality or repeatability result below. No
+provider call, corpus rebuild, final-holdout exposure, production access, write,
+runtime activation, model change, or threshold reduction was used.
+
 ## Cover-observation qualification — bounded contract PASS
 
 After the observation contract and taxonomy binding passed independent code
