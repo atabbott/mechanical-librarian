@@ -56,6 +56,7 @@ class _Candidate:
     height: int
     incumbent: bool
     sources: list[CoverSource]
+    references: list[str]
 
     @property
     def identity_rank(self) -> int:
@@ -111,15 +112,10 @@ def prepare_cover_packet(
         existing = candidates_by_digest.get(artifact.preview_digest)
         if existing is not None:
             existing.sources.append(source)
+            existing.references.append(reference)
             if source.kind is CoverSourceKind.ABS:
                 existing.incumbent = True
                 existing.reference = reference
-            omissions.append({
-                "preview_sha256": artifact.preview_digest,
-                "reason": "duplicate_preview",
-                "reference": reference,
-                "retained_reference": existing.reference,
-            })
             continue
         candidates_by_digest[artifact.preview_digest] = _Candidate(
             reference=reference,
@@ -129,18 +125,36 @@ def prepare_cover_packet(
             height=artifact.height,
             incumbent=source.kind is CoverSourceKind.ABS,
             sources=[source],
+            references=[reference],
         )
 
-    candidates = list(candidates_by_digest.values())
+    return _finalize_cover_packet(list(candidates_by_digest.values()), omissions)
+
+
+def _omit_group(
+    omissions: list[dict[str, object]],
+    candidate: _Candidate,
+    reason: str,
+) -> None:
+    for reference in sorted(candidate.references):
+        omissions.append({
+            "preview_bytes": len(candidate.payload),
+            "reason": reason,
+            "reference": reference,
+        })
+
+
+def _finalize_cover_packet(
+    candidates: list[_Candidate],
+    omissions: list[dict[str, object]],
+) -> PreparedCoverPacket:
+    """Select groups, then bind each duplicate only to final retained state."""
+
     oversize = [value for value in candidates if len(value.payload) > MAX_COVER_PREVIEW_BYTES]
     if any(value.incumbent for value in oversize):
         raise ValueError("cover packet incumbent exceeds the preview limit")
     for value in oversize:
-        omissions.append({
-            "preview_bytes": len(value.payload),
-            "reason": "preview_byte_limit",
-            "reference": value.reference,
-        })
+        _omit_group(omissions, value, "preview_byte_limit")
     candidates = [value for value in candidates if len(value.payload) <= MAX_COVER_PREVIEW_BYTES]
 
     incumbents = [value for value in candidates if value.incumbent]
@@ -166,27 +180,26 @@ def prepare_cover_packet(
         )
         remaining.remove(candidate)
         if selected_bytes + len(candidate.payload) > MAX_COVER_PACKET_BYTES:
-            omissions.append({
-                "preview_bytes": len(candidate.payload),
-                "reason": "aggregate_byte_limit",
-                "reference": candidate.reference,
-            })
+            _omit_group(omissions, candidate, "aggregate_byte_limit")
             continue
         selected.append(candidate)
         selected_bytes += len(candidate.payload)
         source_counts[candidate.source_kind] += 1
     for value in remaining:
-        omissions.append({
-            "preview_bytes": len(value.payload),
-            "reason": "shortlist_limit",
-            "reference": value.reference,
-        })
+        _omit_group(omissions, value, "shortlist_limit")
     if not selected:
         raise ValueError("cover packet has no eligible previews")
 
     candidate_data: list[dict[str, object]] = []
     images: list[CoverPacketImage] = []
     for candidate in selected:
+        for reference in sorted(set(candidate.references) - {candidate.reference}):
+            omissions.append({
+                "preview_sha256": candidate.digest,
+                "reason": "duplicate_preview",
+                "reference": reference,
+                "retained_reference": candidate.reference,
+            })
         provenance: list[dict[str, object]] = []
         for source in candidate.sources:
             detail = source.provenance

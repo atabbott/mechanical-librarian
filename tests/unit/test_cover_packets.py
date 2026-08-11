@@ -36,6 +36,7 @@ from mechanical_librarian_workbench.cover_packets import (  # noqa: E402
     MAX_COVER_PREVIEWS,
     prepare_cover_packet,
 )
+from mechanical_librarian_workbench import cover_packets as packet_builder  # noqa: E402
 from mechanical_librarian_workbench import reviewer as reviewer_binding  # noqa: E402
 from mechanical_librarian_workbench import (  # noqa: E402
     CoverPacketRequest,
@@ -143,6 +144,44 @@ def _expanded_packet(packet: str, count: int, *, size: int = 32):
     value["candidates"] = candidates
     value["omissions"] = []
     return _rebind_packet(value), tuple(images)
+
+
+def _group_candidate(
+    index: int,
+    *,
+    size: int = 32,
+    duplicates: int = 1,
+    width: int = 1000,
+    height: int = 1000,
+):
+    payload = _preview(index, size=size)
+    first = _source(index, payload, embedded=True)
+    sources = [first]
+    references = ["cover_ref_" + f"{index * 10:064x}"]
+    for member in range(1, duplicates):
+        sources.append(CoverSource(
+            cover_source_id(CoverSourceKind.EPUB, f"group-{index}-member-{member}"),
+            CoverSourceKind.EPUB,
+            CoverSourceState.RETRIEVED,
+            first.artifact,
+        ))
+        references.append("cover_ref_" + f"{index * 10 + member:064x}")
+    return packet_builder._Candidate(
+        references[0], hashlib.sha256(payload).hexdigest(), payload,
+        width, height, False, sources, references,
+    )
+
+
+def _admit_produced(packet) -> object:
+    return admit_cover_review_request(
+        "Inspect.",
+        packet.document,
+        '{"additionalProperties":false,"properties":{},"type":"object"}',
+        tuple(
+            (value.reference, value.digest, value.payload)
+            for value in packet.images
+        ),
+    )
 
 
 class CoverPacketTests(unittest.TestCase):
@@ -525,6 +564,69 @@ class CoverPacketTests(unittest.TestCase):
             ),
         )
         self.assertEqual(len(admitted.images), 1)
+
+    def test_duplicate_group_retained_representative_binds_after_selection(self) -> None:
+        packet = packet_builder._finalize_cover_packet(
+            [_group_candidate(1, duplicates=2)], []
+        )
+        admitted = _admit_produced(packet)
+        document = json.loads(packet.document)
+        self.assertEqual(len(admitted.images), 1)  # type: ignore[attr-defined]
+        self.assertEqual(document["omissions"], [{
+            "preview_sha256": document["candidates"][0]["preview_sha256"],
+            "reason": "duplicate_preview",
+            "reference": "cover_ref_" + f"{11:064x}",
+            "retained_reference": document["candidates"][0]["reference"],
+        }])
+
+    def test_duplicate_group_excluded_by_preview_limit_has_no_unbound_representative(self) -> None:
+        packet = packet_builder._finalize_cover_packet(
+            [
+                _group_candidate(1),
+                _group_candidate(2, size=1_048_577, duplicates=2, width=1, height=1),
+            ],
+            [],
+        )
+        _admit_produced(packet)
+        document = json.loads(packet.document)
+        self.assertEqual(
+            [value["reason"] for value in document["omissions"]],
+            ["preview_byte_limit", "preview_byte_limit"],
+        )
+        self.assertNotIn("duplicate_preview", packet.document)
+
+    def test_duplicate_group_excluded_by_aggregate_limit_has_no_unbound_representative(self) -> None:
+        retained = [
+            _group_candidate(index, size=1_048_576)
+            for index in range(1, 9)
+        ]
+        packet = packet_builder._finalize_cover_packet(
+            [*retained, _group_candidate(20, duplicates=2, width=1, height=1)],
+            [],
+        )
+        _admit_produced(packet)
+        document = json.loads(packet.document)
+        self.assertEqual(len(document["candidates"]), 8)
+        self.assertEqual(
+            [value["reason"] for value in document["omissions"]],
+            ["aggregate_byte_limit", "aggregate_byte_limit"],
+        )
+        self.assertNotIn("duplicate_preview", packet.document)
+
+    def test_duplicate_group_excluded_by_shortlist_has_no_unbound_representative(self) -> None:
+        retained = [_group_candidate(index) for index in range(1, 13)]
+        packet = packet_builder._finalize_cover_packet(
+            [*retained, _group_candidate(20, duplicates=2, width=1, height=1)],
+            [],
+        )
+        _admit_produced(packet)
+        document = json.loads(packet.document)
+        self.assertEqual(len(document["candidates"]), 12)
+        self.assertEqual(
+            [value["reason"] for value in document["omissions"]],
+            ["shortlist_limit", "shortlist_limit"],
+        )
+        self.assertNotIn("duplicate_preview", packet.document)
 
 
 if __name__ == "__main__":

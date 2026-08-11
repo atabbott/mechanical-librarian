@@ -98,6 +98,10 @@ request and adapter method have no image member or argument. A changed,
 repeated, unknown, non-PNG, over-bound, or unbound image fails closed. Only the
 bounded Instruction is authoritative; canonical input, provider metadata,
 images, and OCR text are hostile evidence and never instructions.
+
+Duplicate omissions are finalized after selection and can reference only a
+retained representative. If byte, aggregate, or shortlist limits exclude the
+whole digest group, every member records that exclusion reason instead.
 Target/provider configuration additionally admits only loopback or `.invalid`
 origins and confines credential, TLS, password, and media paths to the workbench
 workspace. The production composition refuses every enabled fixed-origin

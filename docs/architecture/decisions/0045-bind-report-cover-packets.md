@@ -33,7 +33,10 @@ reference, media/variant, preview byte and dimension facts, incumbent state,
 canonical producer candidate order, reason-specific omission preconditions,
 domain privacy-safe context text, limits, and exact ordered image mapping. The
 same semantic validator runs before producer return and reviewer admission;
-indistinguishable normalized provenance multiplicity is discarded. The generic
+indistinguishable normalized provenance multiplicity is discarded. Duplicate
+omissions are created only after final selection and always name a retained
+representative; when a whole digest group is excluded, each member carries the
+actual byte, aggregate, or shortlist omission instead. The generic
 request and generic adapter method have no image member or image argument. The
 durable pre-egress attempt binds that packet together with the
 exact reviewer profile, instruction, and output schema. The local result binds

@@ -458,6 +458,8 @@ preview byte/dimension facts, incumbent/provenance/omission facts and limits,
 canonical candidate order, reason-specific omission preconditions, domain
 privacy-safe context text, and exact ordered reference/digest equality with the
 supplied images. Producer and admission use that same semantic validator.
+Duplicate groups bind to a retained representative only after final selection;
+fully excluded groups contain only their reason-specific omission evidence.
 Only the bounded Instruction is authoritative; canonical input, provider
 metadata, images, and OCR text are hostile evidence, not instructions;
 arbitrary paths, URLs, originals, remote fetches, target/service identities, and
