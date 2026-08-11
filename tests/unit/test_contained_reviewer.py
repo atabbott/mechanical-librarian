@@ -491,20 +491,14 @@ class ContainedReviewerTests(unittest.TestCase):
                 root = Path(temporary)
                 codex = root / "codex"
                 codex.write_text(
-                    "#!/usr/bin/env python3\n"
-                    "import hashlib, sys\n"
-                    "images = ('/images/01.png', '/images/02.png')\n"
-                    "digests = []\n"
-                    "for image in images:\n"
-                    "    with open(image, 'rb') as handle:\n"
-                    "        digests.append(hashlib.sha256(handle.read()).hexdigest())\n"
-                    "    try:\n"
-                    "        with open(image, 'wb') as handle:\n"
-                    "            handle.write(b'x')\n"
-                    "    except OSError:\n"
-                    "        continue\n"
-                    "    raise SystemExit(91)\n"
-                    "print('\\n'.join(digests))\n",
+                    "#!/usr/bin/env sh\n"
+                    "set -eu\n"
+                    "for image in /images/01.png /images/02.png; do\n"
+                    "    sha256sum \"$image\" | cut -d' ' -f1\n"
+                    "    if printf x >\"$image\" 2>/dev/null; then\n"
+                    "        exit 91\n"
+                    "    fi\n"
+                    "done\n",
                     encoding="utf-8",
                 )
                 os.chmod(codex, 0o700)
@@ -551,7 +545,9 @@ class ContainedReviewerTests(unittest.TestCase):
                         )
                     stdout.seek(0)
                     observed = stdout.read().decode("ascii").splitlines()
-        self.assertEqual(returncode, 0)
+                    stderr.seek(0)
+                    diagnostics = stderr.read().decode("utf-8", errors="replace")
+        self.assertEqual(returncode, 0, diagnostics)
         self.assertEqual(observed, [image.digest for image in images])
 
     def test_gated_timeout_and_cancel_kill_the_captured_process_identity(self) -> None:
