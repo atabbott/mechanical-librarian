@@ -13,9 +13,11 @@ from starlette.types import ASGIApp
 
 BUILD_IDENTITY = "a" * 64
 HOSTILE_TEXT = "Hostile <img src=x onerror=window.__metadataExecuted=true>"
+UNBROKEN_TITLE_SEGMENT = "UnbrokenSyntheticCatalogueToken" * 12
 LONG_TITLE = (
     "The Clockmaker's Cartography of Quietly Impossible Libraries — "
-    "an intentionally long synthetic title for narrow-layout qualification"
+    f"{UNBROKEN_TITLE_SEGMENT} — an intentionally long synthetic title for "
+    "narrow-layout qualification"
 )
 
 
@@ -55,7 +57,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "Household ebooks",
         "epub",
         case="case-1",
-        attention=3,
+        attention=2,
         dispositions=["unresolved_choice", "automatic", "ineligible"],
     ),
     _work(
@@ -234,6 +236,7 @@ def _case(case_id: str) -> dict[str, object]:
                 LONG_TITLE,
             ],
             needs_attention=not (resolved or automatic or current_only),
+            manual_hold=case_id == "case-4",
             disposition=(
                 "automatic" if automatic else "ineligible" if current_only else "review"
             ),
@@ -270,8 +273,13 @@ def _case(case_id: str) -> dict[str, object]:
         _field(
             "authors",
             ["Mara Venn", "Ivo North"],
-            [["Mara Venn"], ["Mara Venn", "Ivo North", "Pax Rill"]],
-            needs_attention=not (resolved or automatic),
+            (
+                []
+                if current_only
+                else [["Mara Venn"], ["Mara Venn", "Ivo North", "Pax Rill"]]
+            ),
+            needs_attention=not (resolved or automatic or current_only),
+            disposition="ineligible" if current_only else "review",
             human_decision=(
                 {
                     "outcome": "keep_current",
@@ -303,13 +311,17 @@ def _case(case_id: str) -> dict[str, object]:
             "series",
             {"name": "Atlas Cycle", "sequence": "2.5"},
             [],
-            disposition="automatic",
+            disposition="ineligible" if current_only else "automatic",
             needs_attention=False,
-            automatic_decision={
-                "decision_id": "automatic-series",
-                "outcome": "keep_current",
-                "origin": "automatic_policy",
-            },
+            automatic_decision=(
+                None
+                if current_only
+                else {
+                    "decision_id": "automatic-series",
+                    "outcome": "keep_current",
+                    "origin": "automatic_policy",
+                }
+            ),
         ),
     ]
     work = next((item for item in LIBRARY_WORKS if item["review_case_id"] == case_id), LIBRARY_WORKS[0])
@@ -407,7 +419,14 @@ def _activity() -> dict[str, object]:
         ("Paper Moons over Larkspur Station", "Household ebooks", "title", "stale", "human", "target_changed"),
         ("A Field Guide to Borrowed Weather", "Research shelf", "title", "recovered", "human", "readback"),
         ("Unicode shelves: 雨の地図", "Family archive — shared", "series", "paused", "human", "consent_revoked"),
-        (HOSTILE_TEXT, "Household ebooks", "title", "ambiguous", "human", "ambiguous"),
+        (
+            HOSTILE_TEXT,
+            "Household ebooks",
+            "title",
+            "ambiguous",
+            "future_provider_origin",
+            "ambiguous",
+        ),
         ("Resolved work with retained history", "Research shelf", "authors", "resolved", "human", None),
         ("Automatic-only edition", "Household ebooks", "series", "running", "automatic_policy", None),
     ]
@@ -619,23 +638,34 @@ class RichFidelityApiMiddleware(BaseHTTPMiddleware):
             and original_path.startswith(alias_prefix)
             and requested_case_id != self._review_case_id
         )
+        rich_cursor = parse_qs(target_url.query).get("cursor")
+        rewrite_library_page = (
+            request.method == "GET"
+            and original_path == "/api/v1/library"
+            and rich_cursor == ["page-2"]
+        )
         if rewrite_alias:
             installed_path = installed_prefix + (f"/{suffix}" if suffix else "")
             request.scope["path"] = installed_path
             request.scope["raw_path"] = installed_path.encode("ascii")
-            if suffix == "evidence" and parse_qs(target_url.query).get(
-                "cursor"
-            ) == ["evidence-page-2"]:
-                admitted_query = urlencode(
-                    [
-                        (key, value)
-                        for key, value in parse_qsl(
-                            target_url.query, keep_blank_values=True
-                        )
-                        if key != "cursor"
-                    ]
-                )
-                request.scope["query_string"] = admitted_query.encode("ascii")
+        if (
+            (
+                rewrite_alias
+                and suffix == "evidence"
+                and rich_cursor == ["evidence-page-2"]
+            )
+            or rewrite_library_page
+        ):
+            admitted_query = urlencode(
+                [
+                    (key, value)
+                    for key, value in parse_qsl(
+                        target_url.query, keep_blank_values=True
+                    )
+                    if key != "cursor"
+                ]
+            )
+            request.scope["query_string"] = admitted_query.encode("ascii")
         try:
             response = await call_next(request)
         finally:
@@ -666,6 +696,7 @@ __all__ = [
     "HOSTILE_TEXT",
     "LIBRARY_WORKS",
     "LONG_TITLE",
+    "UNBROKEN_TITLE_SEGMENT",
     "RichFidelityApiMiddleware",
     "rich_payload",
 ]

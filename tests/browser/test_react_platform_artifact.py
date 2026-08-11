@@ -16,6 +16,7 @@ from tests.browser.fidelity_cohort import (
     BUILD_IDENTITY as _BUILD_IDENTITY,
     HOSTILE_TEXT as _HOSTILE,
     LONG_TITLE,
+    UNBROKEN_TITLE_SEGMENT,
     rich_payload,
 )
 
@@ -33,15 +34,25 @@ class ReactPlatformArtifactTests(unittest.TestCase):
         ambiguous_decisions = 0
         fail_policy_persistently = False
         consent_payloads: list[object] = []
+        return_automatic_requests = 0
+        failed_requests: list[tuple[str, str, str | None]] = []
 
         def fulfill(route: Route) -> None:
             nonlocal activity_failures, ambiguous_decisions, documents
+            nonlocal return_automatic_requests
             parsed = urlsplit(route.request.url)
             path = parsed.path
             if path.startswith("/api/v1/"):
                 if path.endswith("/decisions") and route.request.method == "POST":
                     ambiguous_decisions += 1
                     route.abort("failed")
+                    return
+                if (
+                    path.endswith("/return-to-automatic")
+                    and route.request.method == "POST"
+                ):
+                    return_automatic_requests += 1
+                    route.fulfill(status=204, body="")
                     return
                 if path == "/api/v1/session/logout":
                     route.fulfill(status=204, headers={"x-ml-build-identity": "c" * 64}, body="")
@@ -85,6 +96,12 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page = browser.new_page(viewport={"width": 390, "height": 844})
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
+            page.on(
+                "requestfailed",
+                lambda request: failed_requests.append(
+                    (request.method, request.url, request.failure)
+                ),
+            )
             page.route("**/*", fulfill)
             routes = (
                 ("/library?lens=all", "Every work, with exceptions first"),
@@ -126,6 +143,11 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                         "The result is being checked", exact=False
                     ).first.wait_for()
                     page.get_by_text("Affected destinations: Authors, Title").wait_for()
+                    page.get_by_text("Recorded decision", exact=False).wait_for()
+                    self.assertNotIn(
+                        "future_provider_origin",
+                        page.locator(".activity-ledger").inner_text(),
+                    )
                     page.get_by_role(
                         "checkbox", name="Spoken stories · 2 prepared"
                     ).check()
@@ -161,6 +183,10 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.get_by_role("link", name="Next page").click()
             page.get_by_text("Unicode shelves:", exact=False).wait_for()
             self.assertEqual(page.locator(".library-work-row").count(), 6)
+            self.assertEqual(
+                page.get_by_text("Library could not be loaded", exact=False).count(),
+                0,
+            )
             page.get_by_label("Search title, author, library, or media").fill(
                 "Spoken stories"
             )
@@ -187,6 +213,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 has_text=LONG_TITLE
             ).locator(".library-work-copy h3 a")
             self.assertEqual(long_title.inner_text(), LONG_TITLE)
+            self.assertIn(UNBROKEN_TITLE_SEGMENT, long_title.inner_text())
             self.assertLessEqual(
                 long_title.evaluate("node => node.scrollWidth"),
                 long_title.evaluate("node => node.parentElement.clientWidth"),
@@ -194,6 +221,10 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertLessEqual(long_title.bounding_box()["height"], 44)
             self.assertEqual(long_title.evaluate("node => getComputedStyle(node).whiteSpace"), "normal")
             self.assertEqual(long_title.evaluate("node => getComputedStyle(node).webkitLineClamp"), "2")
+            self.assertEqual(
+                long_title.evaluate("node => getComputedStyle(node).overflowWrap"),
+                "anywhere",
+            )
             self.assertEqual(
                 long_title.evaluate("node => getComputedStyle(node.parentElement).overflow"),
                 "visible",
@@ -271,6 +302,30 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             )
             page.goto("https://react-platform.invalid/review/case-stale?subview=review")
             page.get_by_role("heading", name="Case superseded").wait_for()
+            page.goto(
+                "https://react-platform.invalid/review/case-11"
+                "?field=authors&subview=review"
+            )
+            page.get_by_role("heading", name="Current review case").wait_for()
+            for destination in ("title", "authors", "subtitle", "series"):
+                page.get_by_role("button", name=destination, exact=True).click()
+                page.locator(f"#field-{destination}").get_by_text(
+                    "No eligible proposed values.", exact=True
+                ).wait_for()
+                self.assertEqual(
+                    page.locator(f"#field-{destination} .direct-choice-grid").count(),
+                    0,
+                )
+            page.goto(
+                "https://react-platform.invalid/review/case-4"
+                "?field=title&subview=review"
+            )
+            page.get_by_role("heading", name="Current review case").wait_for()
+            page.get_by_role("button", name="Return to automatic handling").click()
+            page.get_by_text(
+                "Automatic policy resumes after fresh checks.", exact=True
+            ).wait_for()
+            self.assertEqual(return_automatic_requests, 1)
             page.set_viewport_size({"width": 390, "height": 844})
             for control in page.locator(".masthead nav a, .shell-actions button").all():
                 self.assertGreaterEqual(control.bounding_box()["height"], 44)
@@ -289,6 +344,10 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
             page.get_by_role("link", name="Attention", exact=True).click()
             page.get_by_role("heading", name="Needs your attention").wait_for()
+            self.assertEqual(page.locator(".attention-field-row").count(), 6)
+            page.locator(".attention-work").first.get_by_text(
+                "2 fields", exact=True
+            ).wait_for()
             attention_header = page.locator(".attention-work > header").first
             self.assertEqual(
                 attention_header.evaluate("node => getComputedStyle(node).flexDirection"),
@@ -333,6 +392,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 has_text=LONG_TITLE
             ).locator(".library-work-copy h3 a")
             self.assertEqual(compact_title.inner_text(), LONG_TITLE)
+            self.assertIn(UNBROKEN_TITLE_SEGMENT, compact_title.inner_text())
             self.assertLessEqual(
                 compact_title.evaluate("node => node.scrollWidth"),
                 compact_title.evaluate("node => node.parentElement.clientWidth"),
@@ -345,6 +405,10 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertEqual(
                 compact_title.evaluate("node => getComputedStyle(node).webkitLineClamp"),
                 "2",
+            )
+            self.assertEqual(
+                compact_title.evaluate("node => getComputedStyle(node).overflowWrap"),
+                "anywhere",
             )
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
             self.assertEqual(documents, before_navigation)
@@ -396,7 +460,38 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 ],
                 [],
             )
-            self.assertGreaterEqual(len(expected_ambiguous_errors), 1)
+            self.assertEqual(
+                expected_ambiguous_errors,
+                ["Failed to load resource: net::ERR_FAILED"],
+            )
+            decision_request_failures = [
+                failure
+                for failure in failed_requests
+                if failure[2] == "net::ERR_FAILED"
+            ]
+            self.assertEqual(len(decision_request_failures), 1, failed_requests)
+            failed_method, failed_url, failed_reason = decision_request_failures[0]
+            self.assertEqual(
+                (
+                    failed_method,
+                    failed_url,
+                    failed_reason,
+                ),
+                (
+                    "POST",
+                    "https://react-platform.invalid/api/v1/review-cases/"
+                    "case-1/decisions",
+                    "net::ERR_FAILED",
+                ),
+            )
+            self.assertEqual(
+                [
+                    failure
+                    for failure in failed_requests
+                    if failure[2] not in {"net::ERR_ABORTED", "net::ERR_FAILED"}
+                ],
+                [],
+            )
             browser.close()
 
 
