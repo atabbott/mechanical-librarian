@@ -97,11 +97,12 @@ The source-only classifier was run against the unchanged 50-case development
 cohort before the final holdout was opened. Forty-nine cases had an exact
 report-bound cover source; one retained case was typed unavailable instead of
 being replaced. The classifier made 20 verified-manifestation, 12
-verified-work, 14 plausible, and 3 conflict predictions. It made no verified
+verified-work, 14 unknown, and 3 conflict predictions. It made no verified
 false positives (32/32 verified precision), retained all 3 reviewed conflicts,
-and exactly matched 45 of the 49 evaluable review outcomes. The four remaining
-evaluable differences were reviewed `unknown` cases conservatively projected
-as `plausible`; no case was tuned, moved, or relabelled.
+and exactly matched 39 of the 49 evaluable review outcomes. The ten differences
+were reviewed `plausible` cases conservatively projected as `unknown` because
+the retained report evidence was ambiguous; the remaining reviewed plausible
+case was the typed unavailable case. No case was tuned, moved, or relabelled.
 
 The development run made zero provider or model calls and performed zero
 production access or writes. These figures are development evidence only; the
