@@ -13,11 +13,11 @@ responses, and per-case outcomes.
 - The proof uses real source works through a disposable loopback read-only
   target and the existing report, provider, and cover-artifact seams.
 - Only configured Hardcover and Open Library cover lanes were used; Google
-  Books remained metadata-only. Request, retry, pacing, truncation, gallery,
-  decoder, and network bounds were not widened.
-- There was no production-library access, target or media write, provider
-  envelope change, model/reviewer dispatch during acquisition, or runtime
-  activation.
+  Books remained metadata-only. The retained record does not establish the
+  exact acquisition-time request, retry, pacing, truncation, gallery, decoder,
+  or network bounds, so this report makes no claim about those bounds.
+- There was no production-library access, target or media write,
+  model/reviewer dispatch during acquisition, or runtime activation.
 - The final-holdout cohort remains adjudication-only and unavailable to
   implementation and tuning. Source, work-family, edition/ISBN-family, and
   near-duplicate split checks passed.
@@ -37,14 +37,27 @@ responses, and per-case outcomes.
 | Packets with at least five usable previews | 26 |
 
 The current-schema report store and content-addressed artifacts passed a fresh
-read, integrity, foreign-key, and digest check. The inventory therefore meets
-the minimum proof thresholds for source works, usable previews, work families,
-multi-choice packets, and five-preview packets.
+read, integrity, foreign-key, and digest check. The durable best-effort minimums
+and observed results are:
 
-Historical qualification-role packet provenance and exact historical
-wheel/configuration provenance are unavailable. Under #546's
-minimum-proof clarification, they are reported as unavailable and are not
-claimed as PASS evidence.
+| Proof gate | Minimum | Observed | Result |
+| --- | ---: | ---: | --- |
+| Admitted real source works | 120 | 340 | PASS |
+| Distinct usable report-bound provider previews | 300 | 597 | PASS |
+| Work families represented by usable previews | 75 | 315 | PASS |
+| Work-family-disjoint multi-choice packets | 60 | 224 | PASS |
+| Inventory packets with at least five usable previews | 10 | 26 | PASS |
+| Random candidate-to-target identity cases | 100 (50 development + 50 final holdout) | 100 (50 + 50) | PASS |
+
+The identity proof additionally requires the same 100 cases to receive
+independent first and second reviews plus evidence-only adjudication, with no
+identity-class quota. That review gate is recorded below.
+
+Historical qualification-role packet provenance, exact historical
+wheel/configuration provenance, and acquisition-time limit provenance are
+unavailable. They are not claimed as PASS evidence. This PASS is limited to the
+versioned minimums above and the verified current-schema report, artifact,
+split, review, and adjudication evidence.
 
 Provider cover outcomes are bounded aggregate observations, not semantic
 quality measurements:
