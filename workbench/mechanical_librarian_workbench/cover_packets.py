@@ -39,6 +39,17 @@ def _opaque_reference(report_id: str, source_id: str) -> str:
     return "cover_ref_" + digest
 
 
+def _provenance_key(value: dict[str, object]) -> tuple[object, ...]:
+    context = value["context"]
+    assert isinstance(context, list)
+    return (
+        value["source_kind"],
+        value["provider"] or "",
+        value["designation"] or "",
+        tuple((item["field"], item["value"]) for item in context),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CoverPacketImage:
     reference: str
@@ -183,7 +194,7 @@ def prepare_cover_packet(
     images: list[CoverPacketImage] = []
     for candidate in selected:
         provenance: list[dict[str, object]] = []
-        for source in sorted(candidate.sources, key=lambda value: value.source_id):
+        for source in candidate.sources:
             detail = source.provenance
             provenance.append({
                 "context": [] if detail is None else [value.to_data() for value in detail.context],
@@ -191,10 +202,12 @@ def prepare_cover_packet(
                 "provider": None if detail is None else detail.provider,
                 "source_kind": source.kind.value,
             })
+        provenance.sort(key=_provenance_key)
         candidate_data.append({
             "height": candidate.height,
             "incumbent": candidate.incumbent,
             "media_type": "image/png",
+            "preview_bytes": len(candidate.payload),
             "preview_sha256": candidate.digest,
             "preview_variant": PREVIEW_VARIANT,
             "provenance": provenance,
@@ -204,11 +217,16 @@ def prepare_cover_packet(
         images.append(CoverPacketImage(candidate.reference, candidate.digest, candidate.payload))
 
     omissions.sort(key=lambda value: (value["reference"], value["reason"]))
-    packet = {
+    packet_body = {
         "candidates": candidate_data,
         "omissions": omissions,
-        "packet_reference": "cover_packet_" + hashlib.sha256(report.report_id.encode()).hexdigest(),
         "schema_version": "cover-review-packet-v1",
+    }
+    packet = {
+        **packet_body,
+        "packet_reference": "cover_packet_" + hashlib.sha256(
+            _canonical(packet_body).encode()
+        ).hexdigest(),
     }
     document = _canonical(packet)
     return PreparedCoverPacket(

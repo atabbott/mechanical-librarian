@@ -25,6 +25,8 @@ from mechanical_librarian_workbench.contained_reviewer_contract import (
     ContainedReviewResult,
     ContainedReviewerError,
     ContainedReviewerIdentity,
+    _CoverReviewImage,
+    _CoverReviewRequest,
     canonical_json,
 )
 
@@ -262,6 +264,25 @@ class ContainedReviewerAdapter:
         request: ContainedReviewRequest,
         dispatched: Callable[[int, int, str], None],
     ) -> ContainedReviewResult:
+        if type(request) is not ContainedReviewRequest:
+            raise ContainedReviewerProcessError("response_format")
+        return self._run(request, dispatched, ())
+
+    def run_cover(
+        self,
+        request: _CoverReviewRequest,
+        dispatched: Callable[[int, int, str], None],
+    ) -> ContainedReviewResult:
+        if type(request) is not _CoverReviewRequest or not request._is_admitted:
+            raise ContainedReviewerProcessError("response_format")
+        return self._run(request, dispatched, request.images)
+
+    def _run(
+        self,
+        request: ContainedReviewRequest | _CoverReviewRequest,
+        dispatched: Callable[[int, int, str], None],
+        images: tuple[_CoverReviewImage, ...],
+    ) -> ContainedReviewResult:
         if not sys.platform.startswith("linux"):
             raise ContainedReviewerProcessError("setup")
         job_path: Path | None = None
@@ -300,7 +321,7 @@ class ContainedReviewerAdapter:
                             )
                         )
                         os.chmod(job_path, 0o700)
-                        if request.images:
+                        if images:
                             image_path = Path(
                                 tempfile.mkdtemp(
                                     prefix="contained-reviewer-images-",
@@ -308,7 +329,7 @@ class ContainedReviewerAdapter:
                                 )
                             )
                             os.chmod(image_path, 0o700)
-                            for index, image in enumerate(request.images, start=1):
+                            for index, image in enumerate(images, start=1):
                                 target = image_path / f"{index:02d}.png"
                                 target.write_bytes(image.payload)
                                 os.chmod(target, 0o600)
@@ -353,7 +374,7 @@ class ContainedReviewerAdapter:
                                     job_path,
                                     result_path,
                                     image_path,
-                                    len(request.images),
+                                    len(images),
                                     provider_state_path,
                                     codex.invocation_path,
                                     sandbox.invocation_path,
@@ -1350,9 +1371,14 @@ def _validated_result(
     return ContainedReviewResult(serialized, digest)
 
 
-def _prompt(request: ContainedReviewRequest, *, schema_digest: str) -> str:
+def _prompt(
+    request: ContainedReviewRequest | _CoverReviewRequest,
+    *,
+    schema_digest: str,
+) -> str:
     image_binding = ",".join(
-        value.reference + "=" + value.digest for value in request.images
+        value.reference + "=" + value.digest
+        for value in (() if type(request) is ContainedReviewRequest else request.images)
     )
     return (
         "Only the bounded Instruction below is authoritative. "
@@ -1366,7 +1392,9 @@ def _prompt(request: ContainedReviewRequest, *, schema_digest: str) -> str:
     )
 
 
-def _output_schema(request: ContainedReviewRequest) -> dict[str, object]:
+def _output_schema(
+    request: ContainedReviewRequest | _CoverReviewRequest,
+) -> dict[str, object]:
     raw = json.loads(
         request.output_schema,
         parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
@@ -1376,7 +1404,9 @@ def _output_schema(request: ContainedReviewRequest) -> dict[str, object]:
     return raw
 
 
-def _schema_binding(request: ContainedReviewRequest) -> _SchemaBinding:
+def _schema_binding(
+    request: ContainedReviewRequest | _CoverReviewRequest,
+) -> _SchemaBinding:
     schema = _output_schema(request)
     _validate_output_schema(schema)
     serialized = request.output_schema.encode("utf-8")

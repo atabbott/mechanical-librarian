@@ -26,9 +26,13 @@ in total.
 
 The packet's ordered reference/digest mapping is part of the canonical reviewer
 request. The generic contained-reviewer entry point is image-free; the sole
-image-capable entry point accepts only canonical `cover-review-packet-v1` input
-whose candidate mapping exactly equals the ordered image mapping. The durable
-pre-egress attempt binds that packet together with the
+image-capable entry point admits a distinct cover request only through one full
+`cover-review-packet-v1` parser. That parser closes every packet, candidate,
+provenance, context, and omission field; validates the content-bound packet
+reference, media/variant, preview byte and dimension facts, incumbent state,
+closed omission reasons, limits, and exact ordered image mapping. The generic
+request and generic adapter method have no image member or image argument. The
+durable pre-egress attempt binds that packet together with the
 exact reviewer profile, instruction, and output schema. The local result binds
 the request and profile identities. Preview bytes are copied into a separate
 ephemeral private directory, mounted read-only in the Linux sandbox, passed as

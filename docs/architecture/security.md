@@ -451,8 +451,11 @@ paths, prompts, credentials, and reasoning never cross the boundary. Cover
 previews use opaque references, fixed 12-image/1-MiB-each/8-MiB-total limits,
 digest/order binding, a separate ephemeral read-only mount, and repeatable exact
 image arguments. The generic reviewer entry point is image-free. Its closed
-cover entry point accepts only canonical `cover-review-packet-v1` input whose
-ordered candidate references and digests exactly equal the supplied images.
+request and adapter method have no image member or image argument. A distinct
+cover request is created only by one full `cover-review-packet-v1` parser that
+validates all closed fields and invariants, a content-bound packet reference,
+preview byte/dimension facts, incumbent/provenance/omission facts and limits,
+and exact ordered reference/digest equality with the supplied images.
 Only the bounded Instruction is authoritative; canonical input, provider
 metadata, images, and OCR text are hostile evidence, not instructions;
 arbitrary paths, URLs, originals, remote fetches, target/service identities, and

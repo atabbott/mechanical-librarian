@@ -29,8 +29,8 @@ ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
 
 from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa: E402
-    ContainedReviewImage,
     ContainedReviewRequest,
+    admit_cover_review_request,
 )
 from mechanical_librarian_workbench.cover_packets import (  # noqa: E402
     MAX_COVER_PREVIEWS,
@@ -86,6 +86,59 @@ def _report(sources: tuple[CoverSource, ...]) -> MetadataReport:
         providers=(),
         cover_sources=tuple(sorted(sources, key=lambda value: value.source_id)),
     )
+
+
+def _packet_case(count: int = 2):
+    payloads = tuple(_preview(index) for index in range(1, count + 1))
+    sources = tuple(_source(index, payload) for index, payload in enumerate(payloads, 1))
+    report = _report(sources)
+    by_artifact = {
+        source.artifact.artifact_id: payload
+        for source, payload in zip(sources, payloads, strict=True)
+        if source.artifact is not None
+    }
+    packet = prepare_cover_packet(
+        report.to_json(), lambda artifact, _variant: by_artifact[artifact]
+    )
+    images = tuple(
+        (value.reference, value.digest, value.payload) for value in packet.images
+    )
+    return packet, images
+
+
+def _rebind_packet(value: dict[str, object]) -> str:
+    body = {
+        "candidates": value["candidates"],
+        "omissions": value["omissions"],
+        "schema_version": value["schema_version"],
+    }
+    value["packet_reference"] = "cover_packet_" + hashlib.sha256(
+        json.dumps(body, separators=(",", ":"), sort_keys=True).encode()
+    ).hexdigest()
+    return json.dumps(value, separators=(",", ":"), sort_keys=True)
+
+
+def _expanded_packet(packet: str, count: int, *, size: int = 32):
+    value = json.loads(packet)
+    template = value["candidates"][0]
+    candidates = []
+    images = []
+    for index in range(1, count + 1):
+        payload = _preview(index, size=size)
+        digest = hashlib.sha256(payload).hexdigest()
+        reference = "cover_ref_" + f"{index:064x}"
+        candidate = json.loads(json.dumps(template))
+        candidate.update({
+            "incumbent": False,
+            "preview_bytes": len(payload),
+            "preview_sha256": digest,
+            "reference": reference,
+        })
+        candidates.append(candidate)
+        images.append((reference, digest, payload))
+    value["candidates"] = candidates
+    value["omissions"] = []
+    return _rebind_packet(value), tuple(images)
 
 
 class CoverPacketTests(unittest.TestCase):
@@ -149,19 +202,7 @@ class CoverPacketTests(unittest.TestCase):
         self.assertEqual(len(image_arguments), 5)
 
     def test_only_cover_entry_accepts_exact_packet_bound_images(self) -> None:
-        payloads = (_preview(1), _preview(2))
-        report = _report(tuple(_source(index, payload) for index, payload in enumerate(payloads, 1)))
-        by_artifact = {
-            source.artifact.artifact_id: payload
-            for source, payload in zip(report.cover_sources, payloads, strict=True)
-            if source.artifact is not None
-        }
-        packet = prepare_cover_packet(
-            report.to_json(), lambda artifact, _variant: by_artifact[artifact]
-        )
-        exact = tuple(
-            (value.reference, value.digest, value.payload) for value in packet.images
-        )
+        packet, exact = _packet_case()
 
         self.assertNotIn(
             "image_payloads",
@@ -171,11 +212,13 @@ class CoverPacketTests(unittest.TestCase):
             reviewer_binding.run_contained_reviewer(
                 b"", "invoke", b"instruction", b"{}", b"{}", exact  # type: ignore[call-arg]
             )
-        admitted = reviewer_binding._validate_cover_packet_images(
-            packet.document.encode(), exact
+        admitted = admit_cover_review_request(
+            "Inspect.", packet.document,
+            '{"additionalProperties":false,"properties":{},"type":"object"}',
+            exact,
         )
         self.assertEqual(
-            [(value.reference, value.digest) for value in admitted],
+            [(value.reference, value.digest) for value in admitted.images],
             [(value.reference, value.digest) for value in packet.images],
         )
         mismatches = (
@@ -186,7 +229,7 @@ class CoverPacketTests(unittest.TestCase):
         )
         for mismatch in mismatches:
             with self.subTest(binding=[value[:2] for value in mismatch]), self.assertRaisesRegex(
-                ValueError, "binding is invalid"
+                Exception, "response_format"
             ):
                 reviewer_binding.run_cover_packet_reviewer(
                     b"", b"instruction", packet.document.encode(), b"{}", mismatch
@@ -203,7 +246,7 @@ class CoverPacketTests(unittest.TestCase):
             {"schema_version": "some-other-input-v1"},
             separators=(",", ":"), sort_keys=True,
         ).encode()
-        with self.assertRaisesRegex(ValueError, "binding is invalid"):
+        with self.assertRaisesRegex(Exception, "response_format"):
             reviewer_binding.run_cover_packet_reviewer(
                 b"", b"instruction", forged, b"{}", binding
             )
@@ -252,22 +295,19 @@ class CoverPacketTests(unittest.TestCase):
             )
 
     def test_image_order_and_digests_bind_the_request_identity(self) -> None:
-        payload = _preview(1)
-        image = ContainedReviewImage(
-            "cover_ref_" + "a" * 64, hashlib.sha256(payload).hexdigest(), payload
-        )
+        first_packet, first_images = _packet_case()
+        second_packet, second_images = _packet_case(3)
         schema = json.dumps(
             {"additionalProperties": False, "properties": {}, "type": "object"},
             separators=(",", ":"), sort_keys=True,
         )
-        request = ContainedReviewRequest("Inspect.", '{"packet":true}', schema, (image,))
-        changed = ContainedReviewRequest(
-            "Inspect.", '{"packet":true}', schema,
-            (ContainedReviewImage("cover_ref_" + "b" * 64, image.digest, payload),),
+        request = admit_cover_review_request(
+            "Inspect.", first_packet.document, schema, first_images
+        )
+        changed = admit_cover_review_request(
+            "Inspect.", second_packet.document, schema, second_images
         )
         self.assertNotEqual(request.digest, changed.digest)
-        with self.assertRaisesRegex(Exception, "response_format"):
-            ContainedReviewImage(image.reference, "0" * 64, payload)
 
     def test_image_count_and_aggregate_byte_limits_are_absolute(self) -> None:
         schema = json.dumps(
@@ -275,28 +315,50 @@ class CoverPacketTests(unittest.TestCase):
             separators=(",", ":"), sort_keys=True,
         )
 
-        def image(index: int, size: int = 32) -> ContainedReviewImage:
-            payload = _preview(index, size=size)
-            return ContainedReviewImage(
-                "cover_ref_" + f"{index:064x}",
-                hashlib.sha256(payload).hexdigest(),
-                payload,
-            )
-
-        images = tuple(image(index) for index in range(1, 13))
+        packet, _ = _packet_case()
+        document, images = _expanded_packet(packet.document, 12)
         self.assertEqual(
-            len(ContainedReviewRequest("Inspect.", '{"packet":true}', schema, images).images),
+            len(admit_cover_review_request("Inspect.", document, schema, images).images),
             12,
         )
+        over_count_document, over_count_images = _expanded_packet(packet.document, 13)
         with self.assertRaisesRegex(Exception, "response_format"):
-            ContainedReviewRequest(
-                "Inspect.", '{"packet":true}', schema, images + (image(13),)
+            admit_cover_review_request(
+                "Inspect.", over_count_document, schema, over_count_images
             )
+        over_bytes_document, over_bytes_images = _expanded_packet(
+            packet.document, 9, size=1_048_576
+        )
         with self.assertRaisesRegex(Exception, "response_format"):
-            ContainedReviewRequest(
-                "Inspect.", '{"packet":true}', schema,
-                tuple(image(index, size=1_048_576) for index in range(1, 10)),
+            admit_cover_review_request(
+                "Inspect.", over_bytes_document, schema, over_bytes_images
             )
+        with self.assertRaises(TypeError):
+            ContainedReviewRequest("Inspect.", '{"packet":true}', schema, images)  # type: ignore[call-arg]
+
+    def test_full_packet_parser_rejects_malformed_fields_and_invariants(self) -> None:
+        packet, images = _packet_case()
+        schema = '{"additionalProperties":false,"properties":{},"type":"object"}'
+        original = json.loads(packet.document)
+        mutations = {
+            "packet_reference": lambda value: value.__setitem__("packet_reference", "cover_packet_bad"),
+            "packet_binding": lambda value: value.__setitem__("packet_reference", "cover_packet_" + "0" * 64),
+            "omission": lambda value: value.__setitem__("omissions", [{"reason": "invented", "reference": "cover_ref_" + "f" * 64}]),
+            "omission_schema": lambda value: value.__setitem__("omissions", [{"extra": True, "reason": "shortlist_limit", "reference": "cover_ref_" + "f" * 64}]),
+            "dimension": lambda value: value["candidates"][0].__setitem__("width", 0),
+            "incumbent": lambda value: value["candidates"][0].__setitem__("incumbent", True),
+            "provenance": lambda value: value["candidates"][0]["provenance"][0].__setitem__("provider", " invalid"),
+            "byte_fact": lambda value: value["candidates"][0].__setitem__("preview_bytes", 31),
+        }
+        for name, mutate in mutations.items():
+            value = json.loads(json.dumps(original))
+            mutate(value)
+            document = (
+                json.dumps(value, separators=(",", ":"), sort_keys=True)
+                if name in {"packet_reference", "packet_binding"} else _rebind_packet(value)
+            )
+            with self.subTest(field=name), self.assertRaisesRegex(Exception, "response_format"):
+                admit_cover_review_request("Inspect.", document, schema, images)
 
 
 if __name__ == "__main__":

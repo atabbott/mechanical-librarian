@@ -88,8 +88,12 @@ binds the canonical ordered opaque-reference/preview-digest mapping. Exact
 preview bytes are copied to a separate ephemeral directory, mounted read-only,
 supplied as repeatable ordered `--image` arguments, and removed with the job.
 The cover entry accepts only canonical `cover-review-packet-v1` input whose
-ordered candidate references and digests exactly equal those images. A changed,
-repeated, unknown, non-PNG, over-bound, or unbound image fails closed. Only the
+content-bound packet reference, every closed candidate/provenance/context and
+omission field, byte/dimension and incumbent facts, omission reasons, and limits
+have passed one full parser, and whose ordered candidate references and digests
+exactly equal those images. The generic request and adapter method have no image
+member or argument. A changed, repeated, unknown, non-PNG, over-bound, or
+unbound image fails closed. Only the
 bounded Instruction is authoritative; canonical input, provider metadata,
 images, and OCR text are hostile evidence and never instructions.
 Target/provider configuration additionally admits only loopback or `.invalid`
