@@ -10,13 +10,16 @@ or production-library authorization.
 The accepted references are protected only for the surfaces they were designed
 to decide:
 
-- Variant M at `026e3388c86f583af5d5a136c4bf6a4192a77af6` governs the
-  shared shell, Library, Attention, review detail, responsive visual language,
-  and direct value choice.
-- Refined Policy B at `62960d32547306741ecf52ed1b892c3c91083c9c` governs
-  Policy only. Its Library and Attention experiments are not authoritative.
-- Activity B at `5d2098487b446174d8b4235b6dcce4e5caedd295` governs Activity
-  only.
+- [Variant M at `026e3388c`](https://github.com/atabbott/mechanical-librarian/tree/026e3388c86f583af5d5a136c4bf6a4192a77af6), retained on the remote
+  prototype branch `prototype/f16a-functional-refinements`, governs the shared
+  shell, Library, Attention, review detail, responsive visual language, and
+  direct value choice.
+- [Refined Policy B at `62960d3`](https://github.com/atabbott/mechanical-librarian/tree/62960d32547306741ecf52ed1b892c3c91083c9c), retained on the remote
+  prototype branch `prototype/post-0-11-policy-ui`, governs Policy only. Its
+  Library and Attention experiments are not authoritative.
+- [Activity B at `5d20984`](https://github.com/atabbott/mechanical-librarian/tree/5d2098487b446174d8b4235b6dcce4e5caedd295), retained on the remote
+  prototype branch `prototype/continuous-guarded-application`, governs
+  Activity only.
 
 Ordinary implementation variance is permitted, but not a different
 composition, hierarchy, typography, palette, theme treatment, responsive
@@ -37,8 +40,12 @@ reviewer facts, notices, progressive evidence, and history distinct. The
 current value and every specific eligible proposed value are the choices;
 selecting one records only that field and advances predictably. There are no
 generic Accept, Keep, or Reject controls and no separate submit step. Stale,
-failed, rejected, or ambiguous mutations never report success and recover from
-authoritative state.
+failed, rejected, or ambiguous mutations never report false success. When a
+failed or ambiguous outcome cannot be followed by an authoritative detail
+read, the interface does not claim that the case was refreshed: it blocks every
+choice and retry for that case across persistent-workspace remounts. Only a
+later successful authoritative detail read made after the lock clears it and
+restores eligible choices.
 
 Policy is the refined semantic field notebook with synchronized desktop and
 compact chapter navigation, readable active and draft state, supported posture
@@ -68,13 +75,15 @@ isolation, and one-container deployment contract remain unchanged.
 
 ## Qualification contract
 
-The final candidate is accepted only from one clean exact head. The complete
-public gate runs the fast source cohort, pinned frontend generation, types,
-lint, tests and deterministic build, architecture and clean-schema checks,
-protected browser cohort, exact installed-wheel cohort, slow/resource cohort,
-and exact-container lifecycle. Generated OpenAPI, TypeScript DTOs,
-configuration schema, packaged assets, licences, and documentation must agree
-with that head.
+The final candidate is accepted only from one clean exact head. The hosted
+public pull-request gate combines the fast source cohort, the required
+exact-installed cohort, and the protected browser cohort. Pinned frontend
+generation, types, lint, tests and deterministic build, architecture and
+clean-schema checks remain within those owned jobs. The explicit exact-head
+slow/resource cohort and exact-container lifecycle qualification run
+separately; a green hosted public gate does not substitute for either result.
+Generated OpenAPI, TypeScript DTOs, configuration schema, packaged assets,
+licences, and documentation must agree with the same head.
 
 Direct inspection of the installed application supplements automation. It
 compares every governed surface with its own reference at desktop and 390
