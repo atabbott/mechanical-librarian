@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Reconcile the 0.15.0 source-only semantic-cover workbench against its sealed
+  aggregate corpus, packet, identity, observation, and deterministic-policy
+  evidence. The cumulative proof preserves the unavailable semantic observer
+  and 800 typed policy abstentions as negative evidence, confirms no runtime
+  CLI/HTTP surface or wheel/container inclusion, and does not promote #501.
+  (#544, #500)
+
 - Add a source-only deterministic cover-policy report over exact packet,
   identity and closed observation evidence. Three typed booleans can avoid
   promotional text or tie-in branding and prefer minimal composition; unknown,

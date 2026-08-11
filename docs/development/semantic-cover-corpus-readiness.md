@@ -202,3 +202,33 @@ Issue #543 passes its deterministic policy and real fail-closed abstention
 proof while making no semantic-quality or recommendation claim.
 The tracked report contains no private corpus material, and #501 remains
 unpromoted.
+
+## 0.15.0 cumulative closeout
+
+This closeout reuses the sealed aggregate evidence; it does not reopen,
+re-expose, retune, or rerun either final-holdout cohort. The current assembled
+source workbench is the composition of the preserved corpus receipt (#546),
+bounded packet admission (#542), conservative identity projection (#540),
+closed observation contract (#541), and deterministic policy adjudication
+(#543). The public source identities for the latter four completed increments
+are `28cb7d71d2f6938aa56a6661734de4ab0729f808`,
+`0d1b672b99c63911adc56503561163bf9e9fe5e4`,
+`9ecdd60137700eddc11ed69274495edba6226a21`, and
+`04f11a43ddc69107c04f87b7aafbec3b73443734`, respectively. The #546 receipt
+remains sealed and is represented here only by its aggregate-safe result.
+
+The cumulative proof establishes contract and admission correctness: exact
+report-bound packet/image admission, conservative identity handling, closed
+observation and policy schemas, deterministic fail-closed adjudication, and
+source-only distribution exclusion. It does **not** establish semantic label
+quality, semantic repeat agreement, acceptable-set adherence, a supported
+five-candidate transport bound, or model scale. The preserved observer and
+policy results remain unavailable/all-abstention evidence rather than a
+manufactured pass.
+
+No semantic-cover CLI or HTTP operation exists in the runtime product. The
+workbench remains repository-only and absent from the wheel and container;
+Google Books remains metadata-only. The public record contains only the
+aggregate results above: no corpus values, media, labels, paths, URLs, digests,
+or per-case outcomes. This report-only result keeps #501 and 0.15.1
+unpromoted.
