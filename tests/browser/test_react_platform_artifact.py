@@ -197,6 +197,8 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 ".lenses a, .preview-button, .library-pager a, .library-work-copy h3 a"
             ).all():
                 self.assertGreaterEqual(control.bounding_box()["height"], 44)
+            for lens in page.locator(".lenses a").all():
+                self.assertGreaterEqual(lens.bounding_box()["width"], 44)
             long_title = page.locator(".library-work-copy h3 a").first
             self.assertLessEqual(
                 long_title.evaluate("node => node.scrollWidth"),
@@ -283,6 +285,8 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 ".lenses a, .preview-button, .library-pager a, .library-work-copy h3 a"
             ).all():
                 self.assertGreaterEqual(control.bounding_box()["height"], 44)
+            for lens in page.locator(".lenses a").all():
+                self.assertGreaterEqual(lens.bounding_box()["width"], 44)
             compact_title = page.locator(".library-work-copy h3 a").first
             self.assertLessEqual(
                 compact_title.evaluate("node => node.scrollWidth"),

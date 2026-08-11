@@ -58,7 +58,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .library-works-heading h2 { margin:0; font-family:Georgia,serif; font-size:1.45rem; }
 .library-works-heading > span, .library-order { color:var(--soft); font-size:.64rem; }
 .lenses { display:flex; gap:.35rem; margin:1rem 0 .65rem; overflow-x:auto; padding:.25rem; }
-.lenses a { display:inline-flex; min-height:44px; flex:0 0 auto; align-items:center; padding:.55rem .7rem; border:1px solid var(--line); border-radius:999px; color:var(--soft); font-size:.64rem; font-weight:750; text-decoration:none; }
+.lenses a { display:inline-flex; min-width:44px; min-height:44px; flex:0 0 auto; align-items:center; justify-content:center; padding:.55rem .7rem; border:1px solid var(--line); border-radius:999px; color:var(--soft); font-size:.64rem; font-weight:750; text-decoration:none; }
 .lenses a[aria-current='page'] { border-color:var(--accent); color:var(--accent-strong); background:var(--accent-soft); }
 .search { margin-block:1rem; }
 .search label { display:block; margin-bottom:.3rem; font-size:.76rem; font-weight:700; }
