@@ -10,7 +10,7 @@ export type DetailSubview = 'review' | 'evidence' | 'history'
 export type PolicySection = 'identity' | 'publication' | 'curation' | 'unsupported'
 export type DecisionOutcome = 'accept' | 'keep_current' | 'reject'
 
-export interface LibrarySearch { lens: LibraryLens; q?: string; cursor?: string; preview?: string }
+export interface LibrarySearch { lens: LibraryLens; q?: string; cursor?: string; preview?: string; field?: string; attention?: 'open' }
 export interface AttentionSearch { q?: string; cursor?: string }
 export interface DetailSearch { field?: string; subview: DetailSubview }
 export interface PolicySearch { section: PolicySection }
