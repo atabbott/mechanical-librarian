@@ -44,4 +44,3 @@ current and proposed metadata, so the HTTP response remains authenticated and
 private/no-store and CLI output must be handled as private application data.
 The bounded replay costs no network access and creates no database or target
 write.
-
