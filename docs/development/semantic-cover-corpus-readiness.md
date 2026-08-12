@@ -531,6 +531,7 @@ multimodal model can turn exact report-bound covers into useful closed
 observations, and deterministic code can turn those observations into useful
 policy-compatible recommendations. It does not prove unseen generalisation,
 production readiness, or reliable fine-grained composition classification.
-Issue #501 and 0.15.1 remain unpromoted. Issue #544, tracker #500, and milestone
-#20 remain open until the maintainer reviews this package and explicitly
-approves closure.
+Issue #501 and 0.15.1 remain unpromoted. The maintainer reviewed and accepted
+this package on 2026-08-12, completing #544 and authorizing reconciliation of
+tracker #500 and milestone #20. That acceptance does not activate a runtime
+surface, publish a release, or change the limitations above.
