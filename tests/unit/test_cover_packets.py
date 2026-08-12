@@ -37,11 +37,14 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderCandidate,
     ProviderClaim,
     ProviderEvidenceKind,
+    ProviderLaneCandidate,
+    ProviderLaneObservation,
     ProviderQueryKind,
     ProviderObservation,
     ProviderStatus,
     TargetFacts,
     default_target_fields,
+    provider_lane_candidate_reference,
 )
 
 ROOT = Path(__file__).parents[2]
@@ -1357,6 +1360,8 @@ class CoverIdentityTests(unittest.TestCase):
         *,
         local_creators: tuple[str, ...],
         provider_creators: tuple[str, ...],
+        lane_kind: ProviderQueryKind | None = ProviderQueryKind.ISBN,
+        unrelated_isbn_mapping: bool = False,
     ) -> tuple[str, str, tuple[tuple[str, str, bytes], ...]]:
         payload = _preview(33)
         source = _source(3, payload)
@@ -1384,6 +1389,15 @@ class CoverIdentityTests(unittest.TestCase):
                     occurrence=index,
                 )
                 for index, value in enumerate(local_creators)
+            ),
+            LocalClaim.create(
+                kind=ClaimKind.ISBN,
+                observed="9780306406157",
+                canonical="9780306406157",
+                excerpt="ISBN 9780306406157",
+                applicability="unknown",
+                checksum="valid_isbn_13",
+                applicability_basis="unlabelled",
             ),
         )
         claims = (
@@ -1416,6 +1430,53 @@ class CoverIdentityTests(unittest.TestCase):
             "work-3",
             claims,
         )
+        candidates = (candidate,)
+        lanes: tuple[ProviderLaneObservation, ...] = ()
+        input_references: tuple[str, ...] = ()
+        if lane_kind is not None:
+            mapped_candidate = candidate
+            if unrelated_isbn_mapping:
+                mapped_candidate = ProviderCandidate(
+                    "edition-4",
+                    "work-4",
+                    (),
+                )
+                candidates = (candidate, mapped_candidate)
+            isbn_identity = "lane_" + "a" * 64
+            work_identity = "lane_" + "b" * 64
+            isbn_candidate = (
+                mapped_candidate
+                if lane_kind is ProviderQueryKind.ISBN or unrelated_isbn_mapping
+                else None
+            )
+            work_candidate = candidate if lane_kind is ProviderQueryKind.WORK else None
+            def lane(
+                identity: str,
+                kind: ProviderQueryKind,
+                item: ProviderCandidate | None,
+                inputs: tuple[str, ...],
+            ) -> ProviderLaneObservation:
+                return ProviderLaneObservation(
+                    identity,
+                    kind,
+                    ProviderStatus.CANDIDATES if item is not None else ProviderStatus.NO_MATCH,
+                    inputs,
+                    "9780306406157" if kind is ProviderQueryKind.ISBN else None,
+                    () if item is None else (
+                        ProviderLaneCandidate(
+                            provider_lane_candidate_reference(
+                                "hardcover", identity, item.identity, item.work_identity
+                            ),
+                            item.identity,
+                            item.work_identity,
+                        ),
+                    ),
+                )
+            lanes = (
+                lane(isbn_identity, ProviderQueryKind.ISBN, isbn_candidate, (local_claims[-1].reference,)),
+                lane(work_identity, ProviderQueryKind.WORK, work_candidate, (local_claims[0].reference,)),
+            )
+            input_references = tuple(sorted({reference for lane_value in lanes for reference in lane_value.input_references}))
         report = MetadataReport.create(
             target=TargetFacts(
                 "synthetic", "books", "item", default_target_fields("Synthetic title")
@@ -1427,10 +1488,11 @@ class CoverIdentityTests(unittest.TestCase):
                 ProviderObservation(
                     "hardcover",
                     ProviderStatus.CANDIDATES,
-                    (local_claims[0].reference,),
-                    (candidate,),
+                    input_references,
+                    candidates,
                     ProviderQueryKind.DISCOVERY,
                     "hardcover",
+                    lanes=lanes,
                 ),
             ),
             cover_sources=(source,),
@@ -1455,6 +1517,29 @@ class CoverIdentityTests(unittest.TestCase):
                 )
                 result = json.loads(classify_cover_identity(report, packet, images).document)
                 self.assertEqual(result["candidates"][0]["outcome"], expected)
+
+    def test_typed_lane_mapping_requires_the_matched_candidate_in_an_isbn_lane(self) -> None:
+        cases = (
+            (ProviderQueryKind.WORK, False, "unknown"),
+            (ProviderQueryKind.ISBN, False, "plausible_match"),
+            (ProviderQueryKind.WORK, True, "unknown"),
+            (None, False, "plausible_match"),
+        )
+        for lane_kind, unrelated_isbn_mapping, expected in cases:
+            with self.subTest(
+                lane_kind=lane_kind,
+                unrelated_isbn_mapping=unrelated_isbn_mapping,
+            ):
+                report, packet, images = self._typed_discovery_identity_case(
+                    local_creators=(),
+                    provider_creators=(),
+                    lane_kind=lane_kind,
+                    unrelated_isbn_mapping=unrelated_isbn_mapping,
+                )
+                value = json.loads(
+                    classify_cover_identity(report, packet, images).document
+                )
+                self.assertEqual(value["candidates"][0]["outcome"], expected)
 
     def test_source_bound_epub_cover_is_verified_manifestation(self) -> None:
         source = _source(3, _preview(3), embedded=True)

@@ -69,16 +69,19 @@
   evidence references; explicit identifier and edition/work contradictions plus
   incompatible manifestation publication/format evidence win. Exact
   report-and-packet-bound EPUB covers verify their source manifestation only;
-  an unresolved provider discovery cover is merely plausible with retained title
-  agreement and no unopposed creator/contributor disagreement or deterministic
+  an unresolved provider cover is merely plausible when its exact edition/work
+  pair is retained by an ISBN lane (or an unmapped frozen legacy discovery
+  report), with retained title agreement and no unopposed creator/contributor
+  disagreement or deterministic
   work contradiction. Exact retained creator/contributor overlap counts as
   support and missing creator values are neutral; pairwise disagreement
   alongside agreement and edition-specific disagreement do not
   erase title support, and plausible never means
   verified—without provider calls, visual inference, persistence, or write
   authority. Exact report-bound reference and provenance checks reject
-  digest-equal foreign packets; date-evidence links and default work covers
-  retain their conservative identity meaning. (#540)
+  digest-equal foreign packets; edition-specific date evidence neither supports
+  nor vetoes plausibility, and default work covers retain their conservative
+  identity meaning. (#540)
 
 - Polish the authenticated interface without changing its authority: restore
   the asymmetric book-spine shell mark and touch-safe secondary actions; make

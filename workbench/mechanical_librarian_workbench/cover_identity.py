@@ -51,8 +51,9 @@ _CLASSIFIER_RULES = (
     "accepted-manifestation-with-compatible-publication:verified-manifestation",
     "accepted-manifestation-with-incompatible-publication:conflict",
     "accepted-or-associated-work-including-default-cover:verified-work",
-    "provider-discovery-title-agreement-without-unopposed-creator-or-work-contradiction:plausible",
-    "provider-discovery-title-insufficient-or-unopposed-creator-disagreement:unknown",
+    "provider-isbn-lane-title-agreement-without-unopposed-creator-or-work-contradiction:plausible",
+    "provider-isbn-lane-title-insufficient-or-unopposed-creator-disagreement:unknown",
+    "legacy-discovery-without-lane-candidate-mappings:aggregate-fallback",
 )
 _CLASSIFIER_REFERENCE = "cover_identity_classifier_" + hashlib.sha256(
     canonical_packet_json(
@@ -254,11 +255,7 @@ def _classify_sources(
                         source,
                         observation.provider,
                         candidate,
-                        getattr(
-                            observation,
-                            "query_kind",
-                            ProviderQueryKind.DISCOVERY,
-                        ),
+                        _is_isbn_discovery_candidate(observation, candidate),
                     )
                 )
     if not matches:
@@ -269,7 +266,7 @@ def _classify_sources(
     creator_or_contributor_disagreement = False
     manifestation = False
     work = False
-    for source, provider, candidate, query_kind in matches:
+    for source, provider, candidate, isbn_discovery_supported in matches:
         if any(
             item.kind
             is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
@@ -290,7 +287,7 @@ def _classify_sources(
         if unrelated:
             return "conflict", ["unrelated_identifier"], unrelated
 
-        if query_kind is ProviderQueryKind.DISCOVERY:
+        if isbn_discovery_supported:
             (
                 candidate_title_agreement,
                 candidate_creator_or_contributor_agreement,
@@ -356,6 +353,31 @@ def _classify_sources(
             "retained_title_agreement",
         ],
         [],
+    )
+
+
+def _is_isbn_discovery_candidate(
+    observation: object,
+    candidate: ProviderCandidate,
+) -> bool:
+    lanes = tuple(getattr(observation, "lanes", ()))
+    lane_candidates = tuple(
+        lane_candidate
+        for lane in lanes
+        for lane_candidate in getattr(lane, "candidates", ())
+    )
+    if not lane_candidates:
+        return getattr(
+            observation,
+            "query_kind",
+            ProviderQueryKind.DISCOVERY,
+        ) is ProviderQueryKind.DISCOVERY
+    return any(
+        lane.kind is ProviderQueryKind.ISBN
+        and lane_candidate.edition_identity == candidate.identity
+        and lane_candidate.work_identity == candidate.work_identity
+        for lane in lanes
+        for lane_candidate in lane.candidates
     )
 
 

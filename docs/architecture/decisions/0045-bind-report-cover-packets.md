@@ -92,7 +92,11 @@ already bound by the report and packet verifies its source manifestation only.
 It never confers identity on a provider cover or Audiobookshelf incumbent.
 Unrelated identifier evidence, retained edition/work contradictions,
 incompatible manifestation publication/format evidence win over provider
-verification. An otherwise unresolved report-bound provider discovery cover is
+verification. An otherwise unresolved report-bound provider cover is eligible
+for this limited discovery inference only when its exact edition/work pair is
+retained by an ISBN lane; a mixed aggregate does not let a work-only candidate
+borrow another lane's provenance. Frozen legacy reports with no lane-candidate
+mappings retain the aggregate discovery fallback. Such a cover is
 `plausible_match` only with retained title agreement and without a retained
 creator/contributor disagreement that has no creator/contributor agreement
 (including exact retained overlap), or a deterministic work contradiction.
@@ -108,9 +112,9 @@ URLs, or credentials, and makes no visual, provider, policy, persistence, or
 write decision. Candidate admission recomputes the report-bound opaque source
 reference, normalized provenance, incumbent state, original dimensions, and
 preview variant; matching preview bytes alone cannot bind a foreign packet.
-Retained date-evidence links participate in the same conservative compatibility
-result as claim links, and a provider default cover with explicit work identity
-is work-designated for verification.
+Provider default covers with explicit work identity are work-designated for
+verification. Edition-specific date evidence is not plausibility support or a
+veto once title support is established.
 
 ## Consequences
 

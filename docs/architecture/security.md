@@ -454,8 +454,10 @@ references and fixed outcome/reason codes, and gives retained identifier and
 edition/work contradictions plus incompatible manifestation publication/format
 evidence precedence over provider verification. An exact report-and-packet-bound
 EPUB cover verifies its source manifestation only, never a provider cover or
-Audiobookshelf incumbent. An otherwise unresolved provider discovery cover is
-plausible only with retained title agreement and no unopposed
+Audiobookshelf incumbent. An otherwise unresolved provider cover is plausible
+only when its exact edition/work pair is retained by an ISBN lane, or by the
+legacy aggregate-discovery fallback when no lane-candidate mapping exists, and
+it has retained title agreement and no unopposed
 creator/contributor disagreement or deterministic work contradiction. Exact
 retained creator/contributor overlap counts as agreement. Missing creator values
 are neutral; pairwise disagreement alongside agreement and edition-specific
@@ -464,8 +466,8 @@ verified, and no title agreement or an unopposed creator/contributor
 disagreement remains unknown. Admission
 recomputes exact report-bound candidate reference, provenance, incumbent,
 dimension, and variant facts, so digest-equal foreign packets fail closed.
-Retained date-evidence comparisons are included, and default provider covers
-remain work-level rather than manifestation-level evidence.
+Edition-specific date evidence is neither plausibility support nor a veto; default
+provider covers remain work-level rather than manifestation-level evidence.
 It has no image inference, provider dispatch, child process, persistence,
 policy, or write authority.
 

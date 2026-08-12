@@ -44,7 +44,8 @@ contradictions, and incompatible manifestation publication/format evidence
 produce `conflict` before provider verification. An exact report-and-
 packet-bound EPUB cover verifies that source manifestation only, never a
 provider cover or Audiobookshelf incumbent. An otherwise unresolved provider
-discovery cover is `plausible_match` only with positive retained title agreement
+cover is `plausible_match` only when its exact edition/work pair is retained by
+an ISBN lane (or an unmapped frozen legacy discovery report) and it has positive title agreement
 and no unopposed creator/contributor disagreement or deterministic work
 contradiction. Exact retained creator/contributor overlap counts as agreement.
 Missing creator values are neutral because cover-only discovery may not retain
@@ -56,8 +57,8 @@ creator/contributor disagreement, or unbound provider identity remains
 identity evidence.
 Candidate references and normalized provenance are re-derived from the report;
 matching preview bytes cannot substitute a packet from another report. Date
-evidence links participate in compatibility, and a default provider cover with
-explicit work identity can verify only the work.
+evidence is not identity plausibility support or a veto, and a default provider
+cover with explicit work identity can verify only the work.
 
 `cover-observation-report` reuses the same exact report-bound packet and sole
 image-capable reviewer entry, but asks only for four visible, policy-neutral
