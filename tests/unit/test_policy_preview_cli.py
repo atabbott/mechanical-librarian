@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -93,3 +94,14 @@ class PolicyPreviewCliTests(unittest.TestCase):
             path = Path(temporary) / "policy.json"
             path.write_text(json.dumps(profile), encoding="utf-8")
             self.assertEqual(1, main(["policy-preview", "--config", str(path), "--database", str(path), "--profile", str(path)], policy_preview_runner=lambda *_: self.fail("called"), stdout=io.StringIO(), stderr=io.StringIO()))
+
+    def test_oversized_and_special_profiles_fail_before_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            oversized = root / "oversized.json"
+            oversized.write_bytes(b"x" * 16_385)
+            fifo = root / "profile.fifo"
+            os.mkfifo(fifo)
+            for path in (oversized, fifo):
+                with self.subTest(path=path.name):
+                    self.assertEqual(1, main(["policy-preview", "--config", str(path), "--database", str(path), "--profile", str(path)], policy_preview_runner=lambda *_: self.fail("called"), stdout=io.StringIO(), stderr=io.StringIO()))

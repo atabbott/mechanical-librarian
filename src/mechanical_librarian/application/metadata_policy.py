@@ -213,6 +213,8 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
             )
             if type(pairs_total) is not int or pairs_total < 0 or type(pairs) is not tuple or len(pairs) > 20:
                 raise MetadataPolicyApplicationError("policy preview is unavailable")
+            if hasattr(repository, "current_policy_impact_pairs"):
+                count = pairs_total
             # The stored pair proves exact-current lineage. Re-evaluate its
             # immutable report through the existing pure proposal compiler so
             # a changed draft receives a new exact policy binding without

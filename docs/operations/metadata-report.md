@@ -430,7 +430,8 @@ state.
 ## Rich metadata policy preview
 
 The policy notebook and `policy-preview` CLI read at most 20 exact-current
-review lineages per library in stable connection/item/case order. The persisted
+review lineages across the complete response, in stable library then
+connection/item/case order. The persisted
 pair establishes current lineage; preview replays the immutable report through
 the pure proposal evaluator under the requested resolved draft, then projects
 the eight closed rich-field choices. The response reports the total and whether

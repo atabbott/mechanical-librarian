@@ -229,7 +229,12 @@ def _series_candidate(result: ProposalResult) -> ProposalAlternative | None:
     alternative = result.alternatives[0]
     if alternative.value.kind is not ProposalValueKind.SERIES:
         return None
-    if result.outcome in {ProposalOutcome.PROPOSE_CHANGE, ProposalOutcome.KEEP}:
+    if result.outcome is ProposalOutcome.PROPOSE_CHANGE:
+        return _candidate(result)
+    if (
+        result.outcome is ProposalOutcome.KEEP
+        and alternative.assessment is ProposalAssessment.PRESERVES_TARGET
+    ):
         return alternative
     return None
 

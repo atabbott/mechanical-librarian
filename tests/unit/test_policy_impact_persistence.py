@@ -135,4 +135,5 @@ class PolicyImpactPersistenceTests(unittest.TestCase):
             repository._connection.commit()
             with self.assertRaises(Exception):
                 repository.current_policy_impact_pairs("ebooks", 20)
+            self.assertFalse(repository._connection.in_transaction)
             repository.close()
