@@ -41,10 +41,12 @@ class RichMetadataPreviewTests(unittest.TestCase):
     def _preview_field(self, report, field, option):
         options = dict(MetadataPolicyProfile.builtin().options)
         options[field] = option
+        destinations = dict(MetadataPolicyProfile.builtin().destinations)
+        destinations[field] = "ask"
         profile = MetadataPolicyProfile.create(
             "Exact field preview",
             options,
-            dict(MetadataPolicyProfile.builtin().destinations),
+            destinations,
         )
         policy = resolve_policy(profile, report.target.library)
         proposal = evaluate_report(
@@ -394,6 +396,17 @@ class RichMetadataPreviewTests(unittest.TestCase):
         self.assertEqual(("projected", "2 < 3", None), (
             visible.outcome, visible.desired_value, visible.reason,
         ))
+        self.assertIsNotNone(visible.source_candidate_id)
+        self.assertEqual(
+            (transformed.reference,), visible.source_evidence_references
+        )
+        safe_google = self._preview_field(
+            google, "description_fill", "safe_plain_text"
+        )
+        self.assertEqual(
+            ("abstain", "option_evidence_unavailable"),
+            (safe_google.outcome, safe_google.reason),
+        )
 
         safe = _claim(
             "catalogue", "edition-1", ClaimKind.DESCRIPTION,
@@ -409,6 +422,8 @@ class RichMetadataPreviewTests(unittest.TestCase):
             ordinary, "description_fill", "google_visible_text"
         )
         self.assertEqual("Bounded plain description", plain.desired_value)
+        self.assertIsNotNone(plain.source_candidate_id)
+        self.assertEqual((safe.reference,), plain.source_evidence_references)
         self.assertEqual(
             ("abstain", "option_evidence_unavailable"),
             (unavailable.outcome, unavailable.reason),
@@ -438,6 +453,57 @@ class RichMetadataPreviewTests(unittest.TestCase):
             ("projected", "2 < 3", None),
             (mixed.outcome, mixed.desired_value, mixed.reason),
         )
+        self.assertEqual(
+            (transformed.reference,), mixed.source_evidence_references
+        )
+    def test_plain_description_requires_exact_non_transformed_source(self) -> None:
+        transformed = _claim(
+            "alpha_google", "edition-1", ClaimKind.DESCRIPTION,
+            "Shared  description", scope=ClaimScope.WORK,
+        )
+        ordinary = _claim(
+            "zulu", "edition-2", ClaimKind.DESCRIPTION,
+            "Shared description", scope=ClaimScope.WORK,
+        )
+        normalized_equivalent = _report(providers=(
+            _provider(
+                "alpha_google", "edition-1", (transformed,),
+                (ProviderEvidence(
+                    ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
+                    "google-books-html-visible-text-v1", ClaimScope.WORK,
+                ),),
+                authority="google_books",
+            ),
+            _provider("zulu", "edition-2", (ordinary,)),
+        ))
+        safe = self._preview_field(
+            normalized_equivalent, "description_fill", "safe_plain_text"
+        )
+        self.assertEqual(
+            ("abstain", "option_evidence_unavailable"),
+            (safe.outcome, safe.reason),
+        )
+
+        transformed_elsewhere = _claim(
+            "catalogue", "edition-3", ClaimKind.DESCRIPTION,
+            "Transformed elsewhere", scope=ClaimScope.WORK,
+        )
+        non_google_transform = _report(providers=(_provider(
+            "catalogue", "edition-3", (transformed_elsewhere,),
+            (ProviderEvidence(
+                ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
+                "google-books-html-visible-text-v1", ClaimScope.WORK,
+            ),),
+        ),))
+        for option in ("safe_plain_text", "google_visible_text"):
+            with self.subTest(option=option):
+                result = self._preview_field(
+                    non_google_transform, "description_fill", option
+                )
+                self.assertEqual(
+                    ("abstain", "option_evidence_unavailable"),
+                    (result.outcome, result.reason),
+                )
 
     def test_google_description_requires_transform_and_authority(self) -> None:
         claim = _claim(

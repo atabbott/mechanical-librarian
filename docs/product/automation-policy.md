@@ -28,14 +28,16 @@ category suspension, and explicit recovery fail closed by retaining would-be
 automatic work in human Attention. Any field, option, or policy revision outside
 that exact envelope remains human-routed until separately qualified.
 
-The published F20 rich-metadata candidate qualifies the three `series` options
-and both `isbn_form` options for decision-only Automatic. Its eight rich fields
-retain exact aggregate-safe terminal statuses: evaluated subtitle options are
-`not_qualified`; options without accepted truth are `insufficient_coverage`;
-`tags:off` is policy-only; and `explicit:unsupported` is human-only. Owners
-retain `Ask me` or `Ignore` for every non-automatic rich option. This authority
-records immutable decisions only and does not bypass effect consent
-or any guarded-write control.
+The published F20 rich-metadata candidate qualifies the three `series` options,
+both `isbn_form` options, genre add/replace, tag fill/add/replace, and safe
+plaintext description for decision-only Automatic. Subjective fields qualify
+on exact work-bound source projection, completeness, and safe operation—not on
+matching one preferred taxonomy or prose answer. Subtitle, genre fill-empty,
+and Google visible-text remain `not_qualified`; ASIN remains
+`insufficient_coverage`; `tags:off` is policy-only and stays the default; and
+`explicit:unsupported` is human-only. Owners retain `Ask me` or `Ignore` for
+every non-automatic rich option. This authority records immutable decisions
+only and does not bypass effect consent or any guarded-write control.
 
 ## Availability before curation
 
@@ -90,7 +92,7 @@ provider evidence.
 | Publisher | Fill or correct from applicable embedded edition evidence or a credible edition match. | Imprint and publisher roles are ambiguous or the evidence appears to refer to another edition. |
 | Identifiers | Add valid, typed identifiers and replace malformed or invalid current values under ordinary applicable field evidence. Supersede a validated current comparable identifier only when an applicable embedded/content identifier and a materially independent provider identifier agree on the same validated canonical replacement identity. Preserve raw observations and lineage. | Conflict identifies another applicable edition, or required validation, edition applicability, materially independent lineage, or agreement on the same canonical replacement identity is missing or unresolved. |
 | Cover | Replace when the candidate is clearly more legible, relevant, and visually useful. Exact regional edition matching is not required. | Candidates are similarly good but materially different, work identity is uncertain, or the image is misleading for the content. |
-| Description, genres, narrator, and other fields | Preserve initially unless a field-specific policy and adapter capability have passed shadow qualification. Safe empty-field fills may be enabled independently. | Replacement is subjective, provider vocabularies conflict, or evidence does not support field applicability. |
+| Description, genres, tags, narrator, and other fields | Preserve initially unless a field-specific policy and adapter capability have passed qualification. Qualified subjective-field operations project one exact work-bound source value without synthesis or semantic relabelling; tags remain off by default. | Provenance is incomplete, sources would need synthesis, the operation is unqualified, or evidence does not support field applicability. |
 | Duplicate or media removal | Never automatic. | Always requires a separate destructive review and explicit human authorization. |
 | Embedded media-file write | Disabled in the first production phase. | Requires a later feature with independent file backup, validation, and rollback policy. |
 

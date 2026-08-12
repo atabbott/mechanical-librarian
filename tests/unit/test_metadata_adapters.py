@@ -539,8 +539,9 @@ class MetadataPersistenceTests(unittest.TestCase):
             assert row is not None
             old_sql = row[0].replace(
                 " AND json_extract(document,'$.schema_version')="
+                "'shadow-outcome-set-v3'",
+                " AND json_extract(document,'$.schema_version')="
                 "'shadow-outcome-set-v2'",
-                "",
             )
             self.assertNotEqual(row[0], old_sql)
             connection.execute("PRAGMA writable_schema=ON")

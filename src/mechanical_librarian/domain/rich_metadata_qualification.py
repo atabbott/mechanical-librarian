@@ -11,7 +11,7 @@ from typing import Final, Mapping
 
 
 F20_QUALIFICATION_CANDIDATE_SHA256: Final = (
-    "9c7233074829468ef4ce4fd6defa5a3f3d1fce781b515bc55e1d279ff966686e"
+    "5de2bc89a4f0ace7255a760200af7562fde583fbc362fb4ec439954317646732"
 )
 F20_RICH_FIELDS: Final = (
     "subtitle", "series", "genres", "tags", "description_fill",
@@ -23,15 +23,15 @@ F20_OPTION_DISPOSITIONS: Final[Mapping[str, str]] = MappingProxyType({
     "series:primary_narrative": "passing_automatic",
     "series:source_order": "passing_automatic",
     "series:all_qualified": "passing_automatic",
-    "genres:fill_empty": "insufficient_coverage",
-    "genres:add": "insufficient_coverage",
-    "genres:replace": "insufficient_coverage",
+    "genres:fill_empty": "not_qualified",
+    "genres:add": "passing_automatic",
+    "genres:replace": "passing_automatic",
     "tags:off": "policy_only",
-    "tags:fill_empty": "insufficient_coverage",
-    "tags:add": "insufficient_coverage",
-    "tags:replace": "insufficient_coverage",
-    "description_fill:safe_plain_text": "insufficient_coverage",
-    "description_fill:google_visible_text": "insufficient_coverage",
+    "tags:fill_empty": "passing_automatic",
+    "tags:add": "passing_automatic",
+    "tags:replace": "passing_automatic",
+    "description_fill:safe_plain_text": "passing_automatic",
+    "description_fill:google_visible_text": "not_qualified",
     "isbn_form:preserve_exact": "passing_automatic",
     "isbn_form:prefer_isbn13": "passing_automatic",
     "asin:preserve_exact": "insufficient_coverage",
@@ -40,6 +40,9 @@ F20_OPTION_DISPOSITIONS: Final[Mapping[str, str]] = MappingProxyType({
 })
 F20_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset({
     "series:primary_narrative", "series:source_order", "series:all_qualified",
+    "genres:add", "genres:replace",
+    "tags:fill_empty", "tags:add", "tags:replace",
+    "description_fill:safe_plain_text",
     "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
 })
 

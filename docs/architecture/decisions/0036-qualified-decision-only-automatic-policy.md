@@ -10,6 +10,10 @@ A clean schema starts with the built-in profile in the visible `automatic`
 posture. That posture is limited to the exact F19a qualification manifest: the
 qualified title/series and publication bundles, and the qualified author,
 language, and publisher options. Publisher imprint is deliberately excluded.
+F20 #564 later composes its independently pinned candidate with F19a: only the
+exact passing series, ISBN, source-bound genre/tag, and safe-description options
+join decision-only Automatic. Tags remain off by default, and every failing or
+unobserved sibling stays human-routed.
 
 An automatic result is an immutable policy disposition, never a human actor,
 apply plan, target request, or media operation. The existing exact-current

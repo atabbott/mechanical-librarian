@@ -14,6 +14,7 @@ from typing import Final, Mapping
 
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
+    F20_RICH_FIELDS,
 )
 
 
@@ -140,7 +141,14 @@ class MetadataPolicyProfile:
         # an explicit human-review preference.
         return cls.create("Built-in policy", DEFAULT_OPTIONS, {
             field: (
-                "automatic" if field in QUALIFIED_AUTOMATIC else
+                "automatic"
+                if field in QUALIFIED_AUTOMATIC
+                and (
+                    field not in F20_RICH_FIELDS
+                    or f"{field}:{DEFAULT_OPTIONS[field]}"
+                    in F20_PASSING_AUTOMATIC_OPTIONS
+                )
+                else
                 "unsupported" if field == "explicit" else "ask"
             )
             for field in OPTION_CATALOGUE
@@ -226,7 +234,13 @@ class ResolvedMetadataPolicy:
             raise MetadataPolicyError("policy field is unavailable")
         destination = dict(self.destinations)[field]
         if destination == "automatic":
-            return "available" if field in QUALIFIED_AUTOMATIC else "unavailable"
+            option = dict(self.options)[field]
+            available = (
+                f"{field}:{option}" in F20_PASSING_AUTOMATIC_OPTIONS
+                if field in F20_RICH_FIELDS
+                else field in QUALIFIED_AUTOMATIC
+            )
+            return "available" if available else "unavailable"
         return "manual_only" if destination in {"ask", "ignore"} else "unsupported"
 
 
