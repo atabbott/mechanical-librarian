@@ -32,7 +32,7 @@ from mechanical_librarian.domain.shadow_decision import (
 from mechanical_librarian.domain.shadow_review import MAX_CITATIONS
 
 
-SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v1"
+SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v2"
 MAX_SHADOW_OUTCOME_BYTES = 1_048_576
 
 _POLICY_CATEGORY_BY_DESTINATION = {

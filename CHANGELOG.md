@@ -21,7 +21,10 @@
   Each passing option now reaches the existing persisted-decision and guarded
   effect-plan path; multi-series proposals retain every qualified membership
   while Audiobookshelf receives the preferred first value. It adds no new
-  write authority and leaves every other rich option manual. (#564)
+  write authority and leaves every other rich option manual. The pre-release
+  shadow-outcome contract advances to v2 so databases containing incompatible
+  v1 outcome identities fail cleanly at startup rather than during later
+  reads. (#564)
 
 - Record the F20 rich-metadata qualification candidate from 49 accepted
   real-work reports and 421 retained-response replays through the current
