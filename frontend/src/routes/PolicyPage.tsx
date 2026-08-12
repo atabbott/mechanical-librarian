@@ -60,6 +60,7 @@ const chapters: readonly { key: PolicySection; label: string; description: strin
 
 const readableCategory = (key: string) => fields.find((field) => field.key === key)?.label ?? key.replaceAll('_', ' ')
 const previewValue = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value)
+const isPolicyPreview = (value: unknown): value is PolicyPreviewView => typeof value === 'object' && value !== null && 'schema_version' in value && value.schema_version === 'metadata-policy-preview-v1' && 'libraries' in value && Array.isArray(value.libraries)
 const automaticQualified = (field: FieldDefinition, option: string) => field.automatic && !(field.key === 'publisher_preference' && option === 'imprint')
 
 export default function PolicyPage({ data }: { data: PolicyCritical }) {
@@ -125,7 +126,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     setStatus({ tone: 'neutral', message: label })
     try {
       const value = await command.mutateAsync({ action, body })
-      if ('libraries' in value && 'policy_id' in value) { setPreview(value as PolicyPreviewView); setReviewedId(value.policy_id); setCadence((current) => ({ ...current, saved: true, previewed: true, impactInspected: false, activated: false })); setStatus({ tone: 'success', message: 'Impact preview is current. The active policy is unchanged.' }) }
+      if (isPolicyPreview(value)) { setPreview(value); setReviewedId(value.policy_id); setCadence((current) => ({ ...current, saved: true, previewed: true, impactInspected: false, activated: false })); setStatus({ tone: 'success', message: 'Impact preview is current. The active policy is unchanged.' }) }
       else if ('policy_id' in value && action === 'drafts') { setDraftId(value.policy_id); setReviewedId(undefined); setPreview(undefined); setCadence((current) => ({ ...current, saved: true, previewed: false, impactInspected: false, activated: false })); setStatus({ tone: 'success', message: 'Immutable draft saved. Preview its impact before activation.' }) }
       else if (action === 'validate') { setCadence((current) => ({ ...current, validated: true })); setStatus({ tone: 'success', message: 'Draft is valid. The active policy is unchanged.' }) }
       else if (action === 'activate') { setDraftId(undefined); setReviewedId(undefined); setActivationReview(false); setCadence((current) => ({ ...current, activated: true })); setStatus({ tone: 'success', message: 'Policy activated. Current unapplied work is being reconciled.' }) }
