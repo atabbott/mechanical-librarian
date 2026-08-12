@@ -514,9 +514,14 @@ invalid chunk state, trailing bytes, unsafe dimensions, and decoder warnings or
 failures cross only the value-free response-format boundary.
 Before process creation, admitted bytes are copied into anonymous Linux memory
 descriptors, rehashed, and sealed against write, growth, shrink, and further
-seal changes. The sandbox binds those descriptor identities directly, so a
-dispatch callback or another same-UID process cannot mutate path content between
-admission and gated child release.
+seal changes. An image larger than the profile's child file limit fails before
+dispatch. After gated release, the child reopens every sealed descriptor
+read-only through its own `/proc`, verifies its identity, seals, size, and digest,
+rewinds the independent open-file description, and replaces the inherited
+descriptor before limits and exec. Bubblewrap copies from these child-private
+cursors through descriptor-data mounts into private read-only sandbox files. A
+dispatch callback or another same-UID process can therefore neither mutate the
+sealed bytes nor steer Bubblewrap with a shared inherited file offset.
 The image-capable adapter independently reconstructs and fully re-admits the
 packet and exact ordered image tuple immediately before this path. A directly
 constructed private request object therefore has no admission authority.
@@ -533,15 +538,22 @@ qualification-holdout packets. Its aggregate-only receipt records 17 typed
 mismatches, zero admitted image or reviewer-output bytes, p50 129 ms, p95 160
 ms, successful cleanup, and a failed sandbox aggregate.
 
-The current exact-head admission-only replay has 17 packets: eight eligible and
-nine rejected before dispatch as `icc_bearing_preview_rejected`, with no other
-rejection class. No model rerun occurred. Because sealed v2 retained no
-per-packet outcome or latency mapping, the eligible subset cannot be rebound to
-historical results (`sealed_subset_mapping_insufficient`); historical latency
-must not be attributed to the current head. The required real transport bound
-therefore **DID NOT QUALIFY**. No retry or authority, limit, profile, model, or
-threshold widening followed. The seam remains source-only/report-only and
-synthetically verified, not a runtime activation.
+Diagnosis proved that the historic attempt never reached reviewer execution:
+Bubblewrap could not resolve the sealed images through `/proc` paths. The
+corrected adapter uses verified child-private descriptor cursors as
+descriptor-data mounts; a five-image no-model Linux proof reproduced exact bytes
+inside the sandbox while the parent repeatedly sought its inherited descriptors
+to EOF.
+Authentication-only success had also hidden an under-sized private inference
+envelope. A bounded 512 MiB memory and 32-task isolated profile completed a
+structured reviewer probe without changing the model or widening prompt,
+network, image, output, provider, corpus, or production authority.
+
+The corrected exact implementation **QUALIFIED** one retained real
+five-preview development packet with five admitted ordered observations, zero
+reference mismatch, 16.263-second end-to-end latency, and successful cleanup.
+The seam remains source-only/report-only; this is transport and schema-admission
+evidence, not semantic-quality proof or runtime activation.
 
 Authentication actions remain adapter-owned and create no product lifecycle. The
 kernel is reachable only through the source workbench, excluded from installed

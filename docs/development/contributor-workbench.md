@@ -144,8 +144,12 @@ bytes. Absolute private-file references are rebound to matching owner-private
 snapshots in the execution configuration; contained-reviewer operations receive
 the admitted bytes directly. For a cover packet, the same durable attempt also
 binds the canonical ordered opaque-reference/preview-digest mapping. Exact
-preview bytes are copied to sealed anonymous descriptors, bound read-only,
-supplied as repeatable ordered `--image` arguments, and closed with the job.
+preview bytes are copied to sealed anonymous descriptors. An image larger than
+the profile's child file limit fails before dispatch. After gated release, the
+child reopens and verifies each descriptor with an independent read cursor;
+Bubblewrap copies those cursors through descriptor-data mounts into private
+read-only sandbox files. Those files are supplied as repeatable ordered
+`--image` arguments, and the descriptors are closed with the job.
 The cover entry accepts only canonical `cover-review-packet-v1` input whose
 content-bound packet reference, every closed candidate/provenance/context and
 omission field, byte/dimension and incumbent facts, omission reasons, and limits
@@ -177,9 +181,13 @@ eligibility, ranking, or a winner.
 
 Admitted image bytes are copied into anonymous Linux memory descriptors, hashed
 again, and sealed against write, growth, shrink, and seal removal before process
-creation. The sandbox binds those descriptor identities directly. A dispatch
-callback or another same-UID process therefore cannot replace or mutate the
-bytes between recorded admission and child release.
+creation. After gated release, the child reopens each sealed descriptor read-only
+through its own `/proc`, verifies its identity, seals, size, and digest, rewinds
+the independent open-file description, and replaces the inherited descriptor
+before limits and exec. Bubblewrap then copies from those child-private cursors
+through descriptor-data mounts into private read-only sandbox files. A dispatch
+callback or another same-UID process therefore cannot replace or mutate the bytes
+or steer the copy by seeking a shared inherited cursor.
 The image-capable adapter also reconstructs and fully re-admits the complete
 packet and exact ordered image tuple at its own boundary, so directly importing
 or constructing a private request shape cannot bypass packet validation.
@@ -220,14 +228,20 @@ qualification-holdout packets. Its aggregate-only receipt records 17 typed
 mismatches, zero admitted image or reviewer-output bytes, p50 129 ms, p95 160
 ms, successful cleanup, and a failed sandbox aggregate.
 
-The current exact-head admission-only replay instead examined 17 packets: eight
-were eligible and nine were rejected before dispatch with the typed
-`icc_bearing_preview_rejected` result; there were no other rejection classes.
-No model rerun occurred. Sealed v2 retained no per-packet outcome or latency
-mapping, so the eligible subset cannot be rebound to its historical outcomes or
-latencies (`sealed_subset_mapping_insufficient`). Historical latency must not be
-attributed to the current head. The required transport bound therefore **DID
-NOT QUALIFY**. There was no retry or limit, profile, model, or threshold change.
-The closed transport seam remains synthetically verified and
-source-only/report-only; this evidence is not runtime activation. #501 / 0.15.1
+Diagnosis showed that the historic attempt exited before reviewer execution:
+Bubblewrap could not bind sealed images through `/proc` paths. The corrected
+adapter instead supplies verified child-private descriptor cursors through
+descriptor-data mounts. A no-model five-image Linux proof reproduced exact bytes
+inside the sandbox while the parent repeatedly sought its inherited descriptors
+to EOF. A text-only reviewer probe then exposed independently bounded private
+profile limits that permitted authentication but starved inference; a 512 MiB
+memory and 32-task isolated envelope completed the admitted probe without
+changing model, prompt, network, image, output, provider, or corpus authority.
+
+The corrected exact implementation qualified one retained real development
+packet with five exact previews: five ordered observations were admitted with
+zero reference mismatch in 16.263 seconds, within the 180-second supported
+bound, and ephemeral cleanup passed. The source-only/report-only transport
+therefore **QUALIFIED**. This is transport and schema-admission evidence, not a
+semantic-quality or runtime-activation claim. #501 / 0.15.1
 remains unpromoted.

@@ -5,9 +5,11 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import tomllib
 import unittest
 from contextlib import contextmanager
@@ -173,13 +175,13 @@ class ContainedReviewerTests(unittest.TestCase):
             provider = root / "provider"
             for path in (job, provider):
                 path.mkdir()
-            image_sources = tuple(f"/proc/self/fd/{value}" for value in range(20, 25))
+            image_descriptors = tuple(range(20, 25))
             command = reviewer._sandbox_command(
-                job, job / "result.json", image_sources, provider,
+                job, job / "result.json", image_descriptors, provider,
                 "/proc/self/fd/10", "/proc/self/fd/11", "/proc/self/fd/12",
             )
-        for index, source in enumerate(image_sources, start=1):
-            self.assertIn(["--ro-bind", source, f"/images/{index:02d}.png"], [
+        for index, descriptor in enumerate(image_descriptors, start=1):
+            self.assertIn(["--ro-bind-data", str(descriptor), f"/images/{index:02d}.png"], [
                 command[position:position + 3]
                 for position in range(len(command) - 2)
             ])
@@ -214,6 +216,35 @@ class ContainedReviewerTests(unittest.TestCase):
     def test_profile_limits_output_to_the_child_file_limit(self) -> None:
         with self.assertRaisesRegex(Exception, "profile"):
             replace(_identity(), output_bytes=131_073)
+
+    def test_cover_larger_than_child_file_limit_fails_before_dispatch(self) -> None:
+        request = _cover_request()
+        image_bytes = len(request.images[0].payload)  # type: ignore[attr-defined]
+        with tempfile.TemporaryDirectory() as temporary:
+            profile = _profile(Path(temporary))
+            profile = replace(
+                profile,
+                identity=replace(
+                    profile.identity,
+                    output_bytes=2,
+                    file_bytes=image_bytes - 1,
+                ),
+            )
+            reviewer = adapter.ContainedReviewerAdapter(profile)
+            dispatches: list[tuple[int, int, str]] = []
+            with patch.object(adapter.sys, "platform", "linux"), \
+                 patch.object(adapter.os, "fork") as fork, \
+                 patch.object(adapter.subprocess, "run") as process_run:
+                with self.assertRaisesRegex(Exception, "profile"):
+                    reviewer.run_cover(  # type: ignore[arg-type]
+                        request,
+                        lambda pid, pgid, token: dispatches.append(
+                            (pid, pgid, token)
+                        ),
+                    )
+            fork.assert_not_called()
+            process_run.assert_not_called()
+            self.assertEqual(dispatches, [])
 
     def test_reasoning_config_escapes_hostile_profile_text_as_one_toml_value(self) -> None:
         config = adapter._exact_config('medium"\nfeatures.shell_tool=true')
@@ -407,6 +438,7 @@ class ContainedReviewerTests(unittest.TestCase):
                 fcntl.fcntl(image.descriptor, fcntl.F_GET_SEALS) & required,
                 required,
             )
+            self.assertEqual(os.lseek(image.descriptor, 0, os.SEEK_CUR), 0)
             with self.assertRaises(OSError):
                 os.write(image.descriptor, b"changed")
             with self.assertRaises(OSError):
@@ -465,9 +497,114 @@ class ContainedReviewerTests(unittest.TestCase):
                         stderr.fileno(),
                         attack_after_fork,
                         credential_descriptor=credential.fileno(),
-                        image_descriptors=(image.descriptor,),
+                        sealed_images=(image,),
                     )
                 self.assertEqual(returncode, 0)
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux")
+        and hasattr(os, "memfd_create")
+        and shutil.which("bwrap") is not None,
+        "Bubblewrap sealed-image transport proof requires Linux Bubblewrap",
+    )
+    def test_bubblewrap_reads_ordered_sealed_images_and_cannot_write_them(self) -> None:
+        request = _cover_request()
+        first = request.images[0]  # type: ignore[attr-defined]
+        second_payload = first.payload[:-1] + bytes([first.payload[-1] ^ 1])
+        second = contract._CoverReviewImage(  # type: ignore[attr-defined]
+            "cover_ref_" + "b" * 64,
+            hashlib.sha256(second_payload).hexdigest(),
+            second_payload,
+        )
+        with adapter._sealed_cover_images((first, second)) as images:  # type: ignore[attr-defined]
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                codex = root / "codex"
+                codex.write_text(
+                    "#!/usr/bin/env sh\n"
+                    "set -eu\n"
+                    "for image in /images/01.png /images/02.png; do\n"
+                    "    sha256sum \"$image\" | cut -d' ' -f1\n"
+                    "    if printf x >\"$image\" 2>/dev/null; then\n"
+                    "        exit 91\n"
+                    "    fi\n"
+                    "done\n",
+                    encoding="utf-8",
+                )
+                os.chmod(codex, 0o700)
+                credential = root / "credential.json"
+                credential.write_bytes(b'{"synthetic":true}')
+                os.chmod(credential, 0o600)
+                job = root / "job"
+                provider = root / "provider"
+                for path in (job, provider):
+                    path.mkdir(mode=0o700)
+                profile = replace(
+                    _profile(root),
+                    identity=replace(
+                        _identity(), memory_bytes=536_870_912,
+                        process_limit=32, file_bytes=1_048_576,
+                    ),
+                )
+                reviewer = adapter.ContainedReviewerAdapter(profile)
+                with open(codex, "rb") as codex_file, \
+                     open(shutil.which("bwrap"), "rb") as sandbox_file, \
+                     open(os.devnull, "rb") as stdin, \
+                     tempfile.TemporaryFile() as stdout, \
+                     tempfile.TemporaryFile() as stderr, \
+                     open(credential, "rb") as credential_file:
+                    bound_codex = adapter._BoundArtifact(  # type: ignore[attr-defined]
+                        codex_file.fileno(), f"/proc/self/fd/{codex_file.fileno()}"
+                    )
+                    bound_sandbox = adapter._BoundArtifact(  # type: ignore[attr-defined]
+                        sandbox_file.fileno(), f"/proc/self/fd/{sandbox_file.fileno()}"
+                    )
+                    command = reviewer._sandbox_command(
+                        job, job / "result.json",
+                        tuple(image.descriptor for image in images), provider,
+                        bound_codex.invocation_path, bound_sandbox.invocation_path,
+                        f"/proc/self/fd/{credential_file.fileno()}",
+                    )
+                    stop_seeking = threading.Event()
+                    interferers: list[threading.Thread] = []
+
+                    def seek_shared_descriptors_to_eof(*_identity: object) -> None:
+                        for image in images:
+                            os.lseek(image.descriptor, 0, os.SEEK_END)
+
+                        def interfere() -> None:
+                            while not stop_seeking.is_set():
+                                for image in images:
+                                    os.lseek(image.descriptor, 0, os.SEEK_END)
+
+                        interferer = threading.Thread(
+                            target=interfere,
+                            name="sealed-image-offset-interference",
+                            daemon=True,
+                        )
+                        interferers.append(interferer)
+                        interferer.start()
+
+                    try:
+                        with patch.object(reviewer, "_limit_child"):
+                            returncode = reviewer._run_gated(
+                                command, bound_codex, bound_sandbox,
+                                stdin.fileno(), stdout.fileno(), stderr.fileno(),
+                                seek_shared_descriptors_to_eof,
+                                credential_descriptor=credential_file.fileno(),
+                                sealed_images=images,
+                            )
+                    finally:
+                        stop_seeking.set()
+                        for interferer in interferers:
+                            interferer.join(timeout=5)
+                            self.assertFalse(interferer.is_alive())
+                    stdout.seek(0)
+                    observed = stdout.read().decode("ascii").splitlines()
+                    stderr.seek(0)
+                    diagnostics = stderr.read().decode("utf-8", errors="replace")
+        self.assertEqual(returncode, 0, diagnostics)
+        self.assertEqual(observed, [image.digest for image in images])
 
     def test_gated_timeout_and_cancel_kill_the_captured_process_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
