@@ -566,11 +566,14 @@ authentication, profile, sandbox, binding, or schema failures, while bounded
 transient child, resource, or packet-interaction hypotheses remain. The 4%
 missingness rate remains within the frozen 5%
 tolerance, but its bias magnitude is unknown and conclusions are conditional on
-the 48 admitted cases. Per-field lower bounds remain useful or strong when both
-missing cases are counted as disagreements; joint agreement falls to 72% and is
-not robustly useful across all dispatched cases. Qualification recorded zero
-binding or safety violations, provider
-calls, production-library accesses, or writes. An earlier final cohort was
+the 48 admitted cases. Overall per-field lower bounds remain useful or strong
+when both missing cases are counted as disagreements; joint agreement falls to
+72% and is not robustly useful across all dispatched cases. Tie-in branding is
+also class-sensitive: absent-case specificity was 44/44, but branded-positive
+recall was 2/4 (50%), so the high overall agreement does not establish useful
+tie-in detection for an avoid-tie-in policy. Qualification recorded zero
+binding or safety violations, provider calls, production-library accesses, or
+writes. An earlier final cohort was
 invalidated after a broad private JSON discovery scanner opened final-reference
 files without exposing values to tested or model-visible output; another was
 spent by credential-mount setup. Both supplied no semantic evidence and were

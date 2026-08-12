@@ -84,8 +84,9 @@ owner-private storage. Installed artifacts contain none of this capability.
   agreement was 86% for composition, 84% for medium, 92% for promotional text,
   and 98% for tie-in branding. A shuffled seeded 20-case repeat matched every
   field and the joint result in all 20 cases. Because every field cleared the
-  predeclared useful threshold and repeatability was exact, no second
-  prompt/packaging configuration was justified.
+  predeclared overall-agreement threshold and repeatability was exact, no second
+  prompt/packaging configuration was justified; class-specific policy
+  usefulness remained a separate interpretation.
 - A fresh one-shot, work-family-disjoint final cohort admitted 48 of 50
   candidates. Exact agreement was 83.33% for composition, 97.92% for medium,
   93.75% for promotional text, and 95.83% for tie-in branding; 36 of 48
@@ -96,6 +97,12 @@ owner-private storage. Installed artifacts contain none of this capability.
   conditional on the admitted cases. Per-field conclusions survive a
   missing-as-disagreement sensitivity check; the 75% joint admitted-case result
   does not.
+- Final tie-in absent-case specificity was 44/44, but branded-positive recall
+  was only 2/4 (50%), below the useful band. Its strong overall agreement is
+  prevalence-sensitive and does not establish useful tie-in detection. The
+  development cohort detected its sole branded-positive case, which is too
+  sparse for a strong claim. Later avoid-tie-in policy qualification must report
+  this class-specific limitation and may validly fail.
 - Qualification recorded zero binding or safety violations, provider calls,
   production-library accesses, and writes. Earlier final cohorts invalidated or
   spent by local setup failures supplied no semantic evidence and were replaced

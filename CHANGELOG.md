@@ -43,9 +43,11 @@
   post-dispatch, pre-admission failures without retry or safety/binding
   violation. Their exact shared cause and bias magnitude are unknown. The 4%
   missingness rate remains within the frozen 5% tolerance and does not change
-  per-field sensitivity bands, but the 75% joint admitted-case agreement falls
-  to 72% and is not robustly useful when both missing results count as
-  disagreements.
+  overall per-field sensitivity bands, but the 75% joint admitted-case agreement
+  falls to 72% and is not robustly useful when both missing results count as
+  disagreements. Tie-in's 95.83% overall agreement also masks only 2/4 (50%)
+  branded-positive recall against 44/44 absent-case specificity, so avoid-tie-in
+  policy usefulness remains unproven.
   (#541)
 
 - Preserve bounded rich metadata evidence for manual review without widening

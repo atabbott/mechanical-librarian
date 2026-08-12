@@ -206,6 +206,9 @@ Development aggregate confusion was:
 
 Observer `unknown` predictions were 0/50 for composition, 0/50 for medium,
 1/50 (2%) for promotional text, and 0/50 for tie-in branding.
+Tie-in branded-positive recall was 1/1 and absent-case specificity was 48/48;
+the single positive is too sparse to support a strong detection claim. The one
+reference-unknown case was predicted absent and is excluded from both rates.
 
 One frozen final cohort was invalidated before execution because a broad private
 JSON discovery scanner opened final-reference files, although no reference
@@ -251,6 +254,10 @@ Final-holdout aggregate confusion among the 48 admitted results was:
 
 Observer `unknown` predictions were 0/48 for composition, 0/48 for medium,
 2/48 (4.17%) for promotional text, and 0/48 for tie-in branding.
+Tie-in branded-positive recall was 2/4 (50%), below the 75% useful band, while
+absent-case specificity was 44/44 (100%). The high overall tie-in agreement is
+therefore driven by class prevalence and does not establish useful branded-cover
+detection for an avoid-tie-in policy.
 
 Both runtime failures occurred after dispatch and before result admission. The
 exact shared cause was not retained and is not proven. Successful exact
@@ -264,11 +271,15 @@ unknown and every quality conclusion is conditional on the 48 admitted cases.
 The primary frozen gate—at least 95% coverage, at least 75% exact agreement for
 each field, and zero safety or binding violations—passes. Under the frozen
 bands, admitted-case composition is mixed but useful, while medium,
-promotional text, and tie-in branding are strong. A conservative sensitivity
-calculation that treats both missing results as disagreements gives
-dispatched-cohort lower bounds of 40/50 (80%) for composition, 47/50 (94%) for
-medium, 45/50 (90%) for promotional text, and 46/50 (92%) for tie-in branding;
-the field-level interpretation is unchanged. Joint exact agreement is 36/48
+promotional text, and overall tie-in agreement are strong. Tie-in
+branded-positive recall is separately insufficient; #543 must report
+avoid-tie-in policy performance independently and may validly fail that policy
+proof. A conservative sensitivity calculation that treats both missing results
+as disagreements gives dispatched-cohort lower bounds of 40/50 (80%) for
+composition, 47/50 (94%) for medium, 45/50 (90%) for promotional text, and
+46/50 (92%) for tie-in branding;
+the overall per-field agreement bands are unchanged, but that calculation does
+not cure the tie-in positive-recall failure. Joint exact agreement is 36/48
 (75%) among admitted cases but only 36/50 (72%) under that sensitivity, so it is
 missingness-sensitive and not robustly useful across all dispatched cases.
 There were zero provider calls, production-library accesses, target or media
@@ -276,9 +287,9 @@ writes, or runtime activations. #501 / 0.15.1 remains unpromoted.
 
 ## Cover-policy qualification — historical deterministic contract PASS
 
-Before contained semantic execution was recovered, the deterministic
-adjudicator passed independent code review and replayed
-the unchanged random 100-packet cohort from the observation proof: 50
+During the initial 0.15.0 qualification attempt, before contained semantic
+execution was recovered, the deterministic adjudicator passed independent code
+review and replayed the unchanged random 100-packet cohort from the observation proof: 50
 development and 50 final holdout. Each packet was re-admitted with its exact
 images and locally derived identity report. All eight combinations of the three
 closed policy booleans were applied to every packet.

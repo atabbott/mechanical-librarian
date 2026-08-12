@@ -71,15 +71,16 @@ plus opaque taxonomy, instruction, output-schema, and observer identities. It
 contains no title, creator, source identity, provider value, owner policy,
 eligibility, ranking, preference, or winner.
 
-The 0.15.0 qualification used independent blinded reference judgements frozen
-before tested outputs were opened; these are review judgements, not claimed
-human ground truth. The first development configuration admitted all 50
-candidates and cleared the predeclared useful agreement threshold for every
-field, so no second prompt/packaging configuration was run. A shuffled seeded
-20-case repeat matched every field and the joint result in all 20 cases. The
+The reopened 0.15.0 requalification used independent blinded reference
+judgements frozen before tested outputs were opened; these are review
+judgements, not claimed human ground truth. The first development configuration
+admitted all 50 candidates and cleared the predeclared useful agreement
+threshold for every field, so no second prompt/packaging configuration was run.
+A shuffled seeded 20-case repeat matched every field and the joint result in all 20 cases. The
 fresh one-shot final cohort admitted 48 of 50 candidates with zero binding or
-safety violations. This proves bounded semantic usefulness and repeatability
-for the source-only workbench, not runtime readiness.
+safety violations. This proves bounded overall-agreement usefulness and
+repeatability for the source-only workbench; it does not prove every
+class-specific policy use or runtime readiness.
 
 `cover-policy-report` is a deterministic consumer of the exact retained
 report, cover packet, closed observation report and `cover-policy-v1`. It
@@ -269,8 +270,11 @@ dispatch and before result admission; no exact shared cause was proven, and the
 magnitude is unknown. The primary field-level gate passes and survives treating
 both missing cases as disagreements; the 75% joint admitted-case result falls
 to 72% under that sensitivity and is not robustly useful across all dispatched
-cases. The run recorded zero binding, safety, provider, production-access, or
-write violations. The full aggregate selection, confusion, unknown-rate,
-hypothesis, latency, repeatability, recovery, agreement, and interpretation
+cases. Overall tie-in agreement was high, but branded-positive recall was only
+2/4 (50%) against 44/44 absent-case specificity; avoid-tie-in policy usefulness
+therefore remains separately unproven. The run recorded zero binding, safety,
+provider, production-access, or write violations. The full aggregate selection,
+confusion, unknown-rate, hypothesis, latency, repeatability, recovery,
+agreement, and interpretation
 record is in
 [semantic cover corpus readiness](semantic-cover-corpus-readiness.md).
