@@ -132,23 +132,14 @@ def adjudicate_cover_policy(
         value["candidate_reference"]: value["outcome"]
         for value in identity["candidates"]
     }
-    if any(value == "unknown" for value in identity_by_reference.values()):
-        return _report(
-            packet["packet_reference"],
-            classifier_reference,
-            policy,
-            identity_document,
-            observation_document,
-            (),
-            None,
-            ("identity_ambiguous",),
-        )
-
     reasons: set[str] = set()
     eligible = []
     for reference in references:
-        if identity_by_reference[reference] == "conflict":
+        identity_outcome = identity_by_reference[reference]
+        if identity_outcome == "conflict":
             reasons.add("conflict_excluded")
+        elif identity_outcome == "unknown":
+            reasons.add("identity_unknown_excluded")
         else:
             eligible.append(reference)
     if not eligible:

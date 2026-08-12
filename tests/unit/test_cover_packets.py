@@ -2582,13 +2582,41 @@ class CoverPolicyTests(unittest.TestCase):
         self.assertEqual(len(conflict["acceptable_candidate_references"]), 2)
         self.assertIn("conflict_excluded", conflict["reasons"])
 
-        ambiguous = self._adjudicate(
+        unknown_excluded = self._adjudicate(
             identity_mutation=lambda value: value["candidates"][0].update(
                 outcome="unknown"
             )
         )
-        self.assertEqual(ambiguous["status"], "abstained")
-        self.assertEqual(ambiguous["reasons"], ["identity_ambiguous"])
+        self.assertEqual(unknown_excluded["status"], "recommended")
+        self.assertEqual(
+            len(unknown_excluded["acceptable_candidate_references"]), 2
+        )
+        self.assertIn("identity_unknown_excluded", unknown_excluded["reasons"])
+
+        none_known = self._adjudicate(
+            identity_mutation=lambda value: [
+                candidate.update(outcome="unknown")
+                for candidate in value["candidates"]
+            ]
+        )
+        self.assertEqual(none_known["status"], "abstained")
+        self.assertEqual(
+            none_known["reasons"],
+            ["identity_unknown_excluded", "no_eligible_candidates"],
+        )
+
+        mixed_exclusions = self._adjudicate(
+            identity_mutation=lambda value: (
+                value["candidates"][0].update(outcome="unknown"),
+                value["candidates"][1].update(outcome="conflict"),
+            )
+        )
+        self.assertEqual(mixed_exclusions["status"], "recommended")
+        self.assertEqual(
+            len(mixed_exclusions["acceptable_candidate_references"]), 1
+        )
+        self.assertIn("conflict_excluded", mixed_exclusions["reasons"])
+        self.assertIn("identity_unknown_excluded", mixed_exclusions["reasons"])
 
         none_eligible = self._adjudicate(
             identity_mutation=lambda value: [
@@ -2667,7 +2695,10 @@ class CoverPolicyTests(unittest.TestCase):
             ).document
         )
         self.assertEqual(report["status"], "abstained")
-        self.assertEqual(report["reasons"], ["identity_ambiguous"])
+        self.assertEqual(
+            report["reasons"],
+            ["identity_unknown_excluded", "no_eligible_candidates"],
+        )
 
     def test_unknown_invented_duplicate_or_mismatched_inputs_fail_closed(self) -> None:
         mutations = (
