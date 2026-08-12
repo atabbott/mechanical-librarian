@@ -28,8 +28,8 @@ class ContainedReviewerError(RuntimeError):
     """A value-free failure at the contained-reviewer trust boundary."""
 
     _CODES = frozenset({
-        "auth", "cancel", "malformed_output", "profile", "response_format",
-        "runtime", "setup", "timeout",
+        "auth", "cancel", "local_cli_abort", "malformed_output", "profile",
+        "response_format", "runtime", "setup", "timeout",
     })
 
     def __init__(self, code: str, *, count: int = 0, digest: str | None = None) -> None:
@@ -196,15 +196,48 @@ def admit_cover_review_request(
 class ContainedReviewResult:
     document: str
     digest: str
+    attempts: tuple["ContainedReviewerAttempt", ...] = ()
 
     def __post_init__(self) -> None:
         try:
             value = json.loads(self.document, object_pairs_hook=_unique_object)
-            if (type(value) is not dict or canonical_json(value) != self.document
-                    or hashlib.sha256(self.document.encode("utf-8")).hexdigest() != self.digest):
+            if (
+                type(value) is not dict
+                or canonical_json(value) != self.document
+                or hashlib.sha256(self.document.encode("utf-8")).hexdigest()
+                != self.digest
+                or type(self.attempts) is not tuple
+                or len(self.attempts) > 2
+                or any(
+                    type(attempt) is not ContainedReviewerAttempt
+                    for attempt in self.attempts
+                )
+            ):
                 raise ValueError
         except (json.JSONDecodeError, RecursionError, TypeError, ValueError) as error:
             raise ContainedReviewerError("malformed_output") from error
+
+
+@dataclass(frozen=True, slots=True)
+class ContainedReviewerAttempt:
+    dispatched: bool
+    failure_code: str | None = None
+    diagnostic_bytes: int | None = None
+    diagnostic_sha256: str | None = None
+
+    def __post_init__(self) -> None:
+        detailed = (self.failure_code, self.diagnostic_bytes, self.diagnostic_sha256)
+        if self.dispatched is not True or (
+            detailed != (None, None, None)
+            and (
+                self.failure_code not in ContainedReviewerError._CODES
+                or type(self.diagnostic_bytes) is not int
+                or not 1 <= self.diagnostic_bytes <= 2_147_483_647
+                or type(self.diagnostic_sha256) is not str
+                or _DIGEST.fullmatch(self.diagnostic_sha256) is None
+            )
+        ):
+            raise ValueError("invalid contained-reviewer attempt")
 
 
 class ContainedReviewer(Protocol):
@@ -230,6 +263,6 @@ def _reject_json_constant(value: str) -> object:
 
 __all__ = [
     "ContainedReviewRequest", "ContainedReviewResult", "ContainedReviewer",
-    "ContainedReviewerError", "ContainedReviewerIdentity",
+    "ContainedReviewerAttempt", "ContainedReviewerError", "ContainedReviewerIdentity",
     "admit_cover_review_request", "canonical_json",
 ]

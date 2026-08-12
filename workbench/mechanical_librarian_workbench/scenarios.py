@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias
 
 from .context import WorkbenchContext
+from .contained_reviewer import ContainedReviewerProcessError
+from .contained_reviewer_contract import ContainedReviewerAttempt
 from .cover_identity import classify_cover_identity
-from .cover_observation import observe_cover_packet
+from .cover_observation import MAX_OBSERVER_PROFILE_BYTES, observe_cover_packet
 from .cover_packets import PreparedCoverPacket, prepare_cover_packet
 from .cover_policy import CoverPolicy, adjudicate_cover_policy
 from .results import WorkbenchResult
@@ -22,9 +26,21 @@ Operation = Callable[..., object]
 class WorkbenchFailure(Exception):
     """One bounded diagnostic which never includes operation exception text."""
 
-    def __init__(self, category: str) -> None:
+    def __init__(
+        self,
+        category: str,
+        *,
+        attempts: tuple[ContainedReviewerAttempt, ...] = (),
+    ) -> None:
         _member(category, {"failed", "invalid", "refused"}, "failure category")
+        if (
+            type(attempts) is not tuple
+            or len(attempts) > 2
+            or any(type(attempt) is not ContainedReviewerAttempt for attempt in attempts)
+        ):
+            raise ValueError("invalid failure attempts")
         self.category = category
+        self.attempts = attempts
         super().__init__(f"workbench scenario {category}")
 
 
@@ -284,6 +300,7 @@ class CoverPolicyRequest:
     report_id: str
     policy: CoverPolicy = CoverPolicy()
     observation_document: str | None = None
+    profile: str = "contained-reviewer-profile.json"
     database: str = "reports.sqlite"
     artifacts: str = "artifacts"
 
@@ -291,6 +308,7 @@ class CoverPolicyRequest:
         _required(self.report_id, "report id")
         _required(self.database, "database")
         _required(self.artifacts, "artifacts")
+        _required(self.profile, "reviewer profile")
         if type(self.policy) is not CoverPolicy:
             raise ValueError("cover policy is invalid")
         if self.observation_document is not None and (
@@ -578,6 +596,11 @@ def _execute(
             images,
             request.observation_document,
             request.policy,
+            profile_payload=(
+                _read_observer_profile(context.path(request.profile))
+                if request.observation_document is not None
+                else None
+            ),
             read_preview=_cover_preview_reader(
                 selected, database, artifacts, request.report_id
             ),
@@ -598,6 +621,44 @@ def _execute(
     else:
         raise TypeError("unsupported workbench request")
     return _complete(context, request.name, raw, status=result_status)
+
+
+def _read_observer_profile(path: Path) -> bytes:
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        information = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(information.st_mode)
+            or information.st_mode & 0o077
+            or not 1 <= information.st_size <= MAX_OBSERVER_PROFILE_BYTES
+        ):
+            raise ValueError("cover observer profile is invalid")
+        chunks: list[bytes] = []
+        remaining = MAX_OBSERVER_PROFILE_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, min(65_536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+    except OSError as error:
+        raise ValueError("cover observer profile is invalid") from error
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError as error:
+                raise ValueError("cover observer profile is invalid") from error
+    if not 1 <= len(payload) <= MAX_OBSERVER_PROFILE_BYTES:
+        raise ValueError("cover observer profile is invalid")
+    return payload
 
 
 def _prepare_report_bound_cover_packet(
@@ -644,6 +705,8 @@ def execute(
         return _execute(context, request, operations)
     except PermissionError:
         raise WorkbenchFailure("refused") from None
+    except ContainedReviewerProcessError as error:
+        raise WorkbenchFailure("failed", attempts=error.attempts) from None
     except (TypeError, ValueError):
         raise WorkbenchFailure("invalid") from None
     except Exception:

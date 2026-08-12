@@ -94,18 +94,53 @@ class-specific policy use or runtime readiness. Development minimal-positive
 precision was 11/14 (78.57%) and reference-minimal recall was 11/15 (73.33%), a
 mixed and sparse class result. Final minimal-positive precision was 15/21
 (71.43%), below the useful band, and tie-in branded-positive recall was 2/4
-(50%); prefer-minimal and avoid-tie-in usefulness both remain pending #543.
+(50%). The later full-packet development policy replay found 90% exact agreement
+for minimal preference alone and 98% for tie-in avoidance alone. Promotional
+avoidance remained mixed at 78% exact across its four combinations. The later
+reusable engineering benchmark diagnosed its initial low coverage as Rust
+allocation aborts under a 512 MiB child limit. A 1 GiB profile admitted all
+10 packets and 36 candidates. The baseline prompt was exact on 74/80 policy
+decisions; one bounded composition clarification reached 76/80 and every policy
+combination reached at least 8/10, with zero retries or violations. This is
+reusable-benchmark evidence rather than unseen-holdout generalisation.
 
 `cover-policy-report` is a deterministic consumer of the exact retained
-report, cover packet, closed observation report and `cover-policy-v1`. It
+report, cover packet, closed observation report, the authority-bound reviewer
+profile that produced it and `cover-policy-v1`. It
 recomputes the local identity report from that retained evidence rather than
-accepting caller-supplied identity outcomes.
+accepting caller-supplied identity outcomes, and recomputes the exact observer
+reference instead of accepting a merely well-shaped reference.
 Callers can avoid promotional text, avoid tie-in branding and prefer minimal
 composition through three booleans; no prompt-authored or free-form policy is
-accepted. Conflict candidates are excluded, policy-relevant unknown evidence
-abstains, and a recommendation can name only one exact acceptable packet
+accepted. Conflict and unknown-identity candidates are excluded individually;
+identity abstains only when none remain. Policy-relevant unknown observations
+still abstain, and a recommendation can name only one exact acceptable packet
 reference. When observations are unavailable, the closed result is
 `observations_unavailable`; the scenario never dispatches another reviewer.
+The current development proof reused 50 retained packet observations covering
+148 candidates and all eight policies. Exact acceptable-set, recommendation and
+whole-decision agreement were 88.5%, 89% and 86%, respectively, with every
+combination at or above the predeclared potentially-useful band and zero safety
+or binding violations. The reusable 10-packet, 36-candidate engineering
+benchmark complements that development proof. Its final prompt-bound run
+admitted every candidate and agreed on 78/80 acceptable sets and
+recommendations, 80/80 statuses and 76/80 exact whole decisions. Field
+agreement was 26/36 composition, 33/36 medium, 36/36 promotional text and
+35/36 tie-in branding. Composition remains the least stable field: its two
+blinded human reviews disagreed on 12/36 labels.
+
+The cover entry has one deliberately narrow recovery path for a locally proven
+CLI abort: only return code 134 with bounded strict JSONL that contains one
+`turn.started` and no completed or failed terminal event, plus bounded nonempty
+stderr, gets one fixed one-second retry. It reuses the exact admitted request
+and profile but creates a fresh job and child process inside the same bound
+adapter and authentication lock. Its source-only envelope contains value-free
+dispatch and first-failure code/count/digest evidence. A
+near miss and every generic runtime, schema, auth, setup, sandbox, malformed
+output or timeout failure stays terminal.
+New observation reports are `cover-observation-report-v2`; frozen v1 reports
+remain readable under their exact frozen instruction identity and contain no
+retry evidence.
 
 ## Executing a scenario
 

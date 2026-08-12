@@ -512,15 +512,30 @@ The source-only cover-policy adjudicator introduces no model or provider call.
 It re-admits the exact packet/images, recomputes identity outcomes from the
 exact retained source report instead of trusting a caller-authored identity
 document, and requires the current classifier, taxonomy, observer instruction
-and output-schema identities before using any candidate facts. Its policy is
-three canonical booleans, never prompt text.
-Conflict candidates cannot be rescued; unknown identity or policy-relevant
-unknown observations abstain. Missing, duplicate, invented, mismatched or
-hostile references fail before output. The report contains only opaque
-acceptable references, one exact admitted recommendation or null, closed
-reason codes and content identities. Unavailable observations produce the
-fixed `observations_unavailable` abstention. No image, path, URL, free text,
-production target, persistence or write authority enters this boundary.
+and output-schema identities before using any candidate facts. The policy
+scenario also binds the exact reviewer profile bytes through workbench
+authority and recomputes the observer reference; a substituted profile or
+well-shaped invented observer reference fails closed. Its policy is three
+canonical booleans, never prompt text.
+Conflict and unknown-identity candidates cannot be rescued and are excluded
+individually; identity abstains only when no eligible candidate remains.
+Policy-relevant unknown observations still abstain. Missing, duplicate,
+invented, mismatched or hostile references fail before output. The report
+contains only opaque acceptable references, one exact admitted recommendation
+or null, closed reason codes and content identities. Unavailable observations
+produce the fixed `observations_unavailable` abstention. No image, path, URL,
+free text, production target, persistence or write authority enters this
+boundary.
+
+The policy engineering benchmark preserved this boundary. Diagnosis reproduced
+the earlier low-coverage runtime as a Rust allocation abort under a 512 MiB
+child address-space limit; changing only that limit to 1 GiB moved a fixed
+development A/B from 4/8 to 8/8 admitted packets. The corrected benchmark then
+admitted 10/10 exact packet-v2 packets and 36/36 candidates with no retry,
+invented reference, binding, provider, production-access or write violation.
+The versioned benchmark permits reuse of those independently reviewed covers
+for bounded prompt and resource experiments, but every run retains immutable
+configuration and aggregate receipts and makes no unseen-holdout claim.
 
 Cover
 previews use opaque references, fixed 12-image/1-MiB-each/8-MiB-total limits,
@@ -610,6 +625,14 @@ without retry. Their exact shared cause was not retained or proven. Successful
 exact preflight and the admitted rows show that no cohort-wide always-on
 authentication, profile, sandbox, binding, or schema failure occurred, while
 bounded transient child, resource, or packet-interaction hypotheses remain.
+Subsequent local reproduction identified one bounded retryable signature:
+return code 134 with strict pre-terminal JSONL (`turn.started`, but no completed
+or failed terminal event) and bounded nonempty stderr. The cover-only binding
+may retry that exact signature once after one second, creating a fresh job and
+child process inside the same bound adapter and authentication lock. It retains
+only dispatch booleans and the first failure's code, byte count and digest; no
+raw event, stderr, path, credential, image or semantic output persists. Every
+other failure class remains terminal.
 The 50 selected candidate rows came from 29 distinct packets and rows within a
 packet are correlated because one admitted packet result can score multiple
 selected rows. The two failures were packet invocations, but aggregate receipts
@@ -626,7 +649,9 @@ recall was 2/4 (50%), so the high overall agreement does not establish useful
 tie-in detection for an avoid-tie-in policy. Composition was also
 class-sensitive: minimal-positive precision was 15/21 (71.43%) despite 15/17
 (88.24%) reference-minimal recall, so prefer-minimal usefulness remains
-unproven. Qualification recorded zero
+unproven in that earlier candidate-level run. The later full-packet policy
+benchmark separately establishes useful prefer-minimal and avoid-tie-in
+decisions under the corrected 1 GiB profile. Qualification recorded zero
 binding or safety violations, provider calls, production-library accesses, or
 writes. An earlier final cohort was
 invalidated after a broad private JSON discovery scanner opened final-reference

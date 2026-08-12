@@ -38,6 +38,13 @@ from mechanical_librarian_workbench import (  # noqa: E402
     WorkbenchResult,
     execute,
 )
+from mechanical_librarian_workbench.contained_reviewer import (  # noqa: E402
+    ContainedReviewerProcessError,
+)
+from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa: E402
+    ContainedReviewerAttempt,
+)
+from mechanical_librarian_workbench import scenarios  # noqa: E402
 
 
 def _operation(*_args: object) -> str:
@@ -191,6 +198,56 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                     execute(context, CoverPolicyRequest("report"), _operations())
         self.assertEqual(caught.exception.category, "invalid")
         self.assertNotIn("private", str(caught.exception))
+
+    def test_cover_policy_binds_authority_scoped_observer_profile(self) -> None:
+        prepared = mock.Mock(document="{}", images=())
+        decision = mock.Mock(document='{"status":"safe"}')
+        with WorkbenchContext.temporary() as context:
+            profile = context.path("contained-reviewer-profile.json")
+            profile.write_bytes(b'{"profile":"bound"}')
+            profile.chmod(0o600)
+            with (
+                mock.patch(
+                    "mechanical_librarian_workbench.scenarios.prepare_cover_packet",
+                    return_value=prepared,
+                ),
+                mock.patch(
+                    "mechanical_librarian_workbench.scenarios.adjudicate_cover_policy",
+                    return_value=decision,
+                ) as adjudicate,
+            ):
+                execute(
+                    context,
+                    CoverPolicyRequest("report", observation_document="{}"),
+                    _operations(),
+                )
+        self.assertEqual(
+            adjudicate.call_args.kwargs["profile_payload"],
+            b'{"profile":"bound"}',
+        )
+
+    def test_observer_profile_read_is_bound_to_one_open_descriptor(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile = root / "profile.json"
+            replacement = root / "replacement.json"
+            profile.write_bytes(b'{"profile":"original"}')
+            replacement.write_bytes(b'{"profile":"replacement"}')
+            profile.chmod(0o600)
+            replacement.chmod(0o600)
+            original_open = os.open
+
+            def replace_after_open(path: Path, flags: int):
+                descriptor = original_open(path, flags)
+                if path == profile:
+                    os.replace(replacement, profile)
+                return descriptor
+
+            with mock.patch.object(os, "open", side_effect=replace_after_open):
+                payload = scenarios._read_observer_profile(profile)
+
+        self.assertEqual(payload, b'{"profile":"original"}')
+        self.assertFalse(replacement.exists())
 
     def test_batch_failed_completion_and_events_are_preserved(self) -> None:
         def batch(*arguments: object) -> bool:
@@ -479,6 +536,33 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkbenchFailure, "scenario failed") as caught:
                 execute(context, ReportRequest("inspect", report_id="report"), operations)
         self.assertNotIn("private", str(caught.exception))
+
+    def test_contained_terminal_attempt_evidence_crosses_redacting_boundary(self) -> None:
+        attempts = (
+            ContainedReviewerAttempt(True, "local_cli_abort", 19, "a" * 64),
+            ContainedReviewerAttempt(True),
+        )
+
+        def fail(*_args: object) -> str:
+            raise ContainedReviewerProcessError("runtime", attempts=attempts)
+
+        request = ContainedReviewerRequest(
+            "invoke",
+            instruction="reviewer-instruction.txt",
+            input_document="reviewer-input.json",
+            output_schema="reviewer-output-schema.json",
+        )
+        with WorkbenchContext.temporary() as context:
+            context.network = IsolatedNetworkProfile(
+                "isolated-test", True, True, _network_files(context)
+            )
+            operations = replace(_operations(), run_contained_reviewer=fail)
+            with self.assertRaisesRegex(WorkbenchFailure, "scenario failed") as caught:
+                execute(context, request, operations)
+        self.assertEqual(caught.exception.attempts, attempts)
+        self.assertNotIn("local_cli_abort", str(caught.exception))
+        with self.assertRaises(ValueError):
+            WorkbenchFailure("failed", attempts=(object(),))  # type: ignore[arg-type]
 
     def test_operation_contract_json_preserves_application_field_order(self) -> None:
         raw = '[{"connection":"primary","item":"item","eligible":true}]'

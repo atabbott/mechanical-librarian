@@ -342,6 +342,173 @@ change was used to manufacture a recommendation. The newly admitted semantic
 observations invalidate that all-abstention replay as current policy-quality
 evidence; #543 must requalify the unchanged policy against them.
 
+## Cover-policy development reproof — mixed, potentially useful
+
+After the contained observer and candidate identity admission were corrected,
+the policy proof froze current reference decisions before opening the retained
+development outputs. The 50 retained packet observation artifacts covered all
+148 development candidates, so no additional model or provider call was needed.
+All eight policy combinations ran on every packet.
+
+| Measure | Aggregate result |
+| --- | ---: |
+| Development packets | 50 |
+| Candidate observations admitted | 148/148 |
+| Policy decisions | 400 |
+| Exact acceptable-set agreement | 354/400 (88.5%) |
+| Exact recommendation agreement | 356/400 (89%) |
+| Exact whole-decision agreement | 344/400 (86%) |
+| Lowest exact policy-combination agreement | 39/50 (78%) |
+| Binding, eligibility, explicit-policy, invented-reference or privacy violations | 0 |
+| New model or provider calls | 0 |
+
+The result is inside the predeclared 75–90% mixed-but-potentially-useful band.
+The plain policy was exact on 50/50 packets, minimal preference alone on 45/50,
+and tie-in avoidance alone on 49/50. Promotional-text avoidance was the main
+remaining disagreement source at 39/50 exact across each combination that
+enabled it. Because no policy fell below the useful band, changing the frozen
+prompt or image packaging before confirmation would optimise a development
+result rather than prove the current idea. The next formal evidence is one fresh
+unused holdout under this unchanged configuration; these exposed development
+results are not that holdout.
+
+## Historical cover-policy holdout — insufficient coverage
+
+Before selection or exposure, the fresh holdout design excluded every earlier
+development, final and spent cohort across source, content, work, edition,
+ISBN, packet, exact preview and near-duplicate boundaries. The retained
+inventory could supply 90 eligible complete multi-choice packets. Under the
+frozen complete-packet ordering, exactly ten packets could contain at most 44
+candidates, so the transparent final target was ten complete packets and 44
+candidates rather than subsetting packets or reacquiring covers.
+
+All 44 visual references received independent first and second reviews. The
+reviewers agreed on 164/176 fields; 12 field disagreements received an
+evidence-only visual adjudication before any tested output was opened. The
+accepted ledger contained zero unknown labels and produced 80 frozen policy
+decisions across the eight policy combinations. A development-only Linux
+canary had already admitted all three observations from one previously exposed
+packet on the exact current packet-v2 transport. No provider call, corpus
+rebuild, prompt change, model change, threshold reduction, production access or
+write was used.
+
+The fresh one-shot final run did not meet its frozen 95% coverage gate:
+
+| Formal-holdout measure | Aggregate result |
+| --- | ---: |
+| Complete packets admitted | 2/10 (20%) |
+| Candidate observations admitted | 9/44 (20.45%) |
+| Policy decisions scored | 16/80 (20%) |
+| Typed failures / retries | 8 `runtime` / 0 |
+| Composition exact agreement | 9/9 (100%) |
+| Medium exact agreement | 5/9 (55.56%) |
+| Promotional-text exact agreement | 8/9 (88.89%) |
+| Tie-in exact agreement | 9/9 (100%) |
+| All-four exact agreement | 4/9 (44.44%) |
+| Acceptable-set agreement | 12/16 (75%) |
+| Recommendation agreement | 16/16 (100%) |
+| Status agreement | 16/16 (100%) |
+| Whole-decision agreement | 12/16 (75%) |
+| Ordered-reason agreement | 16/16 (100%) |
+| Strict decision-plus-reason agreement | 12/16 (75%) |
+| Admitted-dispatch p50 / p95 latency | 17.01 s / 17.90 s |
+| Safety, binding or invented-reference violations | 0 |
+
+Aggregate admitted-candidate confusion was:
+
+| Field | Reference → observer | Count |
+| --- | --- | ---: |
+| Composition | `dense` → `dense` | 8 |
+| Composition | `minimal` → `minimal` | 1 |
+| Medium | `illustrated` → `illustrated` | 4 |
+| Medium | `photographic` → `illustrated` / `photographic` | 4 / 1 |
+| Promotional text | `absent` → `absent` / `present` | 2 / 1 |
+| Promotional text | `present` → `present` | 6 |
+| Tie-in branding | `absent` → `absent` | 9 |
+
+There were no observer unknowns in the admitted subset. All four policy
+combinations without promotional avoidance were exact for both admitted
+packets. Each promotional-avoidance combination was exact for one of two; the
+acceptable-set difference did not change either recommendation, status or
+ordered reason list. At the distinct-packet view, one of two packets matched
+all eight whole and strict decisions, while both matched every recommendation,
+status and ordered reason. Neither admitted packet had every candidate exact on
+all four visual fields.
+
+The eight failures occurred after dispatch began and before observation
+admission. They shared the same broad runtime type and a short failure-latency
+band; exact packet-v2, owner, tool, authentication, job-root, runtime and
+environment preflight had passed, and two dispatches completed. This makes an
+always-on cohort-wide configuration or binding defect less likely, but it does
+not identify the cause. The final controller should have persisted the
+contained process error's already value-free diagnostic count and digest; it
+instead persisted a generic one-count runtime digest for every failure. Raw
+stderr was not retained. The exact cause and missingness bias are therefore
+unknown, and no retry or replacement holdout was used.
+
+A post-run local reproduction found one bounded remediation worth testing on a
+fresh cohort: a strict pre-terminal return-code-134 CLI abort can be identified
+without retaining raw output. Cover orchestration now permits one fresh-process
+retry after one second for that exact signal and persists only dispatch status
+and the first failure's code/count/digest. This does not reinterpret the spent
+holdout, broaden provider/model authority, or relax its coverage gate; any new
+formal run remains independently frozen.
+
+The admitted results demonstrate that the current model-to-observation-to-policy
+path can produce correct decisions, including complete agreement for several
+policy configurations. They do not establish final generalisation: coverage is
+far below the frozen minimum, medium and all-four agreement are weak in the
+small admitted subset, and every apparent rate has only two packet units. The
+formal result is therefore **INSUFFICIENT COVERAGE**, not a negative proof that
+the model cannot do the work and not a policy-quality PASS.
+
+## Reusable cover-policy engineering benchmark — PASS
+
+Later diagnosis reproduced the historical short runtime failures as Rust
+allocation aborts under the 512 MiB child address-space limit. On a fixed
+exposed-development A/B, changing only that limit to 1 GiB moved coverage from
+4/8 to 8/8 packets, with no abort, retry, binding or authority change. The
+benchmark therefore uses 1 GiB memory, 32 tasks, the same one-MiB file limit,
+and the existing strict one-retry path only for a proven local CLI abort.
+
+The reusable benchmark contains 10 complete packets and 36 candidates with
+independent blinded labels. The reviewers agreed on 122/144 field cells; 22
+disagreements were resolved from the same pixels and taxonomy before tested
+outputs were opened. The accepted reference contains no unknowns and yields 80
+fixed decisions across all eight policies. Reuse is intentional: this is a
+versioned engineering benchmark for comparing prompt, packaging and resource
+changes, not an unseen-holdout claim.
+
+The corrected 1 GiB baseline admitted all packets and candidates without retry
+or violation. It agreed on 74/80 exact whole decisions (92.5%), but the combined
+tie-in-avoidance and minimal-preference policy reached 7/10, below the
+predeclared 75% per-policy floor. One prompt-only experiment then clarified
+that minimal composition means a simple focal layout rather than empty
+background alone. Images, labels, taxonomy, model, reasoning, limits, policy,
+packet order and thresholds remained fixed.
+
+| Reusable-benchmark measure | Baseline | Clarified composition rubric |
+| --- | ---: | ---: |
+| Packets / candidates admitted | 10/10 / 36/36 | 10/10 / 36/36 |
+| Composition exact | 25/36 (69.44%) | 26/36 (72.22%) |
+| Medium exact | 29/36 (80.56%) | 33/36 (91.67%) |
+| Promotional-text exact | 36/36 (100%) | 36/36 (100%) |
+| Tie-in-branding exact | 34/36 (94.44%) | 35/36 (97.22%) |
+| Acceptable-set exact | 76/80 (95%) | 78/80 (97.5%) |
+| Recommendation exact | 78/80 (97.5%) | 78/80 (97.5%) |
+| Status exact | 80/80 (100%) | 80/80 (100%) |
+| Whole-decision exact | 74/80 (92.5%) | 76/80 (95%) |
+| Lowest exact policy combination | 7/10 (70%) | 8/10 (80%) |
+| Retry / typed failure / safety violation | 0 / 0 / 0 | 0 / 0 / 0 |
+
+The clarified run passed the frozen coverage, per-policy and zero-violation
+gates. Composition remains the least certain field and the two human reviews
+also disagreed on 12/36 composition labels, so the 72.22% result is reported as
+mixed rather than optimized further. The experiment proves the general
+principle: admitted visual observations can support useful closed cover
+preferences and recommendations. It does not prove unseen generalisation or
+justify production activation by itself.
+
 ## Outcome
 
 Issue #546 passes as a best-effort general-principle proof of a bounded,
@@ -349,7 +516,11 @@ aggregate-safe provider-cover corpus. It establishes neither semantic quality
 nor runtime activation, and it does not qualify a model or a later transport
 unit. Issue #541 separately passes its bounded typed observation contract and
 its aggregate-safe semantic usefulness and repeatability proof.
-Issue #543 retains its deterministic contract and historical real fail-closed
-abstention proof, while semantic policy quality remains pending requalification.
+Issue #543 retains its deterministic contract, current-packet-v2 development
+proof and historical real fail-closed evidence. Its reusable engineering
+benchmark now passes at 10/10 packets, 36/36 candidates and 76/80 exact whole
+decisions, with every policy at 8/10 or better and zero violations. This
+establishes useful benchmark behavior while explicitly not claiming unseen
+generalisation.
 The tracked report contains no private corpus material, and #501 remains
 unpromoted.

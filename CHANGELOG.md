@@ -56,13 +56,43 @@
 
 - Add a source-only deterministic cover-policy report over exact packet,
   identity and closed observation evidence. Three typed booleans can avoid
-  promotional text or tie-in branding and prefer minimal composition; unknown,
-  unavailable, conflicting or unbound evidence abstains or fails closed. The
+  promotional text or tie-in branding and prefer minimal composition. Unknown
+  and conflicting identities exclude only their candidate, so identity abstains
+  only when no eligible candidate remains; unavailable, policy-relevant unknown,
+  or unbound evidence still abstains or fails closed. The
   operation introduces no second model, provider, runtime, persistence or write
-  authority. A 100-packet retained-real replay across all eight policies
-  produced the expected 800 typed unavailable-observation abstentions with zero
-  binding mismatch, violation or invented reference; semantic quality is not
-  claimed. (#543)
+  authority. The historical 100-packet replay recorded 800 typed
+  unavailable-observation abstentions. After observation transport and identity
+  admission were corrected, a development reproof reused 50 retained packet
+  observations covering all 148 candidates. Across all eight policies, exact
+  acceptable-set, recommendation and whole-decision agreement were 88.5%, 89%
+  and 86%; every policy combination remained at or above the predeclared 75%
+  potentially-useful band, with zero safety or binding violations. A later
+  engineering benchmark reused 10 independently reviewed complete packets with
+  36 candidates and 80 frozen policy decisions. Diagnosis traced the earlier
+  low coverage to Rust allocation aborts under a 512 MiB child limit; changing
+  only that limit to 1 GiB moved an exposed development A/B from 4/8 to 8/8
+  admitted packets. Under the corrected envelope the benchmark admitted all
+  10 packets and 36 candidates without retry or violation. The baseline prompt
+  was exact on 74/80 decisions but one combined policy reached only 7/10. One
+  bounded composition-rubric clarification raised exact whole decisions to
+  76/80, with every policy at 8/10 or better. Field agreement was 26/36
+  composition, 33/36 medium, 36/36 promotional text and 35/36 tie-in branding.
+  Policy admission now binds the authority-scoped reviewer profile and
+  recomputes the exact observer reference, so a substituted profile or invented
+  valid-shaped observer reference fails closed.
+  This proves useful reusable-benchmark behavior, not unseen generalisation;
+  composition remains the least certain field and had 12/36 independent human
+  review disagreements. (#543)
+
+- Recognize the one proven transient local contained-reviewer CLI abort without
+  widening reviewer authority: only bounded strict pre-terminal JSONL on return
+  code 134 with bounded nonempty stderr receives one fixed one-second retry in
+  a fresh job and child process inside the same bound adapter and authentication
+  lock. The unchanged request/profile/image/model/limit binding and value-free
+  dispatch plus first-failure code/count/digest evidence are retained; every
+  other failure remains terminal. Frozen v1 observations remain admitted only
+  under their exact original instruction identity. (#543)
 
 - Reduce private Actions consumption without recombining the qualification
   suites that previously timed out: run the three exact-head pull-request jobs

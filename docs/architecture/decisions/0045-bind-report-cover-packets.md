@@ -90,6 +90,20 @@ Unknown, repeated, changed, non-PNG, over-bound, or unbound inputs fail closed.
 The image-capable adapter reconstructs and fully re-admits the packet and exact
 ordered image tuple at its own boundary; importing or directly constructing a
 private request shape cannot grant image-mount authority.
+
+The cover-only orchestration recognizes one narrow local CLI recovery signal:
+return code 134, bounded nonempty stderr, and strict bounded JSONL containing
+exactly one `turn.started` and no `turn.completed` or `turn.failed`. It retries
+that signal once after one second, using a fresh job and child process inside
+the same bound adapter and authentication lock, with the same admitted request,
+profile, prompt, images, model, limits and credential binding. Both dispatches
+and the first failure's fixed code, byte count and digest are retained as
+value-free attempt evidence. Every other nonzero exit,
+including near-miss 134, schema, authentication, setup, sandbox, malformed
+output and timeout failures remains fail-closed with no retry.
+The cover observation report is version 2 and carries that evidence; frozen
+version-1 observation reports remain readable without it only under their exact
+frozen instruction identity.
 Only the bounded Instruction is authoritative. Canonical input, provider
 metadata, images, and OCR text are explicitly hostile evidence, never
 instructions.

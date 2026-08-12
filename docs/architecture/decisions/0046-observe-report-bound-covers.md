@@ -27,7 +27,7 @@ Freeze this small policy-neutral vocabulary:
 | Property | Closed values | Observable meaning |
 | --- | --- | --- |
 | Medium | `photographic`, `illustrated`, `typographic`, `mixed`, `unknown` | The primary visible image-making medium; `mixed` requires material photographic and non-photographic media with no clear primary. |
-| Composition | `minimal`, `dense`, `unknown` | Few elements with substantial negative space, or many competing elements/little negative space. |
+| Composition | `minimal`, `dense`, `unknown` | Minimal means one dominant image or figure in a simple supporting layout; dense requires competing focal elements or a genuinely crowded layout. |
 | Promotional text | `present`, `absent`, `unknown` | Visible quoted praise, selling claim, award, or bestseller blurb. |
 | Tie-in branding | `present`, `absent`, `unknown` | Visible film, television, game, or stage adaptation branding. |
 

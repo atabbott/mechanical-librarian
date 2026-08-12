@@ -82,8 +82,7 @@ def _invoke(
         "profile_sha256": hashlib.sha256(profile_payload).hexdigest(),
         "request_sha256": request.digest,
     })
-    return json.dumps(
-        {
+    envelope = {
             "execution_sha256": hashlib.sha256(execution_identity.encode()).hexdigest(),
             "image_binding_sha256": hashlib.sha256(image_binding.encode()).hexdigest(),
             "image_count": 0 if type(request) is ContainedReviewRequest else len(request.images),
@@ -93,7 +92,22 @@ def _invoke(
             "result_sha256": result.digest,
             "schema_version": "contained-reviewer-workbench-result-v2",
             "status": "completed",
-        },
+        }
+    if type(request) is _CoverReviewRequest:
+        envelope.update({
+            "attempt_evidence": [
+                {
+                    "diagnostic_bytes": attempt.diagnostic_bytes,
+                    "diagnostic_sha256": attempt.diagnostic_sha256,
+                    "dispatched": True,
+                    "failure_code": attempt.failure_code,
+                } if attempt.failure_code is not None else {"dispatched": True}
+                for attempt in result.attempts
+            ],
+            "schema_version": "cover-contained-reviewer-result-v1",
+        })
+    return json.dumps(
+        envelope,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,

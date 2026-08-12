@@ -16,8 +16,11 @@ from .cover_identity import (
 )
 from .cover_observation import (
     INSTRUCTION,
+    LEGACY_INSTRUCTION_SHA256,
+    LEGACY_SCHEMA_VERSION,
     SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
     TAXONOMY_REFERENCE,
+    _observer_reference,
     _output_schema,
 )
 from .cover_packet_semantics import bind_cover_packet, canonical_packet_json
@@ -85,6 +88,7 @@ def adjudicate_cover_policy(
     observation_document: str | None,
     policy: CoverPolicy,
     *,
+    profile_payload: bytes | None = None,
     read_preview: Callable[[str, str], bytes],
 ) -> CoverPolicyReport:
     """Return one exact recommendation or a closed abstention."""
@@ -127,28 +131,20 @@ def adjudicate_cover_policy(
         packet["packet_reference"],
         candidates,
         references,
+        profile_payload,
     )
     identity_by_reference = {
         value["candidate_reference"]: value["outcome"]
         for value in identity["candidates"]
     }
-    if any(value == "unknown" for value in identity_by_reference.values()):
-        return _report(
-            packet["packet_reference"],
-            classifier_reference,
-            policy,
-            identity_document,
-            observation_document,
-            (),
-            None,
-            ("identity_ambiguous",),
-        )
-
     reasons: set[str] = set()
     eligible = []
     for reference in references:
-        if identity_by_reference[reference] == "conflict":
+        identity_outcome = identity_by_reference[reference]
+        if identity_outcome == "conflict":
             reasons.add("conflict_excluded")
+        elif identity_outcome == "unknown":
+            reasons.add("identity_unknown_excluded")
         else:
             eligible.append(reference)
     if not eligible:
@@ -311,13 +307,35 @@ def _observation_rows(
     packet_reference: object,
     candidates: list[object],
     references: tuple[str, ...],
+    profile_payload: bytes | None,
 ) -> dict[str, object]:
     value = _load_object(document, "cover observation")
-    expected_instruction = hashlib.sha256(INSTRUCTION.encode("utf-8")).hexdigest()
+    schema_version = value.get("schema_version")
+    expected_instruction = (
+        LEGACY_INSTRUCTION_SHA256
+        if schema_version == LEGACY_SCHEMA_VERSION
+        else hashlib.sha256(INSTRUCTION.encode("utf-8")).hexdigest()
+    )
     expected_schema = hashlib.sha256(_output_schema(references).encode("utf-8")).hexdigest()
-    if (
-        set(value)
-        != {
+    if type(profile_payload) is not bytes:
+        raise ValueError("cover observation profile is invalid")
+    expected_observer = _observer_reference(
+        profile_payload, expected_instruction, expected_schema
+    )
+    valid_shape = (
+        (
+            schema_version == LEGACY_SCHEMA_VERSION
+            and set(value) == {
+                "cover_packet_reference", "instruction_sha256", "observations",
+                "observer_reference", "output_schema_sha256", "schema_version",
+                "taxonomy_reference",
+            }
+        )
+        or (
+            schema_version == OBSERVATION_SCHEMA_VERSION
+            and set(value)
+            == {
+            "attempt_evidence",
             "cover_packet_reference",
             "instruction_sha256",
             "observations",
@@ -325,11 +343,16 @@ def _observation_rows(
             "output_schema_sha256",
             "schema_version",
             "taxonomy_reference",
-        }
-        or value["schema_version"] != OBSERVATION_SCHEMA_VERSION
+            }
+            and _attempt_evidence(value["attempt_evidence"])
+        )
+    )
+    if (
+        not valid_shape
+        or value["schema_version"] not in {LEGACY_SCHEMA_VERSION, OBSERVATION_SCHEMA_VERSION}
         or value["cover_packet_reference"] != packet_reference
         or value["taxonomy_reference"] != TAXONOMY_REFERENCE
-        or _REFERENCE.fullmatch(str(value["observer_reference"])) is None
+        or value["observer_reference"] != expected_observer
         or value["instruction_sha256"] != expected_instruction
         or value["output_schema_sha256"] != expected_schema
         or type(value["observations"]) is not list
@@ -370,6 +393,29 @@ def _observation_rows(
     ):
         raise ValueError("cover observation report is invalid")
     return value
+
+
+def _attempt_evidence(value: object) -> bool:
+    if type(value) is not list or not 1 <= len(value) <= 2:
+        return False
+    for index, attempt in enumerate(value):
+        if type(attempt) is not dict or attempt.get("dispatched") is not True:
+            return False
+        if index == 0 and len(value) == 2:
+            if (
+                set(attempt)
+                != {"diagnostic_bytes", "diagnostic_sha256", "dispatched", "failure_code"}
+                or attempt["failure_code"] != "local_cli_abort"
+                or type(attempt["diagnostic_bytes"]) is not int
+                or not 1 <= attempt["diagnostic_bytes"] <= 2_147_483_647
+                or type(attempt["diagnostic_sha256"]) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", attempt["diagnostic_sha256"])
+                is None
+            ):
+                return False
+        elif set(attempt) != {"dispatched"}:
+            return False
+    return True
 
 
 def _report(
