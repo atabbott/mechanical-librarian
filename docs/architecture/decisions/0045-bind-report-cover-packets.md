@@ -6,56 +6,68 @@ Status: Accepted
 
 The source-only contained-reviewer kernel accepts bounded canonical text but has
 no image transport. Real cover experiments therefore cannot prove that the
-exact previews already admitted to a metadata report are the images examined by
-the isolated reviewer. Accepting arbitrary attachment paths, URLs, originals,
-or remote fetches would create broader authority than this experiment requires.
+exact pixels from previews already admitted to a metadata report are the images
+examined by the isolated reviewer. Accepting arbitrary attachment paths, URLs,
+originals, or remote fetches would create broader authority than this experiment
+requires.
 
 ## Decision
 
 Add one closed `cover-packet-review` workbench scenario. It reopens one exact
 metadata report and reads previews only through the existing report-bound cover
-reader. It projects opaque references, exact preview digests and variant,
-separate original technical and decoded preview dimensions, incumbent state,
-bounded provider provenance, deterministic
-eligibility and omission reasons, and no target or service identity.
+reader. It projects opaque source references, exact source preview digests and
+variant, separate derived transport references and digests, separate original
+technical and decoded preview dimensions, incumbent state, bounded provider
+provenance, deterministic eligibility and omission reasons, and no target or
+service identity.
 
-Digest-equal previews are one candidate. The inspectable Audiobookshelf
-incumbent is retained when present. Remaining candidates are selected
+Pixel-equal normalized previews are one candidate. The inspectable
+Audiobookshelf incumbent is retained when present. Remaining candidates are selected
 deterministically by identity designation, original-cover technical dimensions,
 and source diversity; decoded preview dimensions bind the transported PNG but
 do not change that order. The absolute limits are 12 PNG previews, 1 MiB per
 preview, and 8 MiB in total.
 
-A digest-equal group projects the canonical best observed original dimensions
-by pixel area, width, then height; source iteration order cannot choose its
-technical-quality facts.
+A normalized-pixel-equal group projects the canonical best observed original
+dimensions by pixel area, width, then height; source iteration order cannot
+choose its technical-quality facts.
 
-Every canonical source kind represented by a digest-equal group contributes to
-diversity priority and counts. No single lexicographic source stands in for the
-group.
+Every canonical source kind represented by a normalized-pixel-equal group
+contributes to diversity priority and counts. No single lexicographic source
+stands in for the group.
 
 The packet's ordered reference/digest mapping is part of the canonical reviewer
 request. The generic contained-reviewer entry point is image-free; the sole
 image-capable entry point admits a distinct cover request only through one full
-`cover-review-packet-v1` parser. That parser closes every packet, candidate,
+`cover-review-packet-v2` parser. Before packet selection, each exact report-bound
+source preview is size- and digest-verified, parsed within the existing
+dimension and decompression bounds, decoded as single-frame RGBA, and
+deterministically re-encoded from its pixel bytes. The derived PNG contains
+only IHDR, one consecutive IDAT run and IEND; ICC profiles and all other
+ancillary metadata are discarded without being exposed to the reviewer. Exact
+decoded pixels and dimensions are unchanged. Every candidate separately binds its complete opaque
+source-reference/source-digest set to its derived transport reference and
+digest, so neither a foreign source nor foreign transport can be substituted
+under an existing packet identity. That parser closes every packet, candidate,
 provenance, context, and omission field; validates the content-bound packet
 reference, media/variant, preview byte and dimension facts, incumbent state,
 canonical producer candidate order, reason-specific omission preconditions,
 domain privacy-safe context text, limits, and exact ordered image mapping. The
 same semantic validator runs before producer return and reviewer admission;
-before either can mount an image, it also verifies the complete bounded,
+before either can mount a derived image, it also verifies the complete bounded,
 canonically ordered PNG chunk structure and checksums and fully decodes a
 single-frame RGBA PNG whose dimensions exactly match the distinct packet
-preview facts and do not exceed 320 by 480. The deterministic profile admits
-only exact IHDR, one consecutive IDAT run containing exactly one completed zlib
-stream with no trailing bytes, and IEND. ICC profiles, PLTE, and
-every other ancillary or unknown chunk fail before mount so their bytes cannot
-cross the reviewer boundary;
+preview facts and do not exceed 320 by 480. It re-encodes the decoded pixels and
+requires byte equality with the canonical derived transport. The deterministic
+profile admits only exact IHDR, one consecutive IDAT run containing exactly one
+completed zlib stream with no trailing bytes, and IEND. ICC profiles, PLTE, and every other
+ancillary or unknown chunk are absent from the derived bytes and cannot cross
+the reviewer boundary;
 indistinguishable normalized provenance multiplicity is discarded. Duplicate
 omissions are created only after final selection and always name a retained
-representative; when a whole digest group is excluded, each member carries the
-actual byte, aggregate, or shortlist omission instead. The generic
-request and generic adapter method have no image member or image argument. The
+representative; when a whole normalized-pixel-equal group is excluded, each
+member carries the actual byte, aggregate, or shortlist omission instead. The
+generic request and generic adapter method have no image member or image argument. The
 durable pre-egress attempt binds that packet together with the
 exact reviewer profile, instruction, and output schema. The local result binds
 the request and profile identities. Preview bytes are copied into anonymous
@@ -109,9 +121,11 @@ The projection binds report,
 packet, candidate, classifier, and opaque evidence references. It emits fixed
 reason codes only, never source/provider identities, metadata values, paths,
 URLs, or credentials, and makes no visual, provider, policy, persistence, or
-write decision. Candidate admission recomputes the report-bound opaque source
-reference, normalized provenance, incumbent state, original dimensions, and
-preview variant; matching preview bytes alone cannot bind a foreign packet.
+write decision. Candidate admission reopens every bound source preview through
+the report reader, verifies its source digest, deterministically re-normalizes
+it to the candidate transport identity, and recomputes the report-bound opaque
+source reference, normalized provenance, incumbent state, original dimensions,
+and preview variant; matching preview bytes alone cannot bind a foreign packet.
 Provider default covers with explicit work identity are work-designated for
 verification. Edition-specific date evidence is not plausibility support or a
 veto once title support is established.

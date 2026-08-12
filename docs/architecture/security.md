@@ -463,9 +463,11 @@ retained creator/contributor overlap counts as agreement. Missing creator values
 are neutral; pairwise disagreement alongside agreement and edition-specific
 disagreement are not identity conflicts. Plausible is not
 verified, and no title agreement or an unopposed creator/contributor
-disagreement remains unknown. Admission
-recomputes exact report-bound candidate reference, provenance, incumbent,
-dimension, and variant facts, so digest-equal foreign packets fail closed.
+disagreement remains unknown. Admission reopens every bound source preview
+through the report reader, verifies its source digest, deterministically
+re-normalizes it to the candidate transport identity, and recomputes exact
+report-bound candidate reference, provenance, incumbent, dimension, and variant
+facts, so foreign packets fail closed.
 Edition-specific date evidence is neither plausibility support nor a veto; default
 provider covers remain work-level rather than manifestation-level evidence.
 It has no image inference, provider dispatch, child process, persistence,
@@ -501,23 +503,31 @@ previews use opaque references, fixed 12-image/1-MiB-each/8-MiB-total limits,
 digest/order binding, a separate ephemeral read-only mount, and repeatable exact
 image arguments. The generic reviewer entry point is image-free. Its closed
 request and adapter method have no image member or image argument. A distinct
-cover request is created only by one full `cover-review-packet-v1` parser that
+cover request is created only by one full `cover-review-packet-v2` parser that
 validates all closed fields and invariants, a content-bound packet reference,
 preview byte/dimension facts, incumbent/provenance/omission facts and limits,
-canonical candidate order, reason-specific omission preconditions, domain
+canonical candidate order, source-to-derived transport bindings,
+reason-specific omission preconditions, domain
 privacy-safe context text, and exact ordered reference/digest equality with the
-supplied images. Producer and admission use that same semantic validator. It
-checks the complete bounded, canonically ordered PNG chunk structure and
-checksums and fully decodes each image before mounting it, admitting only
+supplied images. Producer and admission use that same semantic validator.
+Packet preparation first verifies each exact report-bound source digest and
+bounded PNG framing, discards all ancillary/profile chunks, decodes one RGBA
+frame, and deterministically re-encodes the exact pixels into a metadata-free
+derived transport. The candidate keeps the source reference/digest bindings
+separate from the derived transport reference/digest. Admission checks the
+complete bounded, canonically ordered derived PNG chunk structure and checksums,
+fully decodes it, re-encodes it, and requires byte equality before mounting,
+admitting only
 single-frame RGBA PNG previews no larger than 320 by 480 whose decoded and
 declared preview dimensions agree. Its closed profile accepts only exact IHDR,
 one consecutive IDAT run containing exactly one completed zlib stream with no
 trailing bytes, and final IEND. ICC profiles, PLTE, and every other
-ancillary or unknown chunk fail before mount; their bytes cannot cross the
-reviewer boundary. Original-cover technical dimensions remain separate ordering
-evidence; digest-equal groups bind the canonical best observed dimensions by
-area, width, then height, and every represented source kind affects diversity
-priority and counts. Forged signatures, corrupt or truncated streams,
+ancillary or unknown chunk is absent from the derived transport; those source
+bytes cannot cross the reviewer boundary. Original-cover technical dimensions
+remain separate ordering evidence; normalized-pixel-equal groups bind the
+canonical best observed dimensions by area, width, then height, and every
+represented source kind affects diversity priority and counts. Forged
+signatures, corrupt or truncated streams,
 invalid chunk state, trailing bytes, unsafe dimensions, and decoder warnings or
 failures cross only the value-free response-format boundary.
 Before process creation, admitted bytes are copied into anonymous Linux memory

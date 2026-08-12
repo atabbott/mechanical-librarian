@@ -536,6 +536,9 @@ def _execute(
                 (value.reference, value.digest, value.payload)
                 for value in packet.images
             ),
+            read_preview=_cover_preview_reader(
+                selected, database, artifacts, request.report_id
+            ),
         ).document
     elif isinstance(request, CoverObservationRequest):
         database = context.path(request.database)
@@ -575,6 +578,9 @@ def _execute(
             images,
             request.observation_document,
             request.policy,
+            read_preview=_cover_preview_reader(
+                selected, database, artifacts, request.report_id
+            ),
         ).document
     elif isinstance(request, ContainedReviewerRequest):
         paths = tuple(
@@ -604,6 +610,19 @@ def _prepare_report_bound_cover_packet(
     if type(report_document) is not str:
         raise ValueError("cover report is invalid")
 
+    read_preview = _cover_preview_reader(
+        operations, database, artifacts, report_id
+    )
+
+    return report_document, prepare_cover_packet(report_document, read_preview)
+
+
+def _cover_preview_reader(
+    operations: WorkbenchOperations,
+    database: Path,
+    artifacts: Path,
+    report_id: str,
+) -> Callable[[str, str], bytes]:
     def read_preview(artifact_id: str, variant: str) -> bytes:
         preview = operations.reopen_cover_preview(
             database, artifacts, report_id, artifact_id, variant
@@ -612,7 +631,7 @@ def _prepare_report_bound_cover_packet(
             raise ValueError("cover preview is invalid")
         return preview
 
-    return report_document, prepare_cover_packet(report_document, read_preview)
+    return read_preview
 
 
 def execute(

@@ -1,15 +1,16 @@
 """Closed, report-local identity classification for retained cover previews.
 
-This projection is intentionally separate from ``cover-review-packet-v1``.  It
-uses no provider client, image interpretation, persistence, or policy input;
-it merely binds the already-retained report evidence to the exact packet
-candidate references.
+This projection is intentionally separate from ``cover-review-packet-v2``.  It
+uses no provider client, semantic image interpretation, persistence, or policy
+input; source pixels only authenticate the already-retained report evidence to
+the exact packet candidate transport.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from mechanical_librarian.domain.cover_evidence import (
@@ -33,6 +34,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian_workbench.cover_packet_semantics import (
     bind_cover_packet,
     canonical_packet_json,
+    normalize_cover_preview,
     normalize_provenance,
 )
 from mechanical_librarian_workbench.cover_packets import cover_source_reference
@@ -44,6 +46,7 @@ _OUTCOMES = frozenset({
 })
 _CLASSIFIER_RULES = (
     "packet-candidate-reference-and-provenance:exact-report-bound",
+    "packet-source-normalization:exact-transport-bound",
     "report-bound-epub-cover:verified-manifestation",
     "unbound-provider-identity:unknown",
     "edition-work-contradiction:conflict",
@@ -111,6 +114,8 @@ def classify_cover_identity(
     report_document: str,
     packet_document: str,
     image_payloads: tuple[tuple[str, str, bytes], ...],
+    *,
+    read_preview: Callable[[str, str], bytes],
 ) -> CoverIdentityReport:
     """Classify every exact packet candidate from already retained evidence.
 
@@ -131,7 +136,7 @@ def classify_cover_identity(
     for candidate in packet["candidates"]:
         if type(candidate) is not dict:
             raise ValueError("identity packet candidate is invalid")
-        sources = _report_bound_candidate_sources(report, candidate)
+        sources = _report_bound_candidate_sources(report, candidate, read_preview)
         outcome, reasons, evidence = _classify_sources(report, sources)
         if outcome not in _OUTCOMES:
             raise ValueError("identity outcome is invalid")
@@ -159,24 +164,47 @@ def classify_cover_identity(
 
 
 def _report_bound_candidate_sources(
-    report: MetadataReport, candidate: dict[str, object]
+    report: MetadataReport,
+    candidate: dict[str, object],
+    read_preview: Callable[[str, str], bytes],
 ) -> tuple[CoverSource, ...]:
+    bindings = {
+        (value["reference"], value["preview_sha256"])
+        for value in candidate["source_bindings"]
+    }
     sources = tuple(sorted(
         (
             source
             for source in report.cover_sources
             if source.state is CoverSourceState.RETRIEVED
             and source.artifact is not None
-            and source.artifact.preview_digest == candidate["preview_sha256"]
+            and (
+                cover_source_reference(report.report_id, source.source_id),
+                source.artifact.preview_digest,
+            ) in bindings
         ),
         key=lambda source: source.source_id,
     ))
     if not sources:
-        raise ValueError("identity candidate is not report-bound")
+        raise ValueError("identity candidate report binding is invalid")
     references = tuple(
         cover_source_reference(report.report_id, source.source_id)
         for source in sources
     )
+    if bindings != {
+        (reference, source.artifact.preview_digest)
+        for source, reference in zip(sources, references, strict=True)
+    }:
+        raise ValueError("identity candidate source binding is invalid")
+    for source in sources:
+        artifact = source.artifact
+        assert artifact is not None
+        normalized = normalize_cover_preview(
+            read_preview(artifact.artifact_id, artifact.preview_variant),
+            source_sha256=artifact.preview_digest,
+        )
+        if normalized.digest != candidate["transport_sha256"]:
+            raise ValueError("identity candidate transport binding is invalid")
     incumbent_references = tuple(
         reference
         for source, reference in zip(sources, references, strict=True)
@@ -214,6 +242,7 @@ def _report_bound_candidate_sources(
     ])
     if (
         candidate["reference"] != expected_reference
+        or candidate["preview_sha256"] != dict(bindings)[expected_reference]
         or candidate["incumbent"] != bool(incumbent_references)
         or candidate["width"] != best.artifact.width
         or candidate["height"] != best.artifact.height
