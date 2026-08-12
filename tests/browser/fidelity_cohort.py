@@ -19,6 +19,37 @@ LONG_TITLE = (
     f"{UNBROKEN_TITLE_SEGMENT} — an intentionally long synthetic title for "
     "narrow-layout qualification"
 )
+_F20_CANDIDATE_SHA256 = "dde53f9aaad52f8186aa1d25859ebb83b1d6b9c6f8125b15789729831de0b0f9"
+_RICH_QUALIFICATION: tuple[dict[str, object], ...] = tuple(
+    {
+        "automatic_available": False,
+        "candidate_sha256": _F20_CANDIDATE_SHA256,
+        "disposition": disposition,
+        "field": field,
+        "option": option,
+    }
+    for field, option, disposition in (
+        ("subtitle", "fill_empty", "insufficient_coverage"),
+        ("subtitle", "corroborated_split", "insufficient_coverage"),
+        ("series", "primary_narrative", "insufficient_coverage"),
+        ("series", "source_order", "insufficient_coverage"),
+        ("series", "all_qualified", "insufficient_coverage"),
+        ("genres", "fill_empty", "insufficient_coverage"),
+        ("genres", "add", "insufficient_coverage"),
+        ("genres", "replace", "insufficient_coverage"),
+        ("tags", "off", "policy_only"),
+        ("tags", "fill_empty", "insufficient_coverage"),
+        ("tags", "add", "insufficient_coverage"),
+        ("tags", "replace", "insufficient_coverage"),
+        ("description_fill", "safe_plain_text", "insufficient_coverage"),
+        ("description_fill", "google_visible_text", "insufficient_coverage"),
+        ("isbn_form", "preserve_exact", "insufficient_coverage"),
+        ("isbn_form", "prefer_isbn13", "insufficient_coverage"),
+        ("asin", "preserve_exact", "insufficient_coverage"),
+        ("asin", "ebook_manifestation", "insufficient_coverage"),
+        ("explicit", "unsupported", "passing_human_only"),
+    )
+)
 
 
 def _work(
@@ -587,6 +618,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         return {
             "schema_version": "metadata-policy-notebook-v1",
             "policy_id": "policy-active-1",
+            "rich_qualification": list(_RICH_QUALIFICATION),
             "profile": {
                 "schema_version": "metadata-policy-profile-v2",
                 "name": "Household metadata policy",
@@ -613,6 +645,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         return {
             "schema_version": "metadata-policy-preview-v1",
             "policy_id": "policy_" + "d" * 64,
+            "rich_qualification": list(_RICH_QUALIFICATION),
             "libraries": [{
                 "affected_categories": ["description_fill"],
                 "cases": [{

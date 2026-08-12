@@ -28,6 +28,13 @@ category suspension, and explicit recovery fail closed by retaining would-be
 automatic work in human Attention. Any field, option, or policy revision outside
 that exact envelope remains human-routed until separately qualified.
 
+The published F20 rich-metadata candidate currently has an empty passing
+automatic set. Its eight rich fields are shown with their exact aggregate-safe
+terminal status: the 17 eligible options are `insufficient_coverage`,
+`tags:off` is policy-only, and `explicit:unsupported` is human-only. Thus the
+candidate binds explanation and rejection, not a new automatic destination;
+owners retain `Ask me` or `Ignore` for every non-automatic rich option.
+
 ## Availability before curation
 
 Ingestion and consumption do not wait for metadata curation.

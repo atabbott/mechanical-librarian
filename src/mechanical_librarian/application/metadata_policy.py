@@ -17,6 +17,11 @@ from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_repor
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreview, compile_rich_metadata_preview,
 )
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_PASSING_AUTOMATIC_OPTIONS,
+    F20_RICH_FIELDS,
+    public_summary,
+)
 
 
 MAX_SHADOW_SAMPLE_RESPONSE_BYTES = 1_048_576
@@ -278,6 +283,13 @@ class PolicyNotebook:
         except Exception as error:
             raise MetadataPolicyApplicationError("active policy is unavailable") from error
 
+    @staticmethod
+    def rich_qualification(profile: MetadataPolicyProfile) -> tuple[dict[str, object], ...]:
+        """Expose only the fixed public F20 terminal dispositions."""
+        if type(profile) is not MetadataPolicyProfile:
+            raise MetadataPolicyApplicationError("policy validation is invalid")
+        return public_summary()
+
     def validate(self, profile: MetadataPolicyProfile) -> MetadataPolicyProfile:
         """Allow Automatic intent only while it is separately qualified."""
         if type(profile) is not MetadataPolicyProfile:
@@ -287,7 +299,15 @@ class PolicyNotebook:
             for field, option in profile.options
             if dict(profile.destinations)[field] == "automatic"
         }
-        if requested and not requested.issubset(QUALIFIED_POLICY_OPTIONS):
+        rich_requested = {
+            f"{field}:{option}"
+            for field, option in profile.options
+            if field in F20_RICH_FIELDS
+            and dict(profile.destinations)[field] == "automatic"
+        }
+        if (
+            requested and not requested.issubset(QUALIFIED_POLICY_OPTIONS)
+        ) or not rich_requested.issubset(F20_PASSING_AUTOMATIC_OPTIONS):
             raise MetadataPolicyApplicationError("policy automatic unqualified")
         return profile
 

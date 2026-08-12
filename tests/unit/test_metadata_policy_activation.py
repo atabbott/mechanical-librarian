@@ -71,6 +71,14 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(MetadataReportError, "automatic intent is unqualified"):
             repository.create_metadata_policy_draft(unqualified.canonical_json)
+
+        rich_automatic = MetadataPolicyProfile.create(
+            "Rich automatic intent", dict(DEFAULT_OPTIONS),
+            {**destinations, "genres": "automatic"},
+        )
+        notebook = PolicyNotebook(repository, (), {})
+        with self.assertRaisesRegex(MetadataPolicyApplicationError, "automatic unqualified"):
+            notebook.validate(rich_automatic)
         repository.enter_shadow_preview(1)
         repository.create_metadata_policy_draft(profile.canonical_json)
         resolved = resolve_policy(profile, "ebooks")

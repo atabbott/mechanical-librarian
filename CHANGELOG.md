@@ -14,6 +14,11 @@
   admitted the same frozen 10 packets/50 candidates on both platforms, with no
   provider or model calls and no production access or writes. (#542)
 
+- Bind the public F20 candidate identity and terminal rich-field qualification
+  statuses into policy validation, API, CLI preview, and the owner notebook.
+  The empty passing automatic set adds no automatic destination or write
+  authority; the sealed F19a automatic envelope remains unchanged. (#564)
+
 - Record the non-authorizing F20 rich-metadata qualification candidate. No
   fresh F20 holdout is available, so every automatic candidate is visibly
   `insufficient_coverage`; `explicit` remains human-only, and narrators and

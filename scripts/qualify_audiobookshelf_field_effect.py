@@ -75,6 +75,10 @@ from mechanical_librarian.interfaces.web.app import (
     create_review_app,
     load_owner_password_verifier,
 )
+from mechanical_librarian.interfaces.web.react_assets import (
+    ReactAssetLoader,
+    ReactAssetRecovery,
+)
 
 
 IMAGES = {
@@ -86,6 +90,49 @@ OWNERSHIP_LABEL = "org.mechanical-librarian.qualification-run"
 
 class QualificationError(RuntimeError):
     """A fixed, secret-free qualification failure."""
+
+
+def _installed_mutation_headers(
+    origin: dict[str, str], csrf_token: str,
+) -> dict[str, str]:
+    """Bind installed-browser mutations to the loaded sealed shell."""
+    assets = ReactAssetLoader().load()
+    if isinstance(assets, ReactAssetRecovery):
+        raise QualificationError("installed_browser_assets_unavailable")
+    return {
+        **origin,
+        "X-CSRF-Token": csrf_token,
+        "X-ML-Build-Identity": assets.build_identity,
+    }
+
+
+def _installed_consent_grants(
+    activity: object, libraries: tuple[tuple[str, str, Path], ...],
+) -> list[dict[str, object]]:
+    """Mirror the shell's capability-bound consent request exactly."""
+    if type(activity) is not dict or type(activity.get("capabilities")) is not list:
+        raise QualificationError("installed_activity_invalid")
+    capabilities = {
+        value.get("library"): value
+        for value in activity["capabilities"]
+        if type(value) is dict and type(value.get("library")) is str
+    }
+    grants: list[dict[str, object]] = []
+    for library, _, _ in libraries:
+        capability = capabilities.get(library)
+        destinations = (
+            capability.get("destinations") if type(capability) is dict else None
+        )
+        allowed = [
+            value["destination"] for value in destinations
+            if type(value) is dict
+            and value.get("state") == "allowed"
+            and type(value.get("destination")) is str
+        ] if type(destinations) is list else []
+        if not allowed:
+            raise QualificationError("installed_consent_capability_invalid")
+        grants.append({"library": library, "destinations": allowed})
+    return grants
 
 
 def _compose_review_client(
@@ -891,7 +938,7 @@ def _installed_continuous_qualification(
             if login.status_code != 200:
                 raise QualificationError("installed_login_failed")
             csrf = _string(login.json().get("csrf_token"), "installed_login_invalid")
-            mutation_headers = {**origin, "X-CSRF-Token": csrf}
+            mutation_headers = _installed_mutation_headers(origin, csrf)
             for name, _, _ in libraries:
                 request_deadline = time.monotonic() + 30
                 while True:
@@ -1043,9 +1090,23 @@ def _installed_continuous_qualification(
                         json=payload,
                     )
                     if decided.status_code != 200:
+                        response = decided.json()
+                        detail = (
+                            response.get("detail")
+                            if type(response) is dict
+                            else None
+                        )
+                        if detail is None and type(response) is dict:
+                            detail = response.get("error")
+                        code = (
+                            detail.get("code")
+                            if type(detail) is dict
+                            and type(detail.get("code")) is str
+                            else "unknown"
+                        )
                         raise QualificationError(
                             "installed_decision_failed:"
-                            f"{field['destination']}:{decided.status_code}"
+                            f"{field['destination']}:{decided.status_code}:{code}"
                         )
                     missing_human.remove(str(field["destination"]))
                     accepted_libraries.add(library_name)
@@ -1218,10 +1279,21 @@ def _installed_continuous_qualification(
                 raise QualificationError("installed_pause_failed")
             consented = client.post(
                 "/api/v1/activity/consent", headers=mutation_headers,
-                json={"libraries": [name for name, _, _ in libraries]},
+                json={"grants": _installed_consent_grants(activity.json(), libraries)},
             )
             if consented.status_code != 200:
-                raise QualificationError("installed_consent_failed")
+                consent_value = consented.json()
+                detail = (
+                    consent_value.get("detail")
+                    if type(consent_value) is dict else None
+                )
+                code = (
+                    detail.get("code") if type(detail) is dict
+                    and type(detail.get("code")) is str else "unknown"
+                )
+                raise QualificationError(
+                    f"installed_consent_failed:{consented.status_code}:{code}"
+                )
             time.sleep(0.5)
             paused_states = {
                 str(state): int(count)

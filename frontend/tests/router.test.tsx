@@ -65,7 +65,7 @@ const createHttp = (): ReviewHttp => ({
   preparationAction: vi.fn(async (): Promise<PreparationView> => ({ schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [] })),
   recordDecision: vi.fn(async () => ({ schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-1', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: 'proposal-1', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-1' })),
   returnToAutomatic: vi.fn(async () => undefined),
-  getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({ schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v2', name: 'Default', options: {}, destinations: {} } })),
+  getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({ schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v2', name: 'Default', options: {}, destinations: {} }, rich_qualification: [] })),
   getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({ schema_version: 'shadow-posture-v1', posture: 'review', authority: 'none', can_leave_preview: false })),
   getAutomaticSafety: vi.fn(async () => ({ paused: false, global_suspension: null, category_suspensions: {} })),
   getShadowSample: vi.fn(async (): Promise<ShadowSampleView> => ({ schema_version: 'shadow-outcome-sample-v1', authority: 'none', items: [], next_cursor: null })),
@@ -891,7 +891,11 @@ describe('typed review routes', () => {
     })
     const http: ReviewHttp = {
       ...createHttp(),
-      getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({ schema_version: 'metadata-policy-notebook-v1', policy_id: 'opaque-policy-identity', profile: { schema_version: 'metadata-policy-profile-v2', name: 'Qualified default', options, destinations } })),
+      getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({ schema_version: 'metadata-policy-notebook-v1', policy_id: 'opaque-policy-identity', profile: { schema_version: 'metadata-policy-profile-v2', name: 'Qualified default', options, destinations }, rich_qualification: [
+        { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'insufficient_coverage', field: 'isbn_form', option: 'preserve_exact' },
+        { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'insufficient_coverage', field: 'isbn_form', option: 'prefer_isbn13' },
+        { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'passing_human_only', field: 'explicit', option: 'unsupported' },
+      ] })),
       policyCommand: <T,>(path: string, body?: unknown) => policyCommand(path, body) as Promise<T>,
     }
     renderRoute('/policy?section=publication', http)
@@ -905,7 +909,12 @@ describe('typed review routes', () => {
     expect(screen.queryByText('opaque-policy-identity')).toBeNull()
     const isbn = screen.getByRole('group', { name: /ISBN/ })
     expect(within(isbn).getByRole('button', { name: 'Automatic' })).toBeDisabled()
-    expect(within(isbn).getByText(/Automatic is not qualified/)).toBeVisible()
+    expect(within(isbn).getByText(/insufficient qualification coverage/)).toBeVisible()
+    await user.selectOptions(within(isbn).getByRole('combobox', { name: 'ISBN representation' }), 'prefer_isbn13')
+    expect(within(isbn).getByText(/insufficient qualification coverage/)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /Open unsupported content/i }))
+    const explicit = screen.getByRole('group', { name: /Explicit-content flag/ })
+    expect(within(explicit).getByText(/remains unsupported and has no policy choice/)).toBeVisible()
     expect(screen.queryByRole('group', { name: /Title and subtitle/ })).toBeNull()
     expect(screen.getByRole('button', { name: /Open identity/i })).toBeVisible()
 
