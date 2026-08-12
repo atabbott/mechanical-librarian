@@ -47,6 +47,7 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
     publication_date_is_voting,
 )
+from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 
 
 PROPOSAL_SCHEMA = "proposal-set-v4"
@@ -227,6 +228,8 @@ _POLICY_DESTINATIONS: dict[str, frozenset[TargetDestination]] = {
     "language_rendering": frozenset({TargetDestination.LANGUAGE}),
     "contributor_names": frozenset({TargetDestination.AUTHORS, TargetDestination.NARRATORS}),
     "publisher_preference": frozenset({TargetDestination.PUBLISHER}),
+    "subtitle": frozenset({TargetDestination.SUBTITLE}),
+    "series": frozenset({TargetDestination.SERIES}),
     "genres": frozenset({TargetDestination.GENRES}),
     "tags": frozenset({TargetDestination.TAGS}),
     "description_fill": frozenset({TargetDestination.DESCRIPTION}),
@@ -885,7 +888,7 @@ def _ignored_policy_targets(
         return frozenset()
     if (
         type(destinations) is not dict
-        or set(destinations) != set(_POLICY_DESTINATIONS)
+        or set(destinations) != set(OPTION_CATALOGUE)
         or any(
             type(value) is not str
             or value not in {"ask", "ignore", "automatic", "unsupported"}

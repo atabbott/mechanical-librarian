@@ -5719,6 +5719,53 @@ class SQLiteMetadataReportRepository:
         except (sqlite3.Error, TypeError, ValueError) as error:
             raise MetadataReportError("policy preview is unavailable") from error
 
+    def current_policy_impact_pairs(
+        self, library: str, limit: int
+    ) -> tuple[int, tuple[tuple[MetadataReport, ProposalSet], ...]]:
+        """Return bounded exact current review pairs for a no-effect policy preview."""
+        if type(library) is not str or not library or type(limit) is not int or not 1 <= limit <= 20:
+            raise MetadataReportError("policy preview is unavailable")
+        try:
+            total_row = self._connection.execute(
+                "SELECT count(*) " + _CURRENT_REVIEW_FROM_SQL
+                + " WHERE c.library_name=?",
+                (library,),
+            ).fetchone()
+            if total_row is None or type(total_row[0]) is not int or total_row[0] < 0:
+                raise MetadataReportError("policy preview is unavailable")
+            rows = self._connection.execute(
+                "SELECT rc.document,mr.document,p.proposal_set_id,p.report_id,"
+                "p.policy_version,p.document " + _CURRENT_REVIEW_FROM_SQL
+                + " JOIN proposal_sets p ON p.proposal_set_id=rc.proposal_set_id "
+                "AND p.report_id=rc.report_id"
+                + " WHERE c.library_name=? "
+                "ORDER BY c.connection_name,c.item_id,c.review_case_id LIMIT ?",
+                (library, limit),
+            ).fetchall()
+            pairs_list: list[tuple[MetadataReport, ProposalSet]] = []
+            for row in rows:
+                case = ReviewCase.from_json(row[0])
+                report = MetadataReport.from_json(row[1])
+                proposal = ProposalSet.from_json(case.proposal_document)
+                case_document, report_document = _validate_review_browse_row(
+                    row[:2], self._policy_destinations_for(report, proposal)
+                )
+                case = ReviewCase.from_json(case_document)
+                report = MetadataReport.from_json(report_document)
+                proposal = ProposalSet.from_json(case.proposal_document)
+                persisted_proposal = ProposalSet.from_json(
+                    _validate_proposal_row(row[2:])
+                )
+                if persisted_proposal.to_json() != proposal.to_json():
+                    raise MetadataReportError("policy preview is unavailable")
+                pairs_list.append((report, proposal))
+            pairs = tuple(pairs_list)
+            if len(pairs) > total_row[0]:
+                raise MetadataReportError("policy preview is unavailable")
+            return total_row[0], pairs
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            raise MetadataReportError("policy preview is unavailable") from error
+
     def create_review_session(
         self,
         session_digest: str,
@@ -6595,6 +6642,34 @@ class SQLiteShadowPreviewRepository:
             raise MetadataReportError("database authority changed")
         _reject_database_sidecars(self._path)
 
+    def current_unapplied_count(self, library: str) -> int:
+        self._require_current()
+        value = self._reader.current_unapplied_count(library)
+        self._require_current()
+        return value
+
+    def active_metadata_policy(self) -> str:
+        self._require_current()
+        value = self._reader.active_metadata_policy()
+        self._require_current()
+        return value
+
+    def metadata_policy_resolution_for_preview(
+        self, library: str
+    ) -> ResolvedMetadataPolicy | None:
+        self._require_current()
+        value = self._reader.metadata_policy_resolution_for_preview(library)
+        self._require_current()
+        return value
+
+    def current_policy_impact_pairs(
+        self, library: str, limit: int
+    ) -> tuple[int, tuple[tuple[MetadataReport, ProposalSet], ...]]:
+        self._require_current()
+        value = self._reader.current_policy_impact_pairs(library, limit)
+        self._require_current()
+        return value
+
     def preview_shadow_packet(self, review_case_id: str) -> ShadowReviewPacket:
         if self._closed:
             raise MetadataReportError("database is unavailable")
@@ -7222,7 +7297,51 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
     ))
     if objects != expected_objects or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
+    _validate_metadata_policy_documents(connection)
     _validate_field_effect_state(connection)
+
+
+def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:
+    """Accept only canonical documents for the exact current policy schema."""
+    try:
+        drafts = connection.execute(
+            "SELECT policy_id,document FROM metadata_policy_drafts"
+        ).fetchall()
+        if not drafts:
+            raise MetadataPolicyError("metadata policy state is empty")
+        for policy_id, document in drafts:
+            profile = MetadataPolicyProfile.from_data(json.loads(document))
+            if (
+                profile.policy_id != policy_id
+                or profile.canonical_json != document
+            ):
+                raise MetadataPolicyError("metadata policy draft is invalid")
+        for generation, library, resolved_id, document in connection.execute(
+            "SELECT generation,library_name,resolved_policy_id,document "
+            "FROM metadata_policy_resolutions"
+        ):
+            resolved = ResolvedMetadataPolicy.from_data(json.loads(document))
+            if (
+                type(generation) is not int
+                or generation < 1
+                or resolved.library != library
+                or resolved.resolved_id != resolved_id
+                or resolved.canonical_json != document
+            ):
+                raise MetadataPolicyError(
+                    "metadata policy resolution is invalid"
+                )
+    except (
+        json.JSONDecodeError,
+        MetadataPolicyError,
+        TypeError,
+        ValueError,
+        UnicodeError,
+        sqlite3.Error,
+    ) as error:
+        raise MetadataReportError(
+            "database is unavailable or incompatible"
+        ) from error
 
 
 def _validate_field_effect_state(connection: sqlite3.Connection) -> None:

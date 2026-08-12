@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add the closed v2 rich-metadata policy vocabulary for manual preview: subtitle,
+  series, exact list operations, bounded description text, and exact ISBN/ASIN
+  choices. Rich-field automatic intent remains unavailable and this change does
+  not add target or media write authority. (#566)
+
 - Fix source-only contained cover-reviewer image transport so the Linux sandbox
   receives each rehashed, sealed preview through a descriptor-data mount instead
   of a `/proc` path mount. Oversized descriptor copies now fail before dispatch,

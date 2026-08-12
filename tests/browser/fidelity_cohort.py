@@ -588,11 +588,65 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             "schema_version": "metadata-policy-notebook-v1",
             "policy_id": "policy-active-1",
             "profile": {
-                "schema_version": "metadata-policy-profile-v1",
+                "schema_version": "metadata-policy-profile-v2",
                 "name": "Household metadata policy",
-                "options": {"title": "preserve", "authors": "structured"},
-                "destinations": {"title": "ask", "authors": "automatic"},
+                "options": {"title_layout": "title_and_subtitle", "date_precision": "year", "language_rendering": "display_name", "contributor_names": "canonical", "publisher_preference": "publisher", "subtitle": "fill_empty", "series": "primary_narrative", "genres": "fill_empty", "tags": "off", "description_fill": "safe_plain_text", "isbn_form": "preserve_exact", "cover_order": "fixed_source_order", "asin": "preserve_exact", "explicit": "unsupported"},
+                "destinations": {"title_layout": "ask", "date_precision": "ask", "language_rendering": "ask", "contributor_names": "ask", "publisher_preference": "ask", "subtitle": "ask", "series": "ask", "genres": "ask", "tags": "ask", "description_fill": "ask", "isbn_form": "ask", "cover_order": "ask", "asin": "ask", "explicit": "unsupported"},
             },
+        }
+    if path == "/api/v1/metadata-policy/drafts":
+        return {
+            "policy_id": "policy_" + "d" * 64,
+            "schema_version": "metadata-policy-profile-v2",
+        }
+    if path == "/api/v1/metadata-policy/preview":
+        fields = [
+            ("subtitle", "missing", None, "A bounded subtitle", "projected", None),
+            ("series", "value", [{"name": "Old order", "sequence": "1"}], [{"name": "Reading order", "sequence": "2"}], "projected", None),
+            ("genres", "value", ["Fantasy"], ["Fantasy", "Epic"], "projected", None),
+            ("tags", "missing", None, None, "abstain", "policy_off"),
+            ("description_fill", "missing", None, "Safe visible description <3", "projected", None),
+            ("isbn_form", "missing", None, "9780306406157", "projected", None),
+            ("asin", "missing", None, "B012345678", "projected", None),
+            ("explicit", "missing", None, None, "abstain", "explicit_unsupported"),
+        ]
+        return {
+            "schema_version": "metadata-policy-preview-v1",
+            "policy_id": "policy_" + "d" * 64,
+            "libraries": [{
+                "affected_categories": ["description_fill"],
+                "cases": [{
+                    "fields": [{
+                        "current_value": current,
+                        "desired_value": desired,
+                        "field": field,
+                        "narrowed_for_target": field == "series",
+                        "option": {
+                            "subtitle": "fill_empty", "series": "all_qualified",
+                            "genres": "add", "tags": "off",
+                            "description_fill": "google_visible_text",
+                            "isbn_form": "prefer_isbn13",
+                            "asin": "ebook_manifestation",
+                            "explicit": "unsupported",
+                        }[field],
+                        "outcome": outcome,
+                        "qualified_value": ([
+                            {"name": "Reading order", "sequence": "2"},
+                            {"name": "Publication order", "sequence": None},
+                        ] if field == "series" else None),
+                        "reason": reason,
+                        "target_state": state,
+                    } for field, state, current, desired, outcome, reason in fields],
+                    "proposal_set_id": "proposal_set_" + "b" * 64,
+                    "report_id": "report_" + "a" * 64,
+                    "resolved_policy_id": "resolved_policy_" + "c" * 64,
+                }],
+                "cases_total": 1,
+                "cases_truncated": False,
+                "current_unapplied_count": 1,
+                "library": "Household ebooks",
+                "resolved_policy_id": "resolved_policy_" + "c" * 64,
+            }],
         }
     if path == "/api/v1/metadata-policy/shadow":
         return {"schema_version": "shadow-posture-v1", "posture": "preview", "authority": "none", "can_leave_preview": True}
