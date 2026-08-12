@@ -65,7 +65,7 @@ const createHttp = (): ReviewHttp => ({
   preparationAction: vi.fn(async (): Promise<PreparationView> => ({ schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [] })),
   recordDecision: vi.fn(async () => ({ schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-1', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: 'proposal-1', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-1' })),
   returnToAutomatic: vi.fn(async () => undefined),
-  getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({ schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v1', name: 'Default', options: {}, destinations: {} } })),
+  getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({ schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v2', name: 'Default', options: {}, destinations: {} } })),
   getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({ schema_version: 'shadow-posture-v1', posture: 'review', authority: 'none', can_leave_preview: false })),
   getAutomaticSafety: vi.fn(async () => ({ paused: false, global_suspension: null, category_suspensions: {} })),
   getShadowSample: vi.fn(async (): Promise<ShadowSampleView> => ({ schema_version: 'shadow-outcome-sample-v1', authority: 'none', items: [], next_cursor: null })),
@@ -875,7 +875,7 @@ describe('typed review routes', () => {
   it('presents Policy as a semantic notebook and preserves guarded activation currentness', async () => {
     const user = userEvent.setup()
     const options = {
-      title_layout: 'title_and_subtitle', date_precision: 'year', language_rendering: 'display_name', contributor_names: 'canonical', publisher_preference: 'publisher', genres: 'catalogue', tags: 'catalogue', description_fill: 'fill_when_empty', isbn_form: 'isbn13', cover_order: 'fixed_source_order', asin: 'canonical_asin', explicit: 'unsupported',
+      title_layout: 'title_and_subtitle', date_precision: 'year', language_rendering: 'display_name', contributor_names: 'canonical', publisher_preference: 'publisher', subtitle: 'fill_empty', series: 'primary_narrative', genres: 'fill_empty', tags: 'off', description_fill: 'safe_plain_text', isbn_form: 'preserve_exact', cover_order: 'fixed_source_order', asin: 'preserve_exact', explicit: 'unsupported',
     }
     const destinations = {
       title_layout: 'ask', date_precision: 'ask', language_rendering: 'ask', contributor_names: 'ask', publisher_preference: 'ask', genres: 'ask', tags: 'ignore', description_fill: 'ask', isbn_form: 'ask', cover_order: 'ask', asin: 'ask', explicit: 'unsupported',
@@ -884,14 +884,14 @@ describe('typed review routes', () => {
     const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
       if (path === 'validate' && (body as { name?: string }).name === '') throw new ApiError(422, 'invalid_policy')
       if (path === 'drafts' && ++draftSaves > 1) throw new AmbiguousMutationError()
-      if (path === 'drafts') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v1' }
-      if (path === 'preview') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-preview-v1', libraries: [{ library: 'Hostile <script> library', affected_categories: ['title_layout', 'tags'], current_unapplied_count: 3, resolved_policy_id: 'resolved-policy' }] }
+      if (path === 'drafts') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v2' }
+      if (path === 'preview') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-preview-v1', libraries: [{ library: 'Hostile <script> library', affected_categories: ['title_layout', 'tags'], cases: [], cases_total: 0, cases_truncated: false, current_unapplied_count: 3, resolved_policy_id: 'resolved-policy' }] }
       if (path === 'activate') throw new ApiError(409, 'active_policy_changed')
-      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v1' }
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v2' }
     })
     const http: ReviewHttp = {
       ...createHttp(),
-      getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({ schema_version: 'metadata-policy-notebook-v1', policy_id: 'opaque-policy-identity', profile: { schema_version: 'metadata-policy-profile-v1', name: 'Qualified default', options, destinations } })),
+      getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({ schema_version: 'metadata-policy-notebook-v1', policy_id: 'opaque-policy-identity', profile: { schema_version: 'metadata-policy-profile-v2', name: 'Qualified default', options, destinations } })),
       policyCommand: <T,>(path: string, body?: unknown) => policyCommand(path, body) as Promise<T>,
     }
     renderRoute('/policy?section=publication', http)
@@ -959,9 +959,9 @@ describe('typed review routes', () => {
   it('tracks truthful Policy cadence stages and resets them after a draft edit', async () => {
     const user = userEvent.setup()
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
-      if (path === 'drafts') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v1' }
+      if (path === 'drafts') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v2' }
       if (path === 'preview') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-preview-v1', libraries: [] }
-      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v1' }
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v2' }
     })
     const http: ReviewHttp = { ...createHttp(), policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T> }
     renderRoute('/policy?section=identity', http)
@@ -1006,10 +1006,10 @@ describe('typed review routes', () => {
   it('keeps every completed Policy cadence marker after successful activation', async () => {
     const user = userEvent.setup()
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
-      if (path === 'drafts') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v1' }
+      if (path === 'drafts') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v2' }
       if (path === 'preview') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-preview-v1', libraries: [] }
       if (path === 'activate') return { policy_id: 'policy-active', schema_version: 'metadata-policy-activation-v1', transition_id: 'transition-1' }
-      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v1' }
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v2' }
     })
     const http: ReviewHttp = { ...createHttp(), policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T> }
     renderRoute('/policy?section=identity', http)

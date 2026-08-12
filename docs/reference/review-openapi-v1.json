@@ -1572,8 +1572,8 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "metadata-policy-profile-v1",
-            "default": "metadata-policy-profile-v1",
+            "const": "metadata-policy-profile-v2",
+            "default": "metadata-policy-profile-v2",
             "title": "Schema Version",
             "type": "string"
           }
@@ -1594,6 +1594,21 @@
             "title": "Affected Categories",
             "type": "array"
           },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/_RichCasePreviewResponse"
+            },
+            "title": "Cases",
+            "type": "array"
+          },
+          "cases_total": {
+            "title": "Cases Total",
+            "type": "integer"
+          },
+          "cases_truncated": {
+            "title": "Cases Truncated",
+            "type": "boolean"
+          },
           "current_unapplied_count": {
             "title": "Current Unapplied Count",
             "type": "integer"
@@ -1609,6 +1624,9 @@
         },
         "required": [
           "affected_categories",
+          "cases",
+          "cases_total",
+          "cases_truncated",
           "current_unapplied_count",
           "library",
           "resolved_policy_id"
@@ -1670,7 +1688,7 @@
             "type": "object"
           },
           "schema_version": {
-            "const": "metadata-policy-profile-v1",
+            "const": "metadata-policy-profile-v2",
             "title": "Schema Version",
             "type": "string"
           }
@@ -2039,6 +2057,108 @@
           "uncertainty"
         ],
         "title": "_ReviewField",
+        "type": "object"
+      },
+      "_RichCasePreviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/_RichFieldPreviewResponse"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "proposal_set_id": {
+            "title": "Proposal Set Id",
+            "type": "string"
+          },
+          "report_id": {
+            "title": "Report Id",
+            "type": "string"
+          },
+          "resolved_policy_id": {
+            "title": "Resolved Policy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fields",
+          "proposal_set_id",
+          "report_id",
+          "resolved_policy_id"
+        ],
+        "title": "_RichCasePreviewResponse",
+        "type": "object"
+      },
+      "_RichFieldPreviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "current_value": {
+            "title": "Current Value"
+          },
+          "desired_value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Desired Value"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "narrowed_for_target": {
+            "title": "Narrowed For Target",
+            "type": "boolean"
+          },
+          "option": {
+            "title": "Option",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "qualified_value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qualified Value"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "target_state": {
+            "title": "Target State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_value",
+          "desired_value",
+          "field",
+          "narrowed_for_target",
+          "option",
+          "outcome",
+          "qualified_value",
+          "reason",
+          "target_state"
+        ],
+        "title": "_RichFieldPreviewResponse",
         "type": "object"
       },
       "_SeriesValue": {

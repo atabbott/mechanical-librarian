@@ -66,8 +66,15 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                 return httpx.Response(200, headers={"content-type": "image/png"}, content=self.cover_bytes)
             if request.method == "PATCH":
                 payload = json.loads(request.content)
-                self.assertEqual(payload, {"metadata": {"title": "After"}})
-                self.detail["media"]["metadata"]["title"] = "After"
+                if "tags" in payload:
+                    self.assertEqual(set(payload), {"tags"})
+                    self.detail["media"]["tags"] = payload["tags"]
+                else:
+                    self.assertEqual(set(payload), {"metadata"})
+                    metadata = payload["metadata"]
+                    self.assertIsInstance(metadata, dict)
+                    self.assertEqual(1, len(metadata))
+                    self.detail["media"]["metadata"].update(metadata)
                 self.detail["updatedAt"] = 8
                 return httpx.Response(self.write_status, json={"updated": True})
             if request.method == "POST":
@@ -125,6 +132,33 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         )
         patch = next(request for request in self.requests if request.method == "PATCH")
         self.assertEqual(patch.headers["authorization"], "Bearer test-key")
+
+    def test_rich_metadata_target_shapes_read_apply_and_read_back(self) -> None:
+        metadata = self.detail["media"]["metadata"]
+        metadata.update({
+            "subtitle": None,
+            "series": [],
+            "genres": [],
+            "description": None,
+            "isbn": None,
+            "asin": None,
+        })
+        self.detail["media"]["tags"] = []
+        values = {
+            "subtitle": "Synthetic subtitle",
+            "series": [{"name": "Synthetic series", "sequence": "1"}],
+            "genres": ["Synthetic genre"],
+            "tags": ["Synthetic tag"],
+            "description": "Synthetic description.",
+            "isbn": "9780306406157",
+            "asin": "B000000001",
+        }
+        for destination, desired in values.items():
+            with self.subTest(destination=destination):
+                plan = self.plan(destination, None, desired)
+                self.assertIsNone(self.target.read(plan).value)
+                self.assertEqual("accepted", self.target.apply(plan).outcome)
+                self.assertEqual(desired, self.target.read(plan).value)
 
     def test_cover_reads_digest_and_uploads_only_verified_original(self) -> None:
         plan = self.plan("cover", None, self.cover)

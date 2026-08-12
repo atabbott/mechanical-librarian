@@ -14,6 +14,17 @@
   admitted the same frozen 10 packets/50 candidates on both platforms, with no
   provider or model calls and no production access or writes. (#542)
 
+- Record the non-authorizing F20 rich-metadata qualification candidate. No
+  fresh F20 holdout is available, so every automatic candidate is visibly
+  `insufficient_coverage`; `explicit` remains human-only, and narrators and
+  cover remain excluded. The focused Audiobookshelf fake proof covers the
+  rich target shapes without adding automatic authority. (#565)
+
+- Add the closed v2 rich-metadata policy vocabulary for manual preview: subtitle,
+  series, exact list operations, bounded description text, and exact ISBN/ASIN
+  choices. Rich-field automatic intent remains unavailable and this change does
+  not add target or media write authority. (#566)
+
 - Fix source-only contained cover-reviewer image transport so the Linux sandbox
   receives each rehashed, sealed preview through a descriptor-data mount instead
   of a `/proc` path mount. Oversized descriptor copies now fail before dispatch,

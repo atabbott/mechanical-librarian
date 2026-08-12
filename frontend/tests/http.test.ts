@@ -147,9 +147,9 @@ describe('ReviewApiClient', () => {
   })
 
   it('distinguishes matching active policy values from a changed local draft', () => {
-    const active = { schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v1', name: 'Active', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } } } as never
+    const active = { schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v2', name: 'Active', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } } } as never
     expect(derivePolicyDraftDisplay(active, { name: 'Active', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } })).toMatchObject({ changed: false, activeName: 'Active' })
-    const reordered = { schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v1', name: 'Active', options: { first: 'one', second: 'two' }, destinations: { first: 'ask', second: 'ignore' } } } as never
+    const reordered = { schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v2', name: 'Active', options: { first: 'one', second: 'two' }, destinations: { first: 'ask', second: 'ignore' } } } as never
     expect(derivePolicyDraftDisplay(reordered, { name: 'Active', options: { second: 'two', first: 'one' }, destinations: { second: 'ignore', first: 'ask' } })).toMatchObject({ changed: false })
     expect(derivePolicyDraftDisplay(active, { name: 'Draft', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } })).toMatchObject({ changed: true, draftName: 'Draft' })
   })

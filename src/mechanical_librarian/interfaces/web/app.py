@@ -404,14 +404,14 @@ class _PolicyDraftRequest(_ClosedModel):
 
 class _PolicyDraftResponse(_ClosedModel):
     policy_id: str
-    schema_version: Literal["metadata-policy-profile-v1"] = "metadata-policy-profile-v1"
+    schema_version: Literal["metadata-policy-profile-v2"] = "metadata-policy-profile-v2"
 
 
 class _PolicyProfile(_ClosedModel):
     destinations: dict[StrictStr, StrictStr] = Field(max_length=16)
     name: StrictStr = Field(min_length=1, max_length=80)
     options: dict[StrictStr, StrictStr] = Field(max_length=16)
-    schema_version: Literal["metadata-policy-profile-v1"]
+    schema_version: Literal["metadata-policy-profile-v2"]
 
 
 class _PolicyProfileResponse(_ClosedModel):
@@ -420,8 +420,30 @@ class _PolicyProfileResponse(_ClosedModel):
     schema_version: Literal["metadata-policy-notebook-v1"] = "metadata-policy-notebook-v1"
 
 
+class _RichFieldPreviewResponse(_ClosedModel):
+    current_value: object
+    desired_value: object | None
+    field: str
+    narrowed_for_target: bool
+    option: str
+    outcome: str
+    qualified_value: object | None
+    reason: str | None
+    target_state: str
+
+
+class _RichCasePreviewResponse(_ClosedModel):
+    fields: list[_RichFieldPreviewResponse]
+    proposal_set_id: str
+    report_id: str
+    resolved_policy_id: str
+
+
 class _PolicyImpactResponse(_ClosedModel):
     affected_categories: list[str]
+    cases: list[_RichCasePreviewResponse]
+    cases_total: int
+    cases_truncated: bool
     current_unapplied_count: int
     library: str
     resolved_policy_id: str
@@ -1154,7 +1176,7 @@ def _register_policy_routes(
             raise HTTPException(422, detail={"code": _policy_problem(error)}) from None
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None
-        return _PolicyPreviewResponse(policy_id=profile.policy_id, libraries=[_PolicyImpactResponse(affected_categories=list(item.affected_categories), current_unapplied_count=item.current_unapplied_count, library=item.library, resolved_policy_id=item.resolved_policy_id) for item in preview.libraries])
+        return _PolicyPreviewResponse(policy_id=profile.policy_id, libraries=[_PolicyImpactResponse(affected_categories=list(item.affected_categories), cases=[_RichCasePreviewResponse.model_validate(case.to_data()) for case in item.cases], cases_total=item.cases_total, cases_truncated=item.cases_truncated, current_unapplied_count=item.current_unapplied_count, library=item.library, resolved_policy_id=item.resolved_policy_id) for item in preview.libraries])
 
     @app.post("/api/v1/metadata-policy/activate", response_model=_PolicyActivationResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 413, 422, 503)})
     def activate_metadata_policy(payload: _PolicyActivationRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyActivationResponse:

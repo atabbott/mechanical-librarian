@@ -134,6 +134,22 @@ no-store, and covered by the same restrictive CSP. Creating, reading,
 validating, or previewing a draft cannot activate a policy, create a successor
 or queue item, record a decision, or write metadata.
 
+Rich-field impact preview reads at most 20 exact-current lineage pairs per
+library and re-evaluates each immutable report with the existing pure proposal
+compiler under the draft's resolved identity. The field compiler accepts only
+already admitted typed alternatives and exact retained evidence references;
+Google description transformation, accepted ISBN relation, and ebook ASIN
+applicability are checked without parsing, conversion, inference, provider
+access, or target access. Every new Automatic choice returns a closed
+unqualified abstention. The CLI uses the same application path against an
+existing database and creates no file or SQLite state.
+
+The F20 rich-metadata qualification candidate is aggregate-only and currently
+names no automatic option. Its `insufficient_coverage` records cannot be used
+as a fallback authority, and its human-only `explicit:unsupported` invariant
+cannot construct an effect. A later activation may consume only an exact
+passing manifest through its separately reviewed authority path.
+
 Activation is a separate authenticated CSRF-protected owner mutation with the
 same 16 KiB pre-parse request bound as policy drafts. It binds
 the expected active identity and exact immutable draft, revalidates qualified
