@@ -148,41 +148,170 @@ It is not yet the 100-case semantic-quality or repeatability result below. No
 provider call, corpus rebuild, final-holdout exposure, production access, write,
 runtime activation, model change, or threshold reduction was used.
 
-## Cover-observation qualification — bounded contract PASS
+## Cover-observation qualification — semantic proof PASS
 
-After the observation contract and taxonomy binding passed independent code
-review, one recorded random seed selected 100 real report-bound preview
-candidates: 50 development and 50 final holdout. The sample contains 100
-distinct reports and 100 distinct selected preview digests. No case was
-selected by label, and the final holdout remained sealed until the development
-admission replay was complete.
+Independent blinded reference judgements were frozen before tested observer
+outputs were opened. The final reference judgements were independently reviewed
+twice and adjudicated. These are review judgements, not claimed human ground
+truth. Every replacement cohort was work-family-disjoint from the development
+cohort and the other final cohorts. Public evidence contains aggregates only.
 
-| Measure | Development | Final holdout | Combined |
-| --- | ---: | ---: | ---: |
-| Randomly selected cases | 50 | 50 | 100 |
-| Exact packet/image/request admissions | 50 | 50 | 100 |
-| Binding or mapping mismatches | 0 | 0 | 0 |
-| Shuffled deterministic repeat admissions | 20/20 | — | 20/20 |
-| Contained observer dispatches | 0 | 0 | 0 |
-| Admitted semantic observation results | 0 | 0 | 0 |
+Every cohort design sealed a deterministic seed before selection or viewing.
+Selection did not inspect semantic reference judgements or tested observer
+outputs. Each replacement excluded every previously used source, work, report,
+preview, and near-duplicate family; seed values and case identities remain
+private.
 
-The real admission replay proves the closed instruction, taxonomy, output
-schema, packet, ordered-image, candidate, and byte bindings on the retained
-corpus. The final holdout caused no implementation or tuning change.
+| Frozen cohort | Multi-choice packets |
+| --- | ---: |
+| Development | 46 |
+| Original final, invalidated before execution | 37 |
+| Replacement final, spent at setup | 45 |
+| Recovery final, one shot | 25 across 29 fresh packets |
 
-The contained semantic observer **did not execute**. The inherited #542
-qualification result remains `contained_reviewer_invocation_insufficient`, so
-natural label counts, semantic repeat agreement, and semantic quality are not
-available. Historical #542 latency cannot be attributed to this head. This is
-an honest general-principle PASS for the deterministic typed contract and real
-admission boundary, not a model-quality result or runtime activation. No retry,
-profile, model, authority, limit, threshold, provider, or corpus change was
-used to manufacture a semantic result.
+The single development hypothesis was that the existing sealed-image packaging,
+fixed instruction, closed schema, and corrected bounded profile would admit the
+sample and reach at least 75% exact agreement for every field with stable
+repeats. The first configuration passed, so the permitted second and third
+configurations were not run.
 
-## Cover-policy qualification — deterministic contract PASS
+| Development measure | Aggregate result |
+| --- | ---: |
+| Candidates admitted | 50/50 |
+| Composition exact agreement | 43/50 (86%) |
+| Medium exact agreement | 42/50 (84%) |
+| Promotional-text exact agreement | 46/50 (92%) |
+| Tie-in exact agreement | 49/50 (98%) |
+| Seeded repeat, each field and joint | 20/20 (100%) |
+| Initial p50 / p95 latency | 9.76 s / 13.73 s |
+| Repeat p50 / p95 latency | 8.95 s / 12.22 s |
+| Failures / retries / violations | 0 / 0 / 0 |
 
-After the deterministic adjudicator passed independent code review, it replayed
-the unchanged random 100-packet cohort from the observation proof: 50
+Development aggregate confusion was:
+
+| Field | Reference → observer | Count |
+| --- | --- | ---: |
+| Composition | `dense` → `dense` / `minimal` | 32 / 3 |
+| Composition | `minimal` → `dense` / `minimal` | 4 / 11 |
+| Medium | `illustrated` → `illustrated` / `typographic` | 19 / 1 |
+| Medium | `mixed` → `mixed` | 1 |
+| Medium | `photographic` → `illustrated` / `photographic` | 7 / 15 |
+| Medium | `typographic` → `typographic` | 7 |
+| Promotional text | `absent` → `absent` / `present` / `unknown` | 16 / 2 / 1 |
+| Promotional text | `present` → `present` | 30 |
+| Promotional text | `unknown` → `present` | 1 |
+| Tie-in branding | `absent` → `absent` | 48 |
+| Tie-in branding | `present` → `present` | 1 |
+| Tie-in branding | `unknown` → `absent` | 1 |
+
+Observer `unknown` predictions were 0/50 for composition, 0/50 for medium,
+1/50 (2%) for promotional text, and 0/50 for tie-in branding.
+Development minimal-positive precision was 11/14 (78.57%) and
+reference-minimal recall was 11/15 (73.33%). The precision is in the mixed band,
+the recall is below the useful band, and 15 reference-minimal cases are sparse;
+development therefore did not establish prefer-minimal policy usefulness.
+Tie-in branded-positive recall was 1/1 and absent-case specificity was 48/48;
+the single positive is too sparse to support a strong detection claim. The one
+reference-unknown case was predicted absent and is excluded from both rates.
+
+One frozen final cohort was invalidated before execution because a broad private
+JSON discovery scanner opened final-reference files, although no reference
+values entered tested or model-visible output. Its fresh disjoint replacement
+was spent during setup with 0/50 cases run because a credential file was mounted
+at a directory target. Diagnosis corrected the preflight; neither attempt
+supplied semantic evidence. No prompt, model, schema, packaging, taxonomy,
+threshold, provider, corpus, network authority, or resource envelope changed.
+
+The next fresh disjoint final cohort passed an explicit preflight of the
+credential directory and file, lock, exact artifacts and version,
+authentication state, job root, namespace and sealed transport, and exact
+source/configuration/media/binding boundaries before its one shot.
+
+| Final-holdout measure | Aggregate result |
+| --- | ---: |
+| Candidate rows admitted | 48/50 (96%) |
+| Candidate-scoped packet invocations / failed invocations / retries | 50 / 2 / 0 |
+| Distinct selected packets / multi-choice packets | 29 / 25 |
+| Distinct successful / failed packet counts | unavailable / unavailable |
+| Composition exact agreement | 40/48 (83.33%) |
+| Medium exact agreement | 47/48 (97.92%) |
+| Promotional-text exact agreement | 45/48 (93.75%) |
+| Promotional-text unknown predictions | 2 |
+| Tie-in exact agreement | 46/48 (95.83%) |
+| All-four exact agreement | 36/48 (75%) |
+| p50 / p95 latency | 10.74 s / 14.83 s |
+| Safety or binding violations | 0 |
+
+Final-holdout aggregate confusion among the 48 admitted candidate rows was:
+
+| Field | Reference → observer | Count |
+| --- | --- | ---: |
+| Composition | `dense` → `dense` / `minimal` | 25 / 6 |
+| Composition | `minimal` → `dense` / `minimal` | 2 / 15 |
+| Medium | `illustrated` → `illustrated` / `typographic` | 25 / 1 |
+| Medium | `mixed` → `mixed` | 1 |
+| Medium | `photographic` → `photographic` | 9 |
+| Medium | `typographic` → `typographic` | 12 |
+| Promotional text | `absent` → `absent` / `present` / `unknown` | 15 / 2 / 1 |
+| Promotional text | `present` → `present` | 29 |
+| Promotional text | `unknown` → `unknown` | 1 |
+| Tie-in branding | `absent` → `absent` | 44 |
+| Tie-in branding | `present` → `absent` / `present` | 2 / 2 |
+
+Observer `unknown` predictions were 0/48 for composition, 0/48 for medium,
+2/48 (4.17%) for promotional text, and 0/48 for tie-in branding.
+Minimal-positive precision was 15/21 (71.43%), below the 75% useful band, while
+reference-minimal recall was 15/17 (88.24%). The 83.33% overall composition
+agreement therefore does not establish useful prefer-minimal policy behavior;
+#543 must replay that policy and may validly fail it.
+Tie-in branded-positive recall was 2/4 (50%), below the 75% useful band, while
+absent-case specificity was 44/44 (100%). The high overall tie-in agreement is
+therefore driven by class prevalence and does not establish useful branded-cover
+detection for an avoid-tie-in policy.
+
+Both failed packet invocations occurred after dispatch and before result
+admission. The
+exact shared cause was not retained and is not proven. The 50 selected candidate
+rows came from 29 distinct packets, including 25 multi-choice packets; rows
+from one packet share an atomic request/result boundary, one admitted packet
+result can score multiple selected rows, and those rows are correlated. The
+sealed aggregate receipts record 50 candidate-scoped packet invocations and
+two failures, but do not retain the opaque mapping needed to determine whether
+the failures affected two distinct packets or how many distinct packets
+produced at least one successful invocation. Distinct-packet dispatch coverage
+is therefore unavailable and is not inferred. Successful exact preflight and
+the admitted rows show that no cohort-wide always-on authentication, profile,
+sandbox, binding, or schema failure occurred; bounded transient child,
+resource, or packet-interaction hypotheses remain. The failures were retained
+without remediation, retry, or another holdout. The 4% candidate missingness
+rate is within the frozen 5% candidate-coverage tolerance, but it is not a
+packet coverage rate; its bias magnitude is unknown and every quality
+conclusion is conditional on the 48 admitted candidate rows.
+
+The primary frozen gate—at least 95% candidate coverage, at least 75% overall
+exact agreement for each field, and zero safety or binding violations—passes.
+Under the frozen bands, admitted-row composition agreement is mixed, while
+medium, promotional text, and overall tie-in agreement are strong. These
+overall rates do not prove the class-specific policy uses: minimal-positive
+precision and tie-in branded-positive recall are separately insufficient. #543
+must report prefer-minimal and avoid-tie-in policy performance independently
+and may validly fail either proof. A conservative sensitivity calculation that
+treats both missing results
+as disagreements gives dispatched-cohort lower bounds of 40/50 (80%) for
+composition, 47/50 (94%) for medium, 45/50 (90%) for promotional text, and
+46/50 (92%) for tie-in branding;
+the overall per-field agreement bands are unchanged, but that calculation does
+not cure the tie-in positive-recall failure. Joint exact agreement is 36/48
+(75%) among admitted cases but only 36/50 (72%) under that sensitivity, so it is
+missingness-sensitive and not robustly useful across all dispatched cases.
+There were zero provider calls, production-library accesses, target or media
+writes, or runtime activations. #501 / 0.15.1 remains unpromoted.
+
+## Cover-policy qualification — historical deterministic contract PASS
+
+During the initial 0.15.0 qualification attempt, before contained semantic
+execution was recovered, the deterministic adjudicator passed independent code
+review and replayed the unchanged random 100-packet cohort from the observation proof: 50
 development and 50 final holdout. Each packet was re-admitted with its exact
 images and locally derived identity report. All eight combinations of the three
 closed policy booleans were applied to every packet.
@@ -209,16 +338,18 @@ cohort caused no implementation or tuning change.
 The deterministic policy contract therefore passes, while acceptable-set
 adherence and semantic policy quality remain **not established**. No second
 reviewer, retry, provider, corpus, threshold, profile, model, limit or authority
-change was used to manufacture a recommendation.
+change was used to manufacture a recommendation. The newly admitted semantic
+observations invalidate that all-abstention replay as current policy-quality
+evidence; #543 must requalify the unchanged policy against them.
 
 ## Outcome
 
 Issue #546 passes as a best-effort general-principle proof of a bounded,
 aggregate-safe provider-cover corpus. It establishes neither semantic quality
 nor runtime activation, and it does not qualify a model or a later transport
-unit. Issue #541 separately passes its bounded typed observation-contract and
-real-admission proof while preserving the negative semantic-execution result.
-Issue #543 passes its deterministic policy and real fail-closed abstention
-proof while making no semantic-quality or recommendation claim.
+unit. Issue #541 separately passes its bounded typed observation contract and
+its aggregate-safe semantic usefulness and repeatability proof.
+Issue #543 retains its deterministic contract and historical real fail-closed
+abstention proof, while semantic policy quality remains pending requalification.
 The tracked report contains no private corpus material, and #501 remains
 unpromoted.

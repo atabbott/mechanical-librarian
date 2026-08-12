@@ -9,10 +9,15 @@ ranking and owner preference. The next proof asks whether those exact typed
 facts can support a useful policy-compatible recommendation without granting a
 reviewer policy knowledge or introducing another model call.
 
-The contained semantic observer did not execute during 0.15.0 qualification.
-That negative result must remain visible: it is not a reason to fabricate
-labels, add a second reviewer, or widen sandbox, network, model or corpus
-authority.
+The contained semantic observer did not execute during the initial 0.15.0
+qualification attempt. That negative result and its all-abstention policy replay
+remain valid historical evidence: they are not reasons to fabricate labels, add
+a second reviewer, or widen sandbox, network, model or corpus authority. The
+milestone was later reopened and requalified after bounded transport and
+environment remediation; admitted semantic observations now require a separate
+current policy-quality replay without erasing the initial negative result.
+In particular, sub-threshold minimal-positive precision and tie-in-positive
+recall leave both related policy uses unproven until that replay.
 
 ## Decision
 
@@ -73,6 +78,7 @@ The entire surface remains source-only and excluded from installed artifacts.
   applied all eight policies: 800/800 typed
   `observations_unavailable` abstentions, with zero mapping mismatches,
   recommendations, policy violations, model/provider dispatches or private
-  exposure.
+  exposure. This records the initial qualification attempt, not the later
+  reopened semantic requalification.
 - Architecture and exact-installed-artifact gates prove no runtime surface,
   persistence or write authority.
