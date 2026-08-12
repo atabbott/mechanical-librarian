@@ -12,7 +12,8 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import (
     BibliographicCombination, BibliographicSelection,
     ProposalAlternative, ProposalAssessment, ProposalOutcome, ProposalResult,
-    ProposalScope, ProposalSet, ProposalValue, ProposalValueKind, evaluate_report,
+    ProposalScope, ProposalSet, ProposalValue, ProposalValueError,
+    ProposalValueKind, evaluate_report,
 )
 from mechanical_librarian.domain.metadata_report import TargetDestination, TargetSeries
 from mechanical_librarian.domain.rich_metadata_preview import (
@@ -309,6 +310,46 @@ class RichMetadataPreviewTests(unittest.TestCase):
             if option == "all_qualified":
                 self.assertTrue(field.narrowed_for_target)
                 self.assertEqual(({"name": "Reading Order", "sequence": "2"}, {"name": "Publication Order", "sequence": None}), field.qualified_value)
+
+    def test_preserving_single_series_is_a_no_op_for_source_order_and_all_qualified(self) -> None:
+        base = _report()
+        current = (TargetSeries("Exact Provider Spelling", "2"),)
+        report = MetadataReport.create(
+            target=TargetFacts(base.target.connection, base.target.library, base.target.item, tuple(
+                TargetField(value.destination, TargetFieldState.VALUE, current)
+                if value.destination is TargetDestination.SERIES else value
+                for value in base.target.fields
+            )), file=base.file, local_claims=base.local_claims, local_reasons=base.local_reasons,
+            providers=base.providers, cover_sources=base.cover_sources,
+        )
+        base_proposal = evaluate_report(report)
+        alternative = ProposalAlternative.create(ProposalValue(ProposalValueKind.SERIES, current), ProposalAssessment.PRESERVES_TARGET, ("provider_" + "a" * 64,), ("correlation_" + "a" * 64,), ProposalScope.WORK)
+        result = ProposalResult(TargetDestination.SERIES, ProposalOutcome.KEEP, (alternative,), None, ("positive_preservation_evidence",), next(value.dependencies for value in base_proposal.results if value.destination is TargetDestination.SERIES))
+        for option in ("source_order", "all_qualified"):
+            options = dict(MetadataPolicyProfile.builtin().options); options["series"] = option
+            policy = resolve_policy(MetadataPolicyProfile.create("Keep", options, dict(MetadataPolicyProfile.builtin().destinations)), report.target.library)
+            proposal = ProposalSet.create(report_id=base_proposal.report_id, target_fingerprint=base_proposal.target_fingerprint, results=tuple(result if value.destination is TargetDestination.SERIES else value for value in base_proposal.results), resolved_policy_id=policy.resolved_id, bibliographic_combinations=base_proposal.bibliographic_combinations)
+            field = next(value for value in compile_rich_metadata_preview(policy, report, proposal).fields if value.field == "series")
+            self.assertEqual(("no_op", "unchanged", False), (field.outcome, field.reason, field.narrowed_for_target))
+
+    def test_keep_series_requires_one_preserving_membership(self) -> None:
+        alternative = ProposalAlternative.create(
+            ProposalValue(
+                ProposalValueKind.SERIES, (TargetSeries("Not preserving", None),)
+            ),
+            ProposalAssessment.FILLS_EMPTY,
+            ("provider_" + "a" * 64,),
+            ("correlation_" + "a" * 64,),
+            ProposalScope.WORK,
+        )
+        with self.assertRaises(ProposalValueError):
+            ProposalResult(
+                TargetDestination.SERIES,
+                ProposalOutcome.KEEP,
+                (alternative,),
+                None,
+                ("positive_preservation_evidence",),
+            )
 
     def test_description_options_use_exact_admitted_text_and_google_evidence(self) -> None:
         transformed = _claim(

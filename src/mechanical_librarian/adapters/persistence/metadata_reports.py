@@ -4469,14 +4469,6 @@ class SQLiteMetadataReportRepository:
             ):
                 raise MetadataReportError("review library count is invalid")
             return row
-        except MetadataReportError:
-            if self._connection.in_transaction:
-                self._connection.rollback()
-            raise
-        except MetadataReportError:
-            if self._connection.in_transaction:
-                self._connection.rollback()
-            raise
         except (sqlite3.Error, TypeError, ValueError) as error:
             raise MetadataReportError("review library is unavailable") from error
 

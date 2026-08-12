@@ -198,6 +198,8 @@ def _project(
             return _abstain(field, option, target, current, "no_candidate")
         if option == "all_qualified":
             desired = (candidate.value.value[0],)
+            if _data_value(desired) == current:
+                return RichFieldPreview(field, option, target.state.value, current, "no_op", current, "unchanged")
             return RichFieldPreview(field, option, target.state.value, current, "projected", _data_value(desired), None, True, _data_value(candidate.value.value))
         if option == "primary_narrative":
             member = _combination_member(proposal, TargetDestination.SERIES)
@@ -206,8 +208,8 @@ def _project(
             desired = (member.value.value[0],)
         if option in {"source_order", "primary_narrative"}:
             desired = (candidate.value.value[0],)
-    if desired == current:
-        return RichFieldPreview(field, option, target.state.value, current, "no_op", desired, "unchanged")
+    if _data_value(desired) == current:
+        return RichFieldPreview(field, option, target.state.value, current, "no_op", current, "unchanged")
     return RichFieldPreview(field, option, target.state.value, current, "projected", _data_value(desired), None)
 
 
