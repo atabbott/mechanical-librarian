@@ -56,8 +56,8 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
     AutomaticSafetyState,
-    F19A_QUALIFICATION_MANIFEST_SHA256,
     QUALIFIED_POLICY_OPTIONS,
+    qualification_manifest_sha256,
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -5081,7 +5081,9 @@ class SQLiteMetadataReportRepository:
                     rule_id=field.rule_id,
                     policy_category=field.policy_category,
                     policy_option=field.policy_option,
-                    qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
+                    qualification_manifest_sha256=qualification_manifest_sha256(
+                        field.policy_category, field.policy_option
+                    ),
                     source_outcome_id=field.outcome_id,
                     bundle_id=bundle_ids.get(field.policy_category),
                     occurred_at=occurred_at,

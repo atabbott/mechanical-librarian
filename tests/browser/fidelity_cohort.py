@@ -19,21 +19,21 @@ LONG_TITLE = (
     f"{UNBROKEN_TITLE_SEGMENT} — an intentionally long synthetic title for "
     "narrow-layout qualification"
 )
-_F20_CANDIDATE_SHA256 = "dde53f9aaad52f8186aa1d25859ebb83b1d6b9c6f8125b15789729831de0b0f9"
+_F20_CANDIDATE_SHA256 = "c28b11e1e8b6ec51a3e91472ddb65b0e0c49d5c184d078f3a8d9d4832a00a2ae"
 _RICH_QUALIFICATION: tuple[dict[str, object], ...] = tuple(
     {
-        "automatic_available": False,
+        "automatic_available": disposition == "passing_automatic",
         "candidate_sha256": _F20_CANDIDATE_SHA256,
         "disposition": disposition,
         "field": field,
         "option": option,
     }
     for field, option, disposition in (
-        ("subtitle", "fill_empty", "insufficient_coverage"),
-        ("subtitle", "corroborated_split", "insufficient_coverage"),
-        ("series", "primary_narrative", "insufficient_coverage"),
-        ("series", "source_order", "insufficient_coverage"),
-        ("series", "all_qualified", "insufficient_coverage"),
+        ("subtitle", "fill_empty", "not_qualified"),
+        ("subtitle", "corroborated_split", "not_qualified"),
+        ("series", "primary_narrative", "passing_automatic"),
+        ("series", "source_order", "passing_automatic"),
+        ("series", "all_qualified", "passing_automatic"),
         ("genres", "fill_empty", "insufficient_coverage"),
         ("genres", "add", "insufficient_coverage"),
         ("genres", "replace", "insufficient_coverage"),
@@ -43,8 +43,8 @@ _RICH_QUALIFICATION: tuple[dict[str, object], ...] = tuple(
         ("tags", "replace", "insufficient_coverage"),
         ("description_fill", "safe_plain_text", "insufficient_coverage"),
         ("description_fill", "google_visible_text", "insufficient_coverage"),
-        ("isbn_form", "preserve_exact", "insufficient_coverage"),
-        ("isbn_form", "prefer_isbn13", "insufficient_coverage"),
+        ("isbn_form", "preserve_exact", "passing_automatic"),
+        ("isbn_form", "prefer_isbn13", "passing_automatic"),
         ("asin", "preserve_exact", "insufficient_coverage"),
         ("asin", "ebook_manifestation", "insufficient_coverage"),
         ("explicit", "unsupported", "passing_human_only"),

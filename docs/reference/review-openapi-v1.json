@@ -437,8 +437,8 @@
           }
         },
         "required": [
-          "automatic_available",
           "candidate_sha256",
+          "automatic_available",
           "disposition",
           "field",
           "option"
@@ -975,8 +975,8 @@
           }
         },
         "required": [
-          "automatic_available",
           "candidate_sha256",
+          "automatic_available",
           "disposition",
           "field",
           "option"
@@ -1138,8 +1138,8 @@
           }
         },
         "required": [
-          "automatic_available",
           "candidate_sha256",
+          "automatic_available",
           "disposition",
           "field",
           "option"
@@ -1181,8 +1181,8 @@
           }
         },
         "required": [
-          "automatic_available",
           "candidate_sha256",
+          "automatic_available",
           "disposition",
           "field",
           "option"
@@ -1450,7 +1450,7 @@
         "additionalProperties": false,
         "properties": {
           "automatic_available": {
-            "const": false,
+            "const": true,
             "title": "Automatic Available",
             "type": "boolean"
           },
@@ -1460,7 +1460,7 @@
             "type": "string"
           },
           "disposition": {
-            "const": "insufficient_coverage",
+            "const": "passing_automatic",
             "title": "Disposition",
             "type": "string"
           },
@@ -1479,8 +1479,8 @@
           }
         },
         "required": [
-          "automatic_available",
           "candidate_sha256",
+          "automatic_available",
           "disposition",
           "field",
           "option"
@@ -2445,7 +2445,7 @@
         "additionalProperties": false,
         "properties": {
           "automatic_available": {
-            "const": false,
+            "const": true,
             "title": "Automatic Available",
             "type": "boolean"
           },
@@ -2455,7 +2455,7 @@
             "type": "string"
           },
           "disposition": {
-            "const": "insufficient_coverage",
+            "const": "passing_automatic",
             "title": "Disposition",
             "type": "string"
           },
@@ -2475,8 +2475,8 @@
           }
         },
         "required": [
-          "automatic_available",
           "candidate_sha256",
+          "automatic_available",
           "disposition",
           "field",
           "option"
@@ -2931,7 +2931,7 @@
             "type": "string"
           },
           "disposition": {
-            "const": "insufficient_coverage",
+            "const": "not_qualified",
             "title": "Disposition",
             "type": "string"
           },
@@ -2950,8 +2950,8 @@
           }
         },
         "required": [
-          "automatic_available",
           "candidate_sha256",
+          "automatic_available",
           "disposition",
           "field",
           "option"
@@ -3022,8 +3022,8 @@
           }
         },
         "required": [
-          "automatic_available",
           "candidate_sha256",
+          "automatic_available",
           "disposition",
           "field",
           "option"
@@ -3065,8 +3065,8 @@
           }
         },
         "required": [
-          "automatic_available",
           "candidate_sha256",
+          "automatic_available",
           "disposition",
           "field",
           "option"

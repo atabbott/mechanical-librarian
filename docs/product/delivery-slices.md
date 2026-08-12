@@ -559,10 +559,11 @@ reduce human work or become decisions. #479 separately adds `automatic` only
 for the sealed qualified envelope; it records immutable decision-only outcomes
 and never applies or writes target, media, or artifact state.
 
-F20 activation #564 pins the exact public zero-authority candidate in the
-selection and presentation seams. Its empty automatic set preserves the F19a
-manifest and six existing automatic destinations unchanged; the rich fields
-remain human-routed with aggregate-safe terminal explanations.
+F20 activation #564 pins the exact public candidate in selection, decision,
+and presentation seams. Its three qualified series options and two qualified
+ISBN options extend decision-only Automatic while preserving the F19a manifest
+and all guarded-effect controls; the remaining rich options stay human-routed
+with aggregate-safe terminal explanations.
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 

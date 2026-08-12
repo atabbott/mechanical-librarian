@@ -113,11 +113,12 @@ private/no-store. The equivalent CLI writes that private projection to stdout;
 operators must not place it in public logs or support artifacts.
 
 The public F20 rich-metadata qualification candidate contains only closed
-option identities, aggregate dispositions, contract digests, and zero-tolerance
-counts. It contains no corpus identity, case row, bibliographic value,
-identifier, path, source digest, receipt, or per-case result; the underlying
-retained development material remains owner-private. Any future holdout stays
-private and is not implied by this provisional candidate.
+option identities, aggregate dispositions and metrics, contract digests, and
+zero-tolerance counts. It contains no corpus identity, case row, bibliographic
+value, identifier, path, source digest, receipt, or per-case result; the
+underlying retained material and offline replay result remain owner-private.
+Prior unrelated use is an aggregate method fact, not a disclosure of which
+work supplied any field-option result.
 
 The complete application SQLite database—including deterministic packets and
 outcomes—is exposed to whoever can read a backup. Store it and its backups as private

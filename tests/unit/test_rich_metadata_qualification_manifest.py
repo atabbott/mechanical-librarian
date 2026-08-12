@@ -1,4 +1,4 @@
-"""Public contract proof for the non-authorizing F20 qualification candidate."""
+"""Public contract proof for the field-local F20 qualification candidate."""
 
 from __future__ import annotations
 
@@ -36,16 +36,33 @@ RICH_FIELDS = (
 
 
 class RichMetadataQualificationManifestTests(unittest.TestCase):
-    def test_candidate_is_closed_field_local_and_non_authorizing(self) -> None:
+    def test_candidate_is_closed_field_local_and_exactly_authorizing(self) -> None:
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
         self.assertEqual("f20-rich-metadata-qualification-candidate-v1", manifest["schema"])
-        self.assertEqual("none", manifest["automatic_authority"])
-        self.assertEqual([], manifest["passing_automatic_options"])
+        self.assertEqual("decision_only", manifest["automatic_authority"])
+        passing = {
+            "series:primary_narrative", "series:source_order",
+            "series:all_qualified",
+            "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
+        }
+        self.assertEqual(passing, set(manifest["passing_automatic_options"]))
         self.assertEqual(["explicit:unsupported"], manifest["human_only_options"])
         self.assertEqual(["narrators", "cover"], manifest["excluded_destinations"])
-        self.assertEqual(0, manifest["candidate_execution_count"])
-        self.assertEqual(0, manifest["final_holdout"]["execution_count"])
+        self.assertEqual(1, manifest["candidate_execution_count"])
+        self.assertEqual(
+            {
+                "evaluated_reports": 49,
+                "exposure_unit": "case_field_option",
+                "network_access": False,
+                "prior_unrelated_work_use_allowed": True,
+                "replayed_provider_requests": 421,
+                "series_truth_model": "valid_membership_with_preferred_value",
+                "subtitle_truth_model": "ebook_manifestation_bibliographic_subtitle",
+                "unseen_holdout_required": False,
+            },
+            manifest["evidence_method"],
+        )
 
         expected = {
             f"{field}:{option}"
@@ -63,11 +80,30 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            expected - {"explicit:unsupported"},
+            {
+                "subtitle:fill_empty", "subtitle:corroborated_split",
+            },
             {
                 entry["identity"] for entry in manifest["options"]
-                if entry["disposition"] == "insufficient_coverage"
+                if entry["disposition"] == "not_qualified"
             },
+        )
+        self.assertEqual(
+            passing,
+            {
+                entry["identity"] for entry in manifest["options"]
+                if entry["disposition"] == "passing_automatic"
+            },
+        )
+        terminal = {
+            entry["identity"] for entry in manifest["options"]
+            if entry["disposition"] == "insufficient_coverage"
+        }
+        self.assertEqual(
+            expected - passing - {"explicit:unsupported"} - {
+                "subtitle:fill_empty", "subtitle:corroborated_split",
+            },
+            terminal,
         )
         for entry in manifest["options"]:
             self.assertEqual(
@@ -77,31 +113,48 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
                 },
                 set(entry),
             )
-            self.assertIn(entry["cohort_sufficiency"], {"insufficient", "not_applicable"})
-            self.assertEqual(0, entry["eligible_opportunities"])
+            self.assertIn(
+                entry["cohort_sufficiency"],
+                {"sufficient", "insufficient", "not_applicable"},
+            )
             self.assertEqual(
                 {
-                    "automatic_precision": None,
-                    "automatic_predictions": 0,
-                    "automatic_recall": None,
-                    "structural_or_sensitive_violations": 0,
-                    "unsupported_output": 0,
+                    "automatic_precision", "automatic_predictions",
+                    "automatic_recall", "structural_or_sensitive_violations",
+                    "unsupported_output",
                 },
-                entry["metrics"],
+                set(entry["metrics"]),
             )
+            self.assertEqual(0, entry["metrics"]["structural_or_sensitive_violations"])
+        isbn = {
+            entry["identity"]: entry for entry in manifest["options"]
+            if entry["identity"] in passing
+        }
+        self.assertEqual(1.0, isbn["isbn_form:preserve_exact"]["metrics"]["automatic_precision"])
+        self.assertEqual(4, isbn["isbn_form:preserve_exact"]["metrics"]["automatic_predictions"])
+        self.assertEqual(1.0, isbn["isbn_form:prefer_isbn13"]["metrics"]["automatic_precision"])
+        self.assertEqual(22, isbn["isbn_form:prefer_isbn13"]["metrics"]["automatic_predictions"])
+        series = {
+            entry["identity"]: entry for entry in manifest["options"]
+            if entry["identity"].startswith("series:")
+        }
+        self.assertEqual(19, series["series:primary_narrative"]["metrics"]["automatic_predictions"])
+        self.assertEqual(20, series["series:source_order"]["metrics"]["automatic_predictions"])
+        self.assertEqual(20, series["series:all_qualified"]["metrics"]["automatic_predictions"])
+        self.assertTrue(all(entry["metrics"]["automatic_precision"] == 1.0 for entry in series.values()))
 
     def test_candidate_exposes_only_closed_aggregate_contract_data(self) -> None:
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         self.assertEqual(
             {
-                "automatic_authority", "candidate_execution_count",
-                "excluded_destinations", "final_holdout", "frozen_contract",
+                "automatic_authority", "candidate_execution_count", "evidence_method",
+                "excluded_destinations", "frozen_contract",
                 "human_only_options", "options", "passing_automatic_options",
                 "policy_only_options", "schema", "zero_tolerance",
             },
             set(manifest),
         )
-        for name in ("compiler", "policy", "target_shape"):
+        for name in ("automatic_decision", "compiler", "policy", "target_shape"):
             item = manifest["frozen_contract"][name]
             self.assertEqual({"identity", "sha256"}, set(item))
             self.assertEqual(
@@ -110,19 +163,18 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
                 ).hexdigest(),
                 item["sha256"],
             )
-        for name in ("evaluator", "fake_service_qualification", "thresholds"):
-            self.assertEqual(
-                {"status": "not_frozen_without_a_fresh_batch"},
-                manifest["frozen_contract"][name],
-            )
+        for name in ("adjudication", "evaluator", "evidence_execution", "thresholds"):
+            item = manifest["frozen_contract"][name]
+            self.assertEqual({"identity", "sha256"}, set(item))
+            self.assertRegex(item["sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(
             {
-                "evaluation_status", "required_controls",
+                "evaluation_status", "failure_counts", "required_controls",
             },
             set(manifest["zero_tolerance"]),
         )
         self.assertEqual(
-            "not_observed_without_a_fresh_frozen_batch",
+            "passed",
             manifest["zero_tolerance"]["evaluation_status"],
         )
         self.assertEqual(
@@ -133,7 +185,14 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
             },
             set(manifest["zero_tolerance"]["required_controls"]),
         )
-        forbidden = {"case", "corpus", "digest", "identifier", "path", "receipt", "source", "title", "value"}
+        self.assertEqual(
+            {name: 0 for name in manifest["zero_tolerance"]["required_controls"]},
+            manifest["zero_tolerance"]["failure_counts"],
+        )
+        forbidden = {
+            "accepted_gold", "case_id", "filename", "identifier_value", "path",
+            "receipt", "source_sha256", "title", "value",
+        }
         def keys(value):
             if isinstance(value, dict):
                 yield from value
@@ -144,7 +203,7 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
                     yield from keys(child)
         self.assertTrue(forbidden.isdisjoint(keys(manifest)))
 
-    def test_existing_f19a_authority_and_rich_non_authority_remain_closed(self) -> None:
+    def test_f19a_authority_is_preserved_and_exact_f20_is_added(self) -> None:
         self.assertEqual(
             "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37",
             F19A_QUALIFICATION_MANIFEST_SHA256,
@@ -156,26 +215,39 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
                 "language_rendering:preserve", "language_rendering:display_name",
                 "contributor_names:preserve", "contributor_names:canonical",
                 "publisher_preference:publisher",
+                "series:primary_narrative", "series:source_order",
+                "series:all_qualified",
+                "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
             },
             QUALIFIED_POLICY_OPTIONS,
         )
         self.assertEqual(
-            {"title_layout", "date_precision", "language_rendering", "contributor_names", "publisher_preference"},
+            {
+                "title_layout", "date_precision", "language_rendering",
+                "contributor_names", "publisher_preference", "series", "isbn_form",
+            },
             QUALIFIED_AUTOMATIC,
         )
         policy = resolve_policy(MetadataPolicyProfile.builtin(), "library")
         self.assertEqual("unsupported", policy.qualification("explicit"))
-        for field in RICH_FIELDS[:-1]:
+        self.assertEqual("available", policy.qualification("series"))
+        self.assertEqual("available", policy.qualification("isbn_form"))
+        for field in set(RICH_FIELDS[:-1]) - {"series", "isbn_form"}:
             self.assertEqual("manual_only", policy.qualification(field))
 
-    def test_runtime_envelope_pins_every_terminal_disposition_without_authority(self) -> None:
+    def test_runtime_envelope_pins_every_terminal_disposition_and_authority(self) -> None:
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         self.assertEqual(
             hashlib.sha256(MANIFEST.read_bytes()).hexdigest(),
             F20_QUALIFICATION_CANDIDATE_SHA256,
         )
-        self.assertEqual([], manifest["passing_automatic_options"])
-        self.assertEqual(frozenset(), F20_PASSING_AUTOMATIC_OPTIONS)
+        passing = frozenset({
+            "series:primary_narrative", "series:source_order",
+            "series:all_qualified",
+            "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
+        })
+        self.assertEqual(passing, frozenset(manifest["passing_automatic_options"]))
+        self.assertEqual(passing, F20_PASSING_AUTOMATIC_OPTIONS)
         self.assertEqual(
             {entry["identity"]: entry["disposition"] for entry in manifest["options"]}
             | {"tags:off": "policy_only"},
@@ -183,9 +255,18 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         )
         summary = public_summary()
         self.assertEqual(set(F20_OPTION_DISPOSITIONS), {f"{entry['field']}:{entry['option']}" for entry in summary})
-        self.assertTrue(all(entry["automatic_available"] is False for entry in summary))
         self.assertEqual(
-            {"insufficient_coverage", "policy_only", "passing_human_only"},
+            passing,
+            {
+                f"{entry['field']}:{entry['option']}" for entry in summary
+                if entry["automatic_available"] is True
+            },
+        )
+        self.assertEqual(
+            {
+                "insufficient_coverage", "not_qualified", "passing_automatic",
+                "policy_only", "passing_human_only",
+            },
             {entry["disposition"] for entry in summary},
         )
         with self.assertRaises(TypeError):

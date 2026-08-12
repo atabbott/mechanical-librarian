@@ -53,7 +53,6 @@ class MetadataPolicyTests(unittest.TestCase):
             "genres",
             "tags",
             "description_fill",
-            "isbn_form",
             "cover_order",
             "asin",
         }
@@ -71,6 +70,12 @@ class MetadataPolicyTests(unittest.TestCase):
             {field: "unavailable" for field in unavailable},
             {field: automatic.qualification(field) for field in unavailable},
         )
+        isbn = resolve_policy(
+            profile,
+            "library",
+            {"options": {}, "destinations": {"isbn_form": "automatic"}},
+        )
+        self.assertEqual("available", isbn.qualification("isbn_form"))
 
     def test_preview_names_each_library_categories_and_unapplied_count_without_mutation(self) -> None:
         class Repository:
@@ -116,10 +121,18 @@ class MetadataPolicyTests(unittest.TestCase):
             Repository(),
         )
         self.assertEqual(
-            ("title_layout", "date_precision", "language_rendering", "contributor_names", "publisher_preference", "tags"), preview.libraries[0].affected_categories
+            (
+                "title_layout", "date_precision", "language_rendering",
+                "contributor_names", "publisher_preference", "series", "tags",
+                "isbn_form",
+            ),
+            preview.libraries[0].affected_categories,
         )
         self.assertEqual(
-            ("title_layout", "date_precision", "language_rendering", "contributor_names", "publisher_preference"),
+            (
+                "title_layout", "date_precision", "language_rendering",
+                "contributor_names", "publisher_preference", "series", "isbn_form",
+            ),
             preview.libraries[1].affected_categories,
         )
 

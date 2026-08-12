@@ -16,14 +16,17 @@
 
 - Bind the public F20 candidate identity and terminal rich-field qualification
   statuses into policy validation, API, CLI preview, and the owner notebook.
-  The empty passing automatic set adds no automatic destination or write
-  authority; the sealed F19a automatic envelope remains unchanged. (#564)
+  Field-option-local offline qualification admits all three series policies
+  and both exact ISBN policies to decision-only Automatic at 100% precision;
+  it adds no write authority and leaves every other rich option manual. (#564)
 
-- Record the non-authorizing F20 rich-metadata qualification candidate. No
-  fresh F20 holdout is available, so every automatic candidate is visibly
-  `insufficient_coverage`; `explicit` remains human-only, and narrators and
-  cover remain excluded. The focused Audiobookshelf fake proof covers the
-  rich target shapes without adding automatic authority. (#565)
+- Record the F20 rich-metadata qualification candidate from 49 accepted
+  real-work reports and 421 retained-response replays through the current
+  offline pipeline. Qualification is field-option-local and does not require
+  an unseen holdout; three series and two ISBN options pass, subtitle does not,
+  and options without accepted truth remain `insufficient_coverage`.
+  `explicit` remains human-only, while narrators and cover remain excluded.
+  (#565)
 
 - Add the closed v2 rich-metadata policy vocabulary for manual preview: subtitle,
   series, exact list operations, bounded description text, and exact ISBN/ASIN

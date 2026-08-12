@@ -12,6 +12,9 @@ import re
 from typing import Final
 
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_PASSING_AUTOMATIC_OPTIONS,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind, ClaimScope, IdentifierRelation, MetadataReport,
     ProviderClaim, ProviderEvidenceKind, TargetDestination, TargetField,
@@ -152,7 +155,10 @@ def _project(
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "explicit_unsupported")
     if destination == "ignore":
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "policy_ignored")
-    if destination == "automatic":
+    if (
+        destination == "automatic"
+        and f"{field}:{option}" not in F20_PASSING_AUTOMATIC_OPTIONS
+    ):
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "automatic_unqualified")
     if target.state not in _EMPTY and target.state is not TargetFieldState.VALUE:
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "target_state_unusable")
