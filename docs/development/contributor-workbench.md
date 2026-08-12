@@ -177,13 +177,17 @@ privacy-safe context text, source-to-derived transport bindings, and exact
 ordered transport/image equality. Packet preparation verifies each exact
 report-bound source digest, strips all ancillary/profile metadata, decodes one
 RGBA frame within the existing bounds, and deterministically re-encodes the
-same pixels. Source reference/digest bindings remain separate from the derived
-transport reference/digest.
+same pixels. The platform-independent encoder writes filter byte zero for each
+row and one zlib stream using fixed uncompressed DEFLATE blocks of at most
+65,535 bytes, with explicit Adler-32 and PNG CRC values; output bytes do not
+depend on Pillow, libpng, or platform compression choices. Source
+reference/digest bindings remain separate from the derived transport
+reference/digest.
 Every admitted transport is fully parsed and decoded through Pillow before it is
 mounted: its complete PNG structure and checksums, single-frame PNG format,
 RGBA mode, maximum 320-by-480 dimensions, and exact declared preview dimensions
 must all agree. The closed deterministic chunk profile accepts only exact IHDR,
-one consecutive IDAT run containing exactly one completed zlib
+one IDAT containing exactly one completed zlib
 stream with no trailing data, and final IEND. ICC profiles, palette,
 transparency, every other ancillary, and every unknown chunk are absent from the
 canonical derived transport; their source bytes never cross the reviewer
@@ -192,6 +196,11 @@ equality.
 Forged signatures, corrupt or truncated streams, trailing bytes, unsafe
 dimensions, and decoder warnings or failures become the same value-free typed
 format failure.
+Aggregate retained replay under macOS and canonical Linux/Pillow 12.3 produced
+exact byte/digest parity for 147/147 affected previews while preserving every
+pixel and dimension. The same frozen 10 packets containing 50 candidates
+admitted 10/10 on both platforms without provider or model calls, production
+access, or writes.
 Indistinguishable normalized provenance rows collapse to one. Every distinct
 source kind represented by a normalized-pixel-equal group participates in diversity
 priority and counts; no lexicographic representative can hide another source.

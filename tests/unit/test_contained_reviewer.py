@@ -32,6 +32,7 @@ from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa
 )
 from mechanical_librarian_workbench.cover_packet_semantics import (  # noqa: E402
     cover_transport_reference,
+    normalize_cover_preview,
 )
 
 
@@ -55,11 +56,16 @@ def _cover_request() -> object:
     Image.new("RGBA", (1, 1), (1, 2, 3, 255)).save(
         output, "PNG", optimize=False, compress_level=9
     )
-    preview = output.getvalue()
+    source_preview = output.getvalue()
     reference = "cover_ref_" + "a" * 64
-    digest = hashlib.sha256(preview).hexdigest()
+    source_digest = hashlib.sha256(source_preview).hexdigest()
+    normalized = normalize_cover_preview(
+        source_preview, source_sha256=source_digest
+    )
+    preview = normalized.payload
+    digest = normalized.digest
     source_bindings = [{
-        "preview_sha256": digest,
+        "preview_sha256": source_digest,
         "reference": reference,
     }]
     transport_reference = cover_transport_reference(
@@ -71,7 +77,7 @@ def _cover_request() -> object:
         "media_type": "image/png",
         "preview_bytes": len(preview),
         "preview_height": 1,
-        "preview_sha256": digest,
+        "preview_sha256": source_digest,
         "preview_variant": "preview-320x480-rgba-png-v1",
         "preview_width": 1,
         "provenance": [{

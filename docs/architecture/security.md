@@ -513,14 +513,18 @@ supplied images. Producer and admission use that same semantic validator.
 Packet preparation first verifies each exact report-bound source digest and
 bounded PNG framing, discards all ancillary/profile chunks, decodes one RGBA
 frame, and deterministically re-encodes the exact pixels into a metadata-free
-derived transport. The candidate keeps the source reference/digest bindings
+derived transport. The encoder is platform-independent: it writes filter byte
+zero for every row, one zlib stream of fixed uncompressed DEFLATE blocks no
+larger than 65,535 bytes, and explicit Adler-32 and PNG CRC values. It does not
+delegate PNG serialization or compression decisions to Pillow, libpng, or the
+platform zlib build; Pillow remains the bounded decoder. The candidate keeps the source reference/digest bindings
 separate from the derived transport reference/digest. Admission checks the
 complete bounded, canonically ordered derived PNG chunk structure and checksums,
 fully decodes it, re-encodes it, and requires byte equality before mounting,
 admitting only
 single-frame RGBA PNG previews no larger than 320 by 480 whose decoded and
 declared preview dimensions agree. Its closed profile accepts only exact IHDR,
-one consecutive IDAT run containing exactly one completed zlib stream with no
+one IDAT containing exactly one completed zlib stream with no
 trailing bytes, and final IEND. ICC profiles, PLTE, and every other
 ancillary or unknown chunk is absent from the derived transport; those source
 bytes cannot cross the reviewer boundary. Original-cover technical dimensions
