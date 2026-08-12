@@ -42,10 +42,14 @@ image-capable entry point admits a distinct cover request only through one full
 `cover-review-packet-v2` parser. Before packet selection, each exact report-bound
 source preview is size- and digest-verified, parsed within the existing
 dimension and decompression bounds, decoded as single-frame RGBA, and
-deterministically re-encoded from its pixel bytes. The derived PNG contains
-only IHDR, one consecutive IDAT run and IEND; ICC profiles and all other
-ancillary metadata are discarded without being exposed to the reviewer. Exact
-decoded pixels and dimensions are unchanged. Every candidate separately binds its complete opaque
+deterministically re-encoded from its pixel bytes. A platform-independent
+encoder writes filter byte zero for every row, one zlib stream made from fixed
+uncompressed DEFLATE blocks of at most 65,535 bytes, and explicit Adler-32 and
+PNG CRC values. PNG serialization and compression decisions therefore do not
+depend on Pillow, libpng, or a platform zlib build; Pillow remains only the
+bounded decoder. The derived PNG contains exactly IHDR, one IDAT and IEND; ICC
+profiles and all other ancillary metadata are discarded without being exposed
+to the reviewer. Exact decoded pixels and dimensions are unchanged. Every candidate separately binds its complete opaque
 source-reference/source-digest set to its derived transport reference and
 digest, so neither a foreign source nor foreign transport can be substituted
 under an existing packet identity. That parser closes every packet, candidate,
@@ -59,7 +63,7 @@ canonically ordered PNG chunk structure and checksums and fully decodes a
 single-frame RGBA PNG whose dimensions exactly match the distinct packet
 preview facts and do not exceed 320 by 480. It re-encodes the decoded pixels and
 requires byte equality with the canonical derived transport. The deterministic
-profile admits only exact IHDR, one consecutive IDAT run containing exactly one
+profile admits only exact IHDR, one IDAT containing exactly one
 completed zlib stream with no trailing bytes, and IEND. ICC profiles, PLTE, and every other
 ancillary or unknown chunk are absent from the derived bytes and cannot cross
 the reviewer boundary;
@@ -144,8 +148,15 @@ and results remain ignored owner-only workbench state.
   incumbent retention, deduplication, deterministic selection and omissions,
   hard byte/count limits, complete PNG decoding and dimension/mode agreement,
   hostile-text treatment, read-only sandbox arguments, typed failure and
-  cleanup behavior.
+  cleanup behavior. Exact byte and digest fixtures cover both a single stored
+  block and a multi-block image, including row filters, block boundaries,
+  checksums and independent Pillow decoding.
 - Exact-artifact checks prove no runtime CLI/API or distribution inclusion.
+- Aggregate retained replay under macOS and canonical Linux with Pillow 12.3
+  produced exact byte/digest parity for all 147 affected previews, with 147/147
+  pixel- and dimension-equal normalizations and deterministic repeats. The same
+  frozen 10 packets containing 50 candidates admitted 10/10 on both platforms,
+  with zero provider or model calls and zero production access or writes.
 - Historical sealed-v2 qualification attempted 17 exact five-preview
   development and qualification-holdout packets. Its aggregate-only receipt
   records 17 `contained_reviewer_invocation_insufficient` failures, zero mapping

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Make source-only normalized cover transports byte-identical across supported
+  platforms. Pillow remains the bounded RGBA decoder, while a small fixed PNG
+  serializer now emits filter-zero rows, deterministic uncompressed DEFLATE
+  blocks, explicit checksums, and exactly IHDR, IDAT, and IEND. This preserves
+  packet-v2 source/transport separation, pixel and dimension equality, existing
+  image and packet limits, and all reviewer authority boundaries. Exact
+  single- and multi-block byte/digest fixtures replace the previous accidental
+  dependence on the local Pillow/libpng/zlib writer. Retained replay produced
+  exact macOS/Linux byte and digest parity for 147/147 affected previews and
+  admitted the same frozen 10 packets/50 candidates on both platforms, with no
+  provider or model calls and no production access or writes. (#542)
+
 - Bind the public F20 candidate identity and terminal rich-field qualification
   statuses into policy validation, API, CLI preview, and the owner notebook.
   The empty passing automatic set adds no automatic destination or write

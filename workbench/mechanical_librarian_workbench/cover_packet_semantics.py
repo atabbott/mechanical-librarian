@@ -294,12 +294,46 @@ def _structural_png_without_ancillary(
 
 
 def _canonical_rgba_png(width: int, height: int, pixels: bytes) -> bytes:
-    if len(pixels) != width * height * 4:
+    if (
+        type(width) is not int
+        or type(height) is not int
+        or type(pixels) is not bytes
+        or not 1 <= width <= MAX_COVER_PREVIEW_WIDTH
+        or not 1 <= height <= MAX_COVER_PREVIEW_HEIGHT
+        or len(pixels) != width * height * 4
+    ):
         raise ValueError
-    image = Image.frombytes("RGBA", (width, height), pixels)
-    output = io.BytesIO()
-    image.save(output, "PNG", optimize=False, compress_level=9)
-    return output.getvalue()
+
+    scanlines = bytearray()
+    row_bytes = width * 4
+    for offset in range(0, len(pixels), row_bytes):
+        scanlines.append(0)
+        scanlines.extend(pixels[offset:offset + row_bytes])
+
+    compressed = bytearray(b"\x78\x01")
+    for offset in range(0, len(scanlines), 65_535):
+        block = scanlines[offset:offset + 65_535]
+        compressed.append(1 if offset + len(block) == len(scanlines) else 0)
+        compressed.extend(struct.pack("<H", len(block)))
+        compressed.extend(struct.pack("<H", len(block) ^ 0xFFFF))
+        compressed.extend(block)
+    compressed.extend(struct.pack(">I", zlib.adler32(scanlines)))
+
+    def chunk(chunk_type: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + chunk_type
+            + data
+            + struct.pack(">I", zlib.crc32(chunk_type + data))
+        )
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    return (
+        _PNG_SIGNATURE
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", bytes(compressed))
+        + chunk(b"IEND", b"")
+    )
 
 
 def _validate_png_structure(payload: bytes) -> tuple[int, int]:
