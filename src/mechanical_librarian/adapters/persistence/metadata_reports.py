@@ -493,7 +493,7 @@ _SHADOW_DECISION_OUTCOMES_SQL = (
     "resolved_policy_id TEXT NOT NULL CHECK(resolved_policy_id GLOB 'resolved_policy_[0-9a-f]*' AND length(resolved_policy_id)=80), "
     "source_decision_set_id TEXT NOT NULL, evaluated_at INTEGER NOT NULL CHECK(evaluated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 1048576 "
-    "AND json_extract(document,'$.schema_version')='shadow-outcome-set-v2'))"
+    "AND json_extract(document,'$.schema_version')='shadow-outcome-set-v3'))"
 )
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
@@ -933,15 +933,6 @@ class SQLiteMetadataReportRepository:
             if selected is None:
                 raise FieldEffectError("authority_binding")
             value = selected["value"]
-            if decision.policy_category in {"series", "isbn_form"}:
-                try:
-                    value = project_f20_automatic_decision_value(
-                        decision.policy_category,
-                        decision.policy_option,
-                        value,
-                    )
-                except RichMetadataPreviewError as error:
-                    raise FieldEffectError("authority_binding") from error
         lineage = self._connection.execute(
             "SELECT connection_name,library_name,item_id FROM current_review_case_lineages "
             "WHERE review_case_id=?", (decision.review_case_id,),
@@ -967,6 +958,18 @@ class SQLiteMetadataReportRepository:
             if target_field["state"] == "value"
             else None
         )
+        if type(decision) is AutomaticDecision and decision.policy_category in {
+            "series", "genres", "tags", "description_fill", "isbn_form",
+        }:
+            try:
+                value = project_f20_automatic_decision_value(
+                    decision.policy_category,
+                    decision.policy_option,
+                    value,
+                    pre_value,
+                )
+            except RichMetadataPreviewError as error:
+                raise FieldEffectError("authority_binding") from error
         return {"connection": lineage[0], "library": lineage[1], "work_id": lineage[2],
                 "destination": decision.destination,
                 "review_case_id": decision.review_case_id,

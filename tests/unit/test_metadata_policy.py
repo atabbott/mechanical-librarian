@@ -49,13 +49,7 @@ class MetadataPolicyTests(unittest.TestCase):
             resolve_policy(profile, "library", {"options": {"removed": "anything"}, "destinations": {}})
         with self.assertRaises(MetadataPolicyError):
             resolve_policy(profile, "library", {"options": {}, "destinations": {"explicit": "ask"}})
-        unavailable = {
-            "genres",
-            "tags",
-            "description_fill",
-            "cover_order",
-            "asin",
-        }
+        unavailable = {"genres", "tags", "cover_order", "asin"}
         automatic = resolve_policy(
             profile,
             "library",
@@ -63,13 +57,14 @@ class MetadataPolicyTests(unittest.TestCase):
                 "options": {},
                 "destinations": {
                     field: "automatic" for field in unavailable
-                },
+                } | {"description_fill": "automatic"},
             },
         )
         self.assertEqual(
             {field: "unavailable" for field in unavailable},
             {field: automatic.qualification(field) for field in unavailable},
         )
+        self.assertEqual("available", automatic.qualification("description_fill"))
         isbn = resolve_policy(
             profile,
             "library",
@@ -124,14 +119,15 @@ class MetadataPolicyTests(unittest.TestCase):
             (
                 "title_layout", "date_precision", "language_rendering",
                 "contributor_names", "publisher_preference", "series", "tags",
-                "isbn_form",
+                "description_fill", "isbn_form",
             ),
             preview.libraries[0].affected_categories,
         )
         self.assertEqual(
             (
                 "title_layout", "date_precision", "language_rendering",
-                "contributor_names", "publisher_preference", "series", "isbn_form",
+                "contributor_names", "publisher_preference", "series",
+                "description_fill", "isbn_form",
             ),
             preview.libraries[1].affected_categories,
         )

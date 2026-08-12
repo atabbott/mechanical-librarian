@@ -19,7 +19,7 @@ LONG_TITLE = (
     f"{UNBROKEN_TITLE_SEGMENT} — an intentionally long synthetic title for "
     "narrow-layout qualification"
 )
-_F20_CANDIDATE_SHA256 = "9c7233074829468ef4ce4fd6defa5a3f3d1fce781b515bc55e1d279ff966686e"
+_F20_CANDIDATE_SHA256 = "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a"
 _RICH_QUALIFICATION: tuple[dict[str, object], ...] = tuple(
     {
         "automatic_available": disposition == "passing_automatic",
@@ -34,15 +34,15 @@ _RICH_QUALIFICATION: tuple[dict[str, object], ...] = tuple(
         ("series", "primary_narrative", "passing_automatic"),
         ("series", "source_order", "passing_automatic"),
         ("series", "all_qualified", "passing_automatic"),
-        ("genres", "fill_empty", "insufficient_coverage"),
-        ("genres", "add", "insufficient_coverage"),
-        ("genres", "replace", "insufficient_coverage"),
+        ("genres", "fill_empty", "not_qualified"),
+        ("genres", "add", "passing_automatic"),
+        ("genres", "replace", "passing_automatic"),
         ("tags", "off", "policy_only"),
-        ("tags", "fill_empty", "insufficient_coverage"),
-        ("tags", "add", "insufficient_coverage"),
-        ("tags", "replace", "insufficient_coverage"),
-        ("description_fill", "safe_plain_text", "insufficient_coverage"),
-        ("description_fill", "google_visible_text", "insufficient_coverage"),
+        ("tags", "fill_empty", "passing_automatic"),
+        ("tags", "add", "passing_automatic"),
+        ("tags", "replace", "passing_automatic"),
+        ("description_fill", "safe_plain_text", "passing_automatic"),
+        ("description_fill", "google_visible_text", "not_qualified"),
         ("isbn_form", "preserve_exact", "passing_automatic"),
         ("isbn_form", "prefer_isbn13", "passing_automatic"),
         ("asin", "preserve_exact", "insufficient_coverage"),

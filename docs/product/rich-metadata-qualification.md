@@ -24,6 +24,15 @@ failure. Recall is reported but is not a pass gate. This favours safe
 abstention while avoiding a novelty requirement unrelated to the option being
 proved.
 
+Genres, tags, and descriptions do not have one objectively correct semantic
+answer. They are therefore not scored against a preferred taxonomy, tag set,
+or prose description. Their objective gate is exact provenance and operation:
+one complete ordered work-bound source list, no cross-source synthesis or
+taxonomy translation, and the exact selected fill/add/replace behavior; or one
+exact safe work-bound description, without rewriting or silent truncation.
+Google visible-text remains a separate transformation and cannot qualify as
+ordinary safe plaintext.
+
 All three series policies passed after series correctness was separated from
 preference: a prediction is correct when it is a valid membership for the
 bound work, while the corpus value remains the preferred membership. Primary
@@ -47,9 +56,14 @@ provider count is not a safe substitute. A future subtitle candidate must bind
 the selected ebook manifestation, remain distinct from the title, and exclude
 marketing or status text. Both subtitle policies therefore remain
 `not_qualified`.
-Genres, tags, description, and ASIN remain `insufficient_coverage`. `tags:off` is policy-only,
-`explicit:unsupported` remains human-only, and narrators and cover remain
-excluded.
+Genre add and replace each made 3 exact predictions; tag fill-empty, add, and
+replace each made 3; and safe plaintext description made 9. All were correct
+under the provenance-and-operation model, with zero safety failures, so these
+options pass. Genre fill-empty made only one prediction and Google visible-text
+made none, below the frozen minimum of three; both remain `not_qualified`.
+ASIN remains `insufficient_coverage`. `tags:off` is still the default and
+policy-only, `explicit:unsupported` remains human-only, and narrators and cover
+remain excluded.
 
 The machine-readable candidate is
 [`f20-rich-metadata-qualification-candidate-v1.json`](../reference/f20-rich-metadata-qualification-candidate-v1.json).

@@ -147,8 +147,11 @@ an existing database and creates no file or SQLite state.
 
 The F20 rich-metadata qualification candidate is aggregate-only. The runtime
 pins its public digest and closed per-option disposition before validation,
-decision construction, or presentation. The three `series` options and both
-`isbn_form` options have decision-only Automatic authority;
+decision construction, or presentation. The three `series` options, both
+`isbn_form` options, genre add/replace, tag fill/add/replace, and safe plaintext
+description have decision-only Automatic authority. Lists must remain one
+complete ordered work-bound source projection, and descriptions must remain
+exact safe work-bound text without rewriting or truncation;
 `not_qualified` and `insufficient_coverage` cannot be fallback authority,
 `tags:off` remains policy-only, and human-only `explicit:unsupported` cannot
 construct an effect. Each automatic decision binds the F19a or F20 digest that

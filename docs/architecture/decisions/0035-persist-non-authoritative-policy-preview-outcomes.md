@@ -19,17 +19,17 @@ Metadata policy posture is a closed `review | preview` state whose default is
 It grants no authority. While Preview is active, the existing projection stage
 computes the exact F19 decision set for a newly eligible exact-current case and
 atomically persists one immutable shadow outcome. F20 extends the outcome with
-independent series and ISBN categories, so the current persisted contract is
-`shadow-outcome-set-v2`.
+independent series, genres, tags, description, and ISBN categories, so the
+current persisted contract is `shadow-outcome-set-v3`.
 
-Automatic is accepted as policy intent only while the stored posture is exactly
-`preview`. Review rejects validation, draft creation, and preview with the
-stable `policy_automatic_unqualified` problem; draft persistence and activation
-also recheck the posture in their immediate transactions. A resolved Preview
-profile retains Automatic for outcome observation, but human proposal admission
-replaces only Automatic destinations with Ask. Existing Ask, Ignore, and
-Unsupported destinations are unchanged. The qualified Automatic set remains
-empty, so activation grants no decision authority.
+At this F19a preview increment, Automatic was accepted as policy intent only
+while the stored posture was exactly `preview`; the qualified Automatic set was
+still empty. ADR-0036 later added the sealed decision-only `automatic` posture,
+and F20 #564 extended that posture only with exact passing rich field-option
+identities. Preview remains non-authoritative: human proposal admission routes
+its Automatic destinations to Ask, while Ask, Ignore, and Unsupported remain
+unchanged. Current validation and activation recheck the exact qualified option
+set in their immediate transactions.
 
 The outcome binds the exact case, report, proposal set, target fingerprint,
 resolved policy/profile/generation, source decision set and catalogue, fixed
@@ -72,5 +72,5 @@ target client, or write target metadata, covers, media, or artifacts.
 The append-only outcomes increase private application-state retention and have
 no selective purge or export operation. Pre-release ADR-0013 applies: absent or
 exact-current schema only, with no migration, import, or compatibility reader.
-The database table binds its document check to the exact v2 contract, so a
-database created for v1 is rejected at startup before any outcome is read.
+The database table binds its document check to the exact v3 contract, so a
+database created for v2 is rejected at startup before any outcome is read.

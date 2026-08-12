@@ -310,6 +310,58 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 _provider("catalogue", "edition-1", series_claims),
             ),
         )
+        genre_claims = tuple(
+            _claim(
+                "catalogue", "edition-1", ClaimKind.GENRE, value,
+                scope=ClaimScope.WORK, order=index,
+            )
+            for index, value in enumerate(("Fantasy", "Adventure"))
+        )
+        tag_claims = tuple(
+            _claim(
+                "catalogue", "edition-1", ClaimKind.TAG, value,
+                scope=ClaimScope.WORK, order=index,
+            )
+            for index, value in enumerate(("Quest", "Found family"))
+        )
+        description_claim = _claim(
+            "catalogue", "edition-1", ClaimKind.DESCRIPTION,
+            "An exact source-bound description.", scope=ClaimScope.WORK,
+        )
+        genre_report = _proposal_report(
+            fields=_fields(genres=TargetField(
+                TargetDestination.GENRES, TargetFieldState.VALUE,
+                ("Existing",),
+            )),
+            providers=(_provider(
+                "catalogue", "edition-1", genre_claims
+            ),),
+        )
+        tag_empty_report = _proposal_report(
+            fields=_fields(tags=TargetField(
+                TargetDestination.TAGS, TargetFieldState.MISSING,
+            )),
+            providers=(_provider(
+                "catalogue", "edition-1", tag_claims
+            ),),
+        )
+        tag_value_report = _proposal_report(
+            fields=_fields(tags=TargetField(
+                TargetDestination.TAGS, TargetFieldState.VALUE,
+                ("Existing",),
+            )),
+            providers=(_provider(
+                "catalogue", "edition-1", tag_claims
+            ),),
+        )
+        description_report = _proposal_report(
+            fields=_fields(description=TargetField(
+                TargetDestination.DESCRIPTION, TargetFieldState.MISSING,
+            )),
+            providers=(_provider(
+                "catalogue", "edition-1", (description_claim,)
+            ),),
+        )
         cases = (
             *(
                 ("series", option, series_report, "series",
@@ -320,6 +372,23 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                     "primary_narrative", "source_order", "all_qualified"
                 )
             ),
+            ("genres", "add", genre_report, "genres",
+             {"kind": "list", "value": [
+                 "Existing", "Fantasy", "Adventure",
+             ]}),
+            ("genres", "replace", genre_report, "genres",
+             {"kind": "list", "value": ["Fantasy", "Adventure"]}),
+            ("tags", "fill_empty", tag_empty_report, "tags",
+             {"kind": "list", "value": ["Quest", "Found family"]}),
+            ("tags", "add", tag_value_report, "tags",
+             {"kind": "list", "value": [
+                 "Existing", "Quest", "Found family",
+             ]}),
+            ("tags", "replace", tag_value_report, "tags",
+             {"kind": "list", "value": ["Quest", "Found family"]}),
+            ("description_fill", "safe_plain_text", description_report,
+             "description", {"kind": "text", "value":
+                              "An exact source-bound description."}),
             ("isbn_form", "preserve_exact", _proposal_report(
                 fields=_fields(isbn=TargetField(
                     TargetDestination.ISBN, TargetFieldState.MISSING
@@ -715,7 +784,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             self.assertEqual("none", outcome.authority)
             self.assertEqual("preview", outcome.posture)
             self.assertEqual(case_id, outcome.review_case_id)
-            self.assertTrue({value.disposition for value in outcome.outcomes}.issubset({"candidate", "keep_current", "abstention", "conflict", "unsupported"}))
+            self.assertTrue({value.disposition for value in outcome.outcomes}.issubset({"candidate", "keep_current", "abstention", "conflict", "manual", "unsupported"}))
             self.assertTrue(
                 all(value.qualification_candidate_id.startswith("qualification_candidate_") for value in outcome.outcomes)
             )

@@ -432,11 +432,18 @@ class _SeriesQualification(_RichQualificationBase):
     option: Literal["primary_narrative", "source_order", "all_qualified"]
 
 
-class _GenresQualification(_RichQualificationBase):
+class _GenresFillQualification(_RichQualificationBase):
     automatic_available: Literal[False]
-    disposition: Literal["insufficient_coverage"]
+    disposition: Literal["not_qualified"]
     field: Literal["genres"]
-    option: Literal["fill_empty", "add", "replace"]
+    option: Literal["fill_empty"]
+
+
+class _GenresQualification(_RichQualificationBase):
+    automatic_available: Literal[True]
+    disposition: Literal["passing_automatic"]
+    field: Literal["genres"]
+    option: Literal["add", "replace"]
 
 
 class _TagsOffQualification(_RichQualificationBase):
@@ -447,17 +454,24 @@ class _TagsOffQualification(_RichQualificationBase):
 
 
 class _TagsQualification(_RichQualificationBase):
-    automatic_available: Literal[False]
-    disposition: Literal["insufficient_coverage"]
+    automatic_available: Literal[True]
+    disposition: Literal["passing_automatic"]
     field: Literal["tags"]
     option: Literal["fill_empty", "add", "replace"]
 
 
 class _DescriptionQualification(_RichQualificationBase):
-    automatic_available: Literal[False]
-    disposition: Literal["insufficient_coverage"]
+    automatic_available: Literal[True]
+    disposition: Literal["passing_automatic"]
     field: Literal["description_fill"]
-    option: Literal["safe_plain_text", "google_visible_text"]
+    option: Literal["safe_plain_text"]
+
+
+class _GoogleDescriptionQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
+    disposition: Literal["not_qualified"]
+    field: Literal["description_fill"]
+    option: Literal["google_visible_text"]
 
 
 class _IsbnQualification(_RichQualificationBase):
@@ -482,8 +496,10 @@ class _ExplicitQualification(_RichQualificationBase):
 
 
 _RichQualification: TypeAlias = (
-    _SubtitleQualification | _SeriesQualification | _GenresQualification
+    _SubtitleQualification | _SeriesQualification | _GenresFillQualification
+    | _GenresQualification
     | _TagsOffQualification | _TagsQualification | _DescriptionQualification
+    | _GoogleDescriptionQualification
     | _IsbnQualification | _AsinQualification | _ExplicitQualification
 )
 _RICH_QUALIFICATION_ADAPTER = TypeAdapter(_RichQualification)
@@ -640,7 +656,7 @@ class _ShadowOutcomeSetResponse(_ClosedModel):
     report_id: str
     resolved_policy_id: str
     review_case_id: str
-    schema_version: Literal["shadow-outcome-set-v2"]
+    schema_version: Literal["shadow-outcome-set-v3"]
     source_decision_set_id: str
     target_fingerprint: str
 

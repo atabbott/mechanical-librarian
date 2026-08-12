@@ -946,7 +946,7 @@
         "additionalProperties": false,
         "properties": {
           "automatic_available": {
-            "const": false,
+            "const": true,
             "title": "Automatic Available",
             "type": "boolean"
           },
@@ -956,7 +956,7 @@
             "type": "string"
           },
           "disposition": {
-            "const": "insufficient_coverage",
+            "const": "passing_automatic",
             "title": "Disposition",
             "type": "string"
           },
@@ -966,10 +966,7 @@
             "type": "string"
           },
           "option": {
-            "enum": [
-              "safe_plain_text",
-              "google_visible_text"
-            ],
+            "const": "safe_plain_text",
             "title": "Option",
             "type": "string"
           }
@@ -1147,7 +1144,7 @@
         "title": "_ExplicitQualification",
         "type": "object"
       },
-      "_GenresQualification": {
+      "_GenresFillQualification": {
         "additionalProperties": false,
         "properties": {
           "automatic_available": {
@@ -1161,7 +1158,46 @@
             "type": "string"
           },
           "disposition": {
-            "const": "insufficient_coverage",
+            "const": "not_qualified",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "genres",
+            "title": "Field",
+            "type": "string"
+          },
+          "option": {
+            "const": "fill_empty",
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_sha256",
+          "automatic_available",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_GenresFillQualification",
+        "type": "object"
+      },
+      "_GenresQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": true,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "passing_automatic",
             "title": "Disposition",
             "type": "string"
           },
@@ -1172,7 +1208,6 @@
           },
           "option": {
             "enum": [
-              "fill_empty",
               "add",
               "replace"
             ],
@@ -1188,6 +1223,45 @@
           "option"
         ],
         "title": "_GenresQualification",
+        "type": "object"
+      },
+      "_GoogleDescriptionQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "not_qualified",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "description_fill",
+            "title": "Field",
+            "type": "string"
+          },
+          "option": {
+            "const": "google_visible_text",
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_sha256",
+          "automatic_available",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_GoogleDescriptionQualification",
         "type": "object"
       },
       "_HistoryAutomaticItem": {
@@ -1866,6 +1940,9 @@
                   "$ref": "#/components/schemas/_SeriesQualification"
                 },
                 {
+                  "$ref": "#/components/schemas/_GenresFillQualification"
+                },
+                {
                   "$ref": "#/components/schemas/_GenresQualification"
                 },
                 {
@@ -1876,6 +1953,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/_DescriptionQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_GoogleDescriptionQualification"
                 },
                 {
                   "$ref": "#/components/schemas/_IsbnQualification"
@@ -1966,6 +2046,9 @@
                   "$ref": "#/components/schemas/_SeriesQualification"
                 },
                 {
+                  "$ref": "#/components/schemas/_GenresFillQualification"
+                },
+                {
                   "$ref": "#/components/schemas/_GenresQualification"
                 },
                 {
@@ -1976,6 +2059,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/_DescriptionQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_GoogleDescriptionQualification"
                 },
                 {
                   "$ref": "#/components/schemas/_IsbnQualification"
@@ -2808,7 +2894,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "shadow-outcome-set-v2",
+            "const": "shadow-outcome-set-v3",
             "title": "Schema Version",
             "type": "string"
           },
@@ -3035,7 +3121,7 @@
         "additionalProperties": false,
         "properties": {
           "automatic_available": {
-            "const": false,
+            "const": true,
             "title": "Automatic Available",
             "type": "boolean"
           },
@@ -3045,7 +3131,7 @@
             "type": "string"
           },
           "disposition": {
-            "const": "insufficient_coverage",
+            "const": "passing_automatic",
             "title": "Disposition",
             "type": "string"
           },
