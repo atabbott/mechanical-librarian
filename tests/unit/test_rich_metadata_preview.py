@@ -18,6 +18,7 @@ from mechanical_librarian.domain.proposal_set import (
 from mechanical_librarian.domain.metadata_report import TargetDestination, TargetSeries
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError, compile_rich_metadata_preview,
+    project_f20_automatic_decision_value,
 )
 from tests.unit.test_proposal_set import _claim, _fields, _provider, _report
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
@@ -307,9 +308,32 @@ class RichMetadataPreviewTests(unittest.TestCase):
             proposal = ProposalSet.create(report_id=base.report_id, target_fingerprint=base.target_fingerprint, results=tuple(result if value.destination is TargetDestination.SERIES else value for value in base.results), resolved_policy_id=policy.resolved_id, bibliographic_combinations=(combo,))
             field = next(value for value in compile_rich_metadata_preview(policy, report, proposal).fields if value.field == "series")
             self.assertEqual(({"name": "Reading Order", "sequence": "2"},), field.desired_value)
+            self.assertEqual(alt.alternative_id, field.source_candidate_id)
             if option == "all_qualified":
                 self.assertTrue(field.narrowed_for_target)
                 self.assertEqual(({"name": "Reading Order", "sequence": "2"}, {"name": "Publication Order", "sequence": None}), field.qualified_value)
+
+    def test_automatic_series_projection_preserves_qualified_memberships_and_prefers_one(self) -> None:
+        candidate = {
+            "kind": "series",
+            "value": [
+                {"name": "Reading Order", "sequence": "2"},
+                {"name": "Publication Order", "sequence": None},
+            ],
+        }
+        for option in (
+            "primary_narrative", "source_order", "all_qualified"
+        ):
+            with self.subTest(option=option):
+                self.assertEqual(
+                    {"kind": "series", "value": [
+                        {"name": "Reading Order", "sequence": "2"},
+                    ]},
+                    project_f20_automatic_decision_value(
+                        "series", option, candidate
+                    ),
+                )
+                self.assertEqual(2, len(candidate["value"]))
 
     def test_preserving_single_series_is_a_no_op_for_source_order_and_all_qualified(self) -> None:
         base = _report()

@@ -31,12 +31,22 @@ narrative made 19 correct predictions; source order and all qualified each
 made 20, all at 100% precision. The two ISBN policies also passed:
 `isbn_form:prefer_isbn13` made 22 correct predictions from 41 eligible
 opportunities and `isbn_form:preserve_exact` made 4, each at 100% precision.
+The admitted proposal and decision retain every qualified membership; the
+existing Audiobookshelf effect planner projects only the preferred first
+membership because that target accepts one series value.
 
 Subtitle was adjudicated more narrowly at ebook-manifestation scope. Only 2 of
 7 fill-empty predictions were valid: two other proposals duplicated text
 already present in the title, and the remainder were series marketing,
 proof-only, or later franchise descriptors. Corroborated split made no
-predictions. Both subtitle policies therefore remain `not_qualified`.
+predictions. One valid proposal exactly matched a subtitle extracted from the
+ebook package. The other was established by revised-edition evidence that the
+current extractor does not yet expose as a structured subtitle claim. Two of
+the invalid proposals were nevertheless repeated by multiple catalogues, so
+provider count is not a safe substitute. A future subtitle candidate must bind
+the selected ebook manifestation, remain distinct from the title, and exclude
+marketing or status text. Both subtitle policies therefore remain
+`not_qualified`.
 Genres, tags, description, and ASIN remain `insufficient_coverage`. `tags:off` is policy-only,
 `explicit:unsupported` remains human-only, and narrators and cover remain
 excluded.

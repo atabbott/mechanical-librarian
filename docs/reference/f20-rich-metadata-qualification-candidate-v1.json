@@ -26,7 +26,7 @@
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
-      "sha256": "4588eb05227895b6bda4060dab0f9e8a49abf0e954baf1f047af3f67e3a15e89"
+      "sha256": "2ebf23d5ce333be2f267e12c78e51813f41801ea5875cd3a43ec16584e10e707"
     },
     "evaluator": {
       "identity": "f20-field-local-evaluator-v2",

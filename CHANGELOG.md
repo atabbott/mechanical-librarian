@@ -17,8 +17,11 @@
 - Bind the public F20 candidate identity and terminal rich-field qualification
   statuses into policy validation, API, CLI preview, and the owner notebook.
   Field-option-local offline qualification admits all three series policies
-  and both exact ISBN policies to decision-only Automatic at 100% precision;
-  it adds no write authority and leaves every other rich option manual. (#564)
+  and both exact ISBN policies to decision-only Automatic at 100% precision.
+  Each passing option now reaches the existing persisted-decision and guarded
+  effect-plan path; multi-series proposals retain every qualified membership
+  while Audiobookshelf receives the preferred first value. It adds no new
+  write authority and leaves every other rich option manual. (#564)
 
 - Record the F20 rich-metadata qualification candidate from 49 accepted
   real-work reports and 421 retained-response replays through the current
