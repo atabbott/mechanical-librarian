@@ -57,7 +57,18 @@ class PolicyPreviewCliTests(unittest.TestCase):
             result = run_policy_preview(config, database, profile)
             self.assertEqual("metadata-policy-preview-v1", result["schema_version"])
             self.assertEqual(19, len(result["rich_qualification"]))
-            self.assertTrue(all(item["automatic_available"] is False for item in result["rich_qualification"]))
+            self.assertEqual(
+                {
+                    "series:primary_narrative", "series:source_order",
+                    "series:all_qualified", "isbn_form:preserve_exact",
+                    "isbn_form:prefer_isbn13",
+                },
+                {
+                    f"{item['field']}:{item['option']}"
+                    for item in result["rich_qualification"]
+                    if item["automatic_available"] is True
+                },
+            )
             self.assertEqual("ebooks", result["libraries"][0]["library"])
             self.assertEqual([], result["libraries"][0]["cases"])
             self.assertEqual(before_database, database.read_bytes())

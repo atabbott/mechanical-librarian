@@ -11,6 +11,18 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from mechanical_librarian.adapters.persistence.metadata_reports import MetadataReportError, open_repository
+from mechanical_librarian.adapters.field_effect_authority import (
+    PersistedFieldEffectAuthority,
+)
+from mechanical_librarian.adapters.field_effect_fakes import (
+    FakeBackupReadiness,
+    FakeCapabilityObserver,
+    FakeConsentCurrentness,
+    FakeDependencyCurrentness,
+    FakeForwardReevaluation,
+    FakeTargetService,
+)
+from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.metadata_policy import (
     MAX_SHADOW_SAMPLE_RESPONSE_BYTES,
     PolicyNotebook,
@@ -30,9 +42,20 @@ from mechanical_librarian.domain.metadata_policy import (
     human_review_destinations,
     resolve_policy,
 )
-from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope, LocalClaim
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    LocalClaim,
+    TargetDestination,
+    TargetField,
+    TargetFieldState,
+)
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
-from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError, AutomaticSafetyState
+from mechanical_librarian.domain.automatic_decision import (
+    AutomaticDecision,
+    AutomaticDecisionError,
+    AutomaticSafetyState,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
@@ -40,7 +63,12 @@ from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source,
 )
-from tests.unit.test_proposal_set import _fields, _report as _proposal_report
+from tests.unit.test_proposal_set import (
+    _claim,
+    _fields,
+    _provider,
+    _report as _proposal_report,
+)
 from tests.unit.test_review_case_persistence import _report
 
 
@@ -252,6 +280,160 @@ def _human_title_decision(repository, case_id: str, occurred_at: int) -> HumanDe
 
 
 class ShadowOutcomePersistenceTests(unittest.TestCase):
+    def test_every_f20_automatic_option_reaches_persisted_effect_authority(self) -> None:
+        isbn10 = LocalClaim.create(
+            kind=ClaimKind.ISBN, observed="0306406152", canonical="0306406152",
+            excerpt="0306406152", applicability="ebook", checksum="valid_isbn_10",
+            applicability_basis="ebook", scope=ClaimScope.EDITION,
+        )
+        isbn13 = LocalClaim.create(
+            kind=ClaimKind.ISBN, observed="9780306406157",
+            canonical="9780306406157", excerpt="9780306406157",
+            applicability="ebook", checksum="valid_isbn_13",
+            applicability_basis="ebook", scope=ClaimScope.EDITION,
+        )
+        series_claims = (
+            _claim("catalogue", "edition-1", ClaimKind.TITLE, "Book",
+                   scope=ClaimScope.WORK, order=0),
+            _claim("catalogue", "edition-1", ClaimKind.SERIES,
+                   "Reading Order", scope=ClaimScope.WORK, order=1),
+            _claim("catalogue", "edition-1", ClaimKind.SERIES_SEQUENCE,
+                   "2", scope=ClaimScope.WORK, order=2),
+            _claim("catalogue", "edition-1", ClaimKind.SERIES,
+                   "Publication Order", scope=ClaimScope.WORK, order=3),
+            _claim("catalogue", "edition-1", ClaimKind.SERIES_SEQUENCE,
+                   "4", scope=ClaimScope.WORK, order=4),
+        )
+        series_report = _bibliographic_report(
+            current_title="Book",
+            providers=(
+                _provider("catalogue", "edition-1", series_claims),
+            ),
+        )
+        cases = (
+            *(
+                ("series", option, series_report, "series",
+                 {"kind": "series", "value": [
+                     {"name": "Reading Order", "sequence": "2"},
+                 ]})
+                for option in (
+                    "primary_narrative", "source_order", "all_qualified"
+                )
+            ),
+            ("isbn_form", "preserve_exact", _proposal_report(
+                fields=_fields(isbn=TargetField(
+                    TargetDestination.ISBN, TargetFieldState.MISSING
+                )),
+                local_claims=(isbn10,),
+            ), "isbn", {"kind": "text", "value": "0306406152"}),
+            ("isbn_form", "prefer_isbn13", _proposal_report(
+                fields=_fields(isbn=TargetField(
+                    TargetDestination.ISBN, TargetFieldState.MISSING
+                )),
+                local_claims=(isbn13,),
+            ), "isbn", {"kind": "text", "value": "9780306406157"}),
+        )
+        for category, option, report, destination, expected in cases:
+            with self.subTest(option=f"{category}:{option}"), tempfile.TemporaryDirectory() as temporary:
+                repository = open_repository(Path(temporary) / "reports.sqlite")
+                options = dict(DEFAULT_OPTIONS)
+                options[category] = option
+                destinations = {
+                    name: "unsupported" if name == "explicit" else "ask"
+                    for name in OPTION_CATALOGUE
+                }
+                destinations[category] = "automatic"
+                profile = MetadataPolicyProfile.create(
+                    "F20 automatic reachability", options, destinations
+                )
+                resolved = resolve_policy(profile, report.target.library)
+                repository.enter_shadow_preview(1)
+                repository.create_metadata_policy_draft(profile.canonical_json)
+                repository.activate_metadata_policy(
+                    profile.policy_id,
+                    MetadataPolicyProfile.builtin().policy_id,
+                    ((report.target.library, resolved.resolved_id,
+                      resolved.canonical_json),),
+                    2,
+                )
+                repository.activate_qualified_automatic(3)
+                proposal = evaluate_report(
+                    report, resolved.resolved_id,
+                    human_review_destinations(resolved),
+                )
+                if category == "series":
+                    series_result = next(
+                        value for value in proposal.results
+                        if value.destination is TargetDestination.SERIES
+                    )
+                    self.assertEqual(
+                        2,
+                        len(series_result.alternatives[0].value.value),
+                    )
+                repository.publish(report, lambda: True)
+                repository.publish_proposal(proposal)
+                case_id = json.loads(
+                    repository.admit_review_case(proposal)
+                )["review_case_id"]
+                outcome = ShadowOutcomeSet.from_json(
+                    repository.persist_shadow_outcome(case_id, 4)
+                )
+                field = next(
+                    value for value in outcome.outcomes
+                    if value.destination == destination
+                )
+                self.assertEqual(
+                    (category, option, "automatic", "candidate"),
+                    (field.policy_category, field.policy_option,
+                     field.policy_destination, field.disposition),
+                )
+                rows = repository._connection.execute(
+                    "SELECT document FROM automatic_decisions WHERE "
+                    "review_case_id=? AND destination=?",
+                    (case_id, destination),
+                ).fetchall()
+                self.assertEqual(1, len(rows))
+                decision = AutomaticDecision.from_json(rows[0][0])
+                authority = repository.field_effect_authority_source(decision)
+                self.assertEqual(expected, authority["decision_value"])
+                self.assertEqual(destination, authority["destination"])
+                self.assertEqual(case_id, authority["review_case_id"])
+                consent = FakeConsentCurrentness()
+                consent.allow(
+                    connection=authority["connection"],
+                    library=authority["library"],
+                    destination=destination,
+                )
+                service = GuardedFieldApplication(
+                    repository,
+                    FakeTargetService(),
+                    FakeBackupReadiness(),
+                    FakeCapabilityObserver("c" * 64),
+                    PersistedFieldEffectAuthority(repository),
+                    FakeDependencyCurrentness(),
+                    consent,
+                    SimpleNamespace(),
+                    FakeForwardReevaluation(),
+                    lambda: 5,
+                )
+                plan = service.plan(
+                    decision,
+                    connection=authority["connection"],
+                    library=authority["library"],
+                    work_id=authority["work_id"],
+                    destination=destination,
+                    pre_value=authority["pre_value"],
+                    desired_value=expected,
+                    target_fingerprint=authority["target_fingerprint"],
+                    target_version=authority["target_version"],
+                    dependency_digests=authority["dependency_digests"],
+                    capability_digest="c" * 64,
+                )
+                self.assertIsNotNone(plan)
+                assert plan is not None
+                self.assertEqual(expected["value"], plan.plan.desired_value)
+                repository.close()
+
     def test_outcome_accepts_packet_valid_configured_provider_citations(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             repository = open_repository(Path(temporary) / "reports.sqlite")

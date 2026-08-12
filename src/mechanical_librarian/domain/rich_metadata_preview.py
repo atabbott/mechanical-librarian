@@ -12,6 +12,9 @@ import re
 from typing import Final
 
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_PASSING_AUTOMATIC_OPTIONS,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind, ClaimScope, IdentifierRelation, MetadataReport,
     ProviderClaim, ProviderEvidenceKind, TargetDestination, TargetField,
@@ -78,6 +81,9 @@ class RichFieldPreview:
     reason: str | None
     narrowed_for_target: bool = False
     qualified_value: object | None = None
+    source_candidate_id: str | None = None
+    source_evidence_references: tuple[str, ...] = ()
+    source_combination_ids: tuple[str, ...] = ()
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -152,7 +158,10 @@ def _project(
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "explicit_unsupported")
     if destination == "ignore":
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "policy_ignored")
-    if destination == "automatic":
+    if (
+        destination == "automatic"
+        and f"{field}:{option}" not in F20_PASSING_AUTOMATIC_OPTIONS
+    ):
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "automatic_unqualified")
     if target.state not in _EMPTY and target.state is not TargetFieldState.VALUE:
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "target_state_unusable")
@@ -200,7 +209,12 @@ def _project(
             desired = (candidate.value.value[0],)
             if _data_value(desired) == current:
                 return RichFieldPreview(field, option, target.state.value, current, "no_op", current, "unchanged")
-            return RichFieldPreview(field, option, target.state.value, current, "projected", _data_value(desired), None, True, _data_value(candidate.value.value))
+            return RichFieldPreview(
+                field, option, target.state.value, current, "projected",
+                _data_value(desired), None, True, _data_value(candidate.value.value),
+                candidate.alternative_id, candidate.evidence_references,
+                _candidate_combination_ids(proposal, candidate),
+            )
         if option == "primary_narrative":
             member = _combination_member(proposal, TargetDestination.SERIES)
             if member is None:
@@ -210,7 +224,12 @@ def _project(
             desired = (candidate.value.value[0],)
     if _data_value(desired) == current:
         return RichFieldPreview(field, option, target.state.value, current, "no_op", current, "unchanged")
-    return RichFieldPreview(field, option, target.state.value, current, "projected", _data_value(desired), None)
+    return RichFieldPreview(
+        field, option, target.state.value, current, "projected",
+        _data_value(desired), None, False, None,
+        candidate.alternative_id, candidate.evidence_references,
+        _candidate_combination_ids(proposal, candidate),
+    )
 
 
 def _candidate(result: ProposalResult) -> ProposalAlternative | None:
@@ -360,7 +379,11 @@ def _isbn(
         for reference in candidate.evidence_references
     ):
         return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
-    return RichFieldPreview(field, option, target.state.value, _data_value(target.value), "projected", candidate.value.value, None)
+    return RichFieldPreview(
+        field, option, target.state.value, _data_value(target.value),
+        "projected", candidate.value.value, None, False, None,
+        candidate.alternative_id, candidate.evidence_references,
+    )
 
 
 def _asin(
@@ -467,10 +490,49 @@ def _combination_member(proposal: ProposalSet, destination: TargetDestination) -
     return next(iter(matches.values())) if len(matches) == 1 else None
 
 
+def _candidate_combination_ids(
+    proposal: ProposalSet, candidate: ProposalAlternative
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            combination.combination_id
+            for combination in proposal.bibliographic_combinations
+            if any(
+                selection.kind is BibliographicSelectionKind.CANDIDATE
+                and selection.alternative_id == candidate.alternative_id
+                for selection in combination.selections
+            )
+        )
+    )
+
+
+def project_f20_automatic_decision_value(
+    field: str, option: str, candidate_value: object
+) -> dict[str, object]:
+    """Project one qualified proposal value to its exact target shape."""
+    if f"{field}:{option}" not in F20_PASSING_AUTOMATIC_OPTIONS:
+        raise RichMetadataPreviewError("rich automatic projection is unavailable")
+    if type(candidate_value) is not dict or set(candidate_value) != {"kind", "value"}:
+        raise RichMetadataPreviewError("rich automatic projection is invalid")
+    if field == "series":
+        values = candidate_value["value"]
+        if candidate_value["kind"] != "series" or type(values) is not list or not values:
+            raise RichMetadataPreviewError("rich automatic projection is invalid")
+        return {"kind": "series", "value": [values[0]]}
+    if field == "isbn_form":
+        if candidate_value["kind"] != "text" or type(candidate_value["value"]) is not str:
+            raise RichMetadataPreviewError("rich automatic projection is invalid")
+        return {"kind": "text", "value": candidate_value["value"]}
+    raise RichMetadataPreviewError("rich automatic projection is unavailable")
+
+
 def _data_value(value: object) -> object:
     if isinstance(value, tuple):
         return tuple(item.to_data() if hasattr(item, "to_data") else item for item in value)
     return value
 
 
-__all__ = ["RichFieldPreview", "RichMetadataPreview", "RichMetadataPreviewError", "compile_rich_metadata_preview"]
+__all__ = [
+    "RichFieldPreview", "RichMetadataPreview", "RichMetadataPreviewError",
+    "compile_rich_metadata_preview", "project_f20_automatic_decision_value",
+]

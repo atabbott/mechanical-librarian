@@ -18,7 +18,9 @@ Metadata policy posture is a closed `review | preview` state whose default is
 `review`. Entering `preview` is an authenticated, CSRF-protected owner command.
 It grants no authority. While Preview is active, the existing projection stage
 computes the exact F19 decision set for a newly eligible exact-current case and
-atomically persists one immutable `shadow-outcome-set-v1`.
+atomically persists one immutable shadow outcome. F20 extends the outcome with
+independent series and ISBN categories, so the current persisted contract is
+`shadow-outcome-set-v2`.
 
 Automatic is accepted as policy intent only while the stored posture is exactly
 `preview`. Review rejects validation, draft creation, and preview with the
@@ -70,3 +72,5 @@ target client, or write target metadata, covers, media, or artifacts.
 The append-only outcomes increase private application-state retention and have
 no selective purge or export operation. Pre-release ADR-0013 applies: absent or
 exact-current schema only, with no migration, import, or compatibility reader.
+The database table binds its document check to the exact v2 contract, so a
+database created for v1 is rejected at startup before any outcome is read.

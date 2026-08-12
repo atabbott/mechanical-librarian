@@ -892,8 +892,13 @@ describe('typed review routes', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({ schema_version: 'metadata-policy-notebook-v1', policy_id: 'opaque-policy-identity', profile: { schema_version: 'metadata-policy-profile-v2', name: 'Qualified default', options, destinations }, rich_qualification: [
-        { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'insufficient_coverage', field: 'isbn_form', option: 'preserve_exact' },
-        { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'insufficient_coverage', field: 'isbn_form', option: 'prefer_isbn13' },
+        { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'not_qualified', field: 'subtitle', option: 'fill_empty' },
+        { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'not_qualified', field: 'subtitle', option: 'corroborated_split' },
+        { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'series', option: 'primary_narrative' },
+        { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'series', option: 'source_order' },
+        { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'series', option: 'all_qualified' },
+        { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'isbn_form', option: 'preserve_exact' },
+        { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'isbn_form', option: 'prefer_isbn13' },
         { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'passing_human_only', field: 'explicit', option: 'unsupported' },
       ] })),
       policyCommand: <T,>(path: string, body?: unknown) => policyCommand(path, body) as Promise<T>,
@@ -909,9 +914,11 @@ describe('typed review routes', () => {
     expect(screen.queryByText('opaque-policy-identity')).toBeNull()
     const isbn = screen.getByRole('group', { name: /ISBN/ })
     expect(within(isbn).getByRole('button', { name: 'Automatic' })).toBeDisabled()
-    expect(within(isbn).getByText(/insufficient qualification coverage/)).toBeVisible()
+    expect(within(isbn).getByText(/Enter Preview mode before choosing qualified Automatic/)).toBeVisible()
     await user.selectOptions(within(isbn).getByRole('combobox', { name: 'ISBN representation' }), 'prefer_isbn13')
-    expect(within(isbn).getByText(/insufficient qualification coverage/)).toBeVisible()
+    expect(within(isbn).getByText(/Enter Preview mode before choosing qualified Automatic/)).toBeVisible()
+    const series = screen.getByRole('group', { name: /Series memberships/ })
+    expect(within(series).getByText(/Enter Preview mode before choosing qualified Automatic/)).toBeVisible()
     await user.click(screen.getByRole('button', { name: /Open unsupported content/i }))
     const explicit = screen.getByRole('group', { name: /Explicit-content flag/ })
     expect(within(explicit).getByText(/remains unsupported and has no policy choice/)).toBeVisible()
@@ -924,6 +931,8 @@ describe('typed review routes', () => {
     await user.type(screen.getByRole('textbox', { name: 'Policy name' }), 'Qualified draft')
     await user.click(screen.getByRole('button', { name: /Open identity/i }))
     const titleLayout = screen.getByRole('group', { name: /Title and subtitle/ })
+    const subtitle = screen.getByRole('group', { name: /^Subtitle/ })
+    expect(within(subtitle).getByText(/did not meet the qualification gate/)).toBeVisible()
     await user.selectOptions(within(titleLayout).getByRole('combobox', { name: 'Title and subtitle representation' }), 'preserve')
     expect(within(titleLayout).getByText('Draft changed')).toBeVisible()
     expect(screen.getAllByText('Draft has unreviewed changes').length).toBeGreaterThan(0)

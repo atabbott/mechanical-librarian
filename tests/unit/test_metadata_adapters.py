@@ -526,6 +526,43 @@ class MetadataPersistenceTests(unittest.TestCase):
                 open_repository(path)
             self.assertEqual(path.read_bytes(), before)
 
+    def test_prior_shadow_outcome_schema_is_rejected_without_change(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "prior-shadow.sqlite"
+            repository = open_repository(path)
+            repository.close()
+            connection = sqlite3.connect(path)
+            row = connection.execute(
+                "SELECT sql FROM sqlite_schema WHERE type='table' "
+                "AND name='shadow_decision_outcomes'"
+            ).fetchone()
+            assert row is not None
+            old_sql = row[0].replace(
+                " AND json_extract(document,'$.schema_version')="
+                "'shadow-outcome-set-v2'",
+                "",
+            )
+            self.assertNotEqual(row[0], old_sql)
+            connection.execute("PRAGMA writable_schema=ON")
+            connection.execute(
+                "UPDATE sqlite_schema SET sql=? WHERE type='table' "
+                "AND name='shadow_decision_outcomes'",
+                (old_sql,),
+            )
+            schema_version = connection.execute(
+                "PRAGMA schema_version"
+            ).fetchone()[0]
+            connection.execute(f"PRAGMA schema_version={schema_version + 1}")
+            connection.execute("PRAGMA writable_schema=OFF")
+            connection.commit()
+            connection.close()
+            before = path.read_bytes()
+
+            with self.assertRaises(MetadataReportError):
+                open_repository(path, create=False)
+
+            self.assertEqual(before, path.read_bytes())
+
     def test_preview_digest_requires_exact_report_binding(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "reports.sqlite"

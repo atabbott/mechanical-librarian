@@ -140,19 +140,20 @@ compiler under the draft's resolved identity. The field compiler accepts only
 already admitted typed alternatives and exact retained evidence references;
 Google description transformation, accepted ISBN relation, and ebook ASIN
 applicability are checked without parsing, conversion, inference, provider
-access, or target access. Every new Automatic choice returns a closed
-unqualified abstention. The CLI uses the same application path against an
-existing database and creates no file or SQLite state.
+access, or target access. An Automatic rich choice projects only when its exact
+field-option identity is in the pinned passing set; every other choice returns
+a closed unqualified abstention. The CLI uses the same application path against
+an existing database and creates no file or SQLite state.
 
-The F20 rich-metadata qualification candidate is aggregate-only and currently
-names no automatic option. The runtime pins its public candidate digest and
-closed per-option terminal disposition before validation or presentation;
-`insufficient_coverage` cannot be used as fallback authority,
+The F20 rich-metadata qualification candidate is aggregate-only. The runtime
+pins its public digest and closed per-option disposition before validation,
+decision construction, or presentation. The three `series` options and both
+`isbn_form` options have decision-only Automatic authority;
+`not_qualified` and `insufficient_coverage` cannot be fallback authority,
 `tags:off` remains policy-only, and human-only `explicit:unsupported` cannot
-construct an effect. The existing F19a digest and sealed six automatic
-destinations remain the sole automatic authority. A later activation may
-consume only an exact passing manifest through its separately reviewed
-authority path.
+construct an effect. Each automatic decision binds the F19a or F20 digest that
+actually qualified its exact policy option. Effect consent, target concurrency,
+backup, apply, and read-back gates remain unchanged.
 
 Activation is a separate authenticated CSRF-protected owner mutation with the
 same 16 KiB pre-parse request bound as policy drafts. It binds
