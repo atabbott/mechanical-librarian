@@ -432,18 +432,11 @@ class _SeriesQualification(_RichQualificationBase):
     option: Literal["primary_narrative", "source_order", "all_qualified"]
 
 
-class _GenresFillQualification(_RichQualificationBase):
-    automatic_available: Literal[False]
-    disposition: Literal["not_qualified"]
-    field: Literal["genres"]
-    option: Literal["fill_empty"]
-
-
 class _GenresQualification(_RichQualificationBase):
     automatic_available: Literal[True]
     disposition: Literal["passing_automatic"]
     field: Literal["genres"]
-    option: Literal["add", "replace"]
+    option: Literal["fill_empty", "add", "replace"]
 
 
 class _TagsOffQualification(_RichQualificationBase):
@@ -496,8 +489,7 @@ class _ExplicitQualification(_RichQualificationBase):
 
 
 _RichQualification: TypeAlias = (
-    _SubtitleQualification | _SeriesQualification | _GenresFillQualification
-    | _GenresQualification
+    _SubtitleQualification | _SeriesQualification | _GenresQualification
     | _TagsOffQualification | _TagsQualification | _DescriptionQualification
     | _GoogleDescriptionQualification
     | _IsbnQualification | _AsinQualification | _ExplicitQualification

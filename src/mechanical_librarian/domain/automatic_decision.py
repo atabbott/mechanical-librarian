@@ -28,15 +28,44 @@ F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
 QUALIFIED_POLICY_OPTIONS = (
     F19A_QUALIFIED_POLICY_OPTIONS | F20_PASSING_AUTOMATIC_OPTIONS
 )
+_PRIOR_F20_QUALIFICATION_MANIFEST_SHA256 = (
+    "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a"
+)
+_PRIOR_F20_QUALIFIED_POLICY_OPTIONS = frozenset({
+    "series:primary_narrative", "series:source_order", "series:all_qualified",
+    "genres:add", "genres:replace",
+    "tags:fill_empty", "tags:add", "tags:replace",
+    "description_fill:safe_plain_text",
+    "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
+})
 
 
-def qualification_manifest_sha256(policy_category: str, policy_option: str) -> str:
+def _current_qualification_manifest_sha256(
+    policy_category: str, policy_option: str
+) -> str:
     identity = f"{policy_category}:{policy_option}"
     if identity in F19A_QUALIFIED_POLICY_OPTIONS:
         return F19A_QUALIFICATION_MANIFEST_SHA256
     if identity in F20_PASSING_AUTOMATIC_OPTIONS:
         return F20_QUALIFICATION_CANDIDATE_SHA256
     raise AutomaticDecisionError("invalid")
+
+
+def qualification_manifest_sha256(policy_category: str, policy_option: str) -> str:
+    """Return the current manifest used to create a new decision."""
+    return _current_qualification_manifest_sha256(policy_category, policy_option)
+
+
+def _qualification_manifest_is_valid(
+    policy_category: str, policy_option: str, manifest_sha256: str
+) -> bool:
+    identity = f"{policy_category}:{policy_option}"
+    return manifest_sha256 == _current_qualification_manifest_sha256(
+        policy_category, policy_option
+    ) or (
+        identity in _PRIOR_F20_QUALIFIED_POLICY_OPTIONS
+        and manifest_sha256 == _PRIOR_F20_QUALIFICATION_MANIFEST_SHA256
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +135,10 @@ class AutomaticDecision:
         policy_option: str, qualification_manifest_sha256: str,
         source_outcome_id: str, bundle_id: str | None, occurred_at: int,
     ) -> "AutomaticDecision":
+        if qualification_manifest_sha256 != _current_qualification_manifest_sha256(
+            policy_category, policy_option
+        ):
+            raise AutomaticDecisionError("invalid")
         core = {"candidate_id": candidate_id, "destination": destination,
             "outcome": outcome, "policy_category": policy_category,
             "policy_generation": policy_generation, "policy_option": policy_option,
@@ -170,8 +203,10 @@ class AutomaticDecision:
             or any(re.fullmatch(r"[0-9a-f]{64}", v) is None for v in (self.target_fingerprint, self.qualification_manifest_sha256, self.idempotency_digest))
             or re.fullmatch(r"resolved_policy_[0-9a-f]{64}", self.resolved_policy_id) is None
             or f"{self.policy_category}:{self.policy_option}" not in QUALIFIED_POLICY_OPTIONS
-            or self.qualification_manifest_sha256 != qualification_manifest_sha256(
-                self.policy_category, self.policy_option
+            or not _qualification_manifest_is_valid(
+                self.policy_category,
+                self.policy_option,
+                self.qualification_manifest_sha256,
             )
             or (self.policy_category in {"title_layout", "date_precision"}
                 and (type(self.bundle_id) is not str or re.fullmatch(r"automatic_bundle_[0-9a-f]{64}", self.bundle_id) is None))

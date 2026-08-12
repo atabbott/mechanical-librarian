@@ -19,7 +19,7 @@ LONG_TITLE = (
     f"{UNBROKEN_TITLE_SEGMENT} — an intentionally long synthetic title for "
     "narrow-layout qualification"
 )
-_F20_CANDIDATE_SHA256 = "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a"
+_F20_CANDIDATE_SHA256 = "ba42a24185273170f024d861c5dc6865baf298a785068800ab0a0f3f4a6da31a"
 _RICH_QUALIFICATION: tuple[dict[str, object], ...] = tuple(
     {
         "automatic_available": disposition == "passing_automatic",
@@ -34,7 +34,7 @@ _RICH_QUALIFICATION: tuple[dict[str, object], ...] = tuple(
         ("series", "primary_narrative", "passing_automatic"),
         ("series", "source_order", "passing_automatic"),
         ("series", "all_qualified", "passing_automatic"),
-        ("genres", "fill_empty", "not_qualified"),
+        ("genres", "fill_empty", "passing_automatic"),
         ("genres", "add", "passing_automatic"),
         ("genres", "replace", "passing_automatic"),
         ("tags", "off", "policy_only"),
@@ -623,7 +623,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 "schema_version": "metadata-policy-profile-v2",
                 "name": "Household metadata policy",
                 "options": {"title_layout": "title_and_subtitle", "date_precision": "year", "language_rendering": "display_name", "contributor_names": "canonical", "publisher_preference": "publisher", "subtitle": "fill_empty", "series": "primary_narrative", "genres": "fill_empty", "tags": "off", "description_fill": "safe_plain_text", "isbn_form": "preserve_exact", "cover_order": "fixed_source_order", "asin": "preserve_exact", "explicit": "unsupported"},
-                "destinations": {"title_layout": "ask", "date_precision": "ask", "language_rendering": "ask", "contributor_names": "ask", "publisher_preference": "ask", "subtitle": "ask", "series": "ask", "genres": "ask", "tags": "ask", "description_fill": "ask", "isbn_form": "ask", "cover_order": "ask", "asin": "ask", "explicit": "unsupported"},
+                "destinations": {"title_layout": "ask", "date_precision": "ask", "language_rendering": "ask", "contributor_names": "ask", "publisher_preference": "ask", "subtitle": "ask", "series": "ask", "genres": "automatic", "tags": "ask", "description_fill": "ask", "isbn_form": "ask", "cover_order": "ask", "asin": "ask", "explicit": "unsupported"},
             },
         }
     if path == "/api/v1/metadata-policy/drafts":

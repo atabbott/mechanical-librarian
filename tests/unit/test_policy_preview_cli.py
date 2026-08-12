@@ -60,7 +60,7 @@ class PolicyPreviewCliTests(unittest.TestCase):
             self.assertEqual(
                 {
                     "description_fill:safe_plain_text",
-                    "genres:add", "genres:replace",
+                    "genres:fill_empty", "genres:add", "genres:replace",
                     "series:primary_narrative", "series:source_order",
                     "series:all_qualified", "isbn_form:preserve_exact",
                     "isbn_form:prefer_isbn13",

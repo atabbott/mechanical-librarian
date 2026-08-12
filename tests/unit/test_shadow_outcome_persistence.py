@@ -337,6 +337,14 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 "catalogue", "edition-1", genre_claims
             ),),
         )
+        genre_empty_report = _proposal_report(
+            fields=_fields(genres=TargetField(
+                TargetDestination.GENRES, TargetFieldState.EMPTY,
+            )),
+            providers=(_provider(
+                "catalogue", "edition-1", genre_claims
+            ),),
+        )
         tag_empty_report = _proposal_report(
             fields=_fields(tags=TargetField(
                 TargetDestination.TAGS, TargetFieldState.MISSING,
@@ -372,6 +380,8 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                     "primary_narrative", "source_order", "all_qualified"
                 )
             ),
+            ("genres", "fill_empty", genre_empty_report, "genres",
+             {"kind": "list", "value": ["Fantasy", "Adventure"]}),
             ("genres", "add", genre_report, "genres",
              {"kind": "list", "value": [
                  "Existing", "Fantasy", "Adventure",

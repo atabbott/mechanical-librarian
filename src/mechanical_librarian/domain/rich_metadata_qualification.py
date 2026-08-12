@@ -11,7 +11,7 @@ from typing import Final, Mapping
 
 
 F20_QUALIFICATION_CANDIDATE_SHA256: Final = (
-    "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a"
+    "ba42a24185273170f024d861c5dc6865baf298a785068800ab0a0f3f4a6da31a"
 )
 F20_RICH_FIELDS: Final = (
     "subtitle", "series", "genres", "tags", "description_fill",
@@ -23,7 +23,7 @@ F20_OPTION_DISPOSITIONS: Final[Mapping[str, str]] = MappingProxyType({
     "series:primary_narrative": "passing_automatic",
     "series:source_order": "passing_automatic",
     "series:all_qualified": "passing_automatic",
-    "genres:fill_empty": "not_qualified",
+    "genres:fill_empty": "passing_automatic",
     "genres:add": "passing_automatic",
     "genres:replace": "passing_automatic",
     "tags:off": "policy_only",
@@ -40,7 +40,7 @@ F20_OPTION_DISPOSITIONS: Final[Mapping[str, str]] = MappingProxyType({
 })
 F20_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset({
     "series:primary_narrative", "series:source_order", "series:all_qualified",
-    "genres:add", "genres:replace",
+    "genres:fill_empty", "genres:add", "genres:replace",
     "tags:fill_empty", "tags:add", "tags:replace",
     "description_fill:safe_plain_text",
     "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
