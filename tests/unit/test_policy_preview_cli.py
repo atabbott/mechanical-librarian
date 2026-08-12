@@ -56,6 +56,8 @@ class PolicyPreviewCliTests(unittest.TestCase):
             before_entries = tuple(sorted(value.name for value in root.iterdir()))
             result = run_policy_preview(config, database, profile)
             self.assertEqual("metadata-policy-preview-v1", result["schema_version"])
+            self.assertEqual(19, len(result["rich_qualification"]))
+            self.assertTrue(all(item["automatic_available"] is False for item in result["rich_qualification"]))
             self.assertEqual("ebooks", result["libraries"][0]["library"])
             self.assertEqual([], result["libraries"][0]["cases"])
             self.assertEqual(before_database, database.read_bytes())
