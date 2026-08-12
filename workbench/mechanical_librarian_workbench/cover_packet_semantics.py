@@ -27,6 +27,7 @@ MAX_COVER_PREVIEW_HEIGHT = 480
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _MAX_PNG_CHUNKS = 4_096
+_APNG_CHUNKS = frozenset({b"acTL", b"fcTL", b"fdAT"})
 
 _COVER_REFERENCE = re.compile(r"^cover_ref_[0-9a-f]{64}$")
 _TRANSPORT_REFERENCE = re.compile(r"^cover_transport_ref_[0-9a-f]{64}$")
@@ -279,6 +280,8 @@ def _structural_png_without_ancillary(
             saw_end = True
             data_closed = True
             structural.extend(payload[offset:crc_end])
+        elif chunk_type in _APNG_CHUNKS:
+            raise ValueError
         elif chunk_type[0] & 0x20:
             if saw_data:
                 data_closed = True
@@ -615,6 +618,7 @@ def _validate_omissions(
 ) -> None:
     normalized: list[tuple[str, str]] = []
     omitted_references: set[str] = set()
+    duplicate_references: set[str] = set()
     for omission in omissions:
         if type(omission) is not dict or type(omission.get("reason")) is not str:
             raise ValueError
@@ -642,6 +646,7 @@ def _validate_omissions(
                 or _DIGEST.fullmatch(digest) is None
             ):
                 raise ValueError
+            duplicate_references.add(reference)
         elif reference in source_bindings:
             raise ValueError
         elif reason in {"aggregate_byte_limit", "preview_byte_limit", "shortlist_limit"}:
@@ -665,6 +670,13 @@ def _validate_omissions(
                 raise ValueError
         normalized.append((reference, reason))
     if normalized != sorted(normalized):
+        raise ValueError
+    expected_duplicates = {
+        reference
+        for reference, (retained_reference, _digest) in source_bindings.items()
+        if reference != retained_reference
+    }
+    if duplicate_references != expected_duplicates:
         raise ValueError
 
 

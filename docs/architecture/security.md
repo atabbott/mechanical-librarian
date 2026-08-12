@@ -463,9 +463,11 @@ retained creator/contributor overlap counts as agreement. Missing creator values
 are neutral; pairwise disagreement alongside agreement and edition-specific
 disagreement are not identity conflicts. Plausible is not
 verified, and no title agreement or an unopposed creator/contributor
-disagreement remains unknown. Admission
-recomputes exact report-bound candidate reference, provenance, incumbent,
-dimension, and variant facts, so digest-equal foreign packets fail closed.
+disagreement remains unknown. Admission reopens every bound source preview
+through the report reader, verifies its source digest, deterministically
+re-normalizes it to the candidate transport identity, and recomputes exact
+report-bound candidate reference, provenance, incumbent, dimension, and variant
+facts, so foreign packets fail closed.
 Edition-specific date evidence is neither plausibility support nor a veto; default
 provider covers remain work-level rather than manifestation-level evidence.
 It has no image inference, provider dispatch, child process, persistence,

@@ -55,8 +55,10 @@ edition-specific metadata disagreement do not erase title support.
 creator/contributor disagreement, or unbound provider identity remains
 `unknown`. The scenario neither sends a provider request nor reads images as
 identity evidence.
-Candidate references and normalized provenance are re-derived from the report;
-matching preview bytes cannot substitute a packet from another report. Date
+Every candidate's bound source previews are reopened through the report reader,
+source-digest verified, and re-normalized to the candidate transport identity;
+references and normalized provenance are also re-derived from the report.
+Matching preview bytes cannot substitute a packet from another report. Date
 evidence is not identity plausibility support or a veto, and a default provider
 cover with explicit work identity can verify only the work.
 

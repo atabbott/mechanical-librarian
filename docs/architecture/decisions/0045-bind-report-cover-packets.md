@@ -121,9 +121,11 @@ The projection binds report,
 packet, candidate, classifier, and opaque evidence references. It emits fixed
 reason codes only, never source/provider identities, metadata values, paths,
 URLs, or credentials, and makes no visual, provider, policy, persistence, or
-write decision. Candidate admission recomputes the report-bound opaque source
-reference, normalized provenance, incumbent state, original dimensions, and
-preview variant; matching preview bytes alone cannot bind a foreign packet.
+write decision. Candidate admission reopens every bound source preview through
+the report reader, verifies its source digest, deterministically re-normalizes
+it to the candidate transport identity, and recomputes the report-bound opaque
+source reference, normalized provenance, incumbent state, original dimensions,
+and preview variant; matching preview bytes alone cannot bind a foreign packet.
 Provider default covers with explicit work identity are work-designated for
 verification. Edition-specific date evidence is not plausibility support or a
 veto once title support is established.
