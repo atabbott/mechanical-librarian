@@ -54,8 +54,26 @@
   observations covering all 148 candidates. Across all eight policies, exact
   acceptable-set, recommendation and whole-decision agreement were 88.5%, 89%
   and 86%; every policy combination remained at or above the predeclared 75%
-  potentially-useful band, with zero safety or binding violations. Formal fresh
-  holdout confirmation remains separate. (#543)
+  potentially-useful band, with zero safety or binding violations. A fresh
+  work-family-disjoint one-shot holdout then froze 10 complete packets with 44
+  candidates, two independent visual reviews, 12 evidence-only disagreement
+  adjudications, and 80 reference policy decisions. The run admitted only 2/10
+  packets and 9/44 candidates: eight serial dispatches failed at the contained
+  runtime boundary without retry. The admitted subset reached 12/16 exact
+  acceptable sets and whole decisions, 16/16 recommendations, statuses and
+  ordered reasons, and 12/16 strict decisions. That is positive evidence that
+  the end-to-end policy works when observations are admitted, but 20% packet
+  and 20.45% candidate coverage is insufficient to qualify final policy
+  quality. The exact runtime cause is unavailable because the final controller
+  retained only the generic typed runtime code instead of the contained
+  process's already value-free diagnostic count and digest. (#543)
+
+- Recognize the one proven transient local contained-reviewer CLI abort without
+  widening reviewer authority: only bounded strict pre-terminal JSONL on return
+  code 134 with bounded nonempty stderr receives one fixed one-second retry in
+  a new adapter/job/process. The unchanged request/profile/image/model/limit
+  binding and value-free dispatch plus first-failure code/count/digest evidence
+  are retained; every other failure remains terminal. (#543)
 
 - Reduce private Actions consumption without recombining the qualification
   suites that previously timed out: run the three exact-head pull-request jobs

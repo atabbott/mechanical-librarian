@@ -38,6 +38,12 @@ from mechanical_librarian_workbench import (  # noqa: E402
     WorkbenchResult,
     execute,
 )
+from mechanical_librarian_workbench.contained_reviewer import (  # noqa: E402
+    ContainedReviewerProcessError,
+)
+from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa: E402
+    ContainedReviewerAttempt,
+)
 
 
 def _operation(*_args: object) -> str:
@@ -479,6 +485,33 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkbenchFailure, "scenario failed") as caught:
                 execute(context, ReportRequest("inspect", report_id="report"), operations)
         self.assertNotIn("private", str(caught.exception))
+
+    def test_contained_terminal_attempt_evidence_crosses_redacting_boundary(self) -> None:
+        attempts = (
+            ContainedReviewerAttempt(True, "local_cli_abort", 19, "a" * 64),
+            ContainedReviewerAttempt(True),
+        )
+
+        def fail(*_args: object) -> str:
+            raise ContainedReviewerProcessError("runtime", attempts=attempts)
+
+        request = ContainedReviewerRequest(
+            "invoke",
+            instruction="reviewer-instruction.txt",
+            input_document="reviewer-input.json",
+            output_schema="reviewer-output-schema.json",
+        )
+        with WorkbenchContext.temporary() as context:
+            context.network = IsolatedNetworkProfile(
+                "isolated-test", True, True, _network_files(context)
+            )
+            operations = replace(_operations(), run_contained_reviewer=fail)
+            with self.assertRaisesRegex(WorkbenchFailure, "scenario failed") as caught:
+                execute(context, request, operations)
+        self.assertEqual(caught.exception.attempts, attempts)
+        self.assertNotIn("local_cli_abort", str(caught.exception))
+        with self.assertRaises(ValueError):
+            WorkbenchFailure("failed", attempts=(object(),))  # type: ignore[arg-type]
 
     def test_operation_contract_json_preserves_application_field_order(self) -> None:
         raw = '[{"connection":"primary","item":"item","eligible":true}]'

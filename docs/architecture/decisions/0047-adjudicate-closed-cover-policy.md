@@ -91,5 +91,26 @@ The entire surface remains source-only and excluded from installed artifacts.
   eligibility, invented-reference, policy, privacy or expanded-authority
   violations and no new model or provider call. Fresh formal holdout
   confirmation remains required.
+- The fresh formal confirmation froze 10 complete packets, 44 accepted
+  independently reviewed candidate labels, and 80 reference policy decisions
+  before its one shot. Only 2 packets and 9 candidates produced admitted
+  observations; eight dispatches failed with the typed `runtime` class and no
+  retry. On the admitted subset, acceptable sets and whole decisions agreed for
+  12/16 policy rows, while recommendations, statuses and ordered reasons agreed
+  for 16/16; strict decision-plus-reason agreement was 12/16. The four policies
+  without promotional avoidance were exact on both admitted packets; all four
+  promotional-avoidance combinations were exact on one of two. These are
+  encouraging admitted-subset results, but 2/10 packet and 9/44 candidate
+  coverage fails the frozen 95% coverage gate, so formal semantic policy quality
+  remains insufficient rather than PASS.
+- The eight failures all occurred after dispatch began, shared the same broad
+  runtime type, completed in the short failure band, and produced no safety or
+  binding violation. The final controller mistakenly replaced the contained
+  process's value-free diagnostic count and digest with a generic one-count
+  runtime digest, so the exact shared cause cannot be recovered. Static
+  packet-v2 admission, owner, authentication, tool, runtime and environment
+  preflight passed, and two packets completed, which argues against a
+  cohort-wide always-on binding or configuration defect without proving a
+  transient cause.
 - Architecture and exact-installed-artifact gates prove no runtime surface,
   persistence or write authority.

@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import TypeAlias
 
 from .context import WorkbenchContext
+from .contained_reviewer import ContainedReviewerProcessError
+from .contained_reviewer_contract import ContainedReviewerAttempt
 from .cover_identity import classify_cover_identity
 from .cover_observation import observe_cover_packet
 from .cover_packets import PreparedCoverPacket, prepare_cover_packet
@@ -22,9 +24,21 @@ Operation = Callable[..., object]
 class WorkbenchFailure(Exception):
     """One bounded diagnostic which never includes operation exception text."""
 
-    def __init__(self, category: str) -> None:
+    def __init__(
+        self,
+        category: str,
+        *,
+        attempts: tuple[ContainedReviewerAttempt, ...] = (),
+    ) -> None:
         _member(category, {"failed", "invalid", "refused"}, "failure category")
+        if (
+            type(attempts) is not tuple
+            or len(attempts) > 2
+            or any(type(attempt) is not ContainedReviewerAttempt for attempt in attempts)
+        ):
+            raise ValueError("invalid failure attempts")
         self.category = category
+        self.attempts = attempts
         super().__init__(f"workbench scenario {category}")
 
 
@@ -644,6 +658,8 @@ def execute(
         return _execute(context, request, operations)
     except PermissionError:
         raise WorkbenchFailure("refused") from None
+    except ContainedReviewerProcessError as error:
+        raise WorkbenchFailure("failed", attempts=error.attempts) from None
     except (TypeError, ValueError):
         raise WorkbenchFailure("invalid") from None
     except Exception:

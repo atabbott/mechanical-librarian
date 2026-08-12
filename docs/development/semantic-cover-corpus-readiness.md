@@ -372,6 +372,96 @@ result rather than prove the current idea. The next formal evidence is one fresh
 unused holdout under this unchanged configuration; these exposed development
 results are not that holdout.
 
+## Cover-policy formal holdout — insufficient coverage
+
+Before selection or exposure, the fresh holdout design excluded every earlier
+development, final and spent cohort across source, content, work, edition,
+ISBN, packet, exact preview and near-duplicate boundaries. The retained
+inventory could supply 90 eligible complete multi-choice packets. Under the
+frozen complete-packet ordering, exactly ten packets could contain at most 44
+candidates, so the transparent final target was ten complete packets and 44
+candidates rather than subsetting packets or reacquiring covers.
+
+All 44 visual references received independent first and second reviews. The
+reviewers agreed on 164/176 fields; 12 field disagreements received an
+evidence-only visual adjudication before any tested output was opened. The
+accepted ledger contained zero unknown labels and produced 80 frozen policy
+decisions across the eight policy combinations. A development-only Linux
+canary had already admitted all three observations from one previously exposed
+packet on the exact current packet-v2 transport. No provider call, corpus
+rebuild, prompt change, model change, threshold reduction, production access or
+write was used.
+
+The fresh one-shot final run did not meet its frozen 95% coverage gate:
+
+| Formal-holdout measure | Aggregate result |
+| --- | ---: |
+| Complete packets admitted | 2/10 (20%) |
+| Candidate observations admitted | 9/44 (20.45%) |
+| Policy decisions scored | 16/80 (20%) |
+| Typed failures / retries | 8 `runtime` / 0 |
+| Composition exact agreement | 9/9 (100%) |
+| Medium exact agreement | 5/9 (55.56%) |
+| Promotional-text exact agreement | 8/9 (88.89%) |
+| Tie-in exact agreement | 9/9 (100%) |
+| All-four exact agreement | 4/9 (44.44%) |
+| Acceptable-set agreement | 12/16 (75%) |
+| Recommendation agreement | 16/16 (100%) |
+| Status agreement | 16/16 (100%) |
+| Whole-decision agreement | 12/16 (75%) |
+| Ordered-reason agreement | 16/16 (100%) |
+| Strict decision-plus-reason agreement | 12/16 (75%) |
+| Admitted-dispatch p50 / p95 latency | 17.01 s / 17.90 s |
+| Safety, binding or invented-reference violations | 0 |
+
+Aggregate admitted-candidate confusion was:
+
+| Field | Reference → observer | Count |
+| --- | --- | ---: |
+| Composition | `dense` → `dense` | 8 |
+| Composition | `minimal` → `minimal` | 1 |
+| Medium | `illustrated` → `illustrated` | 4 |
+| Medium | `photographic` → `illustrated` / `photographic` | 4 / 1 |
+| Promotional text | `absent` → `absent` / `present` | 2 / 1 |
+| Promotional text | `present` → `present` | 6 |
+| Tie-in branding | `absent` → `absent` | 9 |
+
+There were no observer unknowns in the admitted subset. All four policy
+combinations without promotional avoidance were exact for both admitted
+packets. Each promotional-avoidance combination was exact for one of two; the
+acceptable-set difference did not change either recommendation, status or
+ordered reason list. At the distinct-packet view, one of two packets matched
+all eight whole and strict decisions, while both matched every recommendation,
+status and ordered reason. Neither admitted packet had every candidate exact on
+all four visual fields.
+
+The eight failures occurred after dispatch began and before observation
+admission. They shared the same broad runtime type and a short failure-latency
+band; exact packet-v2, owner, tool, authentication, job-root, runtime and
+environment preflight had passed, and two dispatches completed. This makes an
+always-on cohort-wide configuration or binding defect less likely, but it does
+not identify the cause. The final controller should have persisted the
+contained process error's already value-free diagnostic count and digest; it
+instead persisted a generic one-count runtime digest for every failure. Raw
+stderr was not retained. The exact cause and missingness bias are therefore
+unknown, and no retry or replacement holdout was used.
+
+A post-run local reproduction found one bounded remediation worth testing on a
+fresh cohort: a strict pre-terminal return-code-134 CLI abort can be identified
+without retaining raw output. Cover orchestration now permits one fresh-process
+retry after one second for that exact signal and persists only dispatch status
+and the first failure's code/count/digest. This does not reinterpret the spent
+holdout, broaden provider/model authority, or relax its coverage gate; any new
+formal run remains independently frozen.
+
+The admitted results demonstrate that the current model-to-observation-to-policy
+path can produce correct decisions, including complete agreement for several
+policy configurations. They do not establish final generalisation: coverage is
+far below the frozen minimum, medium and all-four agreement are weak in the
+small admitted subset, and every apparent rate has only two packet units. The
+formal result is therefore **INSUFFICIENT COVERAGE**, not a negative proof that
+the model cannot do the work and not a policy-quality PASS.
+
 ## Outcome
 
 Issue #546 passes as a best-effort general-principle proof of a bounded,
@@ -379,7 +469,10 @@ aggregate-safe provider-cover corpus. It establishes neither semantic quality
 nor runtime activation, and it does not qualify a model or a later transport
 unit. Issue #541 separately passes its bounded typed observation contract and
 its aggregate-safe semantic usefulness and repeatability proof.
-Issue #543 retains its deterministic contract and historical real fail-closed
-abstention proof, while semantic policy quality remains pending requalification.
+Issue #543 retains its deterministic contract, current-packet-v2 development
+proof and historical real fail-closed abstention proof. Its fresh formal
+holdout shows the full path working on two packets, but eight contained-runtime
+failures leave semantic policy quality **insufficient coverage** rather than
+qualified or pending.
 The tracked report contains no private corpus material, and #501 remains
 unpromoted.

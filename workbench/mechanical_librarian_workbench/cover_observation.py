@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -13,7 +14,8 @@ from .contained_reviewer_contract import (
 )
 from .cover_packet_semantics import bind_cover_packet
 
-SCHEMA_VERSION = "cover-observation-report-v1"
+SCHEMA_VERSION = "cover-observation-report-v2"
+LEGACY_SCHEMA_VERSION = "cover-observation-report-v1"
 OUTPUT_SCHEMA_VERSION = "cover-observer-output-v1"
 MAX_RESULT_BYTES = 65_536
 
@@ -166,6 +168,7 @@ def observe_cover_packet(
         "taxonomy_reference": TAXONOMY_REFERENCE,
     }
     report = {
+        "attempt_evidence": envelope["attempt_evidence"],
         "cover_packet_reference": packet["packet_reference"],
         "instruction_sha256": observer_identity["instruction_sha256"],
         "observations": rows,
@@ -226,6 +229,7 @@ def _validate_envelope(
     image_payloads: tuple[tuple[str, str, bytes], ...],
 ) -> dict[str, object]:
     if set(envelope) != {
+        "attempt_evidence",
         "execution_sha256",
         "image_binding_sha256",
         "image_count",
@@ -259,11 +263,39 @@ def _validate_envelope(
         "input_sha256": hashlib.sha256(packet_document.encode()).hexdigest(),
         "request_sha256": request_digest,
         "result_sha256": hashlib.sha256(canonical_json(result).encode()).hexdigest(),
-        "schema_version": "contained-reviewer-workbench-result-v2",
+        "schema_version": "cover-contained-reviewer-result-v1",
         "status": "completed",
     }
     if any(envelope[key] != value for key, value in expected.items()):
         raise ValueError("cover observation binding is invalid")
+    attempt_evidence = envelope["attempt_evidence"]
+    if (
+        type(attempt_evidence) is not list
+        or not 1 <= len(attempt_evidence) <= 2
+        or any(
+            type(attempt) is not dict
+            or attempt.get("dispatched") is not True
+            or set(attempt) not in (
+                {"dispatched"},
+                {"diagnostic_bytes", "diagnostic_sha256", "dispatched", "failure_code"},
+            )
+            for attempt in attempt_evidence
+        )
+    ):
+        raise ValueError("cover observation attempt evidence is invalid")
+    if len(attempt_evidence) == 2:
+        first, second = attempt_evidence
+        if (
+            first.get("failure_code") != "local_cli_abort"
+            or type(first.get("diagnostic_bytes")) is not int
+            or not 1 <= first["diagnostic_bytes"] <= 2_147_483_647
+            or type(first.get("diagnostic_sha256")) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", first["diagnostic_sha256"]) is None
+            or set(second) != {"dispatched"}
+        ):
+            raise ValueError("cover observation attempt evidence is invalid")
+    elif set(attempt_evidence[0]) != {"dispatched"}:
+        raise ValueError("cover observation attempt evidence is invalid")
     return result
 
 

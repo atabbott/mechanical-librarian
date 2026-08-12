@@ -97,7 +97,11 @@ mixed and sparse class result. Final minimal-positive precision was 15/21
 (50%). The later full-packet development policy replay found 90% exact agreement
 for minimal preference alone and 98% for tie-in avoidance alone. Promotional
 avoidance remained mixed at 78% exact across its four combinations; formal fresh
-holdout confirmation remains pending #543.
+holdout confirmation remained necessary for #543. That one-shot holdout later
+admitted only 2/10 packets and 9/44 candidates because eight dispatches failed
+at the typed contained-runtime boundary. Its admitted subset was encouraging,
+but the frozen coverage gate failed, so it does not qualify final policy
+quality or runtime readiness.
 
 `cover-policy-report` is a deterministic consumer of the exact retained
 report, cover packet, closed observation report and `cover-policy-v1`. It
@@ -115,7 +119,23 @@ The current development proof reused 50 retained packet observations covering
 whole-decision agreement were 88.5%, 89% and 86%, respectively, with every
 combination at or above the predeclared potentially-useful band and zero safety
 or binding violations. These exposed development results support the formal
-holdout run; they are not final-holdout evidence or runtime readiness.
+holdout run; they are not final-holdout evidence or runtime readiness. The
+fresh holdout scored 16/80 possible policy decisions because only two packets
+were admitted. It agreed on 12/16 acceptable sets, whole decisions and strict
+decision-plus-reason results, and on all 16 recommendations, statuses and
+ordered reasons. Eight typed runtime failures left final coverage insufficient;
+their exact cause was not retained, and the run was not retried.
+
+The cover entry has one deliberately narrow recovery path for a locally proven
+CLI abort: only return code 134 with bounded strict JSONL that contains one
+`turn.started` and no completed or failed terminal event, plus bounded nonempty
+stderr, gets one fixed one-second retry. It reuses the exact admitted request
+and profile but creates a fresh adapter/job/process. Its source-only envelope
+contains value-free dispatch and first-failure code/count/digest evidence. A
+near miss and every generic runtime, schema, auth, setup, sandbox, malformed
+output or timeout failure stays terminal.
+New observation reports are `cover-observation-report-v2`; frozen v1 reports
+remain readable exactly as sealed and contain no retry evidence.
 
 ## Executing a scenario
 

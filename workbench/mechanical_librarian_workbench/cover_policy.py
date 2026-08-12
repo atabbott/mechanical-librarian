@@ -16,6 +16,7 @@ from .cover_identity import (
 )
 from .cover_observation import (
     INSTRUCTION,
+    LEGACY_SCHEMA_VERSION,
     SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
     TAXONOMY_REFERENCE,
     _output_schema,
@@ -306,9 +307,20 @@ def _observation_rows(
     value = _load_object(document, "cover observation")
     expected_instruction = hashlib.sha256(INSTRUCTION.encode("utf-8")).hexdigest()
     expected_schema = hashlib.sha256(_output_schema(references).encode("utf-8")).hexdigest()
-    if (
-        set(value)
-        != {
+    valid_shape = (
+        (
+            value.get("schema_version") == LEGACY_SCHEMA_VERSION
+            and set(value) == {
+                "cover_packet_reference", "instruction_sha256", "observations",
+                "observer_reference", "output_schema_sha256", "schema_version",
+                "taxonomy_reference",
+            }
+        )
+        or (
+            value.get("schema_version") == OBSERVATION_SCHEMA_VERSION
+            and set(value)
+            == {
+            "attempt_evidence",
             "cover_packet_reference",
             "instruction_sha256",
             "observations",
@@ -316,8 +328,13 @@ def _observation_rows(
             "output_schema_sha256",
             "schema_version",
             "taxonomy_reference",
-        }
-        or value["schema_version"] != OBSERVATION_SCHEMA_VERSION
+            }
+            and _attempt_evidence(value["attempt_evidence"])
+        )
+    )
+    if (
+        not valid_shape
+        or value["schema_version"] not in {LEGACY_SCHEMA_VERSION, OBSERVATION_SCHEMA_VERSION}
         or value["cover_packet_reference"] != packet_reference
         or value["taxonomy_reference"] != TAXONOMY_REFERENCE
         or _REFERENCE.fullmatch(str(value["observer_reference"])) is None
@@ -361,6 +378,29 @@ def _observation_rows(
     ):
         raise ValueError("cover observation report is invalid")
     return value
+
+
+def _attempt_evidence(value: object) -> bool:
+    if type(value) is not list or not 1 <= len(value) <= 2:
+        return False
+    for index, attempt in enumerate(value):
+        if type(attempt) is not dict or attempt.get("dispatched") is not True:
+            return False
+        if index == 0 and len(value) == 2:
+            if (
+                set(attempt)
+                != {"diagnostic_bytes", "diagnostic_sha256", "dispatched", "failure_code"}
+                or attempt["failure_code"] != "local_cli_abort"
+                or type(attempt["diagnostic_bytes"]) is not int
+                or not 1 <= attempt["diagnostic_bytes"] <= 2_147_483_647
+                or type(attempt["diagnostic_sha256"]) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", attempt["diagnostic_sha256"])
+                is None
+            ):
+                return False
+        elif set(attempt) != {"dispatched"}:
+            return False
+    return True
 
 
 def _report(

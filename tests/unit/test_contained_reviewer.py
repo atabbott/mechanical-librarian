@@ -438,6 +438,217 @@ class ContainedReviewerTests(unittest.TestCase):
             self.assertEqual(credential.read_bytes(), b'{"synthetic":true}')
             self.assertEqual(list(profile.job_root_path.iterdir()), [])
 
+    def test_cover_retries_inside_one_bound_credential_and_retains_terminal_attempts(self) -> None:
+        request = _cover_request()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile = _profile(root)
+            profile.codex_path.write_bytes(b"codex")
+            profile.sandbox_path.write_bytes(b"sandbox")
+            os.chmod(profile.codex_path, 0o700)
+            os.chmod(profile.sandbox_path, 0o700)
+            credential = profile.auth_store_path / "auth.json"
+            credential.write_bytes(b'{"synthetic":true}')
+            os.chmod(credential, 0o600)
+            profile = replace(profile, identity=replace(
+                profile.identity,
+                executable_sha256=hashlib.sha256(b"codex").hexdigest(),
+                sandbox_sha256=hashlib.sha256(b"sandbox").hexdigest(),
+            ))
+            reviewer = adapter.ContainedReviewerAdapter(profile)
+            calls: list[int] = []
+
+            def attempt(_request, dispatch, *_bound):
+                calls.append(1)
+                dispatch(100 + len(calls), 100 + len(calls), "synthetic")
+                if len(calls) == 1:
+                    credential.write_bytes(b'{"replacement":true}')
+                    raise adapter.ContainedReviewerProcessError(
+                        "local_cli_abort", count=17, digest="a" * 64
+                    )
+                self.fail("credential replacement must prevent rebind")
+
+            @contextmanager
+            def fake_sealed(images):
+                yield ()
+
+            with (
+                patch.object(adapter.sys, "platform", "linux"),
+                patch.object(reviewer, "_verify_sandbox"),
+                patch.object(adapter, "_sealed_cover_images", new=fake_sealed),
+                patch.object(reviewer, "_run_attempt", side_effect=attempt),
+                patch.object(adapter.time, "sleep"),
+                self.assertRaises(adapter.ContainedReviewerProcessError) as caught,
+            ):
+                reviewer.run_cover(request, lambda *_: None)  # type: ignore[arg-type]
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(caught.exception.code, "auth")
+            self.assertEqual(
+                caught.exception.attempts,
+                (
+                    contract.ContainedReviewerAttempt(
+                        True, "local_cli_abort", 17, "a" * 64
+                    ),
+                ),
+            )
+
+    def test_cover_abort_retries_once_with_immutable_attempt_projection(self) -> None:
+        request = _cover_request()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile = _profile(root)
+            profile.codex_path.write_bytes(b"codex")
+            profile.sandbox_path.write_bytes(b"sandbox")
+            os.chmod(profile.codex_path, 0o700)
+            os.chmod(profile.sandbox_path, 0o700)
+            credential = profile.auth_store_path / "auth.json"
+            credential.write_bytes(b'{"synthetic":true}')
+            os.chmod(credential, 0o600)
+            profile = replace(profile, identity=replace(
+                profile.identity,
+                executable_sha256=hashlib.sha256(b"codex").hexdigest(),
+                sandbox_sha256=hashlib.sha256(b"sandbox").hexdigest(),
+            ))
+            reviewer = adapter.ContainedReviewerAdapter(profile)
+
+            @contextmanager
+            def fake_sealed(images):
+                yield ()
+
+            document = '{"summary":"safe"}'
+            def succeeds_second(_request, dispatch, *_bound):
+                dispatch(100, 100, "synthetic")
+                if not hasattr(succeeds_second, "called"):
+                    succeeds_second.called = True
+                    raise adapter.ContainedReviewerProcessError(
+                        "local_cli_abort", count=17, digest="a" * 64
+                    )
+                return contract.ContainedReviewResult(
+                    document, hashlib.sha256(document.encode()).hexdigest()
+                )
+
+            with (
+                patch.object(adapter.sys, "platform", "linux"),
+                patch.object(reviewer, "_verify_sandbox"),
+                patch.object(adapter, "_sealed_cover_images", new=fake_sealed),
+                patch.object(reviewer, "_run_attempt", side_effect=succeeds_second),
+                patch.object(adapter.time, "sleep") as sleep,
+            ):
+                result = reviewer.run_cover(request, lambda *_: None)  # type: ignore[arg-type]
+            sleep.assert_called_once_with(1)
+            self.assertEqual(result.attempts, (
+                contract.ContainedReviewerAttempt(True, "local_cli_abort", 17, "a" * 64),
+                contract.ContainedReviewerAttempt(True),
+            ))
+
+            attempts = 0
+
+            def aborts_twice(_request, dispatch, *_bound):
+                nonlocal attempts
+                attempts += 1
+                dispatch(200 + attempts, 200 + attempts, "synthetic")
+                raise adapter.ContainedReviewerProcessError(
+                    "local_cli_abort", count=23, digest="b" * 64
+                )
+
+            reviewer = adapter.ContainedReviewerAdapter(profile)
+            with (
+                patch.object(adapter.sys, "platform", "linux"),
+                patch.object(reviewer, "_verify_sandbox"),
+                patch.object(adapter, "_sealed_cover_images", new=fake_sealed),
+                patch.object(reviewer, "_run_attempt", side_effect=aborts_twice),
+                patch.object(adapter.time, "sleep") as sleep,
+                self.assertRaises(adapter.ContainedReviewerProcessError) as caught,
+            ):
+                reviewer.run_cover(request, lambda *_: None)  # type: ignore[arg-type]
+            self.assertEqual(attempts, 2)
+            sleep.assert_called_once_with(1)
+            self.assertEqual(
+                caught.exception.attempts,
+                (
+                    contract.ContainedReviewerAttempt(
+                        True, "local_cli_abort", 23, "b" * 64
+                    ),
+                    contract.ContainedReviewerAttempt(True),
+                ),
+            )
+
+            runtime_attempts = 0
+
+            def runtime_once(_request, dispatch, *_bound):
+                nonlocal runtime_attempts
+                runtime_attempts += 1
+                dispatch(400, 400, "synthetic")
+                raise adapter.ContainedReviewerProcessError(
+                    "runtime", count=37, digest="e" * 64
+                )
+
+            reviewer = adapter.ContainedReviewerAdapter(profile)
+            with (
+                patch.object(adapter.sys, "platform", "linux"),
+                patch.object(reviewer, "_verify_sandbox"),
+                patch.object(adapter, "_sealed_cover_images", new=fake_sealed),
+                patch.object(reviewer, "_run_attempt", side_effect=runtime_once),
+                patch.object(adapter.time, "sleep") as sleep,
+                self.assertRaises(adapter.ContainedReviewerProcessError) as caught,
+            ):
+                reviewer.run_cover(request, lambda *_: None)  # type: ignore[arg-type]
+            self.assertEqual((runtime_attempts, caught.exception.code), (1, "runtime"))
+            sleep.assert_not_called()
+            self.assertEqual(
+                caught.exception.attempts,
+                (contract.ContainedReviewerAttempt(True, "runtime", 37, "e" * 64),),
+            )
+
+            mixed_attempts = 0
+
+            def abort_then_runtime(_request, dispatch, *_bound):
+                nonlocal mixed_attempts
+                mixed_attempts += 1
+                dispatch(300 + mixed_attempts, 300 + mixed_attempts, "synthetic")
+                if mixed_attempts == 1:
+                    raise adapter.ContainedReviewerProcessError(
+                        "local_cli_abort", count=29, digest="c" * 64
+                    )
+                raise adapter.ContainedReviewerProcessError(
+                    "runtime", count=31, digest="d" * 64
+                )
+
+            reviewer = adapter.ContainedReviewerAdapter(profile)
+            with (
+                patch.object(adapter.sys, "platform", "linux"),
+                patch.object(reviewer, "_verify_sandbox"),
+                patch.object(adapter, "_sealed_cover_images", new=fake_sealed),
+                patch.object(
+                    reviewer, "_run_attempt", side_effect=abort_then_runtime
+                ),
+                patch.object(adapter.time, "sleep") as sleep,
+                self.assertRaises(adapter.ContainedReviewerProcessError) as caught,
+            ):
+                reviewer.run_cover(request, lambda *_: None)  # type: ignore[arg-type]
+            self.assertEqual((mixed_attempts, caught.exception.code), (2, "runtime"))
+            sleep.assert_called_once_with(1)
+            self.assertEqual(
+                caught.exception.attempts,
+                (
+                    contract.ContainedReviewerAttempt(
+                        True, "local_cli_abort", 29, "c" * 64
+                    ),
+                    contract.ContainedReviewerAttempt(True),
+                ),
+            )
+
+            with self.assertRaises(ValueError):
+                adapter.ContainedReviewerProcessError(
+                    "runtime", attempts=(object(),)  # type: ignore[arg-type]
+                )
+            with self.assertRaises(contract.ContainedReviewerError):
+                contract.ContainedReviewResult(
+                    document,
+                    hashlib.sha256(document.encode()).hexdigest(),
+                    attempts=(object(),),  # type: ignore[arg-type]
+                )
+
     @unittest.skipUnless(
         sys.platform.startswith("linux") and hasattr(os, "memfd_create"),
         "sealed memfd proof requires Linux",
@@ -661,6 +872,32 @@ class ContainedReviewerTests(unittest.TestCase):
             code, count, digest = adapter._nonzero_failure(stdout, stderr, returncode=1)
         self.assertEqual((code, count), ("response_format", len(event)))
         self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+    def test_only_strict_preterminal_134_abort_is_retryable_local_cli_abort(self) -> None:
+        started = json.dumps({"type": "turn.started"}, separators=(",", ":")).encode() + b"\n"
+        with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+            stdout.write(started)
+            stderr.write(b"local abort")
+            code, count, digest = adapter._nonzero_failure(stdout, stderr, returncode=134)
+        self.assertEqual((code, count), ("local_cli_abort", len(started) + len(b"local abort")))
+        self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+        near_misses = (
+            (133, started, b"local abort"),
+            (134, started, b""),
+            (134, started + b'{"type":"turn.failed"}\n', b"local abort"),
+            (134, b'{"type":"turn.started"}', b"local abort"),
+            (134, b'{"type":1}\n', b"local abort"),
+        )
+        for returncode, stdout_payload, stderr_payload in near_misses:
+            with self.subTest(returncode=returncode, stdout=stdout_payload):
+                with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+                    stdout.write(stdout_payload)
+                    stderr.write(stderr_payload)
+                    code, _count, _digest = adapter._nonzero_failure(
+                        stdout, stderr, returncode=returncode
+                    )
+                self.assertEqual(code, "runtime")
 
     def test_proc_parser_uses_final_command_delimiter(self) -> None:
         fields = ["S", "1", "77"] + ["0"] * 16 + ["12345"] + ["0"] * 4

@@ -520,6 +520,15 @@ produce the fixed `observations_unavailable` abstention. No image, path, URL,
 free text, production target, persistence or write authority enters this
 boundary.
 
+The formal policy holdout preserved this boundary: 10/10 packets passed exact
+packet-v2 preflight, two produced admitted observations and eight failed closed
+at the contained runtime boundary. The admitted subset had zero invented
+reference, binding, provider, production-access or write violations. No retry,
+prompt change, alternate model, wider limit or additional authority was used.
+The terminal controller did not retain the contained process's value-free
+diagnostic count and digest, so the broad `runtime` failures are not assigned a
+more specific cause.
+
 Cover
 previews use opaque references, fixed 12-image/1-MiB-each/8-MiB-total limits,
 digest/order binding, a separate ephemeral read-only mount, and repeatable exact
@@ -608,6 +617,14 @@ without retry. Their exact shared cause was not retained or proven. Successful
 exact preflight and the admitted rows show that no cohort-wide always-on
 authentication, profile, sandbox, binding, or schema failure occurred, while
 bounded transient child, resource, or packet-interaction hypotheses remain.
+Subsequent local reproduction identified one bounded retryable signature:
+return code 134 with strict pre-terminal JSONL (`turn.started`, but no completed
+or failed terminal event) and bounded nonempty stderr. The cover-only binding
+may retry that exact signature once after one second, recreating the adapter,
+job and process from unchanged admitted authority. It retains only dispatch
+booleans and the first failure's code, byte count and digest; no raw event,
+stderr, path, credential, image or semantic output persists. Every other
+failure class remains terminal.
 The 50 selected candidate rows came from 29 distinct packets and rows within a
 packet are correlated because one admitted packet result can score multiple
 selected rows. The two failures were packet invocations, but aggregate receipts

@@ -82,6 +82,7 @@ from mechanical_librarian_workbench.cover_policy import (  # noqa: E402
 )
 from mechanical_librarian_workbench import cover_packets as packet_builder  # noqa: E402
 from mechanical_librarian_workbench import reviewer as reviewer_binding  # noqa: E402
+from mechanical_librarian_workbench import contained_reviewer as reviewer_adapter  # noqa: E402
 from mechanical_librarian_workbench import (  # noqa: E402
     CoverIdentityRequest,
     CoverObservationRequest,
@@ -398,6 +399,7 @@ def _observer_result(
     )
     return canonical_json(
         {
+            "attempt_evidence": [{"dispatched": True}],
             "execution_sha256": hashlib.sha256(execution_identity.encode()).hexdigest(),
             "image_binding_sha256": hashlib.sha256(image_binding.encode()).hexdigest(),
             "image_count": len(images),
@@ -405,7 +407,7 @@ def _observer_result(
             "request_sha256": admitted.digest,
             "result": result,
             "result_sha256": hashlib.sha256(canonical_json(result).encode()).hexdigest(),
-            "schema_version": "contained-reviewer-workbench-result-v2",
+            "schema_version": "cover-contained-reviewer-result-v1",
             "status": "completed",
         }
     )
@@ -684,6 +686,72 @@ class CoverPacketTests(unittest.TestCase):
                 reviewer_binding.run_cover_packet_reviewer(
                     b"", b"instruction", packet.document.encode(), b"{}", mismatch
                 )
+
+    def test_cover_retries_only_one_proven_local_cli_abort_with_bound_attempt_evidence(self) -> None:
+        packet, images = _packet_case()
+        schema = '{"additionalProperties":false,"properties":{"summary":{"type":"string"}},"required":["summary"],"type":"object"}'
+        request_digests: list[str] = []
+        instances: list[object] = []
+
+        class FakeReviewer:
+            def __init__(self, _profile: object) -> None:
+                instances.append(self)
+
+            def run_cover(self, request, dispatched):
+                request_digests.append(request.digest)
+                dispatched(100 + len(instances), 100 + len(instances), "synthetic")
+                document = '{"summary":"safe"}'
+                return SimpleNamespace(
+                    document=document,
+                    digest=hashlib.sha256(document.encode()).hexdigest(),
+                    attempts=(),
+                )
+
+        with (
+            mock.patch.object(reviewer_binding, "load_contained_reviewer_profile_bytes", return_value=object()),
+            mock.patch.object(reviewer_binding, "ContainedReviewerAdapter", FakeReviewer),
+        ):
+            envelope = json.loads(reviewer_binding.run_cover_packet_reviewer(
+                b"profile", b"Inspect.", packet.document.encode(), schema.encode(), images
+            ))
+        self.assertEqual(len(instances), 1)
+        self.assertEqual(request_digests, [request_digests[0]])
+        self.assertEqual(envelope["attempt_evidence"], [])
+
+    def test_cover_retry_is_hard_capped_and_rejects_other_failures(self) -> None:
+        packet, images = _packet_case()
+        schema = '{"additionalProperties":false,"properties":{"summary":{"type":"string"}},"required":["summary"],"type":"object"}'
+        for code, expected_instances, expected_sleep in (
+            ("local_cli_abort", 2, 1),
+            ("runtime", 1, 0),
+            ("response_format", 1, 0),
+            ("auth", 1, 0),
+            ("setup", 1, 0),
+            ("malformed_output", 1, 0),
+            ("timeout", 1, 0),
+        ):
+            with self.subTest(code=code):
+                instances: list[object] = []
+
+                class FailingReviewer:
+                    def __init__(self, _profile: object) -> None:
+                        instances.append(self)
+
+                    def run_cover(self, _request, dispatched):
+                        dispatched(100 + len(instances), 100 + len(instances), "synthetic")
+                        raise reviewer_adapter.ContainedReviewerProcessError(
+                            code, count=19, digest="b" * 64
+                        )
+
+                with (
+                    mock.patch.object(reviewer_binding, "load_contained_reviewer_profile_bytes", return_value=object()),
+                    mock.patch.object(reviewer_binding, "ContainedReviewerAdapter", FailingReviewer),
+                    self.assertRaises(reviewer_adapter.ContainedReviewerProcessError) as caught,
+                ):
+                    reviewer_binding.run_cover_packet_reviewer(
+                        b"profile", b"Inspect.", packet.document.encode(), schema.encode(), images
+                    )
+                self.assertEqual(len(instances), 1)
 
     def test_admission_fully_decodes_exact_rgba_png_preview(self) -> None:
         packet, packet_images = _packet_case(1)
@@ -1529,6 +1597,35 @@ class CoverObservationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "binding"):
             observe_cover_packet(profile, packet.document.encode(), images, unbound)
+
+    def test_observation_report_persists_only_bound_retry_evidence(self) -> None:
+        packet, images = _packet_case()
+
+        def retried(*args: object) -> str:
+            envelope = json.loads(_observer_result(*args))
+            envelope["attempt_evidence"] = [
+                {
+                    "diagnostic_bytes": 17,
+                    "diagnostic_sha256": "a" * 64,
+                    "dispatched": True,
+                    "failure_code": "local_cli_abort",
+                },
+                {"dispatched": True},
+            ]
+            return canonical_json(envelope)
+
+        report = json.loads(observe_cover_packet(
+            b"synthetic-profile", packet.document.encode(), images, retried
+        ).document)
+        self.assertEqual(report["attempt_evidence"], [
+            {
+                "diagnostic_bytes": 17,
+                "diagnostic_sha256": "a" * 64,
+                "dispatched": True,
+                "failure_code": "local_cli_abort",
+            },
+            {"dispatched": True},
+        ])
 
     def test_typed_scenario_uses_only_closed_inputs_and_redacts_failure(self) -> None:
         payloads = tuple(_preview(index) for index in range(1, 3))
@@ -2487,6 +2584,7 @@ def _policy_documents(count: int = 3):
     }
     references = tuple(candidate["reference"] for candidate in candidates)
     observation = {
+        "attempt_evidence": [{"dispatched": True}],
         "cover_packet_reference": packet_value["packet_reference"],
         "instruction_sha256": hashlib.sha256(INSTRUCTION.encode()).hexdigest(),
         "observations": [
@@ -2577,6 +2675,33 @@ class CoverPolicyTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             CoverPolicy(avoid_promotional_text=1)  # type: ignore[arg-type]
+
+    def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence(self) -> None:
+        legacy = self._adjudicate(
+            observation_mutation=lambda value: (
+                value.pop("attempt_evidence"),
+                value.update(schema_version="cover-observation-report-v1"),
+            )
+        )
+        self.assertEqual(legacy["status"], "recommended")
+        with self.assertRaises(ValueError):
+            self._adjudicate(
+                observation_mutation=lambda value: value.pop("attempt_evidence")
+            )
+        with self.assertRaises(ValueError):
+            self._adjudicate(
+                observation_mutation=lambda value: value.update(
+                    attempt_evidence=[
+                        {
+                            "diagnostic_bytes": 17,
+                            "diagnostic_sha256": int("1" * 64),
+                            "dispatched": True,
+                            "failure_code": "local_cli_abort",
+                        },
+                        {"dispatched": True},
+                    ]
+                )
+            )
 
     def test_each_closed_policy_value_filters_prefers_or_abstains(self) -> None:
         cases = (
@@ -2806,6 +2931,17 @@ class CoverPolicyTests(unittest.TestCase):
             ),
             lambda observation: observation["observations"][0].update(
                 medium="/private/hostile"
+            ),
+            lambda observation: observation.update(
+                attempt_evidence=[
+                    {
+                        "diagnostic_bytes": 1,
+                        "diagnostic_sha256": "a" * 64,
+                        "dispatched": True,
+                        "failure_code": "runtime",
+                    },
+                    {"dispatched": True},
+                ]
             ),
         )
         for index, mutation in enumerate(mutations):

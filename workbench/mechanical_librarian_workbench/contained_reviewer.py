@@ -16,13 +16,14 @@ import tempfile
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterator, cast
 
 from mechanical_librarian_workbench.contained_reviewer_contract import (
     ContainedReviewRequest,
     ContainedReviewResult,
+    ContainedReviewerAttempt,
     ContainedReviewerError,
     ContainedReviewerIdentity,
     _CoverReviewImage,
@@ -40,18 +41,32 @@ _LIVE_SCHEMA_REJECTION_PREFIX = (
 _FAILURES = frozenset(
     {
         "runtime", "setup", "auth", "profile", "timeout", "cancel",
-        "response_format", "malformed_output",
+        "response_format", "malformed_output", "local_cli_abort",
     }
 )
 class ContainedReviewerProcessError(ContainedReviewerError):
     """Typed, value-free failure at the reviewer trust boundary."""
 
-    def __init__(self, code: str, *, count: int = 0, digest: str | None = None):
+    def __init__(
+        self,
+        code: str,
+        *,
+        count: int = 0,
+        digest: str | None = None,
+        attempts: tuple[ContainedReviewerAttempt, ...] = (),
+    ):
         if code not in _FAILURES:
             raise ValueError("invalid reviewer failure code")
         self.code = code
         self.count = min(max(count, 0), 2_147_483_647)
         self.digest = digest
+        if (
+            type(attempts) is not tuple
+            or len(attempts) > 2
+            or any(type(attempt) is not ContainedReviewerAttempt for attempt in attempts)
+        ):
+            raise ValueError("invalid reviewer attempts")
+        self.attempts = attempts
         super().__init__(code, count=self.count, digest=self.digest)
 
 
@@ -440,13 +455,15 @@ class ContainedReviewerAdapter:
             ValueError,
         ) as error:
             raise ContainedReviewerProcessError("response_format") from error
-        return self._run(admitted, dispatched, admitted.images)
+        return self._run(admitted, dispatched, admitted.images, retry_local_abort=True)
 
     def _run(
         self,
         request: ContainedReviewRequest | _CoverReviewRequest,
         dispatched: Callable[[int, int, str], None],
         images: tuple[_CoverReviewImage, ...],
+        *,
+        retry_local_abort: bool = False,
     ) -> ContainedReviewResult:
         if not sys.platform.startswith("linux"):
             raise ContainedReviewerProcessError("setup")
@@ -455,7 +472,6 @@ class ContainedReviewerAdapter:
             for image in images
         ):
             raise ContainedReviewerProcessError("profile")
-        job_path: Path | None = None
         self._require_private_directory(self._profile.auth_store_path)
         self._require_private_directory(self._profile.job_root_path)
         trust_failure_path = (
@@ -478,22 +494,77 @@ class ContainedReviewerAdapter:
                 if _path_entry_exists(trust_failure_path):
                     raise ContainedReviewerProcessError("setup")
                 with _bound_credential(credential_path) as credential:
+                    attempts: list[ContainedReviewerAttempt] = []
                     try:
                         if any(
                             path.name.startswith("contained-reviewer-")
                             for path in self._profile.job_root_path.iterdir()
                         ):
                             raise ContainedReviewerProcessError("setup")
-                        job_path = Path(
+                        for ordinal in range(2 if retry_local_abort else 1):
+                            dispatched_current = False
+
+                            def recorded_dispatch(pid: int, pgid: int, token: str) -> None:
+                                nonlocal dispatched_current
+                                dispatched_current = True
+                                dispatched(pid, pgid, token)
+                            try:
+                                result = self._run_attempt(
+                                    request, recorded_dispatch, sealed_images, codex, sandbox,
+                                    credential,
+                                )
+                            except ContainedReviewerProcessError as error:
+                                if dispatched_current:
+                                    if not attempts:
+                                        attempts.append(ContainedReviewerAttempt(
+                                            True, error.code, error.count, error.digest
+                                        ))
+                                    else:
+                                        attempts.append(ContainedReviewerAttempt(True))
+                                if (
+                                    retry_local_abort and ordinal == 0
+                                    and error.code == "local_cli_abort"
+                                    and dispatched_current
+                                ):
+                                    time.sleep(1)
+                                    if not _credential_unchanged(credential_path, credential):
+                                        _record_trust_failure(trust_failure_path)
+                                        raise ContainedReviewerProcessError(
+                                            "auth", attempts=tuple(attempts)
+                                        ) from error
+                                    continue
+                                raise ContainedReviewerProcessError(
+                                    error.code, count=error.count, digest=error.digest,
+                                    attempts=tuple(attempts),
+                                ) from error
+                            if dispatched_current:
+                                attempts.append(ContainedReviewerAttempt(True))
+                            return replace(result, attempts=tuple(attempts))
+                        raise ContainedReviewerProcessError("runtime", attempts=tuple(attempts))
+                    finally:
+                        credential_drifted = not _credential_unchanged(
+                            credential_path, credential
+                        )
+                        if credential_drifted:
+                            _record_trust_failure(trust_failure_path)
+                            raise ContainedReviewerProcessError(
+                                "auth", attempts=tuple(attempts)
+                            )
+
+    def _run_attempt(
+        self, request, dispatched, sealed_images, codex, sandbox, credential
+    ) -> ContainedReviewResult:
+        job_path = Path(
                             tempfile.mkdtemp(
                                 prefix="contained-reviewer-",
                                 dir=self._profile.job_root_path,
                             )
                         )
-                        os.chmod(job_path, 0o700)
-                        provider_state_path = job_path / "provider-state"
-                        provider_state_path.mkdir(mode=0o700)
-                        with self._empty_auth_config() as empty_config:
+        os.chmod(job_path, 0o700)
+        provider_state_path = job_path / "provider-state"
+        provider_state_path.mkdir(mode=0o700)
+        try:
+            with self._empty_auth_config() as empty_config:
                             self._verify_codex(codex, sandbox)
                             self._require_chatgpt_auth(
                                 self._auth_command(
@@ -508,26 +579,26 @@ class ContainedReviewerAdapter:
                                 empty_config,
                                 credential,
                             )
-                        schema_path = job_path / "output-schema.json"
-                        result_path = job_path / "result.json"
-                        prompt_path = job_path / "prompt.bin"
-                        binding = _schema_binding(request)
-                        schema_path.write_bytes(binding.serialized)
-                        prompt_path.write_bytes(
+            schema_path = job_path / "output-schema.json"
+            result_path = job_path / "result.json"
+            prompt_path = job_path / "prompt.bin"
+            binding = _schema_binding(request)
+            schema_path.write_bytes(binding.serialized)
+            prompt_path.write_bytes(
                             _prompt(
                                 request, schema_digest=binding.digest
                             ).encode("utf-8")
-                        )
-                        os.chmod(schema_path, 0o600)
-                        os.chmod(prompt_path, 0o600)
-                        stdout_path = job_path / "stdout.bin"
-                        stderr_path = job_path / "stderr.bin"
-                        with (
+            )
+            os.chmod(schema_path, 0o600)
+            os.chmod(prompt_path, 0o600)
+            stdout_path = job_path / "stdout.bin"
+            stderr_path = job_path / "stderr.bin"
+            with (
                             prompt_path.open("rb") as prompt_file,
                             stdout_path.open("w+b") as stdout_file,
                             stderr_path.open("w+b") as stderr_file,
-                        ):
-                            returncode = self._run_gated(
+            ):
+                returncode = self._run_gated(
                                 self._sandbox_command(
                                     job_path,
                                     result_path,
@@ -545,45 +616,32 @@ class ContainedReviewerAdapter:
                                 dispatched,
                                 credential_descriptor=credential.descriptor,
                                 sealed_images=sealed_images,
-                            )
-                            if returncode != 0:
-                                code, count, digest = _nonzero_failure(
+                )
+                if returncode != 0:
+                    code, count, digest = _nonzero_failure(
                                     stdout_file,
                                     stderr_file,
                                     returncode=returncode,
-                                )
-                                raise ContainedReviewerProcessError(
+                    )
+                    raise ContainedReviewerProcessError(
                                     code, count=count, digest=digest
-                                )
-                        try:
-                            result_bytes = result_path.read_bytes()
-                        except OSError as error:
-                            raise ContainedReviewerProcessError(
+                    )
+            try:
+                result_bytes = result_path.read_bytes()
+            except OSError as error:
+                raise ContainedReviewerProcessError(
                                 "malformed_output"
-                            ) from error
-                        return _validated_result(
+                ) from error
+            return _validated_result(
                             result_bytes,
                             maximum=self._profile.identity.output_bytes,
                             schema=binding.schema,
-                        )
-                    finally:
-                        cleanup_errors: list[OSError] = []
-                        for ephemeral_path in (job_path,):
-                            if ephemeral_path is None:
-                                continue
-                            try:
-                                shutil.rmtree(ephemeral_path)
-                            except OSError as error:
-                                cleanup_errors.append(error)
-                        credential_drifted = not _credential_unchanged(
-                            credential_path, credential
-                        )
-                        if credential_drifted or cleanup_errors:
-                            _record_trust_failure(trust_failure_path)
-                        if credential_drifted:
-                            raise ContainedReviewerProcessError("auth")
-                        if cleanup_errors:
-                            raise ContainedReviewerProcessError("runtime") from cleanup_errors[0]
+            )
+        finally:
+            try:
+                shutil.rmtree(job_path)
+            except OSError as error:
+                raise ContainedReviewerProcessError("runtime") from error
 
     def _verify_codex(
         self, codex: "_BoundArtifact", sandbox: "_BoundArtifact"
@@ -1388,6 +1446,8 @@ def _nonzero_failure(
     code = "runtime"
     if returncode == 1 and _is_live_schema_rejection(stdout_file, stderr_file):
         code = "response_format"
+    elif returncode == 134 and _is_local_cli_abort(stdout_file, stderr_file):
+        code = "local_cli_abort"
     return code, count, digest
 
 
@@ -1469,6 +1529,54 @@ def _is_live_schema_rejection(stdout_file, stderr_file) -> bool:
         return service_message.startswith(
             _LIVE_SCHEMA_REJECTION_PREFIX
         ) and len(service_message) > len(_LIVE_SCHEMA_REJECTION_PREFIX)
+    except (
+        OSError,
+        TypeError,
+        ValueError,
+        UnicodeError,
+        RecursionError,
+        json.JSONDecodeError,
+    ):
+        return False
+
+
+def _is_local_cli_abort(stdout_file, stderr_file) -> bool:
+    """Recognize only the observed pre-terminal local CLI abort signature."""
+    try:
+        stdout_file.flush()
+        stderr_file.flush()
+        stdout_size = os.fstat(stdout_file.fileno()).st_size
+        stderr_size = os.fstat(stderr_file.fileno()).st_size
+        if not (
+            1 <= stdout_size <= MAX_FAILURE_SIGNAL_BYTES
+            and 1 <= stderr_size <= MAX_FAILURE_SIGNAL_BYTES
+        ):
+            return False
+        stdout_file.seek(0)
+        payload = stdout_file.read(MAX_FAILURE_SIGNAL_BYTES + 1)
+        if len(payload) != stdout_size or not payload.endswith(b"\n"):
+            return False
+        serialized = payload.decode("utf-8", errors="strict")
+        lines = serialized[:-1].split("\n")
+        if not 1 <= len(lines) <= 64 or any(not line for line in lines):
+            return False
+        event_types: list[str] = []
+        for line in lines:
+            event = json.loads(
+                line,
+                object_pairs_hook=_unique_failure_object,
+                parse_constant=lambda value: (_ for _ in ()).throw(
+                    ValueError(value)
+                ),
+            )
+            if type(event) is not dict or type(event.get("type")) is not str:
+                return False
+            event_types.append(cast(str, event["type"]))
+        return (
+            event_types.count("turn.started") == 1
+            and "turn.completed" not in event_types
+            and "turn.failed" not in event_types
+        )
     except (
         OSError,
         TypeError,
