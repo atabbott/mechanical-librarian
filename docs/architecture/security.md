@@ -561,11 +561,15 @@ candidates with zero failures, retries, or violations; its seeded 20-case repeat
 matched every field and the joint result. A fresh one-shot final cohort admitted
 48/50 candidates, retaining two post-dispatch, pre-admission runtime failures
 without retry. Their exact shared cause was not retained or proven. Successful
-exact preflight and the other 48 admissions falsified a systemic authentication,
-profile, sandbox, binding, or schema failure, while bounded transient child,
-resource, or packet-interaction hypotheses remain. The resulting nonzero 4%
-missingness-bias risk is assessed low and remains within the frozen 5%
-tolerance. Qualification recorded zero binding or safety violations, provider
+exact preflight and the other 48 admissions falsified systemic always-on
+authentication, profile, sandbox, binding, or schema failures, while bounded
+transient child, resource, or packet-interaction hypotheses remain. The 4%
+missingness rate remains within the frozen 5%
+tolerance, but its bias magnitude is unknown and conclusions are conditional on
+the 48 admitted cases. Per-field lower bounds remain useful or strong when both
+missing cases are counted as disagreements; joint agreement falls to 72% and is
+not robustly useful across all dispatched cases. Qualification recorded zero
+binding or safety violations, provider
 calls, production-library accesses, or writes. An earlier final cohort was
 invalidated after a broad private JSON discovery scanner opened final-reference
 files without exposing values to tested or model-visible output; another was

@@ -41,8 +41,11 @@
   run. A fresh one-shot final cohort admitted 48/50 cases, reached 83.33–97.92%
   per-field agreement and 75% all-four agreement, and retained two
   post-dispatch, pre-admission failures without retry or safety/binding
-  violation. Their exact shared cause was not proven; the nonzero 4%
-  missingness-bias risk remains within the frozen 5% tolerance.
+  violation. Their exact shared cause and bias magnitude are unknown. The 4%
+  missingness rate remains within the frozen 5% tolerance and does not change
+  per-field sensitivity bands, but the 75% joint admitted-case agreement falls
+  to 72% and is not robustly useful when both missing results count as
+  disagreements.
   (#541)
 
 - Preserve bounded rich metadata evidence for manual review without widening

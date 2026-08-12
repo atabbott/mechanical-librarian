@@ -156,6 +156,19 @@ twice and adjudicated. These are review judgements, not claimed human ground
 truth. Every replacement cohort was work-family-disjoint from the development
 cohort and the other final cohorts. Public evidence contains aggregates only.
 
+Every cohort design sealed a deterministic seed before selection or viewing.
+Selection did not inspect semantic reference judgements or tested observer
+outputs. Each replacement excluded every previously used source, work, report,
+preview, and near-duplicate family; seed values and case identities remain
+private.
+
+| Frozen cohort | Multi-choice packets |
+| --- | ---: |
+| Development | 46 |
+| Original final, invalidated before execution | 37 |
+| Replacement final, spent at setup | 45 |
+| Recovery final, one shot | 25 across 29 fresh packets |
+
 The single development hypothesis was that the existing sealed-image packaging,
 fixed instruction, closed schema, and corrected bounded profile would admit the
 sample and reach at least 75% exact agreement for every field with stable
@@ -173,6 +186,26 @@ configurations were not run.
 | Initial p50 / p95 latency | 9.76 s / 13.73 s |
 | Repeat p50 / p95 latency | 8.95 s / 12.22 s |
 | Failures / retries / violations | 0 / 0 / 0 |
+
+Development aggregate confusion was:
+
+| Field | Reference → observer | Count |
+| --- | --- | ---: |
+| Composition | `dense` → `dense` / `minimal` | 32 / 3 |
+| Composition | `minimal` → `dense` / `minimal` | 4 / 11 |
+| Medium | `illustrated` → `illustrated` / `typographic` | 19 / 1 |
+| Medium | `mixed` → `mixed` | 1 |
+| Medium | `photographic` → `illustrated` / `photographic` | 7 / 15 |
+| Medium | `typographic` → `typographic` | 7 |
+| Promotional text | `absent` → `absent` / `present` / `unknown` | 16 / 2 / 1 |
+| Promotional text | `present` → `present` | 30 |
+| Promotional text | `unknown` → `present` | 1 |
+| Tie-in branding | `absent` → `absent` | 48 |
+| Tie-in branding | `present` → `present` | 1 |
+| Tie-in branding | `unknown` → `absent` | 1 |
+
+Observer `unknown` predictions were 0/50 for composition, 0/50 for medium,
+1/50 (2%) for promotional text, and 0/50 for tie-in branding.
 
 One frozen final cohort was invalidated before execution because a broad private
 JSON discovery scanner opened final-reference files, although no reference
@@ -200,18 +233,46 @@ source/configuration/media/binding boundaries before its one shot.
 | p50 / p95 latency | 10.74 s / 14.83 s |
 | Safety or binding violations | 0 |
 
+Final-holdout aggregate confusion among the 48 admitted results was:
+
+| Field | Reference → observer | Count |
+| --- | --- | ---: |
+| Composition | `dense` → `dense` / `minimal` | 25 / 6 |
+| Composition | `minimal` → `dense` / `minimal` | 2 / 15 |
+| Medium | `illustrated` → `illustrated` / `typographic` | 25 / 1 |
+| Medium | `mixed` → `mixed` | 1 |
+| Medium | `photographic` → `photographic` | 9 |
+| Medium | `typographic` → `typographic` | 12 |
+| Promotional text | `absent` → `absent` / `present` / `unknown` | 15 / 2 / 1 |
+| Promotional text | `present` → `present` | 29 |
+| Promotional text | `unknown` → `unknown` | 1 |
+| Tie-in branding | `absent` → `absent` | 44 |
+| Tie-in branding | `present` → `absent` / `present` | 2 / 2 |
+
+Observer `unknown` predictions were 0/48 for composition, 0/48 for medium,
+2/48 (4.17%) for promotional text, and 0/48 for tie-in branding.
+
 Both runtime failures occurred after dispatch and before result admission. The
 exact shared cause was not retained and is not proven. Successful exact
-preflight plus 48 independently admitted cases falsified a systemic
-authentication, profile, sandbox, binding, or schema failure; bounded transient
-child, resource, or packet-interaction hypotheses remain. The failures were
-retained without remediation, retry, or another holdout. Their 4% missingness
-creates a nonzero but low assessed bias risk within the frozen 5% tolerance.
-Under the frozen bands, composition is mixed but useful, medium, promotional
-text, and tie-in branding are strong, and joint exact agreement lands exactly
-on the useful threshold. There were zero provider calls, production-library
-accesses, target or media writes, or runtime activations. #501 / 0.15.1 remains
-unpromoted.
+preflight plus 48 independently admitted cases falsified systemic always-on
+authentication, profile, sandbox, binding, or schema failures; bounded
+transient child, resource, or packet-interaction hypotheses remain. The
+failures were retained without remediation, retry, or another holdout. The 4%
+missingness rate is within the frozen 5% tolerance, but its bias magnitude is
+unknown and every quality conclusion is conditional on the 48 admitted cases.
+
+The primary frozen gate—at least 95% coverage, at least 75% exact agreement for
+each field, and zero safety or binding violations—passes. Under the frozen
+bands, admitted-case composition is mixed but useful, while medium,
+promotional text, and tie-in branding are strong. A conservative sensitivity
+calculation that treats both missing results as disagreements gives
+dispatched-cohort lower bounds of 40/50 (80%) for composition, 47/50 (94%) for
+medium, 45/50 (90%) for promotional text, and 46/50 (92%) for tie-in branding;
+the field-level interpretation is unchanged. Joint exact agreement is 36/48
+(75%) among admitted cases but only 36/50 (72%) under that sensitivity, so it is
+missingness-sensitive and not robustly useful across all dispatched cases.
+There were zero provider calls, production-library accesses, target or media
+writes, or runtime activations. #501 / 0.15.1 remains unpromoted.
 
 ## Cover-policy qualification — historical deterministic contract PASS
 

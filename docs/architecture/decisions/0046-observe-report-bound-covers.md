@@ -91,8 +91,11 @@ owner-private storage. Installed artifacts contain none of this capability.
   93.75% for promotional text, and 95.83% for tie-in branding; 36 of 48
   observations matched all four fields. Two post-dispatch runtime failures
   occurred before result admission and were retained without retry. Their exact
-  shared cause was not proven; the resulting nonzero 4% missingness-bias risk
-  is assessed low and remains within the frozen 5% tolerance.
+  shared cause was not proven. The 4% missingness rate remains within the frozen
+  5% tolerance, but its bias magnitude is unknown and conclusions are
+  conditional on the admitted cases. Per-field conclusions survive a
+  missing-as-disagreement sensitivity check; the 75% joint admitted-case result
+  does not.
 - Qualification recorded zero binding or safety violations, provider calls,
   production-library accesses, and writes. Earlier final cohorts invalidated or
   spent by local setup failures supplied no semantic evidence and were replaced

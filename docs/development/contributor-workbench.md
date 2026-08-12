@@ -265,8 +265,12 @@ spent by credential-mount setup. After diagnosis and corrected preflight, the
 next fresh disjoint one-shot cohort admitted 48/50 candidates at 83.33–97.92%
 per-field agreement and 75% all-four agreement. Its two failures occurred after
 dispatch and before result admission; no exact shared cause was proven, and the
-4% missingness risk remains nonzero but within the frozen 5% tolerance. It
-recorded zero binding, safety, provider, production-access, or write violations.
-The full aggregate hypothesis, latency, repeatability, recovery, agreement, and
-interpretation record is in
+4% missingness rate remains within the frozen 5% tolerance, but its bias
+magnitude is unknown. The primary field-level gate passes and survives treating
+both missing cases as disagreements; the 75% joint admitted-case result falls
+to 72% under that sensitivity and is not robustly useful across all dispatched
+cases. The run recorded zero binding, safety, provider, production-access, or
+write violations. The full aggregate selection, confusion, unknown-rate,
+hypothesis, latency, repeatability, recovery, agreement, and interpretation
+record is in
 [semantic cover corpus readiness](semantic-cover-corpus-readiness.md).
