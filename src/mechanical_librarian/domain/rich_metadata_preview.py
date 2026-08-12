@@ -16,7 +16,7 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
 )
 from mechanical_librarian.domain.metadata_report import (
-    ClaimKind, ClaimScope, IdentifierRelation, MetadataReport,
+    MAX_TAGS, ClaimKind, ClaimScope, IdentifierRelation, MetadataReport,
     ProviderClaim, ProviderEvidenceKind, TargetDestination, TargetField,
     TargetFieldState,
 )
@@ -202,6 +202,8 @@ def _project(
             return _preserved(field, option, target, current)
         elif option not in {"fill_empty", "add", "replace"}:
             return _abstain(field, option, target, current, "policy_option_unavailable")
+        if len(desired) > MAX_TAGS:
+            return _abstain(field, option, target, current, "target_projection_oversized")
     elif field == "series":
         if candidate.value.kind is not ProposalValueKind.SERIES:
             return _abstain(field, option, target, current, "no_candidate")
@@ -592,6 +594,8 @@ def project_f20_automatic_decision_value(
             ):
                 raise RichMetadataPreviewError("rich automatic projection is invalid")
             values = [*current_value, *(value for value in values if value not in current_value)]
+        if len(values) > MAX_TAGS:
+            raise RichMetadataPreviewError("rich automatic projection is oversized")
         return {"kind": "list", "value": values}
     raise RichMetadataPreviewError("rich automatic projection is unavailable")
 

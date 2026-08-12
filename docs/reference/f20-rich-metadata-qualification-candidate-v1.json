@@ -1,6 +1,6 @@
 {
   "automatic_authority": "decision_only",
-  "candidate_execution_count": 2,
+  "candidate_execution_count": 3,
   "evidence_method": {
     "evaluated_reports": 49,
     "exposure_unit": "case_field_option",
@@ -27,7 +27,7 @@
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
-      "sha256": "2ac98ee8617a2c5fbb83dc438f2b063d07d82ea7be46d8e106c745d60932eefb"
+      "sha256": "31f59fe2f00de0d77956c98030ad5b1b1a704261396081045224da54e92b0710"
     },
     "evaluator": {
       "identity": "f20-field-local-evaluator-v3",
@@ -35,7 +35,7 @@
     },
     "evidence_execution": {
       "identity": "offline-current-adapter-replay-v3",
-      "sha256": "54a2d9a17f0419e0ca4360cc2e264c3bd290c34a22e78eb1f3df4b45d8ebab75"
+      "sha256": "5b64abdc2d44cc5cd5050dc0fac079836c0fddf678b9ad31f3c9db9dd95a0851"
     },
     "policy": {
       "identity": "src/mechanical_librarian/domain/metadata_policy.py",

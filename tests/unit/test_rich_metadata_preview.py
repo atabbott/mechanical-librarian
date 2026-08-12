@@ -197,6 +197,25 @@ class RichMetadataPreviewTests(unittest.TestCase):
         unchanged = self._list_preview("tags", "add", ("Fantasy", "Epic"))
         self.assertEqual(("no_op", "unchanged"), (unchanged.outcome, unchanged.reason))
 
+    def test_list_add_abstains_when_exact_target_union_would_be_oversized(self) -> None:
+        current = tuple(f"Existing {index}" for index in range(32))
+        for field in ("genres", "tags"):
+            with self.subTest(field=field):
+                preview = self._list_preview(field, "add", current)
+                self.assertEqual(
+                    ("abstain", "target_projection_oversized", None),
+                    (preview.outcome, preview.reason, preview.desired_value),
+                )
+
+    def test_automatic_list_projection_rejects_an_oversized_union(self) -> None:
+        candidate = {"kind": "list", "value": ["New value"]}
+        with self.assertRaisesRegex(
+            RichMetadataPreviewError, "rich automatic projection is oversized"
+        ):
+            project_f20_automatic_decision_value(
+                "genres", "add", candidate, tuple(f"Existing {index}" for index in range(32))
+            )
+
     def test_populated_list_modes_use_real_unresolved_evaluator_candidate(self) -> None:
         genres = TargetField(
             TargetDestination.GENRES,

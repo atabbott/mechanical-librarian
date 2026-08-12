@@ -52,7 +52,7 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         self.assertEqual(passing, set(manifest["passing_automatic_options"]))
         self.assertEqual(["explicit:unsupported"], manifest["human_only_options"])
         self.assertEqual(["narrators", "cover"], manifest["excluded_destinations"])
-        self.assertEqual(2, manifest["candidate_execution_count"])
+        self.assertEqual(3, manifest["candidate_execution_count"])
         self.assertEqual(
             {
                 "evaluated_reports": 49,

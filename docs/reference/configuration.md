@@ -94,7 +94,7 @@ me or Ignore. The application never rewrites this configuration. `automatic`
 is accepted only for the closed qualified category/option matrix and produces
 decision-only authority after the owner explicitly confirms an exact Preview;
 all other automatic intent is rejected. `explicit` is always `unsupported`.
-The v2 rich-field choices are manual-preview-only and exact:
+The v2 rich-field choices are exact:
 
 - `subtitle`: `fill_empty` (default) or `corroborated_split`;
 - `series`: `primary_narrative` (default), `source_order`, or `all_qualified`;
@@ -112,8 +112,12 @@ providers. Description normalization requires the retained Google Books
 visible-text transformation evidence. Identifier preferences select only an
 already admitted exact manifestation value and never convert or infer one.
 Series retains every qualified membership in the product result while the
-Audiobookshelf projection selects at most its first membership. These choices
-create no automatic or write authority.
+Audiobookshelf projection selects at most its first membership. The qualified
+automatic options are all three series modes, genre `add` and `replace`, tag
+`fill_empty`, `add`, and `replace`, description `safe_plain_text`, and both ISBN
+modes. They may create decision-only automatic authority when the destination
+is `automatic`; they never create write authority, and tags remain `off`/Ask in
+the built-in policy. Every other rich-field option remains manual-preview-only.
 
 Corroborated subtitle splitting is atomic and accepts only an already admitted
 title/subtitle pair when the current title is their exact concatenation with
