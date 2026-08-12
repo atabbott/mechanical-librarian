@@ -22,9 +22,12 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     Comparison,
     IdentifierRelation,
+    LocalClaim,
     MetadataReport,
     ProviderCandidate,
     ProviderEvidenceKind,
+    ProviderQueryKind,
+    creator_comparison_key,
     manifestation_publication_compatible,
 )
 from mechanical_librarian_workbench.cover_packet_semantics import (
@@ -41,15 +44,16 @@ _OUTCOMES = frozenset({
 })
 _CLASSIFIER_RULES = (
     "packet-candidate-reference-and-provenance:exact-report-bound",
+    "report-bound-epub-cover:verified-manifestation",
     "unbound-provider-identity:unknown",
     "edition-work-contradiction:conflict",
     "unrelated-identifier:conflict",
     "accepted-manifestation-with-compatible-publication:verified-manifestation",
     "accepted-manifestation-with-incompatible-publication:conflict",
     "accepted-or-associated-work-including-default-cover:verified-work",
-    "retained-claim-and-date-evidence-comparisons:conservative-compatibility",
-    "provider-identity-with-bibliographic-agreement:plausible",
-    "provider-identity-with-ambiguous-or-insufficient-bibliography:unknown",
+    "provider-isbn-lane-title-agreement-without-unopposed-creator-or-work-contradiction:plausible",
+    "provider-isbn-lane-title-insufficient-or-unopposed-creator-disagreement:unknown",
+    "legacy-discovery-without-lane-candidate-mappings:aggregate-fallback",
 )
 _CLASSIFIER_REFERENCE = "cover_identity_classifier_" + hashlib.sha256(
     canonical_packet_json(
@@ -57,12 +61,13 @@ _CLASSIFIER_REFERENCE = "cover_identity_classifier_" + hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
-_IDENTITY_CLAIMS = frozenset({
-    ClaimKind.TITLE,
+_CREATOR_OR_CONTRIBUTOR_CLAIMS = frozenset({
     ClaimKind.CREATOR,
-    ClaimKind.LANGUAGE,
-    ClaimKind.PUBLISHER,
-    ClaimKind.PUBLICATION_DATE,
+    ClaimKind.CONTRIBUTOR,
+})
+_CREATOR_OR_CONTRIBUTOR_EVIDENCE = frozenset({
+    ProviderEvidenceKind.AUTHOR_IDENTITY,
+    ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
 })
 
 def _opaque_evidence_reference(report_id: str, reference: str) -> str:
@@ -109,10 +114,12 @@ def classify_cover_identity(
 ) -> CoverIdentityReport:
     """Classify every exact packet candidate from already retained evidence.
 
-    A verified result requires an exact provider identity binding plus accepted
-    (manifestation) or accepted/associated (work) identifier evidence.  Any
-    retained edition/work contradiction wins deterministically.  The document
-    contains opaque references and fixed reason codes only.
+    A verified provider result requires an exact provider identity binding plus
+    accepted (manifestation) or accepted/associated (work) identifier evidence.
+    An exact report-bound EPUB cover verifies its source manifestation. Any
+    retained edition/work contradiction wins deterministically for provider
+    evidence. The document contains opaque references and fixed reason codes
+    only.
     """
     report = MetadataReport.from_json(report_document)
     bind_cover_packet(packet_document, image_payloads)
@@ -223,6 +230,8 @@ def _report_bound_candidate_sources(
 def _classify_sources(
     report: MetadataReport, sources: tuple[CoverSource, ...]
 ) -> tuple[str, list[str], list[str]]:
+    if any(source.kind is CoverSourceKind.EPUB for source in sources):
+        return "verified_manifestation_match", ["source_bound_epub_cover"], []
     provider_sources = tuple(source for source in sources if source.provenance is not None)
     if not provider_sources:
         return "unknown", ["no_provider_identity"], []
@@ -241,14 +250,23 @@ def _classify_sources(
                     and candidate.identity != provenance.edition_identity
                 ):
                     continue
-                matches.append((source, observation.provider, candidate))
+                matches.append(
+                    (
+                        source,
+                        observation.provider,
+                        candidate,
+                        _is_isbn_discovery_candidate(observation, candidate),
+                    )
+                )
     if not matches:
         return "unknown", ["unbound_provider_identity"], []
     evidence: list[str] = []
-    compatibility_reasons: set[str] = set()
+    title_agreement = False
+    creator_or_contributor_agreement = False
+    creator_or_contributor_disagreement = False
     manifestation = False
     work = False
-    for source, provider, candidate in matches:
+    for source, provider, candidate, isbn_discovery_supported in matches:
         if any(
             item.kind
             is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
@@ -269,7 +287,24 @@ def _classify_sources(
         if unrelated:
             return "conflict", ["unrelated_identifier"], unrelated
 
-        compatibility_reasons.add(_bibliographic_compatibility(candidate))
+        if isbn_discovery_supported:
+            (
+                candidate_title_agreement,
+                candidate_creator_or_contributor_agreement,
+                candidate_creator_or_contributor_disagreement,
+            ) = _plausible_match_evidence(
+                candidate,
+                getattr(report, "local_claims", ()),
+            )
+            title_agreement = title_agreement or candidate_title_agreement
+            creator_or_contributor_agreement = (
+                creator_or_contributor_agreement
+                or candidate_creator_or_contributor_agreement
+            )
+            creator_or_contributor_disagreement = (
+                creator_or_contributor_disagreement
+                or candidate_creator_or_contributor_disagreement
+            )
 
         accepted = [item.reference for item in bound if item.relation is IdentifierRelation.ACCEPTED]
         associated = [item.reference for item in bound if item.relation is IdentifierRelation.ASSOCIATED]
@@ -304,32 +339,108 @@ def _classify_sources(
         return "verified_manifestation_match", ["accepted_manifestation_identifier"], evidence
     if work:
         return "verified_work_match", ["accepted_or_associated_work_identifier"], evidence
-    if "retained_bibliographic_ambiguity" in compatibility_reasons:
-        return "unknown", sorted(compatibility_reasons), []
-    if "retained_bibliographic_agreement" not in compatibility_reasons:
-        return "unknown", sorted(compatibility_reasons), []
+    if (
+        creator_or_contributor_disagreement
+        and not creator_or_contributor_agreement
+    ):
+        return "unknown", ["retained_creator_or_contributor_disagreement"], []
+    if not title_agreement:
+        return "unknown", ["retained_title_evidence_insufficient"], []
     return (
         "plausible_match",
         [
             "provider_identity_without_explicit_identifier",
-            *sorted(compatibility_reasons),
+            "retained_title_agreement",
         ],
         [],
     )
 
 
-def _bibliographic_compatibility(candidate: ProviderCandidate) -> str:
-    outcomes: set[Comparison] = set()
+def _is_isbn_discovery_candidate(
+    observation: object,
+    candidate: ProviderCandidate,
+) -> bool:
+    lanes = tuple(getattr(observation, "lanes", ()))
+    lane_candidates = tuple(
+        lane_candidate
+        for lane in lanes
+        for lane_candidate in getattr(lane, "candidates", ())
+    )
+    if not lane_candidates:
+        return getattr(
+            observation,
+            "query_kind",
+            ProviderQueryKind.DISCOVERY,
+        ) is ProviderQueryKind.DISCOVERY
+    return any(
+        lane.kind is ProviderQueryKind.ISBN
+        and lane_candidate.edition_identity == candidate.identity
+        and lane_candidate.work_identity == candidate.work_identity
+        for lane in lanes
+        for lane_candidate in lane.candidates
+    )
+
+
+def _plausible_match_evidence(
+    candidate: ProviderCandidate,
+    local_claims: tuple[LocalClaim, ...] | tuple[object, ...],
+) -> tuple[bool, bool, bool]:
+    title_agreement = False
+    creator_or_contributor_agreement = False
+    creator_or_contributor_disagreement = False
     for claim in candidate.claims:
-        if claim.kind in _IDENTITY_CLAIMS:
-            outcomes.update(link.outcome for link in claim.links)
+        outcomes = {link.outcome for link in claim.links}
+        if claim.kind is ClaimKind.TITLE:
+            title_agreement = title_agreement or Comparison.AGREEMENT in outcomes
+        if claim.kind in _CREATOR_OR_CONTRIBUTOR_CLAIMS:
+            creator_or_contributor_agreement = (
+                creator_or_contributor_agreement
+                or Comparison.AGREEMENT in outcomes
+            )
+            creator_or_contributor_disagreement = (
+                creator_or_contributor_disagreement
+                or Comparison.DISAGREEMENT in outcomes
+            )
     for item in candidate.evidence:
-        outcomes.update(link.outcome for link in item.links)
-    if Comparison.DISAGREEMENT in outcomes:
-        return "retained_bibliographic_ambiguity"
-    if Comparison.AGREEMENT in outcomes:
-        return "retained_bibliographic_agreement"
-    return "retained_bibliographic_evidence_insufficient"
+        if item.kind not in _CREATOR_OR_CONTRIBUTOR_EVIDENCE:
+            continue
+        outcomes = {link.outcome for link in item.links}
+        creator_or_contributor_agreement = (
+            creator_or_contributor_agreement
+            or Comparison.AGREEMENT in outcomes
+        )
+        creator_or_contributor_disagreement = (
+            creator_or_contributor_disagreement
+            or Comparison.DISAGREEMENT in outcomes
+        )
+    retained_creator_or_contributor_values = {
+        creator_comparison_key(claim.value)
+        for claim in candidate.claims
+        if (
+            getattr(claim, "kind", None) in _CREATOR_OR_CONTRIBUTOR_CLAIMS
+            and getattr(claim, "value", None) is not None
+        )
+    }
+    local_creator_or_contributor_values = {
+        creator_comparison_key(claim.observed)
+        for claim in local_claims
+        if (
+            getattr(claim, "kind", None) in _CREATOR_OR_CONTRIBUTOR_CLAIMS
+            and getattr(claim, "canonical", None) is not None
+        )
+    }
+    creator_or_contributor_agreement = (
+        creator_or_contributor_agreement
+        or bool(
+            retained_creator_or_contributor_values
+            & local_creator_or_contributor_values
+        )
+    )
+    return (
+        title_agreement,
+        creator_or_contributor_agreement,
+        creator_or_contributor_disagreement,
+    )
 
 
 __all__ = ["CoverIdentityReport", "SCHEMA_VERSION", "classify_cover_identity"]

@@ -30,10 +30,21 @@ from mechanical_librarian.domain.metadata_report import (
     Comparison,
     FileFacts,
     IdentifierRelation,
+    FieldState,
+    ClaimScope,
+    LocalClaim,
     MetadataReport,
+    ProviderCandidate,
+    ProviderClaim,
     ProviderEvidenceKind,
+    ProviderLaneCandidate,
+    ProviderLaneObservation,
+    ProviderQueryKind,
+    ProviderObservation,
+    ProviderStatus,
     TargetFacts,
     default_target_fields,
+    provider_lane_candidate_reference,
 )
 
 ROOT = Path(__file__).parents[2]
@@ -1344,6 +1355,361 @@ class CoverObservationTests(unittest.TestCase):
 
 
 class CoverIdentityTests(unittest.TestCase):
+    def _typed_discovery_identity_case(
+        self,
+        *,
+        local_creators: tuple[str, ...],
+        provider_creators: tuple[str, ...],
+        lane_kind: ProviderQueryKind | None = ProviderQueryKind.ISBN,
+        unrelated_isbn_mapping: bool = False,
+    ) -> tuple[str, str, tuple[tuple[str, str, bytes], ...]]:
+        payload = _preview(33)
+        source = _source(3, payload)
+        local_claims = (
+            LocalClaim.create(
+                kind=ClaimKind.TITLE,
+                observed="Synthetic title",
+                canonical="Synthetic title",
+                excerpt="Synthetic title",
+                applicability="not_applicable",
+                basis="target_metadata",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+            ),
+            *tuple(
+                LocalClaim.create(
+                    kind=ClaimKind.CREATOR,
+                    observed=value,
+                    canonical=value,
+                    excerpt=value,
+                    applicability="not_applicable",
+                    checksum="not_applicable",
+                    applicability_basis="not_applicable",
+                    role="author",
+                    occurrence=index,
+                )
+                for index, value in enumerate(local_creators)
+            ),
+            LocalClaim.create(
+                kind=ClaimKind.ISBN,
+                observed="9780306406157",
+                canonical="9780306406157",
+                excerpt="ISBN 9780306406157",
+                applicability="unknown",
+                checksum="valid_isbn_13",
+                applicability_basis="unlabelled",
+            ),
+        )
+        claims = (
+            ProviderClaim.create(
+                provider="hardcover",
+                candidate="edition-3",
+                kind=ClaimKind.TITLE,
+                value="Synthetic title",
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+            ),
+            *tuple(
+                ProviderClaim.create(
+                    provider="hardcover",
+                    candidate="edition-3",
+                    kind=ClaimKind.CREATOR,
+                    value=value,
+                    state=FieldState.VALID,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                    role="author",
+                    raw_order=index + 1,
+                )
+                for index, value in enumerate(provider_creators)
+            ),
+        )
+        candidate = ProviderCandidate(
+            "edition-3",
+            "work-3",
+            claims,
+        )
+        candidates = (candidate,)
+        lanes: tuple[ProviderLaneObservation, ...] = ()
+        input_references: tuple[str, ...] = ()
+        if lane_kind is not None:
+            mapped_candidate = candidate
+            if unrelated_isbn_mapping:
+                mapped_candidate = ProviderCandidate(
+                    "edition-4",
+                    "work-4",
+                    (),
+                )
+                candidates = (candidate, mapped_candidate)
+            isbn_identity = "lane_" + "a" * 64
+            work_identity = "lane_" + "b" * 64
+            isbn_candidate = (
+                mapped_candidate
+                if lane_kind is ProviderQueryKind.ISBN or unrelated_isbn_mapping
+                else None
+            )
+            work_candidate = candidate if lane_kind is ProviderQueryKind.WORK else None
+            def lane(
+                identity: str,
+                kind: ProviderQueryKind,
+                item: ProviderCandidate | None,
+                inputs: tuple[str, ...],
+            ) -> ProviderLaneObservation:
+                return ProviderLaneObservation(
+                    identity,
+                    kind,
+                    ProviderStatus.CANDIDATES if item is not None else ProviderStatus.NO_MATCH,
+                    inputs,
+                    "9780306406157" if kind is ProviderQueryKind.ISBN else None,
+                    () if item is None else (
+                        ProviderLaneCandidate(
+                            provider_lane_candidate_reference(
+                                "hardcover", identity, item.identity, item.work_identity
+                            ),
+                            item.identity,
+                            item.work_identity,
+                        ),
+                    ),
+                )
+            lanes = (
+                lane(isbn_identity, ProviderQueryKind.ISBN, isbn_candidate, (local_claims[-1].reference,)),
+                lane(work_identity, ProviderQueryKind.WORK, work_candidate, (local_claims[0].reference,)),
+            )
+            input_references = tuple(sorted({reference for lane_value in lanes for reference in lane_value.input_references}))
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "synthetic", "books", "item", default_target_fields("Synthetic title")
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=local_claims,
+            local_reasons=("package_metadata_creator",),
+            providers=(
+                ProviderObservation(
+                    "hardcover",
+                    ProviderStatus.CANDIDATES,
+                    input_references,
+                    candidates,
+                    ProviderQueryKind.DISCOVERY,
+                    "hardcover",
+                    lanes=lanes,
+                ),
+            ),
+            cover_sources=(source,),
+        )
+        packet = prepare_cover_packet(report.to_json(), lambda *_: payload)
+        images = tuple(
+            (item.reference, item.digest, item.payload) for item in packet.images
+        )
+        return report.to_json(), packet.document, images
+
+    def test_typed_discovery_creator_evidence_uses_any_agreement_over_pairwise_noise(self) -> None:
+        for local_creators, provider_creators, expected in (
+            (("Ada Author", "Bea Author"), ("Ada Author", "Bea Author"), "plausible_match"),
+            (("Ada Author", "Bea Author"), ("Ada Author",), "plausible_match"),
+            (("Ada Author",), ("Different Author",), "unknown"),
+            (("Ada Author",), (), "plausible_match"),
+        ):
+            with self.subTest(local_creators=local_creators, provider_creators=provider_creators):
+                report, packet, images = self._typed_discovery_identity_case(
+                    local_creators=local_creators,
+                    provider_creators=provider_creators,
+                )
+                result = json.loads(classify_cover_identity(report, packet, images).document)
+                self.assertEqual(result["candidates"][0]["outcome"], expected)
+
+    def test_typed_lane_mapping_requires_the_matched_candidate_in_an_isbn_lane(self) -> None:
+        cases = (
+            (ProviderQueryKind.WORK, False, "unknown"),
+            (ProviderQueryKind.ISBN, False, "plausible_match"),
+            (ProviderQueryKind.WORK, True, "unknown"),
+            (None, False, "plausible_match"),
+        )
+        for lane_kind, unrelated_isbn_mapping, expected in cases:
+            with self.subTest(
+                lane_kind=lane_kind,
+                unrelated_isbn_mapping=unrelated_isbn_mapping,
+            ):
+                report, packet, images = self._typed_discovery_identity_case(
+                    local_creators=(),
+                    provider_creators=(),
+                    lane_kind=lane_kind,
+                    unrelated_isbn_mapping=unrelated_isbn_mapping,
+                )
+                value = json.loads(
+                    classify_cover_identity(report, packet, images).document
+                )
+                self.assertEqual(value["candidates"][0]["outcome"], expected)
+
+    def test_source_bound_epub_cover_is_verified_manifestation(self) -> None:
+        source = _source(3, _preview(3), embedded=True)
+        self.assertEqual(
+            _classify_sources(
+                SimpleNamespace(providers=(), identifier_evidence=(), local_claims=()),
+                (source,),
+            ),
+            ("verified_manifestation_match", ["source_bound_epub_cover"], []),
+        )
+
+        incumbent = _source(4, _preview(4), incumbent=True)
+        self.assertEqual(
+            _classify_sources(
+                SimpleNamespace(providers=(), identifier_evidence=(), local_claims=()),
+                (incumbent,),
+            ),
+            ("unknown", ["no_provider_identity"], []),
+        )
+
+    def test_title_supported_provider_discovery_is_plausible_despite_edition_noise(self) -> None:
+        source = _source(3, _preview(3))
+        assert source.provenance is not None
+        agreement = SimpleNamespace(outcome=Comparison.AGREEMENT)
+        disagreement = SimpleNamespace(outcome=Comparison.DISAGREEMENT)
+        candidate = SimpleNamespace(
+            identity=source.provenance.edition_identity,
+            work_identity=source.provenance.work_identity,
+            claims=(
+                SimpleNamespace(kind=ClaimKind.TITLE, links=(agreement, disagreement)),
+                SimpleNamespace(kind=ClaimKind.LANGUAGE, links=(disagreement,)),
+                SimpleNamespace(kind=ClaimKind.PUBLISHER, links=(disagreement,)),
+            ),
+            evidence=(
+                SimpleNamespace(
+                    kind=ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                    links=(disagreement,),
+                ),
+            ),
+        )
+        report = SimpleNamespace(
+            providers=(
+                SimpleNamespace(
+                    provider=source.provenance.provider,
+                    candidates=(candidate,),
+                    query_kind=ProviderQueryKind.DISCOVERY,
+                ),
+            ),
+            identifier_evidence=(),
+            local_claims=(),
+        )
+        self.assertEqual(
+            _classify_sources(report, (source,)),
+            (
+                "plausible_match",
+                [
+                    "provider_identity_without_explicit_identifier",
+                    "retained_title_agreement",
+                ],
+                [],
+            ),
+        )
+        work_report = SimpleNamespace(
+            providers=(
+                SimpleNamespace(
+                    provider=source.provenance.provider,
+                    candidates=(candidate,),
+                    query_kind=ProviderQueryKind.WORK,
+                ),
+            ),
+            identifier_evidence=(),
+            local_claims=(),
+        )
+        self.assertEqual(
+            _classify_sources(work_report, (source,)),
+            ("unknown", ["retained_title_evidence_insufficient"], []),
+        )
+
+    def test_explicit_creator_disagreement_vetoes_title_supported_plausible_match(self) -> None:
+        source = _source(3, _preview(3))
+        assert source.provenance is not None
+        agreement = SimpleNamespace(outcome=Comparison.AGREEMENT)
+        disagreement = SimpleNamespace(outcome=Comparison.DISAGREEMENT)
+        candidate = SimpleNamespace(
+            identity=source.provenance.edition_identity,
+            work_identity=source.provenance.work_identity,
+            claims=(
+                SimpleNamespace(kind=ClaimKind.TITLE, links=(agreement,)),
+                SimpleNamespace(kind=ClaimKind.CREATOR, links=(disagreement,)),
+                SimpleNamespace(kind=ClaimKind.CONTRIBUTOR, links=(disagreement,)),
+            ),
+            evidence=(
+                SimpleNamespace(
+                    kind=ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+                    links=(disagreement,),
+                ),
+            ),
+        )
+        report = SimpleNamespace(
+            providers=(
+                SimpleNamespace(
+                    provider=source.provenance.provider,
+                    candidates=(candidate,),
+                    query_kind=ProviderQueryKind.DISCOVERY,
+                ),
+            ),
+            identifier_evidence=(),
+            local_claims=(),
+        )
+        self.assertEqual(
+            _classify_sources(report, (source,)),
+            ("unknown", ["retained_creator_or_contributor_disagreement"], []),
+        )
+
+    def test_creator_or_contributor_evidence_agreement_defeats_disagreement_noise(self) -> None:
+        source = _source(3, _preview(3))
+        assert source.provenance is not None
+        agreement = SimpleNamespace(outcome=Comparison.AGREEMENT)
+        disagreement = SimpleNamespace(outcome=Comparison.DISAGREEMENT)
+        candidate = SimpleNamespace(
+            identity=source.provenance.edition_identity,
+            work_identity=source.provenance.work_identity,
+            claims=(SimpleNamespace(kind=ClaimKind.TITLE, links=(agreement,)),),
+            evidence=(
+                SimpleNamespace(
+                    kind=ProviderEvidenceKind.AUTHOR_IDENTITY,
+                    links=(agreement, disagreement),
+                ),
+                SimpleNamespace(
+                    kind=ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+                    links=(disagreement,),
+                ),
+            ),
+        )
+        report = SimpleNamespace(
+            providers=(
+                SimpleNamespace(
+                    provider=source.provenance.provider,
+                    candidates=(candidate,),
+                    query_kind=ProviderQueryKind.DISCOVERY,
+                ),
+            ),
+            identifier_evidence=(),
+            local_claims=(),
+        )
+        self.assertEqual(_classify_sources(report, (source,))[0], "plausible_match")
+
+    def test_missing_creator_is_neutral_for_title_supported_plausible_match(self) -> None:
+        source = _source(3, _preview(3))
+        assert source.provenance is not None
+        agreement = SimpleNamespace(outcome=Comparison.AGREEMENT)
+        candidate = SimpleNamespace(
+            identity=source.provenance.edition_identity,
+            work_identity=source.provenance.work_identity,
+            claims=(SimpleNamespace(kind=ClaimKind.TITLE, links=(agreement,)),),
+            evidence=(),
+        )
+        report = SimpleNamespace(
+            providers=(
+                SimpleNamespace(
+                    provider=source.provenance.provider,
+                    candidates=(candidate,),
+                    query_kind=ProviderQueryKind.DISCOVERY,
+                ),
+            ),
+            identifier_evidence=(),
+            local_claims=(),
+        )
+        self.assertEqual(_classify_sources(report, (source,))[0], "plausible_match")
+
     def test_every_outcome_is_closed_and_does_not_project_hostile_values(self) -> None:
         payload = _preview(3)
         source = _source(3, payload)
@@ -1402,7 +1768,7 @@ class CoverIdentityTests(unittest.TestCase):
         conflicting = SimpleNamespace(**{**candidate.__dict__, "evidence": (contradiction,)})
         self.assertEqual(_classify_sources(SimpleNamespace(providers=(SimpleNamespace(provider=source.provenance.provider, candidates=(conflicting,)),), identifier_evidence=()), (source,))[0], "conflict")
 
-    def test_deterministic_contradictions_and_bibliographic_ambiguity(self) -> None:
+    def test_deterministic_contradictions_and_title_supported_discovery(self) -> None:
         source = _source(3, _preview(3))
         assert source.provenance is not None
         candidate = SimpleNamespace(
@@ -1459,8 +1825,11 @@ class CoverIdentityTests(unittest.TestCase):
         self.assertEqual(
             _classify_sources(report, (source,)),
             (
-                "unknown",
-                ["retained_bibliographic_ambiguity"],
+                "plausible_match",
+                [
+                    "provider_identity_without_explicit_identifier",
+                    "retained_title_agreement",
+                ],
                 [],
             ),
         )
@@ -1498,7 +1867,14 @@ class CoverIdentityTests(unittest.TestCase):
         )
         self.assertEqual(
             _classify_sources(report, (source,)),
-            ("unknown", ["retained_bibliographic_ambiguity"], []),
+            (
+                "plausible_match",
+                [
+                    "provider_identity_without_explicit_identifier",
+                    "retained_title_agreement",
+                ],
+                [],
+            ),
         )
 
         agreement = SimpleNamespace(
@@ -1533,7 +1909,7 @@ class CoverIdentityTests(unittest.TestCase):
                 "plausible_match",
                 [
                     "provider_identity_without_explicit_identifier",
-                    "retained_bibliographic_agreement",
+                    "retained_title_agreement",
                 ],
                 [],
             ),
@@ -1578,6 +1954,30 @@ class CoverIdentityTests(unittest.TestCase):
         )
         self.assertNotIn("Synthetic title", document)
         self.assertNotIn("source-", document)
+
+        epub_payload = _preview(8)
+        epub_source = _source(8, epub_payload, embedded=True)
+        epub_report = _report((epub_source,))
+        epub_packet = prepare_cover_packet(
+            epub_report.to_json(), lambda *_: epub_payload
+        )
+        epub_images = tuple(
+            (item.reference, item.digest, item.payload)
+            for item in epub_packet.images
+        )
+        epub_document = json.loads(
+            classify_cover_identity(
+                epub_report.to_json(), epub_packet.document, epub_images
+            ).document
+        )
+        self.assertEqual(
+            epub_document["candidates"][0]["outcome"],
+            "verified_manifestation_match",
+        )
+        self.assertEqual(
+            epub_document["candidates"][0]["reasons"],
+            ["source_bound_epub_cover"],
+        )
 
         shared_payload = _preview(9)
         foreign_source = _source(9, shared_payload)
