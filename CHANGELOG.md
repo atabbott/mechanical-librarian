@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Reconcile the 0.15.0 source-only semantic-cover workbench into one
+  aggregate-safe maintainer review package. The retained real-provider corpus,
+  deterministic image transport, conservative identity classifier, contained
+  visual observer, and deterministic policy path now prove useful reusable
+  benchmark behavior: 10/10 packets and 36/36 candidates admitted, 76/80 whole
+  policy decisions exact, and zero safety or binding violations. Medium,
+  promotional-text, and tie-in observations are strong on the benchmark;
+  composition remains below the useful band. This is not an unseen-
+  generalisation or runtime-activation claim, and #501 remains unpromoted.
+  (#544, #500)
+
 - Make source-only normalized cover transports byte-identical across supported
   platforms. Pillow remains the bounded RGBA decoder, while a small fixed PNG
   serializer now emits filter-zero rows, deterministic uncompressed DEFLATE

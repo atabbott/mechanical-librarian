@@ -1,6 +1,6 @@
 # Semantic cover corpus readiness — 0.15.0
 
-Status: **PASS** (2026-08-11)
+Status: **PASS** (2026-08-12 cumulative review package)
 
 This aggregate-only record supersedes the prior insufficiency report for the
 best-effort provider-cover qualification proof. It deliberately excludes corpus
@@ -93,40 +93,22 @@ that distribution.
 
 ## Identity-classifier qualification — PASS
 
-The source-only classifier was run against the unchanged 50-case development
-cohort before the final holdout was opened. Forty-nine cases had an exact
-report-bound cover source; one retained case was typed unavailable instead of
-being replaced. After the implementation and its exact artifact passed review
-and validation, the unchanged 50-case final holdout was opened. The later C1
-connector review required three structural correctness fixes and therefore
-invalidated the exact head; one blind aggregate requalification was performed
-under the milestone rule to rerun invalidated evidence. It exposed no identity,
-per-case result, or tuning signal, and every aggregate result remained
-unchanged.
+The corrected source-only classifier was evaluated on 99 usable retained cases;
+one unreadable preview remained unavailable and was not replaced. Exact
+agreement was 96/99 (96.97%): all 45 verified-manifestation, 21 verified-work,
+seven unknown, and five conflict references were exact. Eighteen of 21
+plausible references were recovered and three remained conservatively unknown.
+There were zero false plausible or false verified results and no deterministic
+conflict was lost.
 
-| Measure | Development | Final holdout | Combined |
-| --- | ---: | ---: | ---: |
-| Verified manifestation predictions | 20 | 25 | 45 |
-| Verified work predictions | 12 | 9 | 21 |
-| Plausible predictions | 0 | 0 | 0 |
-| Unknown predictions | 14 | 14 | 28 |
-| Conflict predictions | 3 | 2 | 5 |
-| Typed unavailable cases | 1 | 0 | 1 |
-| Exact matches / evaluable cases | 39/49 | 39/50 | 78/99 |
-| Verified precision | 32/32 | 34/34 | 66/66 |
-| Reviewed conflicts retained | 3/3 | 2/2 | 5/5 |
-
-Ten development and eleven final reviewed `plausible` cases were
-conservatively projected as `unknown` because the retained report evidence was
-ambiguous; the remaining reviewed plausible development case was the typed
-unavailable case. All reviewed unknown cases remained unknown. This is an
-honest precision-first negative recall result, not a semantic-quality or
-production-activation claim. No case was tuned, moved, relabelled, or replaced.
-
-Both runs made zero provider or model calls and performed zero production
-access or writes. The final holdout was unavailable to implementation and
-tuning before qualification and remained unavailable during the blind
-post-review requalification.
+The exact-current packet replay then admitted 79 packets and all 232 candidates
+with zero binding failures. Its outcomes were 117 verified manifestation, 81
+verified work, 31 plausible, two unknown, and one conflict. Exact report-bound
+source covers prove only their own manifestation; provider discovery evidence
+can support plausibility but cannot manufacture verified identity. Missing
+creator evidence remains neutral and exact retained creator overlap can support
+a match without fuzzy author inference. Neither replay made a provider or model
+call or performed production access or writes.
 
 ## Contained cover transport — PASS
 
@@ -524,3 +506,32 @@ establishes useful benchmark behavior while explicitly not claiming unseen
 generalisation.
 The tracked report contains no private corpus material, and #501 remains
 unpromoted.
+
+## 0.15.0 maintainer review package
+
+| Question | Aggregate answer |
+| --- | --- |
+| Is there enough real provider material? | Yes: 597 verified previews across 315 work families, 224 multi-choice packets, and 26 packets with at least five previews. |
+| Can exact covers reach the contained reviewer? | Yes: the five-preview proof passed, and the final benchmark admitted 10/10 packets and 36/36 candidates with zero retry or failure. |
+| Can identity be admitted safely? | Yes: 96/99 exact on the retained qualification set, with zero false plausible/verified outcomes and every conflict preserved. |
+| Can the tested model describe useful cover traits? | Yes for medium, promotional text, and tie-in branding on this benchmark; composition remains below the useful band. |
+| Can those observations support policy decisions? | Yes on the reusable benchmark: 76/80 whole decisions exact and every policy at least 8/10, with zero policy or safety violation. |
+
+The final end-to-end benchmark's contained-reviewer latency was 12.554 seconds
+p50 and 14.951 seconds p95. Across acquisition, transport, observation, and
+policy evaluation there was no production-library access or write, credential
+exposure, provider access from the reviewer, invented reference, ineligible
+selection, explicit-policy violation, hostile-evidence instruction following,
+private-data leakage, or repair of invalid model output. The workbench remains
+source-only and excluded from installed artifacts; no semantic-cover runtime
+CLI or HTTP operation was activated.
+
+The milestone therefore proves the intended general principle: a contained
+multimodal model can turn exact report-bound covers into useful closed
+observations, and deterministic code can turn those observations into useful
+policy-compatible recommendations. It does not prove unseen generalisation,
+production readiness, or reliable fine-grained composition classification.
+Issue #501 and 0.15.1 remain unpromoted. The maintainer reviewed and accepted
+this package on 2026-08-12, completing #544 and authorizing reconciliation of
+tracker #500 and milestone #20. That acceptance does not activate a runtime
+surface, publish a release, or change the limitations above.
