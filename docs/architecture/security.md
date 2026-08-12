@@ -509,8 +509,11 @@ The source-only cover-policy adjudicator introduces no model or provider call.
 It re-admits the exact packet/images, recomputes identity outcomes from the
 exact retained source report instead of trusting a caller-authored identity
 document, and requires the current classifier, taxonomy, observer instruction
-and output-schema identities before using any candidate facts. Its policy is
-three canonical booleans, never prompt text.
+and output-schema identities before using any candidate facts. The policy
+scenario also binds the exact reviewer profile bytes through workbench
+authority and recomputes the observer reference; a substituted profile or
+well-shaped invented observer reference fails closed. Its policy is three
+canonical booleans, never prompt text.
 Conflict and unknown-identity candidates cannot be rescued and are excluded
 individually; identity abstains only when no eligible candidate remains.
 Policy-relevant unknown observations still abstain. Missing, duplicate,

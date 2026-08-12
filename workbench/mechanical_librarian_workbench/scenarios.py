@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +14,7 @@ from .context import WorkbenchContext
 from .contained_reviewer import ContainedReviewerProcessError
 from .contained_reviewer_contract import ContainedReviewerAttempt
 from .cover_identity import classify_cover_identity
-from .cover_observation import observe_cover_packet
+from .cover_observation import MAX_OBSERVER_PROFILE_BYTES, observe_cover_packet
 from .cover_packets import PreparedCoverPacket, prepare_cover_packet
 from .cover_policy import CoverPolicy, adjudicate_cover_policy
 from .results import WorkbenchResult
@@ -298,6 +299,7 @@ class CoverPolicyRequest:
     report_id: str
     policy: CoverPolicy = CoverPolicy()
     observation_document: str | None = None
+    profile: str = "contained-reviewer-profile.json"
     database: str = "reports.sqlite"
     artifacts: str = "artifacts"
 
@@ -305,6 +307,7 @@ class CoverPolicyRequest:
         _required(self.report_id, "report id")
         _required(self.database, "database")
         _required(self.artifacts, "artifacts")
+        _required(self.profile, "reviewer profile")
         if type(self.policy) is not CoverPolicy:
             raise ValueError("cover policy is invalid")
         if self.observation_document is not None and (
@@ -592,6 +595,11 @@ def _execute(
             images,
             request.observation_document,
             request.policy,
+            profile_payload=(
+                _read_observer_profile(context.path(request.profile))
+                if request.observation_document is not None
+                else None
+            ),
             read_preview=_cover_preview_reader(
                 selected, database, artifacts, request.report_id
             ),
@@ -612,6 +620,25 @@ def _execute(
     else:
         raise TypeError("unsupported workbench request")
     return _complete(context, request.name, raw, status=result_status)
+
+
+def _read_observer_profile(path: Path) -> bytes:
+    try:
+        information = path.lstat()
+        if (
+            not stat.S_ISREG(information.st_mode)
+            or stat.S_ISLNK(information.st_mode)
+            or information.st_mode & 0o077
+            or not 1 <= information.st_size <= MAX_OBSERVER_PROFILE_BYTES
+        ):
+            raise ValueError("cover observer profile is invalid")
+        with path.open("rb") as handle:
+            payload = handle.read(MAX_OBSERVER_PROFILE_BYTES + 1)
+    except OSError as error:
+        raise ValueError("cover observer profile is invalid") from error
+    if not 1 <= len(payload) <= MAX_OBSERVER_PROFILE_BYTES:
+        raise ValueError("cover observer profile is invalid")
+    return payload
 
 
 def _prepare_report_bound_cover_packet(

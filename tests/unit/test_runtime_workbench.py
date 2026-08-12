@@ -198,6 +198,33 @@ class RuntimeWorkbenchTests(unittest.TestCase):
         self.assertEqual(caught.exception.category, "invalid")
         self.assertNotIn("private", str(caught.exception))
 
+    def test_cover_policy_binds_authority_scoped_observer_profile(self) -> None:
+        prepared = mock.Mock(document="{}", images=())
+        decision = mock.Mock(document='{"status":"safe"}')
+        with WorkbenchContext.temporary() as context:
+            profile = context.path("contained-reviewer-profile.json")
+            profile.write_bytes(b'{"profile":"bound"}')
+            profile.chmod(0o600)
+            with (
+                mock.patch(
+                    "mechanical_librarian_workbench.scenarios.prepare_cover_packet",
+                    return_value=prepared,
+                ),
+                mock.patch(
+                    "mechanical_librarian_workbench.scenarios.adjudicate_cover_policy",
+                    return_value=decision,
+                ) as adjudicate,
+            ):
+                execute(
+                    context,
+                    CoverPolicyRequest("report", observation_document="{}"),
+                    _operations(),
+                )
+        self.assertEqual(
+            adjudicate.call_args.kwargs["profile_payload"],
+            b'{"profile":"bound"}',
+        )
+
     def test_batch_failed_completion_and_events_are_preserved(self) -> None:
         def batch(*arguments: object) -> bool:
             emit = arguments[-1]

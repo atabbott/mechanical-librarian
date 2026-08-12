@@ -20,6 +20,7 @@ from .cover_observation import (
     LEGACY_SCHEMA_VERSION,
     SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
     TAXONOMY_REFERENCE,
+    _observer_reference,
     _output_schema,
 )
 from .cover_packet_semantics import bind_cover_packet, canonical_packet_json
@@ -87,6 +88,7 @@ def adjudicate_cover_policy(
     observation_document: str | None,
     policy: CoverPolicy,
     *,
+    profile_payload: bytes | None = None,
     read_preview: Callable[[str, str], bytes],
 ) -> CoverPolicyReport:
     """Return one exact recommendation or a closed abstention."""
@@ -129,6 +131,7 @@ def adjudicate_cover_policy(
         packet["packet_reference"],
         candidates,
         references,
+        profile_payload,
     )
     identity_by_reference = {
         value["candidate_reference"]: value["outcome"]
@@ -304,6 +307,7 @@ def _observation_rows(
     packet_reference: object,
     candidates: list[object],
     references: tuple[str, ...],
+    profile_payload: bytes | None,
 ) -> dict[str, object]:
     value = _load_object(document, "cover observation")
     schema_version = value.get("schema_version")
@@ -313,6 +317,11 @@ def _observation_rows(
         else hashlib.sha256(INSTRUCTION.encode("utf-8")).hexdigest()
     )
     expected_schema = hashlib.sha256(_output_schema(references).encode("utf-8")).hexdigest()
+    if type(profile_payload) is not bytes:
+        raise ValueError("cover observation profile is invalid")
+    expected_observer = _observer_reference(
+        profile_payload, expected_instruction, expected_schema
+    )
     valid_shape = (
         (
             schema_version == LEGACY_SCHEMA_VERSION
@@ -343,7 +352,7 @@ def _observation_rows(
         or value["schema_version"] not in {LEGACY_SCHEMA_VERSION, OBSERVATION_SCHEMA_VERSION}
         or value["cover_packet_reference"] != packet_reference
         or value["taxonomy_reference"] != TAXONOMY_REFERENCE
-        or _REFERENCE.fullmatch(str(value["observer_reference"])) is None
+        or value["observer_reference"] != expected_observer
         or value["instruction_sha256"] != expected_instruction
         or value["output_schema_sha256"] != expected_schema
         or type(value["observations"]) is not list

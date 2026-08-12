@@ -18,6 +18,7 @@ SCHEMA_VERSION = "cover-observation-report-v2"
 LEGACY_SCHEMA_VERSION = "cover-observation-report-v1"
 OUTPUT_SCHEMA_VERSION = "cover-observer-output-v1"
 MAX_RESULT_BYTES = 65_536
+MAX_OBSERVER_PROFILE_BYTES = 65_536
 
 TAXONOMY = (
     (
@@ -102,6 +103,27 @@ Reviewer = Callable[
 ]
 
 
+def _observer_reference(
+    profile_payload: bytes,
+    instruction_sha256: str,
+    schema_sha256: str,
+) -> str:
+    if (
+        type(profile_payload) is not bytes
+        or not 1 <= len(profile_payload) <= MAX_OBSERVER_PROFILE_BYTES
+    ):
+        raise ValueError("cover observer profile is invalid")
+    identity = {
+        "instruction_sha256": instruction_sha256,
+        "profile_sha256": hashlib.sha256(profile_payload).hexdigest(),
+        "schema_sha256": schema_sha256,
+        "taxonomy_reference": TAXONOMY_REFERENCE,
+    }
+    return "cover_observer_" + hashlib.sha256(
+        canonical_json(identity).encode("utf-8")
+    ).hexdigest()
+
+
 @dataclass(frozen=True)
 class CoverObservationReport:
     document: str
@@ -166,21 +188,17 @@ def observe_cover_packet(
             }
         )
     rows.sort(key=lambda value: value["candidate_reference"])
-    observer_identity = {
-        "instruction_sha256": hashlib.sha256(INSTRUCTION.encode("utf-8")).hexdigest(),
-        "profile_sha256": hashlib.sha256(profile_payload).hexdigest(),
-        "schema_sha256": hashlib.sha256(schema_document.encode("utf-8")).hexdigest(),
-        "taxonomy_reference": TAXONOMY_REFERENCE,
-    }
+    instruction_sha256 = hashlib.sha256(INSTRUCTION.encode("utf-8")).hexdigest()
+    schema_sha256 = hashlib.sha256(schema_document.encode("utf-8")).hexdigest()
     report = {
         "attempt_evidence": envelope["attempt_evidence"],
         "cover_packet_reference": packet["packet_reference"],
-        "instruction_sha256": observer_identity["instruction_sha256"],
+        "instruction_sha256": instruction_sha256,
         "observations": rows,
-        "observer_reference": "cover_observer_" + hashlib.sha256(
-            canonical_json(observer_identity).encode("utf-8")
-        ).hexdigest(),
-        "output_schema_sha256": observer_identity["schema_sha256"],
+        "observer_reference": _observer_reference(
+            profile_payload, instruction_sha256, schema_sha256
+        ),
+        "output_schema_sha256": schema_sha256,
         "schema_version": SCHEMA_VERSION,
         "taxonomy_reference": TAXONOMY_REFERENCE,
     }

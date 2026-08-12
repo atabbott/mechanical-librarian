@@ -105,9 +105,11 @@ combination reached at least 8/10, with zero retries or violations. This is
 reusable-benchmark evidence rather than unseen-holdout generalisation.
 
 `cover-policy-report` is a deterministic consumer of the exact retained
-report, cover packet, closed observation report and `cover-policy-v1`. It
+report, cover packet, closed observation report, the authority-bound reviewer
+profile that produced it and `cover-policy-v1`. It
 recomputes the local identity report from that retained evidence rather than
-accepting caller-supplied identity outcomes.
+accepting caller-supplied identity outcomes, and recomputes the exact observer
+reference instead of accepting a merely well-shaped reference.
 Callers can avoid promotional text, avoid tie-in branding and prefer minimal
 composition through three booleans; no prompt-authored or free-form policy is
 accepted. Conflict and unknown-identity candidates are excluded individually;

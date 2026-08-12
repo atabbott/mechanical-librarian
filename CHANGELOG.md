@@ -74,6 +74,9 @@
   bounded composition-rubric clarification raised exact whole decisions to
   76/80, with every policy at 8/10 or better. Field agreement was 26/36
   composition, 33/36 medium, 36/36 promotional text and 35/36 tie-in branding.
+  Policy admission now binds the authority-scoped reviewer profile and
+  recomputes the exact observer reference, so a substituted profile or invented
+  valid-shaped observer reference fails closed.
   This proves useful reusable-benchmark behavior, not unseen generalisation;
   composition remains the least certain field and had 12/36 independent human
   review disagreements. (#543)

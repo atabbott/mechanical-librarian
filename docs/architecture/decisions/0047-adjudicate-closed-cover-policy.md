@@ -23,8 +23,9 @@ against fixed independently reviewed covers.
 Add one repository-only deterministic cover-policy adjudicator and one
 `cover-policy-report` scenario. The scenario prepares the existing exact
 report-bound packet, derives the conservative identity report locally, and
-accepts an optional already-admitted observation report. It never calls a
-provider or model.
+accepts an optional already-admitted observation report together with the exact
+authority-bound contained-reviewer profile bytes that produced it. It never
+calls a provider or model.
 
 The initial `cover-policy-v1` has exactly three booleans:
 
@@ -36,7 +37,9 @@ Policy is canonical typed data, never prompt text. The adjudicator re-admits
 the complete packet and images, recomputes the identity report from the exact
 retained source report instead of accepting caller-supplied outcomes, requires
 the exact current identity classifier, observation taxonomy, instruction and
-output schema, and verifies every candidate/preview binding before deciding.
+output schema. It recomputes the observer reference from the authority-bound
+profile plus those frozen identities and verifies every candidate/preview
+binding before deciding.
 Conflict and unknown-identity candidates are excluded individually. The packet
 abstains for identity only when no eligible candidate remains. Unknown
 observation evidence needed by an enabled policy still produces an abstention.

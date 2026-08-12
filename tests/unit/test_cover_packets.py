@@ -64,6 +64,7 @@ from mechanical_librarian_workbench.cover_observation import (  # noqa: E402
     TAXONOMY_DOCUMENT,
     TAXONOMY_REFERENCE,
     observe_cover_packet,
+    _observer_reference,
     _output_schema,
 )
 from mechanical_librarian_workbench.cover_packets import (  # noqa: E402
@@ -2552,6 +2553,7 @@ class CoverIdentityTests(unittest.TestCase):
 
 
 def _policy_documents(count: int = 3):
+    profile_payload = b'{"profile":"synthetic"}'
     payloads = tuple(_preview(index) for index in range(1, count + 1))
     sources = tuple(_source(index, payload) for index, payload in enumerate(payloads, 1))
     report = _report(sources)
@@ -2604,7 +2606,11 @@ def _policy_documents(count: int = 3):
             }
             for candidate in candidates
         ],
-        "observer_reference": "cover_observer_" + "c" * 64,
+        "observer_reference": _observer_reference(
+            profile_payload,
+            hashlib.sha256(INSTRUCTION.encode()).hexdigest(),
+            hashlib.sha256(_output_schema(references).encode()).hexdigest(),
+        ),
         "output_schema_sha256": hashlib.sha256(
             _output_schema(references).encode()
         ).hexdigest(),
@@ -2630,6 +2636,7 @@ class CoverPolicyTests(unittest.TestCase):
         identity_mutation: object | None = None,
         observation_mutation: object | None = None,
         observation_available: bool = True,
+        profile_payload: bytes = b'{"profile":"synthetic"}',
     ) -> dict[str, object]:
         (
             report_document,
@@ -2658,6 +2665,9 @@ class CoverPolicyTests(unittest.TestCase):
                 images,
                 canonical_json(observation) if observation_available else None,
                 policy,
+                profile_payload=(
+                    profile_payload if observation_available else None
+                ),
                 read_preview=read_preview,
             )
         return json.loads(result.document)
@@ -2687,11 +2697,18 @@ class CoverPolicyTests(unittest.TestCase):
                 value.pop("attempt_evidence"),
                 value.update(
                     instruction_sha256=LEGACY_INSTRUCTION_SHA256,
+                    observer_reference=_observer_reference(
+                        b'{"profile":"synthetic"}',
+                        LEGACY_INSTRUCTION_SHA256,
+                        value["output_schema_sha256"],
+                    ),
                     schema_version="cover-observation-report-v1",
                 ),
             )
         )
         self.assertEqual(legacy["status"], "recommended")
+        with self.assertRaises(ValueError):
+            self._adjudicate(profile_payload=b'{"profile":"different"}')
         with self.assertRaises(ValueError):
             self._adjudicate(
                 observation_mutation=lambda value: (
@@ -2921,6 +2938,7 @@ class CoverPolicyTests(unittest.TestCase):
                 images,
                 canonical_json(observation),
                 CoverPolicy(),
+                profile_payload=b'{"profile":"synthetic"}',
                 read_preview=read_preview,
             ).document
         )
@@ -2932,6 +2950,9 @@ class CoverPolicyTests(unittest.TestCase):
 
     def test_unknown_invented_duplicate_or_mismatched_inputs_fail_closed(self) -> None:
         mutations = (
+            lambda observation: observation.update(
+                observer_reference="cover_observer_" + "0" * 64
+            ),
             lambda observation: observation.update(
                 taxonomy_reference="cover_taxonomy_" + "0" * 64
             ),
@@ -2984,6 +3005,7 @@ class CoverPolicyTests(unittest.TestCase):
                             images,
                             canonical_json(observation),
                             CoverPolicy(),
+                            profile_payload=b'{"profile":"synthetic"}',
                             read_preview=read_preview,
                         )
 
