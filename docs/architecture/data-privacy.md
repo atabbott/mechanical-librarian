@@ -119,6 +119,9 @@ value, identifier, path, source digest, receipt, or per-case result; the
 underlying retained material and offline replay result remain owner-private.
 Prior unrelated use is an aggregate method fact, not a disclosure of which
 work supplied any field-option result.
+Subjective-field qualification compares only aggregate provenance and operation
+outcomes; it does not publish or manufacture a preferred genre, tag set, or
+description for any work.
 
 The complete application SQLite database—including deterministic packets and
 outcomes—is exposed to whoever can read a backup. Store it and its backups as private

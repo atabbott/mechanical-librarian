@@ -59,9 +59,12 @@ class PolicyPreviewCliTests(unittest.TestCase):
             self.assertEqual(19, len(result["rich_qualification"]))
             self.assertEqual(
                 {
+                    "description_fill:safe_plain_text",
+                    "genres:add", "genres:replace",
                     "series:primary_narrative", "series:source_order",
                     "series:all_qualified", "isbn_form:preserve_exact",
                     "isbn_form:prefer_isbn13",
+                    "tags:fill_empty", "tags:add", "tags:replace",
                 },
                 {
                     f"{item['field']}:{item['option']}"

@@ -31,11 +31,13 @@ The API, CLI, and owner policy page serialize the same result, including the
 full qualified series tuple when Audiobookshelf can receive only its selected
 first membership.
 
-Every new Automatic destination remains unqualified. The F20 activation seam
-pins the public candidate digest and every option-local terminal disposition;
-its passing automatic set is empty, so it rejects rich Automatic intent while
-exposing no qualification cases. Existing qualified automatic categories and
-their effect/consent boundary are unchanged.
+At this non-activating #566 increment every new Automatic destination remained
+unqualified. The F20 activation seam pinned the public candidate digest and
+every option-local terminal disposition with an empty passing set, rejecting
+rich Automatic intent while exposing no qualification cases. #565 and #564
+later replaced that candidate with the independently scored exact passing set;
+the same seam now admits only those identities. Existing F19a authority and the
+effect/consent boundary remain unchanged.
 `metadata-policy-profile-v1` persisted documents are rejected under ADR-0013;
 there is no reader, migration, conversion, or import path.
 

@@ -16,7 +16,7 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
 )
 from mechanical_librarian.domain.metadata_report import (
-    ClaimKind, ClaimScope, IdentifierRelation, MetadataReport,
+    MAX_TAGS, ClaimKind, ClaimScope, IdentifierRelation, MetadataReport,
     ProviderClaim, ProviderEvidenceKind, TargetDestination, TargetField,
     TargetFieldState,
 )
@@ -202,6 +202,8 @@ def _project(
             return _preserved(field, option, target, current)
         elif option not in {"fill_empty", "add", "replace"}:
             return _abstain(field, option, target, current, "policy_option_unavailable")
+        if len(desired) > MAX_TAGS:
+            return _abstain(field, option, target, current, "target_projection_oversized")
     elif field == "series":
         if candidate.value.kind is not ProposalValueKind.SERIES:
             return _abstain(field, option, target, current, "no_candidate")
@@ -306,15 +308,40 @@ def _description(
         return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
     if option not in {"safe_plain_text", "google_visible_text"}:
         return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
-    if option == "google_visible_text" and not candidate.evidence_references:
+    if not candidate.evidence_references:
         return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
-    if option == "google_visible_text" and not any(
-        _google_description_reference(reference, candidate, retained_claims)
+    google_references = tuple(
+        reference
         for reference in candidate.evidence_references
-    ):
+        if _google_description_reference(reference, candidate, retained_claims)
+    )
+    ordinary_references = tuple(
+        reference
+        for reference in candidate.evidence_references
+        if _ordinary_description_reference(reference, candidate, retained_claims)
+    )
+    if option == "google_visible_text" and not google_references:
         return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
+    if option == "safe_plain_text" and not ordinary_references:
+        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
+    source_references = (
+        google_references if option == "google_visible_text" else ordinary_references
+    )
     desired = _data_value(candidate.value.value)
-    return RichFieldPreview(field, option, target.state.value, _data_value(target.value), "projected", desired, None)
+    return RichFieldPreview(
+        field,
+        option,
+        target.state.value,
+        _data_value(target.value),
+        "projected",
+        desired,
+        None,
+        False,
+        None,
+        candidate.alternative_id,
+        source_references,
+        (),
+    )
 
 
 def _google_description_reference(
@@ -335,6 +362,27 @@ def _google_description_reference(
             evidence.kind is ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
             and evidence.scope is ClaimScope.WORK
             and evidence.value == "google-books-html-visible-text-v1"
+            for evidence in retained.candidate.evidence
+        )
+    )
+
+
+def _ordinary_description_reference(
+    reference: str,
+    alternative: ProposalAlternative,
+    retained_claims: dict[str, _RetainedClaim],
+) -> bool:
+    retained = retained_claims.get(reference)
+    return bool(
+        retained is not None
+        and type(retained.claim) is ProviderClaim
+        and retained.claim.kind is ClaimKind.DESCRIPTION
+        and retained.claim.scope is ClaimScope.WORK
+        and retained.claim.value == alternative.value.value
+        and retained.candidate is not None
+        and not any(
+            evidence.kind is ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
+            and evidence.scope is ClaimScope.WORK
             for evidence in retained.candidate.evidence
         )
     )
@@ -507,7 +555,10 @@ def _candidate_combination_ids(
 
 
 def project_f20_automatic_decision_value(
-    field: str, option: str, candidate_value: object
+    field: str,
+    option: str,
+    candidate_value: object,
+    current_value: object = None,
 ) -> dict[str, object]:
     """Project one qualified proposal value to its exact target shape."""
     if f"{field}:{option}" not in F20_PASSING_AUTOMATIC_OPTIONS:
@@ -523,6 +574,29 @@ def project_f20_automatic_decision_value(
         if candidate_value["kind"] != "text" or type(candidate_value["value"]) is not str:
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         return {"kind": "text", "value": candidate_value["value"]}
+    if field == "description_fill":
+        if candidate_value["kind"] != "text" or type(candidate_value["value"]) is not str:
+            raise RichMetadataPreviewError("rich automatic projection is invalid")
+        return {"kind": "text", "value": candidate_value["value"]}
+    if field in {"genres", "tags"}:
+        values = candidate_value["value"]
+        if (
+            candidate_value["kind"] != "list"
+            or type(values) is not list
+            or not values
+            or any(type(value) is not str for value in values)
+        ):
+            raise RichMetadataPreviewError("rich automatic projection is invalid")
+        if option == "add" and current_value is not None:
+            if (
+                type(current_value) not in {list, tuple}
+                or any(type(value) is not str for value in current_value)
+            ):
+                raise RichMetadataPreviewError("rich automatic projection is invalid")
+            values = [*current_value, *(value for value in values if value not in current_value)]
+        if len(values) > MAX_TAGS:
+            raise RichMetadataPreviewError("rich automatic projection is oversized")
+        return {"kind": "list", "value": values}
     raise RichMetadataPreviewError("rich automatic projection is unavailable")
 
 

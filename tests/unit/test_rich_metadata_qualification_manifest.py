@@ -42,14 +42,17 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         self.assertEqual("f20-rich-metadata-qualification-candidate-v1", manifest["schema"])
         self.assertEqual("decision_only", manifest["automatic_authority"])
         passing = {
+            "description_fill:safe_plain_text",
+            "genres:add", "genres:replace",
             "series:primary_narrative", "series:source_order",
             "series:all_qualified",
+            "tags:fill_empty", "tags:add", "tags:replace",
             "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
         }
         self.assertEqual(passing, set(manifest["passing_automatic_options"]))
         self.assertEqual(["explicit:unsupported"], manifest["human_only_options"])
         self.assertEqual(["narrators", "cover"], manifest["excluded_destinations"])
-        self.assertEqual(1, manifest["candidate_execution_count"])
+        self.assertEqual(3, manifest["candidate_execution_count"])
         self.assertEqual(
             {
                 "evaluated_reports": 49,
@@ -57,6 +60,7 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
                 "network_access": False,
                 "prior_unrelated_work_use_allowed": True,
                 "replayed_provider_requests": 421,
+                "subjective_field_truth_model": "exact_work_bound_source_projection",
                 "series_truth_model": "valid_membership_with_preferred_value",
                 "subtitle_truth_model": "ebook_manifestation_bibliographic_subtitle",
                 "unseen_holdout_required": False,
@@ -82,6 +86,8 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         self.assertEqual(
             {
                 "subtitle:fill_empty", "subtitle:corroborated_split",
+                "genres:fill_empty",
+                "description_fill:google_visible_text",
             },
             {
                 entry["identity"] for entry in manifest["options"]
@@ -102,6 +108,8 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         self.assertEqual(
             expected - passing - {"explicit:unsupported"} - {
                 "subtitle:fill_empty", "subtitle:corroborated_split",
+                "genres:fill_empty",
+                "description_fill:google_visible_text",
             },
             terminal,
         )
@@ -142,6 +150,17 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         self.assertEqual(20, series["series:source_order"]["metrics"]["automatic_predictions"])
         self.assertEqual(20, series["series:all_qualified"]["metrics"]["automatic_predictions"])
         self.assertTrue(all(entry["metrics"]["automatic_precision"] == 1.0 for entry in series.values()))
+        subjective = {
+            entry["identity"]: entry for entry in manifest["options"]
+            if entry["identity"] in passing
+            and entry["identity"].split(":", 1)[0]
+            in {"genres", "tags", "description_fill"}
+        }
+        self.assertTrue(subjective)
+        self.assertTrue(all(
+            entry["metrics"]["automatic_precision"] == 1.0
+            for entry in subjective.values()
+        ))
 
     def test_candidate_exposes_only_closed_aggregate_contract_data(self) -> None:
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
@@ -179,9 +198,12 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         )
         self.assertEqual(
             {
-                "incomplete_ordered_list", "invalid_interaction", "invented_value",
-                "private_leakage", "stale_or_unsupported_effect",
-                "wrong_manifestation",
+                "cross_source_list_synthesis", "incomplete_ordered_list",
+                "invalid_list_operation", "invented_value",
+                "private_data_disclosure",
+                "silent_description_rewrite_or_truncation",
+                "stale_target_apply", "taxonomy_translation",
+                "unsafe_description", "wrong_manifestation_identifier",
             },
             set(manifest["zero_tolerance"]["required_controls"]),
         )
@@ -215,8 +237,11 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
                 "language_rendering:preserve", "language_rendering:display_name",
                 "contributor_names:preserve", "contributor_names:canonical",
                 "publisher_preference:publisher",
+                "description_fill:safe_plain_text",
+                "genres:add", "genres:replace",
                 "series:primary_narrative", "series:source_order",
                 "series:all_qualified",
+                "tags:fill_empty", "tags:add", "tags:replace",
                 "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
             },
             QUALIFIED_POLICY_OPTIONS,
@@ -224,15 +249,19 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         self.assertEqual(
             {
                 "title_layout", "date_precision", "language_rendering",
-                "contributor_names", "publisher_preference", "series", "isbn_form",
+                "contributor_names", "publisher_preference", "series", "genres",
+                "tags", "description_fill", "isbn_form",
             },
             QUALIFIED_AUTOMATIC,
         )
         policy = resolve_policy(MetadataPolicyProfile.builtin(), "library")
         self.assertEqual("unsupported", policy.qualification("explicit"))
         self.assertEqual("available", policy.qualification("series"))
+        self.assertEqual("available", policy.qualification("description_fill"))
         self.assertEqual("available", policy.qualification("isbn_form"))
-        for field in set(RICH_FIELDS[:-1]) - {"series", "isbn_form"}:
+        for field in set(RICH_FIELDS[:-1]) - {
+            "series", "description_fill", "isbn_form",
+        }:
             self.assertEqual("manual_only", policy.qualification(field))
 
     def test_runtime_envelope_pins_every_terminal_disposition_and_authority(self) -> None:
@@ -242,8 +271,11 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
             F20_QUALIFICATION_CANDIDATE_SHA256,
         )
         passing = frozenset({
+            "description_fill:safe_plain_text",
+            "genres:add", "genres:replace",
             "series:primary_narrative", "series:source_order",
             "series:all_qualified",
+            "tags:fill_empty", "tags:add", "tags:replace",
             "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
         })
         self.assertEqual(passing, frozenset(manifest["passing_automatic_options"]))
@@ -271,7 +303,7 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         )
         with self.assertRaises(TypeError):
             F20_OPTION_DISPOSITIONS["genres:add"] = "passing_automatic"  # type: ignore[index]
-        self.assertEqual("insufficient_coverage", F20_OPTION_DISPOSITIONS["genres:add"])
+        self.assertEqual("passing_automatic", F20_OPTION_DISPOSITIONS["genres:add"])
 
 
 if __name__ == "__main__":

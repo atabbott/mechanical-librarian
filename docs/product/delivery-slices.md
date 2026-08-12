@@ -560,9 +560,10 @@ for the sealed qualified envelope; it records immutable decision-only outcomes
 and never applies or writes target, media, or artifact state.
 
 F20 activation #564 pins the exact public candidate in selection, decision,
-and presentation seams. Its three qualified series options and two qualified
-ISBN options extend decision-only Automatic while preserving the F19a manifest
-and all guarded-effect controls; the remaining rich options stay human-routed
+and presentation seams. Its qualified series, ISBN, exact source-bound genre
+and tag operations, and safe plaintext description extend decision-only
+Automatic while preserving the F19a manifest and all guarded-effect controls;
+tags remain off by default and the remaining rich options stay human-routed
 with aggregate-safe terminal explanations.
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation

@@ -16,21 +16,25 @@
 
 - Bind the public F20 candidate identity and terminal rich-field qualification
   statuses into policy validation, API, CLI preview, and the owner notebook.
-  Field-option-local offline qualification admits all three series policies
-  and both exact ISBN policies to decision-only Automatic at 100% precision.
+  Field-option-local offline qualification admits all three series policies,
+  both exact ISBN policies, genre add/replace, tag fill/add/replace, and safe
+  plaintext description to decision-only Automatic at 100% precision.
   Each passing option now reaches the existing persisted-decision and guarded
   effect-plan path; multi-series proposals retain every qualified membership
   while Audiobookshelf receives the preferred first value. It adds no new
-  write authority and leaves every other rich option manual. The pre-release
-  shadow-outcome contract advances to v2 so databases containing incompatible
-  v1 outcome identities fail cleanly at startup rather than during later
+  write authority, keeps tags off by default, and leaves every other rich
+  option manual. The pre-release shadow-outcome contract advances to v3 so
+  databases containing incompatible v2 outcome identities fail cleanly at
+  startup rather than during later
   reads. (#564)
 
 - Record the F20 rich-metadata qualification candidate from 49 accepted
   real-work reports and 421 retained-response replays through the current
   offline pipeline. Qualification is field-option-local and does not require
-  an unseen holdout; three series and two ISBN options pass, subtitle does not,
-  and options without accepted truth remain `insufficient_coverage`.
+  an unseen holdout. Subjective genre, tag, and description choices are scored
+  on exact work-bound projection and safe operation rather than one golden
+  semantic answer; six list operations and safe plaintext description pass,
+  alongside three series and two ISBN options. Subtitle does not pass.
   `explicit` remains human-only, while narrators and cover remain excluded.
   (#565)
 

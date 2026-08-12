@@ -32,7 +32,7 @@ from mechanical_librarian.domain.shadow_decision import (
 from mechanical_librarian.domain.shadow_review import MAX_CITATIONS
 
 
-SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v2"
+SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v3"
 MAX_SHADOW_OUTCOME_BYTES = 1_048_576
 
 _POLICY_CATEGORY_BY_DESTINATION = {
@@ -322,7 +322,7 @@ class ShadowOutcomeSet:
         options = dict(policy.options)
         fields: list[ShadowFieldOutcome] = []
         for decision in decisions.decisions:
-            if decision.destination in {"series", "isbn"}:
+            if decision.destination in {"series", "genres", "tags", "description", "isbn"}:
                 continue
             category = _POLICY_CATEGORY_BY_DESTINATION.get(decision.destination)
             policy_destination = (
@@ -403,7 +403,13 @@ class ShadowOutcomeSet:
         proposals = {
             value["destination"]: value["proposal_id"] for value in case.proposals
         }
-        for category, destination in (("series", "series"), ("isbn_form", "isbn")):
+        for category, destination in (
+            ("series", "series"),
+            ("genres", "genres"),
+            ("tags", "tags"),
+            ("description_fill", "description"),
+            ("isbn_form", "isbn"),
+        ):
             fields.append(
                 _rich_field_outcome(
                     rich[category],
