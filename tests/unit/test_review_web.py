@@ -59,6 +59,9 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
 )
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_OPTION_DISPOSITIONS,
+)
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
@@ -1769,6 +1772,23 @@ class ReviewWebTests(unittest.TestCase):
                 self.assertEqual(build_parameters[0]["in"], "header")
                 self.assertIn("409", operation["responses"])
         schemas = expected["components"]["schemas"]
+        qualification_items = schemas["_PolicyProfileResponse"]["properties"][
+            "rich_qualification"
+        ]["items"]
+        closed_qualification: dict[str, str] = {}
+        for reference in qualification_items["anyOf"]:
+            schema = schemas[reference["$ref"].rsplit("/", 1)[-1]]
+            properties = schema["properties"]
+            field = properties["field"]["const"]
+            disposition = properties["disposition"]["const"]
+            option_schema = properties["option"]
+            options = option_schema["enum"] if "enum" in option_schema else [
+                option_schema["const"]
+            ]
+            closed_qualification.update(
+                {f"{field}:{option}": disposition for option in options}
+            )
+        self.assertEqual(dict(F20_OPTION_DISPOSITIONS), closed_qualification)
         self.assertNotIn("HTTPValidationError", schemas)
         self.assertTrue(
             all(

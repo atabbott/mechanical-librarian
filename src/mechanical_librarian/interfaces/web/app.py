@@ -8,7 +8,7 @@ import stat
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeAlias
 from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
@@ -32,7 +32,7 @@ from fastapi.responses import (
     RedirectResponse,
 )
 from fastapi.security import APIKeyCookie
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, TypeAdapter
 from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
@@ -404,24 +404,114 @@ class _PolicyDraftRequest(_ClosedModel):
 
 class _PolicyDraftResponse(_ClosedModel):
     policy_id: str
-    schema_version: Literal["metadata-policy-profile-v1"] = "metadata-policy-profile-v1"
+    schema_version: Literal["metadata-policy-profile-v2"] = "metadata-policy-profile-v2"
 
 
 class _PolicyProfile(_ClosedModel):
     destinations: dict[StrictStr, StrictStr] = Field(max_length=16)
     name: StrictStr = Field(min_length=1, max_length=80)
     options: dict[StrictStr, StrictStr] = Field(max_length=16)
-    schema_version: Literal["metadata-policy-profile-v1"]
+    schema_version: Literal["metadata-policy-profile-v2"]
+
+
+class _RichQualificationBase(_ClosedModel):
+    automatic_available: Literal[False]
+    candidate_sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class _SubtitleQualification(_RichQualificationBase):
+    disposition: Literal["insufficient_coverage"]
+    field: Literal["subtitle"]
+    option: Literal["fill_empty", "corroborated_split"]
+
+
+class _SeriesQualification(_RichQualificationBase):
+    disposition: Literal["insufficient_coverage"]
+    field: Literal["series"]
+    option: Literal["primary_narrative", "source_order", "all_qualified"]
+
+
+class _GenresQualification(_RichQualificationBase):
+    disposition: Literal["insufficient_coverage"]
+    field: Literal["genres"]
+    option: Literal["fill_empty", "add", "replace"]
+
+
+class _TagsOffQualification(_RichQualificationBase):
+    disposition: Literal["policy_only"]
+    field: Literal["tags"]
+    option: Literal["off"]
+
+
+class _TagsQualification(_RichQualificationBase):
+    disposition: Literal["insufficient_coverage"]
+    field: Literal["tags"]
+    option: Literal["fill_empty", "add", "replace"]
+
+
+class _DescriptionQualification(_RichQualificationBase):
+    disposition: Literal["insufficient_coverage"]
+    field: Literal["description_fill"]
+    option: Literal["safe_plain_text", "google_visible_text"]
+
+
+class _IsbnQualification(_RichQualificationBase):
+    disposition: Literal["insufficient_coverage"]
+    field: Literal["isbn_form"]
+    option: Literal["preserve_exact", "prefer_isbn13"]
+
+
+class _AsinQualification(_RichQualificationBase):
+    disposition: Literal["insufficient_coverage"]
+    field: Literal["asin"]
+    option: Literal["preserve_exact", "ebook_manifestation"]
+
+
+class _ExplicitQualification(_RichQualificationBase):
+    disposition: Literal["passing_human_only"]
+    field: Literal["explicit"]
+    option: Literal["unsupported"]
+
+
+_RichQualification: TypeAlias = (
+    _SubtitleQualification | _SeriesQualification | _GenresQualification
+    | _TagsOffQualification | _TagsQualification | _DescriptionQualification
+    | _IsbnQualification | _AsinQualification | _ExplicitQualification
+)
+_RICH_QUALIFICATION_ADAPTER = TypeAdapter(_RichQualification)
 
 
 class _PolicyProfileResponse(_ClosedModel):
     policy_id: str
     profile: _PolicyProfile
+    rich_qualification: list[_RichQualification]
     schema_version: Literal["metadata-policy-notebook-v1"] = "metadata-policy-notebook-v1"
+
+
+class _RichFieldPreviewResponse(_ClosedModel):
+    current_value: object
+    desired_value: object | None
+    field: str
+    narrowed_for_target: bool
+    option: str
+    outcome: str
+    qualified_value: object | None
+    reason: str | None
+    target_state: str
+
+
+class _RichCasePreviewResponse(_ClosedModel):
+    fields: list[_RichFieldPreviewResponse]
+    proposal_set_id: str
+    report_id: str
+    resolved_policy_id: str
 
 
 class _PolicyImpactResponse(_ClosedModel):
     affected_categories: list[str]
+    cases: list[_RichCasePreviewResponse]
+    cases_total: int
+    cases_truncated: bool
     current_unapplied_count: int
     library: str
     resolved_policy_id: str
@@ -430,6 +520,7 @@ class _PolicyImpactResponse(_ClosedModel):
 class _PolicyPreviewResponse(_ClosedModel):
     libraries: list[_PolicyImpactResponse]
     policy_id: str
+    rich_qualification: list[_RichQualification]
     schema_version: Literal["metadata-policy-preview-v1"] = "metadata-policy-preview-v1"
 
 
@@ -1026,7 +1117,8 @@ def _register_policy_routes(
         _require_session(sessions, ml_session)
         profile = notebook.active()
         return _PolicyProfileResponse(
-            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data())
+            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data()),
+            rich_qualification=[_RICH_QUALIFICATION_ADAPTER.validate_python(item) for item in notebook.rich_qualification(profile)],
         )
 
     @app.get("/api/v1/metadata-policy/shadow", response_model=_ShadowPostureResponse, responses={status: {"model": _ErrorResponse} for status in (401, 503)})
@@ -1129,7 +1221,8 @@ def _register_policy_routes(
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None
         return _PolicyProfileResponse(
-            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data())
+            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data()),
+            rich_qualification=[_RICH_QUALIFICATION_ADAPTER.validate_python(item) for item in notebook.rich_qualification(profile)],
         )
 
     @app.get("/api/v1/metadata-policy/drafts/{policy_id}", response_model=_PolicyProfileResponse, responses={status: {"model": _ErrorResponse} for status in (401, 404, 422, 503)})
@@ -1140,7 +1233,8 @@ def _register_policy_routes(
         except MetadataPolicyApplicationError:
             raise HTTPException(404, detail={"code": "unavailable"}) from None
         return _PolicyProfileResponse(
-            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data())
+            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data()),
+            rich_qualification=[_RICH_QUALIFICATION_ADAPTER.validate_python(item) for item in notebook.rich_qualification(profile)],
         )
 
     @app.post("/api/v1/metadata-policy/preview", response_model=_PolicyPreviewResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
@@ -1154,7 +1248,7 @@ def _register_policy_routes(
             raise HTTPException(422, detail={"code": _policy_problem(error)}) from None
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None
-        return _PolicyPreviewResponse(policy_id=profile.policy_id, libraries=[_PolicyImpactResponse(affected_categories=list(item.affected_categories), current_unapplied_count=item.current_unapplied_count, library=item.library, resolved_policy_id=item.resolved_policy_id) for item in preview.libraries])
+        return _PolicyPreviewResponse(policy_id=profile.policy_id, rich_qualification=[_RICH_QUALIFICATION_ADAPTER.validate_python(item) for item in notebook.rich_qualification(profile)], libraries=[_PolicyImpactResponse(affected_categories=list(item.affected_categories), cases=[_RichCasePreviewResponse.model_validate(case.to_data()) for case in item.cases], cases_total=item.cases_total, cases_truncated=item.cases_truncated, current_unapplied_count=item.current_unapplied_count, library=item.library, resolved_policy_id=item.resolved_policy_id) for item in preview.libraries])
 
     @app.post("/api/v1/metadata-policy/activate", response_model=_PolicyActivationResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 413, 422, 503)})
     def activate_metadata_policy(payload: _PolicyActivationRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyActivationResponse:

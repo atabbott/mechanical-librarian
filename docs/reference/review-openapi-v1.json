@@ -404,6 +404,48 @@
         "title": "_ActivitySuspension",
         "type": "object"
       },
+      "_AsinQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "insufficient_coverage",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "asin",
+            "title": "Field",
+            "type": "string"
+          },
+          "option": {
+            "enum": [
+              "preserve_exact",
+              "ebook_manifestation"
+            ],
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "automatic_available",
+          "candidate_sha256",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_AsinQualification",
+        "type": "object"
+      },
       "_AttentionItem": {
         "additionalProperties": false,
         "properties": {
@@ -900,6 +942,48 @@
         "title": "_DecisionRequest",
         "type": "object"
       },
+      "_DescriptionQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "insufficient_coverage",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "description_fill",
+            "title": "Field",
+            "type": "string"
+          },
+          "option": {
+            "enum": [
+              "safe_plain_text",
+              "google_visible_text"
+            ],
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "automatic_available",
+          "candidate_sha256",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_DescriptionQualification",
+        "type": "object"
+      },
       "_ErrorCode": {
         "additionalProperties": false,
         "properties": {
@@ -1022,6 +1106,88 @@
           "schema_version"
         ],
         "title": "_EvidenceResponse",
+        "type": "object"
+      },
+      "_ExplicitQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "passing_human_only",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "explicit",
+            "title": "Field",
+            "type": "string"
+          },
+          "option": {
+            "const": "unsupported",
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "automatic_available",
+          "candidate_sha256",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_ExplicitQualification",
+        "type": "object"
+      },
+      "_GenresQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "insufficient_coverage",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "genres",
+            "title": "Field",
+            "type": "string"
+          },
+          "option": {
+            "enum": [
+              "fill_empty",
+              "add",
+              "replace"
+            ],
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "automatic_available",
+          "candidate_sha256",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_GenresQualification",
         "type": "object"
       },
       "_HistoryAutomaticItem": {
@@ -1278,6 +1444,48 @@
           "transition_id"
         ],
         "title": "_HistoryTransitionItem",
+        "type": "object"
+      },
+      "_IsbnQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "insufficient_coverage",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "isbn_form",
+            "title": "Field",
+            "type": "string"
+          },
+          "option": {
+            "enum": [
+              "preserve_exact",
+              "prefer_isbn13"
+            ],
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "automatic_available",
+          "candidate_sha256",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_IsbnQualification",
         "type": "object"
       },
       "_LibraryResponse": {
@@ -1572,8 +1780,8 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "metadata-policy-profile-v1",
-            "default": "metadata-policy-profile-v1",
+            "const": "metadata-policy-profile-v2",
+            "default": "metadata-policy-profile-v2",
             "title": "Schema Version",
             "type": "string"
           }
@@ -1594,6 +1802,21 @@
             "title": "Affected Categories",
             "type": "array"
           },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/_RichCasePreviewResponse"
+            },
+            "title": "Cases",
+            "type": "array"
+          },
+          "cases_total": {
+            "title": "Cases Total",
+            "type": "integer"
+          },
+          "cases_truncated": {
+            "title": "Cases Truncated",
+            "type": "boolean"
+          },
           "current_unapplied_count": {
             "title": "Current Unapplied Count",
             "type": "integer"
@@ -1609,6 +1832,9 @@
         },
         "required": [
           "affected_categories",
+          "cases",
+          "cases_total",
+          "cases_truncated",
           "current_unapplied_count",
           "library",
           "resolved_policy_id"
@@ -1630,6 +1856,41 @@
             "title": "Policy Id",
             "type": "string"
           },
+          "rich_qualification": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/_SubtitleQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_SeriesQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_GenresQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_TagsOffQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_TagsQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_DescriptionQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_IsbnQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_AsinQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_ExplicitQualification"
+                }
+              ]
+            },
+            "title": "Rich Qualification",
+            "type": "array"
+          },
           "schema_version": {
             "const": "metadata-policy-preview-v1",
             "default": "metadata-policy-preview-v1",
@@ -1639,7 +1900,8 @@
         },
         "required": [
           "libraries",
-          "policy_id"
+          "policy_id",
+          "rich_qualification"
         ],
         "title": "_PolicyPreviewResponse",
         "type": "object"
@@ -1670,7 +1932,7 @@
             "type": "object"
           },
           "schema_version": {
-            "const": "metadata-policy-profile-v1",
+            "const": "metadata-policy-profile-v2",
             "title": "Schema Version",
             "type": "string"
           }
@@ -1694,6 +1956,41 @@
           "profile": {
             "$ref": "#/components/schemas/_PolicyProfile"
           },
+          "rich_qualification": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/_SubtitleQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_SeriesQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_GenresQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_TagsOffQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_TagsQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_DescriptionQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_IsbnQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_AsinQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_ExplicitQualification"
+                }
+              ]
+            },
+            "title": "Rich Qualification",
+            "type": "array"
+          },
           "schema_version": {
             "const": "metadata-policy-notebook-v1",
             "default": "metadata-policy-notebook-v1",
@@ -1703,7 +2000,8 @@
         },
         "required": [
           "policy_id",
-          "profile"
+          "profile",
+          "rich_qualification"
         ],
         "title": "_PolicyProfileResponse",
         "type": "object"
@@ -2039,6 +2337,151 @@
           "uncertainty"
         ],
         "title": "_ReviewField",
+        "type": "object"
+      },
+      "_RichCasePreviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/_RichFieldPreviewResponse"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "proposal_set_id": {
+            "title": "Proposal Set Id",
+            "type": "string"
+          },
+          "report_id": {
+            "title": "Report Id",
+            "type": "string"
+          },
+          "resolved_policy_id": {
+            "title": "Resolved Policy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fields",
+          "proposal_set_id",
+          "report_id",
+          "resolved_policy_id"
+        ],
+        "title": "_RichCasePreviewResponse",
+        "type": "object"
+      },
+      "_RichFieldPreviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "current_value": {
+            "title": "Current Value"
+          },
+          "desired_value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Desired Value"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "narrowed_for_target": {
+            "title": "Narrowed For Target",
+            "type": "boolean"
+          },
+          "option": {
+            "title": "Option",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "qualified_value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qualified Value"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "target_state": {
+            "title": "Target State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_value",
+          "desired_value",
+          "field",
+          "narrowed_for_target",
+          "option",
+          "outcome",
+          "qualified_value",
+          "reason",
+          "target_state"
+        ],
+        "title": "_RichFieldPreviewResponse",
+        "type": "object"
+      },
+      "_SeriesQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "insufficient_coverage",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "series",
+            "title": "Field",
+            "type": "string"
+          },
+          "option": {
+            "enum": [
+              "primary_narrative",
+              "source_order",
+              "all_qualified"
+            ],
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "automatic_available",
+          "candidate_sha256",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_SeriesQualification",
         "type": "object"
       },
       "_SeriesValue": {
@@ -2474,6 +2917,48 @@
         "title": "_ShadowSampleResponse",
         "type": "object"
       },
+      "_SubtitleQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "insufficient_coverage",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "subtitle",
+            "title": "Field",
+            "type": "string"
+          },
+          "option": {
+            "enum": [
+              "fill_empty",
+              "corroborated_split"
+            ],
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "automatic_available",
+          "candidate_sha256",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_SubtitleQualification",
+        "type": "object"
+      },
       "_SupportPreviewResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2505,6 +2990,88 @@
           "schema_version"
         ],
         "title": "_SupportPreviewResponse",
+        "type": "object"
+      },
+      "_TagsOffQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "policy_only",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "tags",
+            "title": "Field",
+            "type": "string"
+          },
+          "option": {
+            "const": "off",
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "automatic_available",
+          "candidate_sha256",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_TagsOffQualification",
+        "type": "object"
+      },
+      "_TagsQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "insufficient_coverage",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "tags",
+            "title": "Field",
+            "type": "string"
+          },
+          "option": {
+            "enum": [
+              "fill_empty",
+              "add",
+              "replace"
+            ],
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "automatic_available",
+          "candidate_sha256",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_TagsQualification",
         "type": "object"
       },
       "_TargetField": {

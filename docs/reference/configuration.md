@@ -94,6 +94,37 @@ me or Ignore. The application never rewrites this configuration. `automatic`
 is accepted only for the closed qualified category/option matrix and produces
 decision-only authority after the owner explicitly confirms an exact Preview;
 all other automatic intent is rejected. `explicit` is always `unsupported`.
+The v2 rich-field choices are manual-preview-only and exact:
+
+- `subtitle`: `fill_empty` (default) or `corroborated_split`;
+- `series`: `primary_narrative` (default), `source_order`, or `all_qualified`;
+- `genres`: `fill_empty` (default), `add`, or `replace`;
+- `tags`: `off` (default), `fill_empty`, `add`, or `replace`;
+- `description_fill`: `safe_plain_text` (default) or
+  `google_visible_text`;
+- `isbn_form`: `preserve_exact` (default) or `prefer_isbn13`;
+- `asin`: `preserve_exact` (default) or `ebook_manifestation`;
+- `explicit`: `unsupported` only.
+
+List Add retains current target order and appends absent values from one exact
+qualified source list; Replace uses one exact list and never combines
+providers. Description normalization requires the retained Google Books
+visible-text transformation evidence. Identifier preferences select only an
+already admitted exact manifestation value and never convert or infer one.
+Series retains every qualified membership in the product result while the
+Audiobookshelf projection selects at most its first membership. These choices
+create no automatic or write authority.
+
+Corroborated subtitle splitting is atomic and accepts only an already admitted
+title/subtitle pair when the current title is their exact concatenation with
+one of `: `, ` — `, ` – `, or ` - `. It never performs a general punctuation
+or free-text split.
+
+`mechanical-librarian policy-preview --config CONFIG --database DATABASE
+--profile PROFILE` reads an existing exact-current database and prints the same
+canonical preview returned by the API. It creates no database, draft,
+activation, decision, or target effect. Its output includes private current and
+desired metadata values and should be protected like the application database.
 
 Activation resolves every configured library override against the exact
 immutable draft and persists that canonical resolved document with the new

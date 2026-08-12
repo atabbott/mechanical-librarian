@@ -134,6 +134,26 @@ no-store, and covered by the same restrictive CSP. Creating, reading,
 validating, or previewing a draft cannot activate a policy, create a successor
 or queue item, record a decision, or write metadata.
 
+Rich-field impact preview reads at most 20 exact-current lineage pairs per
+library and re-evaluates each immutable report with the existing pure proposal
+compiler under the draft's resolved identity. The field compiler accepts only
+already admitted typed alternatives and exact retained evidence references;
+Google description transformation, accepted ISBN relation, and ebook ASIN
+applicability are checked without parsing, conversion, inference, provider
+access, or target access. Every new Automatic choice returns a closed
+unqualified abstention. The CLI uses the same application path against an
+existing database and creates no file or SQLite state.
+
+The F20 rich-metadata qualification candidate is aggregate-only and currently
+names no automatic option. The runtime pins its public candidate digest and
+closed per-option terminal disposition before validation or presentation;
+`insufficient_coverage` cannot be used as fallback authority,
+`tags:off` remains policy-only, and human-only `explicit:unsupported` cannot
+construct an effect. The existing F19a digest and sealed six automatic
+destinations remain the sole automatic authority. A later activation may
+consume only an exact passing manifest through its separately reviewed
+authority path.
+
 Activation is a separate authenticated CSRF-protected owner mutation with the
 same 16 KiB pre-parse request bound as policy drafts. It binds
 the expected active identity and exact immutable draft, revalidates qualified
@@ -515,14 +535,18 @@ supplied images. Producer and admission use that same semantic validator.
 Packet preparation first verifies each exact report-bound source digest and
 bounded PNG framing, discards all ancillary/profile chunks, decodes one RGBA
 frame, and deterministically re-encodes the exact pixels into a metadata-free
-derived transport. The candidate keeps the source reference/digest bindings
+derived transport. The encoder is platform-independent: it writes filter byte
+zero for every row, one zlib stream of fixed uncompressed DEFLATE blocks no
+larger than 65,535 bytes, and explicit Adler-32 and PNG CRC values. It does not
+delegate PNG serialization or compression decisions to Pillow, libpng, or the
+platform zlib build; Pillow remains the bounded decoder. The candidate keeps the source reference/digest bindings
 separate from the derived transport reference/digest. Admission checks the
 complete bounded, canonically ordered derived PNG chunk structure and checksums,
 fully decodes it, re-encodes it, and requires byte equality before mounting,
 admitting only
 single-frame RGBA PNG previews no larger than 320 by 480 whose decoded and
 declared preview dimensions agree. Its closed profile accepts only exact IHDR,
-one consecutive IDAT run containing exactly one completed zlib stream with no
+one IDAT containing exactly one completed zlib stream with no
 trailing bytes, and final IEND. ICC profiles, PLTE, and every other
 ancillary or unknown chunk is absent from the derived transport; those source
 bytes cannot cross the reviewer boundary. Original-cover technical dimensions

@@ -232,50 +232,17 @@ def _packet_case(count: int = 2):
     return packet, images
 
 
-def _source_reader(
-    report_document: str,
-    packet_document: str,
-    images: tuple[tuple[str, str, bytes], ...],
-):
-    report = MetadataReport.from_json(report_document)
-    packet = json.loads(packet_document)
-    image_by_reference = {
-        reference: payload for reference, _digest, payload in images
-    }
-    payload_by_source_reference = {
-        binding["reference"]: image_by_reference[candidate["transport_reference"]]
-        for candidate in packet["candidates"]
-        for binding in candidate["source_bindings"]
-    }
-    payload_by_artifact = {
-        (source.artifact.artifact_id, source.artifact.preview_variant):
-        payload_by_source_reference[
-            packet_builder.cover_source_reference(report.report_id, source.source_id)
-        ]
-        for source in report.cover_sources
-        if (
-            source.artifact is not None
-            and packet_builder.cover_source_reference(report.report_id, source.source_id)
-            in payload_by_source_reference
-        )
-    }
-
-    def read_preview(artifact_id: str, variant: str) -> bytes:
-        return payload_by_artifact[(artifact_id, variant)]
-
-    return read_preview
-
-
 def _classify_identity(
     report_document: str,
     packet_document: str,
     images: tuple[tuple[str, str, bytes], ...],
+    read_preview,
 ):
     return classify_cover_identity(
         report_document,
         packet_document,
         images,
-        read_preview=_source_reader(report_document, packet_document, images),
+        read_preview=read_preview,
     )
 
 
@@ -341,10 +308,16 @@ def _group_candidate(
     preview_width: int = 1,
     preview_height: int = 1,
 ):
-    payload = _preview(
+    source_payload = _preview(
         index, size=size, width=preview_width, height=preview_height
     )
-    first = _source(index, payload, embedded=True)
+    first = _source(index, source_payload, embedded=True)
+    source_digest = hashlib.sha256(source_payload).hexdigest()
+    payload = source_payload
+    if size is None:
+        payload = packet_builder.normalize_cover_preview(
+            source_payload, source_sha256=source_digest
+        ).payload
     sources = [first]
     references = ["cover_ref_" + f"{index * 10:064x}"]
     for member in range(1, duplicates):
@@ -358,7 +331,7 @@ def _group_candidate(
     return packet_builder._Candidate(
         reference=references[0],
         digest=hashlib.sha256(payload).hexdigest(),
-        source_digest=hashlib.sha256(payload).hexdigest(),
+        source_digest=source_digest,
         payload=payload,
         width=width,
         height=height,
@@ -439,6 +412,77 @@ def _observer_result(
 
 
 class CoverPacketTests(unittest.TestCase):
+    def test_normalized_transport_has_platform_independent_exact_bytes(self) -> None:
+        source = io.BytesIO()
+        Image.new("RGBA", (1, 1), (1, 2, 3, 4)).save(source, "PNG")
+        source_payload = source.getvalue()
+
+        normalized = packet_builder.normalize_cover_preview(
+            source_payload,
+            source_sha256=hashlib.sha256(source_payload).hexdigest(),
+        )
+
+        expected = bytes.fromhex(
+            "89504e470d0a1a0a0000000d494844520000000100000001"
+            "08060000001f15c48900000010494441547801010500faff"
+            "00010203040019000bb9b0e3eb0000000049454e44ae426082"
+        )
+        self.assertEqual(normalized.payload, expected)
+        self.assertEqual(
+            normalized.digest,
+            "ade26d473c75b874b4db5ffbf620097659fce1ceae14797efe22dc2e3729e829",
+        )
+        self.assertEqual((normalized.width, normalized.height), (1, 1))
+        with Image.open(io.BytesIO(normalized.payload)) as decoded:
+            self.assertEqual(decoded.tobytes(), b"\x01\x02\x03\x04")
+
+    def test_normalized_transport_uses_fixed_stored_blocks_across_rows(self) -> None:
+        source = io.BytesIO()
+        Image.new("RGBA", (100, 200), (5, 10, 15, 20)).save(source, "PNG")
+        source_payload = source.getvalue()
+
+        normalized = packet_builder.normalize_cover_preview(
+            source_payload,
+            source_sha256=hashlib.sha256(source_payload).hexdigest(),
+        )
+
+        self.assertEqual(len(normalized.payload), 80_273)
+        self.assertEqual(
+            normalized.digest,
+            "6edd73f4fa023d64ab145abb3b0170c49f08db1d7ee18aefcfa7d40d8401e928",
+        )
+        idat_length = struct.unpack(">I", normalized.payload[33:37])[0]
+        self.assertEqual(normalized.payload[37:41], b"IDAT")
+        compressed = normalized.payload[41:41 + idat_length]
+        self.assertEqual(compressed[:7], b"\x78\x01\x00\xff\xff\x00\x00")
+        self.assertEqual(
+            compressed[2 + 5 + 65_535:2 + 5 + 65_535 + 5],
+            b"\x01\x49\x39\xb6\xc6",
+        )
+        scanlines = zlib.decompress(compressed)
+        self.assertEqual(len(scanlines), 80_200)
+        for offset in range(0, len(scanlines), 401):
+            self.assertEqual(scanlines[offset], 0)
+            self.assertEqual(
+                scanlines[offset + 1:offset + 401],
+                bytes((5, 10, 15, 20)) * 100,
+            )
+
+        largest_source = io.BytesIO()
+        Image.new("RGBA", (320, 480), (5, 10, 15, 20)).save(
+            largest_source, "PNG"
+        )
+        largest_payload = largest_source.getvalue()
+        largest = packet_builder.normalize_cover_preview(
+            largest_payload,
+            source_sha256=hashlib.sha256(largest_payload).hexdigest(),
+        )
+        self.assertEqual(len(largest.payload), 614_993)
+        self.assertLessEqual(
+            len(largest.payload) * MAX_COVER_PREVIEWS,
+            packet_builder.MAX_COVER_PACKET_BYTES,
+        )
+
     def test_iccp_preview_is_normalized_for_transport(self) -> None:
         profile = ImageCms.ImageCmsProfile(
             ImageCms.createProfile("sRGB")
@@ -642,11 +686,11 @@ class CoverPacketTests(unittest.TestCase):
                 )
 
     def test_admission_fully_decodes_exact_rgba_png_preview(self) -> None:
-        packet, _ = _packet_case(1)
+        packet, packet_images = _packet_case(1)
         original = json.loads(packet.document)
         reference = original["candidates"][0]["reference"]
         schema = '{"additionalProperties":false,"properties":{},"type":"object"}'
-        valid = _preview(1)
+        valid = packet_images[0][2]
 
         def bound(
             payload: bytes, *, preview_width: int = 1, preview_height: int = 1
@@ -776,6 +820,7 @@ class CoverPacketTests(unittest.TestCase):
         valid_icc = _preview(1, icc_profile=icc_profile)
 
         malformed = {
+            "animated": _animated_preview(),
             "forged_signature": b"\x89PNG\r\n\x1a\nforged",
             "truncated": valid[:-4],
             "corrupt_crc": valid[:29] + bytes([valid[29] ^ 1]) + valid[30:],
@@ -920,10 +965,14 @@ class CoverPacketTests(unittest.TestCase):
             index: int,
             members: tuple[tuple[CoverSourceKind, CoverDesignation | None], ...],
         ) -> packet_builder._Candidate:
-            payload = _preview(index)
+            source_payload = _preview(index)
+            source_digest = hashlib.sha256(source_payload).hexdigest()
+            payload = packet_builder.normalize_cover_preview(
+                source_payload, source_sha256=source_digest
+            ).payload
             artifact = CoverArtifact.create(
                 f"diversity-original-{index}".encode(),
-                payload,
+                source_payload,
                 "image/png",
                 1000,
                 1000,
@@ -954,7 +1003,7 @@ class CoverPacketTests(unittest.TestCase):
             return packet_builder._Candidate(
                 reference=references[0],
                 digest=hashlib.sha256(payload).hexdigest(),
-                source_digest=hashlib.sha256(payload).hexdigest(),
+                source_digest=source_digest,
                 payload=payload,
                 width=1000,
                 height=1000,
@@ -1681,7 +1730,7 @@ class CoverIdentityTests(unittest.TestCase):
         provider_creators: tuple[str, ...],
         lane_kind: ProviderQueryKind | None = ProviderQueryKind.ISBN,
         unrelated_isbn_mapping: bool = False,
-    ) -> tuple[str, str, tuple[tuple[str, str, bytes], ...]]:
+    ) -> tuple[str, str, tuple[tuple[str, str, bytes], ...], bytes]:
         payload = _preview(33)
         source = _source(3, payload)
         local_claims = (
@@ -1820,7 +1869,7 @@ class CoverIdentityTests(unittest.TestCase):
         images = tuple(
             (item.reference, item.digest, item.payload) for item in packet.images
         )
-        return report.to_json(), packet.document, images
+        return report.to_json(), packet.document, images, payload
 
     def test_typed_discovery_creator_evidence_uses_any_agreement_over_pairwise_noise(self) -> None:
         for local_creators, provider_creators, expected in (
@@ -1830,11 +1879,15 @@ class CoverIdentityTests(unittest.TestCase):
             (("Ada Author",), (), "plausible_match"),
         ):
             with self.subTest(local_creators=local_creators, provider_creators=provider_creators):
-                report, packet, images = self._typed_discovery_identity_case(
+                report, packet, images, payload = self._typed_discovery_identity_case(
                     local_creators=local_creators,
                     provider_creators=provider_creators,
                 )
-                result = json.loads(_classify_identity(report, packet, images).document)
+                result = json.loads(
+                    _classify_identity(
+                        report, packet, images, lambda *_: payload
+                    ).document
+                )
                 self.assertEqual(result["candidates"][0]["outcome"], expected)
 
     def test_typed_lane_mapping_requires_the_matched_candidate_in_an_isbn_lane(self) -> None:
@@ -1849,14 +1902,16 @@ class CoverIdentityTests(unittest.TestCase):
                 lane_kind=lane_kind,
                 unrelated_isbn_mapping=unrelated_isbn_mapping,
             ):
-                report, packet, images = self._typed_discovery_identity_case(
+                report, packet, images, payload = self._typed_discovery_identity_case(
                     local_creators=(),
                     provider_creators=(),
                     lane_kind=lane_kind,
                     unrelated_isbn_mapping=unrelated_isbn_mapping,
                 )
                 value = json.loads(
-                    _classify_identity(report, packet, images).document
+                    _classify_identity(
+                        report, packet, images, lambda *_: payload
+                    ).document
                 )
                 self.assertEqual(value["candidates"][0]["outcome"], expected)
 
@@ -2254,12 +2309,31 @@ class CoverIdentityTests(unittest.TestCase):
             )
 
     def test_report_binds_exact_packet_candidates_and_emits_only_opaque_references(self) -> None:
-        packet, images = _packet_case()
-        report_document = _report(tuple(_source(index, _preview(index)) for index in range(1, 3))).to_json()
+        payloads = tuple(_preview(index) for index in range(1, 3))
+        sources = tuple(
+            _source(index, payload)
+            for index, payload in enumerate(payloads, start=1)
+        )
+        report_document = _report(sources).to_json()
         report = MetadataReport.from_json(report_document)
+        by_artifact = {
+            source.artifact.artifact_id: payload
+            for source, payload in zip(sources, payloads, strict=True)
+            if source.artifact is not None
+        }
+        packet = prepare_cover_packet(
+            report_document, lambda artifact, _variant: by_artifact[artifact]
+        )
+        images = tuple(
+            (item.reference, item.digest, item.payload)
+            for item in packet.images
+        )
         with mock.patch("mechanical_librarian_workbench.cover_identity.MetadataReport.from_json", return_value=report):
             document = _classify_identity(
-                report_document, packet.document, images
+                report_document,
+                packet.document,
+                images,
+                lambda artifact, _variant: by_artifact[artifact],
             ).document
         value = json.loads(document)
         self.assertEqual(value["schema_version"], SCHEMA_VERSION)
@@ -2288,7 +2362,10 @@ class CoverIdentityTests(unittest.TestCase):
         )
         epub_document = json.loads(
             _classify_identity(
-                epub_report.to_json(), epub_packet.document, epub_images
+                epub_report.to_json(),
+                epub_packet.document,
+                epub_images,
+                lambda *_: epub_payload,
             ).document
         )
         self.assertEqual(
@@ -2438,6 +2515,7 @@ def _policy_documents(count: int = 3):
         identity,
         observation,
         references,
+        lambda artifact, _variant: by_artifact[artifact],
     )
 
 
@@ -2450,7 +2528,15 @@ class CoverPolicyTests(unittest.TestCase):
         observation_mutation: object | None = None,
         observation_available: bool = True,
     ) -> dict[str, object]:
-        report_document, packet, images, identity, observation, _references = (
+        (
+            report_document,
+            packet,
+            images,
+            identity,
+            observation,
+            _references,
+            read_preview,
+        ) = (
             _policy_documents()
         )
         if identity_mutation is not None:
@@ -2469,9 +2555,7 @@ class CoverPolicyTests(unittest.TestCase):
                 images,
                 canonical_json(observation) if observation_available else None,
                 policy,
-                read_preview=_source_reader(
-                    report_document, packet.document, images
-                ),
+                read_preview=read_preview,
             )
         return json.loads(result.document)
 
@@ -2679,7 +2763,15 @@ class CoverPolicyTests(unittest.TestCase):
         self.assertIsNone(report["recommended_candidate_reference"])
 
     def test_identity_is_recomputed_from_exact_report_evidence(self) -> None:
-        report_document, packet, images, _identity, observation, _references = (
+        (
+            report_document,
+            packet,
+            images,
+            _identity,
+            observation,
+            _references,
+            read_preview,
+        ) = (
             _policy_documents()
         )
         report = json.loads(
@@ -2689,9 +2781,7 @@ class CoverPolicyTests(unittest.TestCase):
                 images,
                 canonical_json(observation),
                 CoverPolicy(),
-                read_preview=_source_reader(
-                    report_document, packet.document, images
-                ),
+                read_preview=read_preview,
             ).document
         )
         self.assertEqual(report["status"], "abstained")
@@ -2720,7 +2810,15 @@ class CoverPolicyTests(unittest.TestCase):
         )
         for index, mutation in enumerate(mutations):
             with self.subTest(index=index):
-                report_document, packet, images, identity, observation, _references = (
+                (
+                    report_document,
+                    packet,
+                    images,
+                    identity,
+                    observation,
+                    _references,
+                    read_preview,
+                ) = (
                     _policy_documents()
                 )
                 mutation(observation)
@@ -2735,9 +2833,7 @@ class CoverPolicyTests(unittest.TestCase):
                             images,
                             canonical_json(observation),
                             CoverPolicy(),
-                            read_preview=_source_reader(
-                                report_document, packet.document, images
-                            ),
+                            read_preview=read_preview,
                         )
 
 

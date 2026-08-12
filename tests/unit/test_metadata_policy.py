@@ -123,6 +123,86 @@ class MetadataPolicyTests(unittest.TestCase):
             preview.libraries[1].affected_categories,
         )
 
+    def test_preview_uses_bounded_exact_current_pairs_without_effects(self) -> None:
+        from mechanical_librarian.domain.proposal_set import evaluate_report
+        from tests.unit.test_proposal_set import _report
+
+        report = _report()
+        proposal = evaluate_report(report)
+        options = dict(MetadataPolicyProfile.builtin().options)
+        options["tags"] = "fill_empty"
+        draft = MetadataPolicyProfile.create(
+            "Changed draft", options,
+            dict(MetadataPolicyProfile.builtin().destinations),
+        )
+        class Repository:
+            def current_unapplied_count(self, library: str) -> int: return 1
+            def current_policy_impact_pairs(self, library: str, limit: int):
+                self.limit = limit
+                return (1, ((report, proposal),))
+        repository = Repository()
+        preview = preview_policy(
+            draft, (report.target.library,), {}, repository
+        )
+        self.assertEqual(20, repository.limit)
+        self.assertEqual(1, preview.libraries[0].cases_total)
+        self.assertEqual(8, len(preview.libraries[0].cases[0].fields))
+        self.assertNotEqual(
+            proposal.resolved_policy_id,
+            preview.libraries[0].cases[0].resolved_policy_id,
+        )
+
+    def test_preview_caps_cases_across_libraries_and_uses_pair_snapshot_counts(self) -> None:
+        from mechanical_librarian.domain.metadata_report import MetadataReport, TargetFacts
+        from mechanical_librarian.domain.proposal_set import evaluate_report
+        from tests.unit.test_proposal_set import _report
+
+        source = _report()
+
+        def pair_for(library: str):
+            report = MetadataReport.create(
+                target=TargetFacts(
+                    source.target.connection, library, source.target.item,
+                    source.target.fields,
+                ),
+                file=source.file,
+                local_claims=source.local_claims,
+                local_reasons=source.local_reasons,
+                providers=source.providers,
+                cover_sources=source.cover_sources,
+            )
+            return report, evaluate_report(report)
+
+        first = pair_for("first")
+        second = pair_for("second")
+
+        class Repository:
+            def current_unapplied_count(self, library: str) -> int:
+                return 999
+
+            def current_policy_impact_pairs(self, library: str, limit: int):
+                total, pair = {"first": (15, first), "second": (15, second)}[library]
+                return total, (pair,) * min(limit, total)
+
+        options = dict(MetadataPolicyProfile.builtin().options)
+        options["tags"] = "fill_empty"
+        draft = MetadataPolicyProfile.create(
+            "Global bounded preview", options,
+            dict(MetadataPolicyProfile.builtin().destinations),
+        )
+        preview = preview_policy(draft, ("first", "second"), {}, Repository())
+        first_impact, second_impact = preview.libraries
+        self.assertEqual(20, sum(len(impact.cases) for impact in preview.libraries))
+        self.assertEqual((15, False, 15), (
+            first_impact.cases_total, first_impact.cases_truncated,
+            first_impact.current_unapplied_count,
+        ))
+        self.assertEqual((15, True, 15), (
+            second_impact.cases_total, second_impact.cases_truncated,
+            second_impact.current_unapplied_count,
+        ))
+        self.assertEqual((15, 5), (len(first_impact.cases), len(second_impact.cases)))
+
     def test_proposal_binding_is_exact_and_does_not_change_the_profile(self) -> None:
         profile = MetadataPolicyProfile.builtin()
         resolved = resolve_policy(profile, "library")

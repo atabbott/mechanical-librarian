@@ -1553,9 +1553,63 @@ def run_review_server(
             raise
 
 
+def run_policy_preview(
+    config_path: Path, database_path: Path, document: dict[str, object]
+) -> dict[str, object]:
+    """Compose the existing read-only policy notebook for one CLI preview."""
+    from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
+
+    configuration = load_configuration_file(config_path)
+    repository = open_shadow_preview_repository(database_path)
+    try:
+        application = compose_review_application(
+            state_owner=repository,
+            session_store=repository,
+            case_store=repository,
+            decision_store=repository,
+            library_store=repository,
+            policy_store=repository,
+            verify_password=lambda _: False,
+            clock=lambda: int(time.time()),
+            session_lifetime_seconds=1,
+            graceful_shutdown_seconds=1,
+            close_state_owner=False,
+            policy_libraries=tuple(
+                (library.name, library.policy_override)
+                for library in getattr(configuration, "libraries", ())
+            ),
+        )
+        profile = MetadataPolicyProfile.from_data(document)
+        _, preview = application.preview_policy(
+            profile.name, dict(profile.options), dict(profile.destinations)
+        )
+        return {
+            "libraries": [
+                {
+                    "affected_categories": list(item.affected_categories),
+                    "cases": [case.to_data() for case in item.cases],
+                    "cases_total": item.cases_total,
+                    "cases_truncated": item.cases_truncated,
+                    "current_unapplied_count": item.current_unapplied_count,
+                    "library": item.library,
+                    "resolved_policy_id": item.resolved_policy_id,
+                }
+                for item in preview.libraries
+            ],
+            "policy_id": profile.policy_id,
+            "rich_qualification": list(application.policy.rich_qualification(profile)),
+            "schema_version": "metadata-policy-preview-v1",
+        }
+    finally:
+        repository.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     from mechanical_librarian.interfaces.cli import main as runtime_main
-    return runtime_main(argv, review_serve_runner=run_review_server)
+    return runtime_main(
+        argv, review_serve_runner=run_review_server,
+        policy_preview_runner=run_policy_preview,
+    )
 
 
 __all__ = [

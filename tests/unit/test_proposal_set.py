@@ -51,6 +51,7 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalValue,
     ProposalValueError,
     ProposalValueKind,
+    _ignored_policy_targets,
     evaluate_report,
 )
 
@@ -468,6 +469,22 @@ def _result(proposal_set: ProposalSet, destination: TargetDestination):
 
 
 class ProposalSetTests(unittest.TestCase):
+    def test_shared_title_subtitle_destination_requires_every_owner_to_ignore(self) -> None:
+        from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
+
+        base = dict(MetadataPolicyProfile.builtin().destinations)
+        cases = (
+            ({**base, "title_layout": "ignore", "subtitle": "ask"}, False),
+            ({**base, "title_layout": "ask", "subtitle": "ignore"}, False),
+            ({**base, "title_layout": "ignore", "subtitle": "ignore"}, True),
+        )
+        for destinations, ignored in cases:
+            with self.subTest(destinations=destinations):
+                self.assertEqual(
+                    ignored,
+                    TargetDestination.SUBTITLE
+                    in _ignored_policy_targets(destinations),
+                )
     def test_exact_sixteen_results_are_deterministic_and_round_trip(self) -> None:
         proposal_set = evaluate_report(_report())
         self.assertEqual(tuple(TargetDestination), tuple(

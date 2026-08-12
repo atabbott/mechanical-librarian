@@ -1,0 +1,476 @@
+"""Read-only projections of admitted rich metadata proposals.
+
+This module does not admit new evidence or schedule effects. It turns one exact
+report/proposal pair into a bounded explanation of the owner policy, with only
+the option-specific retained-evidence checks needed for manual preview.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import re
+from typing import Final
+
+from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind, ClaimScope, IdentifierRelation, MetadataReport,
+    ProviderClaim, ProviderEvidenceKind, TargetDestination, TargetField,
+    TargetFieldState,
+)
+from mechanical_librarian.domain.proposal_set import (
+    BibliographicSelectionKind, ProposalAlternative, ProposalAssessment,
+    ProposalOutcome, ProposalResult, ProposalSet, ProposalValueKind,
+)
+
+
+_DESTINATIONS: Final = {
+    "subtitle": TargetDestination.SUBTITLE,
+    "series": TargetDestination.SERIES,
+    "genres": TargetDestination.GENRES,
+    "tags": TargetDestination.TAGS,
+    "description_fill": TargetDestination.DESCRIPTION,
+    "isbn_form": TargetDestination.ISBN,
+    "asin": TargetDestination.ASIN,
+    "explicit": TargetDestination.EXPLICIT,
+}
+_EMPTY: Final = frozenset({TargetFieldState.MISSING, TargetFieldState.NULL, TargetFieldState.EMPTY})
+_ISBN13: Final = re.compile(r"^97[89][0-9]{10}$")
+_SUBTITLE_SEPARATORS: Final = (": ", " — ", " – ", " - ")
+
+
+class RichMetadataPreviewError(ValueError):
+    """The exact immutable preview inputs do not belong together."""
+
+
+@dataclass(frozen=True, slots=True)
+class _RetainedClaim:
+    claim: object
+    provider: object | None
+    candidate: object | None
+
+
+def _retained_claims(report: MetadataReport) -> dict[str, _RetainedClaim]:
+    """Index only evidence retained by this exact report; opaque IDs never infer."""
+    values: dict[str, _RetainedClaim] = {}
+    for claim in report.local_claims:
+        _remember_claim(values, claim.reference, _RetainedClaim(claim, None, None))
+    for provider in report.providers:
+        for candidate in provider.candidates:
+            for claim in candidate.claims:
+                _remember_claim(values, claim.reference, _RetainedClaim(claim, provider, candidate))
+    return values
+
+
+def _remember_claim(values: dict[str, _RetainedClaim], reference: object, value: _RetainedClaim) -> None:
+    if type(reference) is not str or reference in values:
+        raise RichMetadataPreviewError("rich preview evidence binding is invalid")
+    values[reference] = value
+
+
+@dataclass(frozen=True, slots=True)
+class RichFieldPreview:
+    field: str
+    option: str
+    target_state: str
+    current_value: object
+    outcome: str
+    desired_value: object | None
+    reason: str | None
+    narrowed_for_target: bool = False
+    qualified_value: object | None = None
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "current_value": self.current_value,
+            "desired_value": self.desired_value,
+            "field": self.field,
+            "narrowed_for_target": self.narrowed_for_target,
+            "option": self.option,
+            "outcome": self.outcome,
+            "reason": self.reason,
+            "qualified_value": self.qualified_value,
+            "target_state": self.target_state,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RichMetadataPreview:
+    report_id: str
+    proposal_set_id: str
+    resolved_policy_id: str
+    fields: tuple[RichFieldPreview, ...]
+
+    def to_data(self) -> dict[str, object]:
+        return {"fields": [field.to_data() for field in self.fields], "proposal_set_id": self.proposal_set_id, "report_id": self.report_id, "resolved_policy_id": self.resolved_policy_id}
+
+
+def compile_rich_metadata_preview(policy: ResolvedMetadataPolicy, report: MetadataReport, proposal: ProposalSet) -> RichMetadataPreview:
+    """Compile a no-effect preview from one exact, already-admitted pair."""
+    if (
+        type(policy) is not ResolvedMetadataPolicy
+        or type(report) is not MetadataReport
+        or type(proposal) is not ProposalSet
+        or proposal.report_id != report.report_id
+        or proposal.target_fingerprint != report.target.fingerprint
+        or proposal.resolved_policy_id != policy.resolved_id
+        or policy.library != report.target.library
+    ):
+        raise RichMetadataPreviewError("rich preview binding is invalid")
+    targets = {field.destination: field for field in report.target.fields}
+    results = {result.destination: result for result in proposal.results}
+    options = dict(policy.options)
+    destinations = dict(policy.destinations)
+    retained_claims = _retained_claims(report)
+    previews = tuple(
+        _project(
+            field,
+            options[field],
+            destinations[field],
+            targets[destination],
+            results[destination],
+            proposal,
+            report,
+            retained_claims,
+        )
+        for field, destination in _DESTINATIONS.items()
+    )
+    return RichMetadataPreview(report.report_id, proposal.proposal_set_id, policy.resolved_id, previews)
+
+
+def _project(
+    field: str,
+    option: str,
+    destination: str,
+    target: TargetField,
+    result: ProposalResult,
+    proposal: ProposalSet,
+    report: MetadataReport,
+    retained_claims: dict[str, _RetainedClaim],
+) -> RichFieldPreview:
+    current = _data_value(target.value)
+    if field == "explicit":
+        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "explicit_unsupported")
+    if destination == "ignore":
+        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "policy_ignored")
+    if destination == "automatic":
+        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "automatic_unqualified")
+    if target.state not in _EMPTY and target.state is not TargetFieldState.VALUE:
+        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "target_state_unusable")
+    if field == "tags" and option == "off":
+        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "policy_off")
+    if target.state is TargetFieldState.VALUE and (
+        field in {"subtitle", "description_fill", "isbn_form", "asin"}
+        or (field in {"genres", "tags"} and option == "fill_empty")
+    ):
+        return _preserved(field, option, target, current)
+    if field == "subtitle" and option == "corroborated_split":
+        return _subtitle_bundle(field, option, target, result, proposal, report)
+    if field == "description_fill":
+        return _description(field, option, target, result, retained_claims)
+    if field == "isbn_form":
+        return _isbn(field, option, target, result, report, retained_claims)
+    if field == "asin":
+        return _asin(field, option, target, result, retained_claims)
+    candidate = (
+        _combination_member(proposal, TargetDestination.SERIES)
+        if field == "series" and option == "primary_narrative"
+        else _series_candidate(result)
+        if field == "series"
+        else _one_list_candidate(result)
+        if field in {"genres", "tags"}
+        else _candidate(result)
+    )
+    if candidate is None:
+        reason = _candidate_reason(result)
+        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, reason)
+    desired = _data_value(candidate.value.value)
+    if field in {"genres", "tags"}:
+        if candidate.value.kind is not ProposalValueKind.LIST:
+            return _abstain(field, option, target, current, "no_candidate")
+        if option == "add" and target.state is TargetFieldState.VALUE:
+            desired = tuple((*target.value, *(item for item in candidate.value.value if item not in target.value)))
+        elif option == "fill_empty" and target.state not in _EMPTY:
+            return _preserved(field, option, target, current)
+        elif option not in {"fill_empty", "add", "replace"}:
+            return _abstain(field, option, target, current, "policy_option_unavailable")
+    elif field == "series":
+        if candidate.value.kind is not ProposalValueKind.SERIES:
+            return _abstain(field, option, target, current, "no_candidate")
+        if option == "all_qualified":
+            desired = (candidate.value.value[0],)
+            if _data_value(desired) == current:
+                return RichFieldPreview(field, option, target.state.value, current, "no_op", current, "unchanged")
+            return RichFieldPreview(field, option, target.state.value, current, "projected", _data_value(desired), None, True, _data_value(candidate.value.value))
+        if option == "primary_narrative":
+            member = _combination_member(proposal, TargetDestination.SERIES)
+            if member is None:
+                return _abstain(field, option, target, current, "atomic_bundle_unavailable")
+            desired = (member.value.value[0],)
+        if option in {"source_order", "primary_narrative"}:
+            desired = (candidate.value.value[0],)
+    if _data_value(desired) == current:
+        return RichFieldPreview(field, option, target.state.value, current, "no_op", current, "unchanged")
+    return RichFieldPreview(field, option, target.state.value, current, "projected", _data_value(desired), None)
+
+
+def _candidate(result: ProposalResult) -> ProposalAlternative | None:
+    if (
+        result.outcome is ProposalOutcome.PROPOSE_CHANGE
+        and len(result.alternatives) == 1
+        and result.selected_alternative_id == result.alternatives[0].alternative_id
+        and result.alternatives[0].assessment is not ProposalAssessment.PRESERVES_TARGET
+    ):
+        return result.alternatives[0]
+    return None
+
+
+def _series_candidate(result: ProposalResult) -> ProposalAlternative | None:
+    """Series projection may narrow an admitted target-preserving alternative."""
+    if len(result.alternatives) != 1:
+        return None
+    alternative = result.alternatives[0]
+    if alternative.value.kind is not ProposalValueKind.SERIES:
+        return None
+    if result.outcome is ProposalOutcome.PROPOSE_CHANGE:
+        return _candidate(result)
+    if (
+        result.outcome is ProposalOutcome.KEEP
+        and alternative.assessment is ProposalAssessment.PRESERVES_TARGET
+    ):
+        return alternative
+    return None
+
+
+def _one_list_candidate(result: ProposalResult) -> ProposalAlternative | None:
+    values = tuple(value for value in result.alternatives if value.value.kind is ProposalValueKind.LIST)
+    return values[0] if len(values) == 1 else None
+
+
+def _candidate_reason(result: ProposalResult) -> str:
+    if result.outcome in {ProposalOutcome.UNRESOLVED_CHOICE, ProposalOutcome.ACCEPTABLE_CHOICE} or len(result.alternatives) > 1:
+        return "ambiguous_evidence"
+    return "no_candidate"
+
+
+def _typed_alternatives(
+    result: ProposalResult, kind: ProposalValueKind
+) -> tuple[ProposalAlternative, ...]:
+    return tuple(
+        alternative
+        for alternative in result.alternatives
+        if alternative.value.kind is kind
+        and alternative.assessment is not ProposalAssessment.PRESERVES_TARGET
+    )
+
+
+def _one_typed_candidate(
+    result: ProposalResult, kind: ProposalValueKind
+) -> tuple[ProposalAlternative | None, str | None]:
+    selected = _candidate(result)
+    if selected is not None:
+        return (selected, None) if selected.value.kind is kind else (None, "no_candidate")
+    alternatives = _typed_alternatives(result, kind)
+    if len(alternatives) == 1:
+        return alternatives[0], None
+    return None, "ambiguous_evidence" if len(alternatives) > 1 else "no_candidate"
+
+
+def _description(
+    field: str,
+    option: str,
+    target: TargetField,
+    result: ProposalResult,
+    retained_claims: dict[str, _RetainedClaim],
+) -> RichFieldPreview:
+    candidate, reason = _one_typed_candidate(result, ProposalValueKind.TEXT)
+    if candidate is None:
+        return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
+    if option not in {"safe_plain_text", "google_visible_text"}:
+        return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
+    if option == "google_visible_text" and not candidate.evidence_references:
+        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
+    if option == "google_visible_text" and not any(
+        _google_description_reference(reference, candidate, retained_claims)
+        for reference in candidate.evidence_references
+    ):
+        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
+    desired = _data_value(candidate.value.value)
+    return RichFieldPreview(field, option, target.state.value, _data_value(target.value), "projected", desired, None)
+
+
+def _google_description_reference(
+    reference: str,
+    alternative: ProposalAlternative,
+    retained_claims: dict[str, _RetainedClaim],
+) -> bool:
+    retained = retained_claims.get(reference)
+    return bool(
+        retained is not None
+        and type(retained.claim) is ProviderClaim
+        and retained.claim.kind is ClaimKind.DESCRIPTION
+        and retained.claim.value == alternative.value.value
+        and retained.provider is not None
+        and retained.provider.authority == "google_books"
+        and retained.candidate is not None
+        and any(
+            evidence.kind is ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
+            and evidence.scope is ClaimScope.WORK
+            and evidence.value == "google-books-html-visible-text-v1"
+            for evidence in retained.candidate.evidence
+        )
+    )
+
+
+def _isbn(
+    field: str,
+    option: str,
+    target: TargetField,
+    result: ProposalResult,
+    report: MetadataReport,
+    retained_claims: dict[str, _RetainedClaim],
+) -> RichFieldPreview:
+    alternatives = _typed_alternatives(result, ProposalValueKind.TEXT)
+    if option == "prefer_isbn13":
+        eligible = tuple(
+            alternative
+            for alternative in alternatives
+            if type(alternative.value.value) is str
+            and _ISBN13.fullmatch(alternative.value.value) is not None
+        )
+        if not eligible:
+            reason = "option_evidence_unavailable" if alternatives else "no_candidate"
+            return _abstain(field, option, target, _data_value(target.value), reason)
+        if len(eligible) != 1:
+            return _abstain(field, option, target, _data_value(target.value), "ambiguous_evidence")
+        candidate = eligible[0]
+    elif option == "preserve_exact":
+        candidate, reason = _one_typed_candidate(result, ProposalValueKind.TEXT)
+        if candidate is None:
+            return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
+    else:
+        return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
+    accepted = {
+        evidence.reference
+        for evidence in report.identifier_evidence
+        if evidence.relation is IdentifierRelation.ACCEPTED
+    }
+    if not candidate.evidence_references or any(
+        reference not in accepted
+        or not _identifier_reference(reference, ClaimKind.ISBN, candidate, retained_claims, {"ebook", "unknown"})
+        for reference in candidate.evidence_references
+    ):
+        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
+    return RichFieldPreview(field, option, target.state.value, _data_value(target.value), "projected", candidate.value.value, None)
+
+
+def _asin(
+    field: str,
+    option: str,
+    target: TargetField,
+    result: ProposalResult,
+    retained_claims: dict[str, _RetainedClaim],
+) -> RichFieldPreview:
+    candidate, reason = _one_typed_candidate(result, ProposalValueKind.TEXT)
+    if candidate is None:
+        return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
+    if option not in {"preserve_exact", "ebook_manifestation"}:
+        return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
+    if option == "ebook_manifestation" and (
+        not candidate.evidence_references
+        or any(
+            not _identifier_reference(reference, ClaimKind.ASIN, candidate, retained_claims, {"ebook"})
+            for reference in candidate.evidence_references
+        )
+    ):
+        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
+    return RichFieldPreview(field, option, target.state.value, _data_value(target.value), "projected", candidate.value.value, None)
+
+
+def _identifier_reference(
+    reference: str,
+    kind: ClaimKind,
+    alternative: ProposalAlternative,
+    retained_claims: dict[str, _RetainedClaim],
+    applicability: set[str],
+) -> bool:
+    retained = retained_claims.get(reference)
+    claim = None if retained is None else retained.claim
+    return bool(
+        claim is not None
+        and claim.kind is kind
+        and getattr(claim, "value", getattr(claim, "canonical", None)) == alternative.value.value
+        and getattr(claim, "applicability", None) in applicability
+    )
+
+
+def _preserved(field: str, option: str, target: TargetField, current: object) -> RichFieldPreview:
+    return RichFieldPreview(field, option, target.state.value, current, "no_op", current, "target_preserved")
+
+
+def _abstain(field: str, option: str, target: TargetField, current: object, reason: str) -> RichFieldPreview:
+    return RichFieldPreview(field, option, target.state.value, current, "abstain", None, reason)
+
+
+def _subtitle_bundle(
+    field: str,
+    option: str,
+    target: TargetField,
+    result: ProposalResult,
+    proposal: ProposalSet,
+    report: MetadataReport,
+) -> RichFieldPreview:
+    """Expose only an admitted title/subtitle combination; never parse title text."""
+    alternatives = {value.destination: {alt.alternative_id: alt for alt in value.alternatives} for value in proposal.results}
+    matches = {}
+    for combination in proposal.bibliographic_combinations:
+        selected = {selection.destination: selection for selection in combination.selections}
+        title = selected[TargetDestination.TITLE]
+        subtitle = selected[TargetDestination.SUBTITLE]
+        if title.kind is BibliographicSelectionKind.CANDIDATE and subtitle.kind is BibliographicSelectionKind.CANDIDATE:
+            left = alternatives[TargetDestination.TITLE].get(title.alternative_id)
+            right = alternatives[TargetDestination.SUBTITLE].get(subtitle.alternative_id)
+            if left is not None and right is not None:
+                matches[(left.alternative_id, right.alternative_id)] = (left, right)
+    if len(matches) != 1:
+        return _abstain(field, option, target, _data_value(target.value), "atomic_bundle_unavailable" if not matches else "ambiguous_evidence")
+    title_candidate, candidate = next(iter(matches.values()))
+    current_title = next(
+        value for value in report.target.fields
+        if value.destination is TargetDestination.TITLE
+    )
+    if (
+        current_title.state is not TargetFieldState.VALUE
+        or type(current_title.value) is not str
+        or not any(
+            current_title.value
+            == title_candidate.value.value + separator + candidate.value.value
+            for separator in _SUBTITLE_SEPARATORS
+        )
+    ):
+        return _abstain(
+            field, option, target, _data_value(target.value),
+            "corroborated_split_unavailable",
+        )
+    desired = {"title": _data_value(title_candidate.value.value), "subtitle": _data_value(candidate.value.value)}
+    return RichFieldPreview(field, option, target.state.value, _data_value(target.value), "projected", desired, None)
+
+
+def _combination_member(proposal: ProposalSet, destination: TargetDestination) -> ProposalAlternative | None:
+    alternatives = {value.destination: {alt.alternative_id: alt for alt in value.alternatives} for value in proposal.results}
+    matches = {}
+    for combination in proposal.bibliographic_combinations:
+        selection = next(value for value in combination.selections if value.destination is destination)
+        if selection.kind is BibliographicSelectionKind.CANDIDATE:
+            candidate = alternatives[destination].get(selection.alternative_id)
+            if candidate is not None:
+                matches[candidate.alternative_id] = candidate
+    return next(iter(matches.values())) if len(matches) == 1 else None
+
+
+def _data_value(value: object) -> object:
+    if isinstance(value, tuple):
+        return tuple(item.to_data() if hasattr(item, "to_data") else item for item in value)
+    return value
+
+
+__all__ = ["RichFieldPreview", "RichMetadataPreview", "RichMetadataPreviewError", "compile_rich_metadata_preview"]
