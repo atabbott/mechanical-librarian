@@ -70,7 +70,7 @@ const qualificationExplanation = (field: FieldDefinition, option: string, qualif
   const rich = qualification.find((entry) => entry.field === field.key && entry.option === option)
   if (!rich) return undefined
   if (rich.disposition === 'policy_only') return 'Automatic is unavailable: this policy option is intentionally off.'
-  if (rich.disposition === 'passing_human_only') return 'Automatic is unavailable: this field is supported only for human review.'
+  if (rich.disposition === 'passing_human_only') return 'Automatic is unavailable: this field remains unsupported and has no policy choice.'
   return 'Automatic is unavailable: this option has insufficient qualification coverage and remains Ask me or Ignore.'
 }
 

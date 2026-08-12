@@ -914,7 +914,7 @@ describe('typed review routes', () => {
     expect(within(isbn).getByText(/insufficient qualification coverage/)).toBeVisible()
     await user.click(screen.getByRole('button', { name: /Open unsupported content/i }))
     const explicit = screen.getByRole('group', { name: /Explicit-content flag/ })
-    expect(within(explicit).getByText(/supported only for human review/)).toBeVisible()
+    expect(within(explicit).getByText(/remains unsupported and has no policy choice/)).toBeVisible()
     expect(screen.queryByRole('group', { name: /Title and subtitle/ })).toBeNull()
     expect(screen.getByRole('button', { name: /Open identity/i })).toBeVisible()
 
