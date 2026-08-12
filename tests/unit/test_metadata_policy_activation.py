@@ -77,8 +77,7 @@ class MetadataPolicyActivationTests(unittest.TestCase):
             {**destinations, "genres": "automatic"},
         )
         notebook = PolicyNotebook(repository, (), {})
-        with self.assertRaisesRegex(MetadataPolicyApplicationError, "automatic unqualified"):
-            notebook.validate(rich_automatic)
+        self.assertEqual(rich_automatic, notebook.validate(rich_automatic))
         repository.enter_shadow_preview(1)
         repository.create_metadata_policy_draft(profile.canonical_json)
         resolved = resolve_policy(profile, "ebooks")

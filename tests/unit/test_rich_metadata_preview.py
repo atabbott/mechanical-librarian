@@ -120,7 +120,7 @@ class RichMetadataPreviewTests(unittest.TestCase):
         # Rebind only in this direct pure-module proof; evidence/results remain intact.
         rebound = proposal.create(report_id=proposal.report_id, target_fingerprint=proposal.target_fingerprint, results=proposal.results, resolved_policy_id=policy.resolved_id, bibliographic_combinations=proposal.bibliographic_combinations)
         fields = {field.field: field for field in compile_rich_metadata_preview(policy, report, rebound).fields}
-        self.assertEqual("automatic_unqualified", fields["genres"].reason)
+        self.assertEqual("no_candidate", fields["genres"].reason)
         self.assertEqual("policy_ignored", fields["tags"].reason)
 
     def test_every_closed_rich_option_is_stably_exposed(self) -> None:
@@ -168,7 +168,7 @@ class RichMetadataPreviewTests(unittest.TestCase):
     def test_destination_precedence_is_typed_and_never_projects(self) -> None:
         report = _report()
         base = MetadataPolicyProfile.builtin()
-        for field, destination, reason in (("genres", "ignore", "policy_ignored"), ("genres", "automatic", "automatic_unqualified"), ("tags", "ask", "policy_off")):
+        for field, destination, reason in (("genres", "ignore", "policy_ignored"), ("genres", "automatic", "no_candidate"), ("tags", "ask", "policy_off")):
             choices = dict(base.destinations); choices[field] = destination
             profile = MetadataPolicyProfile.create("Destination", dict(base.options), choices)
             policy = resolve_policy(profile, report.target.library)

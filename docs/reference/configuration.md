@@ -113,11 +113,13 @@ visible-text transformation evidence. Identifier preferences select only an
 already admitted exact manifestation value and never convert or infer one.
 Series retains every qualified membership in the product result while the
 Audiobookshelf projection selects at most its first membership. The qualified
-automatic options are all three series modes, genre `add` and `replace`, tag
-`fill_empty`, `add`, and `replace`, description `safe_plain_text`, and both ISBN
-modes. They may create decision-only automatic authority when the destination
-is `automatic`; they never create write authority, and tags remain `off`/Ask in
-the built-in policy. Every other rich-field option remains manual-preview-only.
+automatic options are all three series modes, genre `fill_empty`, `add`, and
+`replace`, tag `fill_empty`, `add`, and `replace`, description
+`safe_plain_text`, and both ISBN modes. They may create decision-only automatic
+authority when the destination is `automatic`; they never create write
+authority. Genre `fill_empty` is now Automatic in the built-in policy, while
+tags remain `off`/Ask. Every other rich-field option remains
+manual-preview-only.
 
 Corroborated subtitle splitting is atomic and accepts only an already admitted
 title/subtitle pair when the current title is their exact concatenation with

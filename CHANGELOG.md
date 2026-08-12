@@ -17,7 +17,7 @@
 - Bind the public F20 candidate identity and terminal rich-field qualification
   statuses into policy validation, API, CLI preview, and the owner notebook.
   Field-option-local offline qualification admits all three series policies,
-  both exact ISBN policies, genre add/replace, tag fill/add/replace, and safe
+  both exact ISBN policies, genre fill/add/replace, tag fill/add/replace, and safe
   plaintext description to decision-only Automatic at 100% precision.
   Each passing option now reaches the existing persisted-decision and guarded
   effect-plan path; multi-series proposals retain every qualified membership
@@ -33,7 +33,8 @@
   offline pipeline. Qualification is field-option-local and does not require
   an unseen holdout. Subjective genre, tag, and description choices are scored
   on exact work-bound projection and safe operation rather than one golden
-  semantic answer; six list operations and safe plaintext description pass,
+  semantic answer; all six genre/tag list operations and safe plaintext
+  description pass,
   alongside three series and two ISBN options. Subtitle does not pass.
   `explicit` remains human-only, while narrators and cover remain excluded.
   (#565)

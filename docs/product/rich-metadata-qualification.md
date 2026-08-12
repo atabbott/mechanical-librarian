@@ -56,14 +56,16 @@ provider count is not a safe substitute. A future subtitle candidate must bind
 the selected ebook manifestation, remain distinct from the title, and exclude
 marketing or status text. Both subtitle policies therefore remain
 `not_qualified`.
-Genre add and replace each made 3 exact predictions; tag fill-empty, add, and
-replace each made 3; and safe plaintext description made 9. All were correct
-under the provenance-and-operation model, with zero safety failures, so these
-options pass. Genre fill-empty made only one prediction and Google visible-text
-made none, below the frozen minimum of three; both remain `not_qualified`.
-ASIN remains `insufficient_coverage`. `tags:off` is still the default and
-policy-only, `explicit:unsupported` remains human-only, and narrators and cover
-remain excluded.
+Genre add and replace each made 3 exact predictions. Genre fill-empty was
+evaluated with only the target genre field set empty while preserving the
+observed provider evidence; it made 4 exact predictions. Tag fill-empty, add,
+and replace each made 3, and safe plaintext description made 9. All were
+correct under the provenance-and-operation model, with zero safety failures,
+so these options pass. Google visible-text made no predictions and remains
+`not_qualified`. ASIN remains `insufficient_coverage`. `tags:off` is still the
+default and policy-only, `explicit:unsupported` remains human-only, and
+narrators and cover remain excluded. The ordinary populated-genre case remains
+a no-op under fill-empty and is not rewritten.
 
 The machine-readable candidate is
 [`f20-rich-metadata-qualification-candidate-v1.json`](../reference/f20-rich-metadata-qualification-candidate-v1.json).

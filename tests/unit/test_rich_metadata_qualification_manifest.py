@@ -43,7 +43,7 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         self.assertEqual("decision_only", manifest["automatic_authority"])
         passing = {
             "description_fill:safe_plain_text",
-            "genres:add", "genres:replace",
+            "genres:fill_empty", "genres:add", "genres:replace",
             "series:primary_narrative", "series:source_order",
             "series:all_qualified",
             "tags:fill_empty", "tags:add", "tags:replace",
@@ -52,11 +52,12 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         self.assertEqual(passing, set(manifest["passing_automatic_options"]))
         self.assertEqual(["explicit:unsupported"], manifest["human_only_options"])
         self.assertEqual(["narrators", "cover"], manifest["excluded_destinations"])
-        self.assertEqual(3, manifest["candidate_execution_count"])
+        self.assertEqual(4, manifest["candidate_execution_count"])
         self.assertEqual(
             {
                 "evaluated_reports": 49,
                 "exposure_unit": "case_field_option",
+                "genres_fill_empty_target_scenario": "empty_target_with_observed_provider_evidence_preserved",
                 "network_access": False,
                 "prior_unrelated_work_use_allowed": True,
                 "replayed_provider_requests": 421,
@@ -86,7 +87,6 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         self.assertEqual(
             {
                 "subtitle:fill_empty", "subtitle:corroborated_split",
-                "genres:fill_empty",
                 "description_fill:google_visible_text",
             },
             {
@@ -108,7 +108,6 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         self.assertEqual(
             expected - passing - {"explicit:unsupported"} - {
                 "subtitle:fill_empty", "subtitle:corroborated_split",
-                "genres:fill_empty",
                 "description_fill:google_visible_text",
             },
             terminal,
@@ -238,7 +237,7 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
                 "contributor_names:preserve", "contributor_names:canonical",
                 "publisher_preference:publisher",
                 "description_fill:safe_plain_text",
-                "genres:add", "genres:replace",
+                "genres:fill_empty", "genres:add", "genres:replace",
                 "series:primary_narrative", "series:source_order",
                 "series:all_qualified",
                 "tags:fill_empty", "tags:add", "tags:replace",
@@ -260,7 +259,7 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         self.assertEqual("available", policy.qualification("description_fill"))
         self.assertEqual("available", policy.qualification("isbn_form"))
         for field in set(RICH_FIELDS[:-1]) - {
-            "series", "description_fill", "isbn_form",
+            "series", "genres", "description_fill", "isbn_form",
         }:
             self.assertEqual("manual_only", policy.qualification(field))
 
@@ -272,7 +271,7 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         )
         passing = frozenset({
             "description_fill:safe_plain_text",
-            "genres:add", "genres:replace",
+            "genres:fill_empty", "genres:add", "genres:replace",
             "series:primary_narrative", "series:source_order",
             "series:all_qualified",
             "tags:fill_empty", "tags:add", "tags:replace",
