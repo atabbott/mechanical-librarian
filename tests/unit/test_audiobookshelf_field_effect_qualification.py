@@ -13,6 +13,8 @@ from scripts.qualify_audiobookshelf_field_effect import (
     QualificationError,
     _compose_review_client,
     _epub,
+    _installed_consent_grants,
+    _installed_mutation_headers,
     _qualification_hardcover_client,
     _read_installed_return_lineage,
     _require_installed_return_automatic_transition,
@@ -20,9 +22,55 @@ from scripts.qualify_audiobookshelf_field_effect import (
     _operator_epub,
     _require_installed_full_chain_coverage,
 )
+from mechanical_librarian.interfaces.web.react_assets import ReactAssetRecovery
 
 
 class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
+    def test_installed_mutations_bind_the_loaded_browser_identity(self) -> None:
+        assets = SimpleNamespace(build_identity="a" * 64)
+        with patch(
+            "scripts.qualify_audiobookshelf_field_effect.ReactAssetLoader"
+        ) as loader:
+            loader.return_value.load.return_value = assets
+            headers = _installed_mutation_headers(
+                {"Origin": "https://review.test"}, "csrf-token"
+            )
+
+        self.assertEqual(headers, {
+            "Origin": "https://review.test",
+            "X-CSRF-Token": "csrf-token",
+            "X-ML-Build-Identity": "a" * 64,
+        })
+
+    def test_installed_mutations_fail_closed_without_browser_assets(self) -> None:
+        with patch(
+            "scripts.qualify_audiobookshelf_field_effect.ReactAssetLoader"
+        ) as loader:
+            loader.return_value.load.return_value = ReactAssetRecovery()
+            with self.assertRaisesRegex(
+                QualificationError, "installed_browser_assets_unavailable"
+            ):
+                _installed_mutation_headers(
+                    {"Origin": "https://review.test"}, "csrf-token"
+                )
+
+    def test_installed_consent_uses_only_capability_allowed_destinations(self) -> None:
+        grants = _installed_consent_grants({"capabilities": [
+            {"library": "alpha", "destinations": [
+                {"destination": "description", "state": "not_ready"},
+                {"destination": "title", "state": "allowed"},
+            ]},
+            {"library": "beta", "destinations": [
+                {"destination": "authors", "state": "allowed"},
+            ]},
+        ]}, (("alpha", "alpha-id", Path("alpha")),
+             ("beta", "beta-id", Path("beta"))))
+
+        self.assertEqual(grants, [
+            {"library": "alpha", "destinations": ["title"]},
+            {"library": "beta", "destinations": ["authors"]},
+        ])
+
     def test_installed_qualification_composes_application_before_fastapi(self) -> None:
         repository = Mock()
         review = SimpleNamespace(

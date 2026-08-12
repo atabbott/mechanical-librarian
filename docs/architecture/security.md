@@ -145,10 +145,14 @@ unqualified abstention. The CLI uses the same application path against an
 existing database and creates no file or SQLite state.
 
 The F20 rich-metadata qualification candidate is aggregate-only and currently
-names no automatic option. Its `insufficient_coverage` records cannot be used
-as a fallback authority, and its human-only `explicit:unsupported` invariant
-cannot construct an effect. A later activation may consume only an exact
-passing manifest through its separately reviewed authority path.
+names no automatic option. The runtime pins its public candidate digest and
+closed per-option terminal disposition before validation or presentation;
+`insufficient_coverage` cannot be used as fallback authority,
+`tags:off` remains policy-only, and human-only `explicit:unsupported` cannot
+construct an effect. The existing F19a digest and sealed six automatic
+destinations remain the sole automatic authority. A later activation may
+consume only an exact passing manifest through its separately reviewed
+authority path.
 
 Activation is a separate authenticated CSRF-protected owner mutation with the
 same 16 KiB pre-parse request bound as policy drafts. It binds

@@ -187,6 +187,11 @@ class PolicyOperations:
     def active(self) -> MetadataPolicyProfile:
         return self._gate(self._notebook.active)
 
+    def rich_qualification(
+        self, profile: MetadataPolicyProfile
+    ) -> tuple[dict[str, object], ...]:
+        return self._gate(lambda: self._notebook.rich_qualification(profile))
+
     def validate(self, profile: MetadataPolicyProfile) -> MetadataPolicyProfile:
         return self._gate(lambda: self._notebook.validate(profile))
 

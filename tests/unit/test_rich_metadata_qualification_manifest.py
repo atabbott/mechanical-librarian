@@ -17,6 +17,12 @@ from mechanical_librarian.domain.metadata_policy import (
     QUALIFIED_AUTOMATIC,
     resolve_policy,
 )
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_OPTION_DISPOSITIONS,
+    F20_PASSING_AUTOMATIC_OPTIONS,
+    F20_QUALIFICATION_CANDIDATE_SHA256,
+    public_summary,
+)
 
 
 MANIFEST = (
@@ -161,6 +167,30 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         self.assertEqual("unsupported", policy.qualification("explicit"))
         for field in RICH_FIELDS[:-1]:
             self.assertEqual("manual_only", policy.qualification(field))
+
+    def test_runtime_envelope_pins_every_terminal_disposition_without_authority(self) -> None:
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        self.assertEqual(
+            hashlib.sha256(MANIFEST.read_bytes()).hexdigest(),
+            F20_QUALIFICATION_CANDIDATE_SHA256,
+        )
+        self.assertEqual([], manifest["passing_automatic_options"])
+        self.assertEqual(frozenset(), F20_PASSING_AUTOMATIC_OPTIONS)
+        self.assertEqual(
+            {entry["identity"]: entry["disposition"] for entry in manifest["options"]}
+            | {"tags:off": "policy_only"},
+            F20_OPTION_DISPOSITIONS,
+        )
+        summary = public_summary()
+        self.assertEqual(set(F20_OPTION_DISPOSITIONS), {f"{entry['field']}:{entry['option']}" for entry in summary})
+        self.assertTrue(all(entry["automatic_available"] is False for entry in summary))
+        self.assertEqual(
+            {"insufficient_coverage", "policy_only", "passing_human_only"},
+            {entry["disposition"] for entry in summary},
+        )
+        with self.assertRaises(TypeError):
+            F20_OPTION_DISPOSITIONS["genres:add"] = "passing_automatic"  # type: ignore[index]
+        self.assertEqual("insufficient_coverage", F20_OPTION_DISPOSITIONS["genres:add"])
 
 
 if __name__ == "__main__":

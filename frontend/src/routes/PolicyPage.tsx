@@ -61,7 +61,18 @@ const chapters: readonly { key: PolicySection; label: string; description: strin
 const readableCategory = (key: string) => fields.find((field) => field.key === key)?.label ?? key.replaceAll('_', ' ')
 const previewValue = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value)
 const isPolicyPreview = (value: unknown): value is PolicyPreviewView => typeof value === 'object' && value !== null && 'schema_version' in value && value.schema_version === 'metadata-policy-preview-v1' && 'libraries' in value && Array.isArray(value.libraries)
-const automaticQualified = (field: FieldDefinition, option: string) => field.automatic && !(field.key === 'publisher_preference' && option === 'imprint')
+const automaticQualified = (field: FieldDefinition, option: string, qualification: readonly { readonly automatic_available: boolean; readonly field: string; readonly option: string }[]) => {
+  const rich = qualification.find((entry) => entry.field === field.key && entry.option === option)
+  return rich ? rich.automatic_available : field.automatic && !(field.key === 'publisher_preference' && option === 'imprint')
+}
+
+const qualificationExplanation = (field: FieldDefinition, option: string, qualification: readonly { readonly automatic_available: boolean; readonly disposition: string; readonly field: string; readonly option: string }[]) => {
+  const rich = qualification.find((entry) => entry.field === field.key && entry.option === option)
+  if (!rich) return undefined
+  if (rich.disposition === 'policy_only') return 'Automatic is unavailable: this policy option is intentionally off.'
+  if (rich.disposition === 'passing_human_only') return 'Automatic is unavailable: this field remains unsupported and has no policy choice.'
+  return 'Automatic is unavailable: this option has insufficient qualification coverage and remains Ask me or Ignore.'
+}
 
 export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const { http, queryClient } = useReviewContext()
@@ -190,19 +201,19 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           {expanded ? <div className="policy-chapter-controls">{chapterFields.map((field) => {
             const option = draft.options[field.key] ?? field.options[0] ?? ''
             const destination = draft.destinations[field.key] ?? (field.unsupported ? 'unsupported' : 'ask')
-            const qualified = automaticQualified(field, option)
-            const automaticExplanation = !qualified ? 'Automatic is not qualified for this field and representation.' : !automaticAllowed ? 'Enter Preview mode before choosing qualified Automatic.' : 'Qualified, decision-only Automatic is available.'
+            const qualified = automaticQualified(field, option, data.state.rich_qualification)
+            const automaticExplanation = qualificationExplanation(field, option, data.state.rich_qualification) ?? (!qualified ? 'Automatic is not qualified for this field and representation.' : !automaticAllowed ? 'Enter Preview mode before choosing qualified Automatic.' : 'Qualified, decision-only Automatic is available.')
             const changed = fieldChanged(field)
             return <fieldset className={`policy-field ${changed ? 'changed' : ''} ${field.unsupported ? 'unsafe' : ''}`} key={field.key}>
               <legend><strong>{field.label}</strong>{changed || field.unsupported ? <span className="policy-field-state">{field.unsupported ? 'Unavailable' : 'Draft changed'}</span> : null}<small>{field.meaning}</small></legend>
-              {field.unsupported ? <div className="policy-unavailable"><span className="badge">Not currently supported</span><p>No policy choice is available for this content yet.</p></div> : <>
+              {field.unsupported ? <div className="policy-unavailable"><span className="badge">Not currently supported</span><p>No policy choice is available for this content yet.</p><small className="automatic-explanation">{automaticExplanation}</small></div> : <>
                 <span className="policy-posture" aria-label={`${field.label} attention posture`}>
                   <button type="button" aria-pressed={destination === 'automatic'} disabled={!qualified || !automaticAllowed || command.isPending} title={automaticExplanation} onClick={() => editDraft({ ...draft, destinations: { ...draft.destinations, [field.key]: 'automatic' } })}>Automatic</button>
                   <button type="button" aria-pressed={destination === 'ask'} disabled={command.isPending} onClick={() => editDraft({ ...draft, destinations: { ...draft.destinations, [field.key]: 'ask' } })}>Ask me</button>
                   <button type="button" aria-pressed={destination === 'ignore'} disabled={command.isPending} onClick={() => editDraft({ ...draft, destinations: { ...draft.destinations, [field.key]: 'ignore' } })}>Ignore</button>
                 </span>
                 <small className="automatic-explanation">{automaticExplanation}</small>
-                {field.options.length > 1 ? <label>Representation<select aria-label={`${field.label} representation`} value={option} disabled={command.isPending} onChange={(event) => { const nextOption = event.target.value; const nextDestination = destination === 'automatic' && !automaticQualified(field, nextOption) ? 'ask' : destination; editDraft({ ...draft, options: { ...draft.options, [field.key]: nextOption }, destinations: { ...draft.destinations, [field.key]: nextDestination } }) }}>{field.options.map((value) => <option value={value} key={value}>{field.optionLabels[value]}</option>)}</select></label> : <p className="fixed-representation">Representation: {field.optionLabels[option]}</p>}
+                {field.options.length > 1 ? <label>Representation<select aria-label={`${field.label} representation`} value={option} disabled={command.isPending} onChange={(event) => { const nextOption = event.target.value; const nextDestination = destination === 'automatic' && !automaticQualified(field, nextOption, data.state.rich_qualification) ? 'ask' : destination; editDraft({ ...draft, options: { ...draft.options, [field.key]: nextOption }, destinations: { ...draft.destinations, [field.key]: nextDestination } }) }}>{field.options.map((value) => <option value={value} key={value}>{field.optionLabels[value]}</option>)}</select></label> : <p className="fixed-representation">Representation: {field.optionLabels[option]}</p>}
               </>}
             </fieldset>
           })}</div> : <button className="policy-chapter-summary" type="button" onClick={() => void openChapter(chapter.key)}><span>{changedCount ? `${String(changedCount)} changed field${changedCount === 1 ? '' : 's'}` : `${String(chapterFields.length)} unchanged field${chapterFields.length === 1 ? '' : 's'}`}</span><strong>Open {chapter.label.toLowerCase()}</strong></button>}

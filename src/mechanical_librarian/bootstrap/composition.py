@@ -1597,6 +1597,7 @@ def run_policy_preview(
                 for item in preview.libraries
             ],
             "policy_id": profile.policy_id,
+            "rich_qualification": list(application.policy.rich_qualification(profile)),
             "schema_version": "metadata-policy-preview-v1",
         }
     finally:
