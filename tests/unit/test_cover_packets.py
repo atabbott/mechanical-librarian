@@ -57,6 +57,7 @@ from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa
 )
 from mechanical_librarian_workbench.cover_observation import (  # noqa: E402
     INSTRUCTION,
+    LEGACY_INSTRUCTION_SHA256,
     OUTPUT_SCHEMA_VERSION,
     SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
     TAXONOMY,
@@ -2684,10 +2685,20 @@ class CoverPolicyTests(unittest.TestCase):
         legacy = self._adjudicate(
             observation_mutation=lambda value: (
                 value.pop("attempt_evidence"),
-                value.update(schema_version="cover-observation-report-v1"),
+                value.update(
+                    instruction_sha256=LEGACY_INSTRUCTION_SHA256,
+                    schema_version="cover-observation-report-v1",
+                ),
             )
         )
         self.assertEqual(legacy["status"], "recommended")
+        with self.assertRaises(ValueError):
+            self._adjudicate(
+                observation_mutation=lambda value: (
+                    value.pop("attempt_evidence"),
+                    value.update(schema_version="cover-observation-report-v1"),
+                )
+            )
         with self.assertRaises(ValueError):
             self._adjudicate(
                 observation_mutation=lambda value: value.pop("attempt_evidence")

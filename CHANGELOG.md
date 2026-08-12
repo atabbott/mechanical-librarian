@@ -81,9 +81,11 @@
 - Recognize the one proven transient local contained-reviewer CLI abort without
   widening reviewer authority: only bounded strict pre-terminal JSONL on return
   code 134 with bounded nonempty stderr receives one fixed one-second retry in
-  a new adapter/job/process. The unchanged request/profile/image/model/limit
-  binding and value-free dispatch plus first-failure code/count/digest evidence
-  are retained; every other failure remains terminal. (#543)
+  a fresh job and child process inside the same bound adapter and authentication
+  lock. The unchanged request/profile/image/model/limit binding and value-free
+  dispatch plus first-failure code/count/digest evidence are retained; every
+  other failure remains terminal. Frozen v1 observations remain admitted only
+  under their exact original instruction identity. (#543)
 
 - Reduce private Actions consumption without recombining the qualification
   suites that previously timed out: run the three exact-head pull-request jobs

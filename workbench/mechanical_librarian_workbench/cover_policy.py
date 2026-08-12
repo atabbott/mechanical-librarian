@@ -16,6 +16,7 @@ from .cover_identity import (
 )
 from .cover_observation import (
     INSTRUCTION,
+    LEGACY_INSTRUCTION_SHA256,
     LEGACY_SCHEMA_VERSION,
     SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
     TAXONOMY_REFERENCE,
@@ -305,11 +306,16 @@ def _observation_rows(
     references: tuple[str, ...],
 ) -> dict[str, object]:
     value = _load_object(document, "cover observation")
-    expected_instruction = hashlib.sha256(INSTRUCTION.encode("utf-8")).hexdigest()
+    schema_version = value.get("schema_version")
+    expected_instruction = (
+        LEGACY_INSTRUCTION_SHA256
+        if schema_version == LEGACY_SCHEMA_VERSION
+        else hashlib.sha256(INSTRUCTION.encode("utf-8")).hexdigest()
+    )
     expected_schema = hashlib.sha256(_output_schema(references).encode("utf-8")).hexdigest()
     valid_shape = (
         (
-            value.get("schema_version") == LEGACY_SCHEMA_VERSION
+            schema_version == LEGACY_SCHEMA_VERSION
             and set(value) == {
                 "cover_packet_reference", "instruction_sha256", "observations",
                 "observer_reference", "output_schema_sha256", "schema_version",
@@ -317,7 +323,7 @@ def _observation_rows(
             }
         )
         or (
-            value.get("schema_version") == OBSERVATION_SCHEMA_VERSION
+            schema_version == OBSERVATION_SCHEMA_VERSION
             and set(value)
             == {
             "attempt_evidence",

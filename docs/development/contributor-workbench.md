@@ -131,12 +131,14 @@ The cover entry has one deliberately narrow recovery path for a locally proven
 CLI abort: only return code 134 with bounded strict JSONL that contains one
 `turn.started` and no completed or failed terminal event, plus bounded nonempty
 stderr, gets one fixed one-second retry. It reuses the exact admitted request
-and profile but creates a fresh adapter/job/process. Its source-only envelope
-contains value-free dispatch and first-failure code/count/digest evidence. A
+and profile but creates a fresh job and child process inside the same bound
+adapter and authentication lock. Its source-only envelope contains value-free
+dispatch and first-failure code/count/digest evidence. A
 near miss and every generic runtime, schema, auth, setup, sandbox, malformed
 output or timeout failure stays terminal.
 New observation reports are `cover-observation-report-v2`; frozen v1 reports
-remain readable exactly as sealed and contain no retry evidence.
+remain readable under their exact frozen instruction identity and contain no
+retry evidence.
 
 ## Executing a scenario
 

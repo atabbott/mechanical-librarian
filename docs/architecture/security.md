@@ -622,11 +622,11 @@ bounded transient child, resource, or packet-interaction hypotheses remain.
 Subsequent local reproduction identified one bounded retryable signature:
 return code 134 with strict pre-terminal JSONL (`turn.started`, but no completed
 or failed terminal event) and bounded nonempty stderr. The cover-only binding
-may retry that exact signature once after one second, recreating the adapter,
-job and process from unchanged admitted authority. It retains only dispatch
-booleans and the first failure's code, byte count and digest; no raw event,
-stderr, path, credential, image or semantic output persists. Every other
-failure class remains terminal.
+may retry that exact signature once after one second, creating a fresh job and
+child process inside the same bound adapter and authentication lock. It retains
+only dispatch booleans and the first failure's code, byte count and digest; no
+raw event, stderr, path, credential, image or semantic output persists. Every
+other failure class remains terminal.
 The 50 selected candidate rows came from 29 distinct packets and rows within a
 packet are correlated because one admitted packet result can score multiple
 selected rows. The two failures were packet invocations, but aggregate receipts
