@@ -20,7 +20,9 @@ from mechanical_librarian_workbench.cover_packet_semantics import (
     bind_cover_packet,
     candidate_priority,
     canonical_packet_json,
+    cover_transport_reference,
     designation_rank,
+    normalize_cover_preview,
     normalize_provenance,
     validate_cover_preview,
 )
@@ -56,6 +58,7 @@ class PreparedCoverPacket:
 class _Candidate:
     reference: str
     digest: str
+    source_digest: str
     payload: bytes
     width: int
     height: int
@@ -116,13 +119,20 @@ def prepare_cover_packet(
         if hashlib.sha256(payload).hexdigest() != artifact.preview_digest:
             raise ValueError("cover packet preview digest changed")
         if len(payload) <= MAX_COVER_PREVIEW_BYTES:
-            preview_width, preview_height = validate_cover_preview(payload)
+            normalized = normalize_cover_preview(
+                payload, source_sha256=artifact.preview_digest
+            )
+            transport_payload = normalized.payload
+            transport_digest = normalized.digest
+            preview_width, preview_height = normalized.width, normalized.height
         else:
             # Oversized groups are omitted before candidate emission; decoding
             # them would widen work beyond the existing byte gate.
             preview_width = preview_height = 1
+            transport_payload = payload
+            transport_digest = artifact.preview_digest
         reference = cover_source_reference(report.report_id, source.source_id)
-        existing = candidates_by_digest.get(artifact.preview_digest)
+        existing = candidates_by_digest.get(transport_digest)
         if existing is not None:
             existing.sources.append(source)
             existing.references.append(reference)
@@ -134,11 +144,13 @@ def prepare_cover_packet(
             if source.kind is CoverSourceKind.ABS:
                 existing.incumbent = True
                 existing.reference = reference
+                existing.source_digest = artifact.preview_digest
             continue
-        candidates_by_digest[artifact.preview_digest] = _Candidate(
+        candidates_by_digest[transport_digest] = _Candidate(
             reference=reference,
-            digest=artifact.preview_digest,
-            payload=payload,
+            digest=transport_digest,
+            source_digest=artifact.preview_digest,
+            payload=transport_payload,
             width=artifact.width,
             height=artifact.height,
             preview_width=preview_width,
@@ -169,6 +181,16 @@ def _finalize_cover_packet(
     omissions: list[dict[str, object]],
 ) -> PreparedCoverPacket:
     """Select groups, then bind each duplicate only to final retained state."""
+
+    for candidate in candidates:
+        if len(candidate.payload) <= MAX_COVER_PREVIEW_BYTES:
+            if hashlib.sha256(candidate.payload).hexdigest() != candidate.digest:
+                raise ValueError("cover packet transport digest changed")
+            validate_cover_preview(
+                candidate.payload,
+                expected_width=candidate.preview_width,
+                expected_height=candidate.preview_height,
+            )
 
     oversize = [value for value in candidates if len(value.payload) > MAX_COVER_PREVIEW_BYTES]
     if any(value.incumbent for value in oversize):
@@ -215,9 +237,16 @@ def _finalize_cover_packet(
     candidate_data: list[dict[str, object]] = []
     images: list[CoverPacketImage] = []
     for candidate in selected:
+        source_digests = {
+            reference: source.artifact.preview_digest
+            for source, reference in zip(
+                candidate.sources, candidate.references, strict=True
+            )
+            if source.artifact is not None
+        }
         for reference in sorted(set(candidate.references) - {candidate.reference}):
             omissions.append({
-                "preview_sha256": candidate.digest,
+                "preview_sha256": source_digests[reference],
                 "reason": "duplicate_preview",
                 "reference": reference,
                 "retained_reference": candidate.reference,
@@ -232,26 +261,48 @@ def _finalize_cover_packet(
                 "source_kind": source.kind.value,
             })
         provenance = normalize_provenance(provenance)
+        source_bindings = sorted(
+            {
+                (
+                    reference,
+                    source_digests[reference],
+                )
+                for source, reference in zip(
+                    candidate.sources, candidate.references, strict=True
+                )
+                if source.artifact is not None
+            }
+        )
+        source_binding_data = [
+            {"preview_sha256": digest, "reference": reference}
+            for reference, digest in source_bindings
+        ]
+        transport_reference = cover_transport_reference(
+            candidate.reference, source_binding_data, candidate.digest
+        )
         candidate_data.append({
             "height": candidate.height,
             "incumbent": candidate.incumbent,
             "media_type": "image/png",
             "preview_bytes": len(candidate.payload),
             "preview_height": candidate.preview_height,
-            "preview_sha256": candidate.digest,
+            "preview_sha256": candidate.source_digest,
             "preview_variant": PREVIEW_VARIANT,
             "preview_width": candidate.preview_width,
             "provenance": provenance,
             "reference": candidate.reference,
+            "source_bindings": source_binding_data,
+            "transport_reference": transport_reference,
+            "transport_sha256": candidate.digest,
             "width": candidate.width,
         })
-        images.append(CoverPacketImage(candidate.reference, candidate.digest, candidate.payload))
+        images.append(CoverPacketImage(transport_reference, candidate.digest, candidate.payload))
 
     omissions.sort(key=lambda value: (value["reference"], value["reason"]))
     packet_body = {
         "candidates": candidate_data,
         "omissions": omissions,
-        "schema_version": "cover-review-packet-v1",
+        "schema_version": "cover-review-packet-v2",
     }
     packet = {
         **packet_body,

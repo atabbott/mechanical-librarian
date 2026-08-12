@@ -131,6 +131,12 @@
   arguments, typed cleanup, and no runtime, production-library, or write
   authority. (#542)
 
+- Normalize bounded report-bound RGBA cover pixels into deterministic,
+  metadata-free PNG transports before isolated review. Source and derived
+  identities remain separately bound; malformed, foreign, changed, oversized,
+  or non-canonical inputs still fail closed, with no provider, runtime, or write
+  authority. (#542)
+
 - Reconcile and qualify the complete 0.14.1 authenticated interface against its
   exact surface-specific references. The packaged source, wheel, and container
   retain one persistent responsive shell, direct current-or-specific-value

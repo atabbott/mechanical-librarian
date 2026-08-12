@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from .cover_identity import (
@@ -83,6 +84,8 @@ def adjudicate_cover_policy(
     image_payloads: tuple[tuple[str, str, bytes], ...],
     observation_document: str | None,
     policy: CoverPolicy,
+    *,
+    read_preview: Callable[[str, str], bytes],
 ) -> CoverPolicyReport:
     """Return one exact recommendation or a closed abstention."""
     if type(policy) is not CoverPolicy:
@@ -91,6 +94,7 @@ def adjudicate_cover_policy(
         report_document,
         packet_document,
         image_payloads,
+        read_preview=read_preview,
     ).document
     bind_cover_packet(packet_document, image_payloads)
     packet = _load_object(packet_document, "cover packet")
