@@ -44,6 +44,7 @@ from mechanical_librarian_workbench.contained_reviewer import (  # noqa: E402
 from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa: E402
     ContainedReviewerAttempt,
 )
+from mechanical_librarian_workbench import scenarios  # noqa: E402
 
 
 def _operation(*_args: object) -> str:
@@ -224,6 +225,29 @@ class RuntimeWorkbenchTests(unittest.TestCase):
             adjudicate.call_args.kwargs["profile_payload"],
             b'{"profile":"bound"}',
         )
+
+    def test_observer_profile_read_is_bound_to_one_open_descriptor(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile = root / "profile.json"
+            replacement = root / "replacement.json"
+            profile.write_bytes(b'{"profile":"original"}')
+            replacement.write_bytes(b'{"profile":"replacement"}')
+            profile.chmod(0o600)
+            replacement.chmod(0o600)
+            original_open = os.open
+
+            def replace_after_open(path: Path, flags: int):
+                descriptor = original_open(path, flags)
+                if path == profile:
+                    os.replace(replacement, profile)
+                return descriptor
+
+            with mock.patch.object(os, "open", side_effect=replace_after_open):
+                payload = scenarios._read_observer_profile(profile)
+
+        self.assertEqual(payload, b'{"profile":"original"}')
+        self.assertFalse(replacement.exists())
 
     def test_batch_failed_completion_and_events_are_preserved(self) -> None:
         def batch(*arguments: object) -> bool:

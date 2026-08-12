@@ -438,6 +438,94 @@ class ContainedReviewerTests(unittest.TestCase):
             self.assertEqual(credential.read_bytes(), b'{"synthetic":true}')
             self.assertEqual(list(profile.job_root_path.iterdir()), [])
 
+    def test_cleanup_failure_records_trust_failure_before_returning(self) -> None:
+        request = _cover_request()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile = _profile(root)
+            reviewer = adapter.ContainedReviewerAdapter(profile)
+            artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
+            credential = adapter._BoundCredential(
+                11, "/proc/self/fd/11", (1, 2, 3, 4, "a" * 64)
+            )
+
+            @contextmanager
+            def empty_config():
+                yield root / "empty-config"
+
+            def sandbox_command(_job_path, result_path, *_args):
+                result_path.write_text('{"summary":"safe"}', encoding="utf-8")
+                return ["fake-sandbox"]
+
+            def gated(_command, _codex, _sandbox, _stdin, _stdout, _stderr,
+                      dispatched, **_kwargs):
+                dispatched(4321, 4321, "synthetic")
+                return 0
+
+            with (
+                patch.object(reviewer, "_empty_auth_config", new=empty_config),
+                patch.object(reviewer, "_verify_codex"),
+                patch.object(reviewer, "_require_chatgpt_auth"),
+                patch.object(reviewer, "_auth_command", return_value=[]),
+                patch.object(reviewer, "_sandbox_command", side_effect=sandbox_command),
+                patch.object(reviewer, "_run_gated", side_effect=gated),
+                patch.object(adapter.shutil, "rmtree", side_effect=OSError("synthetic")),
+                self.assertRaisesRegex(
+                    adapter.ContainedReviewerProcessError, "runtime"
+                ),
+            ):
+                reviewer._run_attempt(
+                    request, lambda *_: None, (), artifact, artifact, credential
+                )
+
+            trust_failure = profile.job_root_path / ".reviewer-trust-failure"
+            self.assertEqual(
+                trust_failure.read_bytes(), b"reviewer-trust-failure-v1\n"
+            )
+            self.assertEqual(trust_failure.stat().st_mode & 0o777, 0o600)
+
+    def test_dispatched_failure_without_diagnostics_retains_dispatch_evidence(self) -> None:
+        request = _cover_request()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile = _profile(root)
+            profile.codex_path.write_bytes(b"codex")
+            profile.sandbox_path.write_bytes(b"sandbox")
+            os.chmod(profile.codex_path, 0o700)
+            os.chmod(profile.sandbox_path, 0o700)
+            credential = profile.auth_store_path / "auth.json"
+            credential.write_bytes(b'{"synthetic":true}')
+            os.chmod(credential, 0o600)
+            profile = replace(profile, identity=replace(
+                profile.identity,
+                executable_sha256=hashlib.sha256(b"codex").hexdigest(),
+                sandbox_sha256=hashlib.sha256(b"sandbox").hexdigest(),
+            ))
+            reviewer = adapter.ContainedReviewerAdapter(profile)
+
+            def timeout(_request, dispatch, *_bound):
+                dispatch(100, 100, "synthetic")
+                raise adapter.ContainedReviewerProcessError("timeout")
+
+            @contextmanager
+            def fake_sealed(_images):
+                yield ()
+
+            with (
+                patch.object(adapter.sys, "platform", "linux"),
+                patch.object(reviewer, "_verify_sandbox"),
+                patch.object(adapter, "_sealed_cover_images", new=fake_sealed),
+                patch.object(reviewer, "_run_attempt", side_effect=timeout),
+                self.assertRaises(adapter.ContainedReviewerProcessError) as caught,
+            ):
+                reviewer.run_cover(request, lambda *_: None)  # type: ignore[arg-type]
+
+            self.assertEqual(caught.exception.code, "timeout")
+            self.assertEqual(
+                caught.exception.attempts,
+                (contract.ContainedReviewerAttempt(True),),
+            )
+
     def test_cover_retries_inside_one_bound_credential_and_retains_terminal_attempts(self) -> None:
         request = _cover_request()
         with tempfile.TemporaryDirectory() as temporary:

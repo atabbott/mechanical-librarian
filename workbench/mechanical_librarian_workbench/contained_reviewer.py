@@ -516,9 +516,17 @@ class ContainedReviewerAdapter:
                             except ContainedReviewerProcessError as error:
                                 if dispatched_current:
                                     if not attempts:
-                                        attempts.append(ContainedReviewerAttempt(
-                                            True, error.code, error.count, error.digest
-                                        ))
+                                        attempts.append(
+                                            ContainedReviewerAttempt(
+                                                True,
+                                                error.code,
+                                                error.count,
+                                                error.digest,
+                                            )
+                                            if error.count > 0
+                                            and error.digest is not None
+                                            else ContainedReviewerAttempt(True)
+                                        )
                                     else:
                                         attempts.append(ContainedReviewerAttempt(True))
                                 if (
@@ -641,6 +649,9 @@ class ContainedReviewerAdapter:
             try:
                 shutil.rmtree(job_path)
             except OSError as error:
+                _record_trust_failure(
+                    self._profile.job_root_path / ".reviewer-trust-failure"
+                )
                 raise ContainedReviewerProcessError("runtime") from error
 
     def _verify_codex(

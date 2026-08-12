@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import stat
 from collections.abc import Callable
@@ -623,19 +624,38 @@ def _execute(
 
 
 def _read_observer_profile(path: Path) -> bytes:
+    descriptor = -1
     try:
-        information = path.lstat()
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        information = os.fstat(descriptor)
         if (
             not stat.S_ISREG(information.st_mode)
-            or stat.S_ISLNK(information.st_mode)
             or information.st_mode & 0o077
             or not 1 <= information.st_size <= MAX_OBSERVER_PROFILE_BYTES
         ):
             raise ValueError("cover observer profile is invalid")
-        with path.open("rb") as handle:
-            payload = handle.read(MAX_OBSERVER_PROFILE_BYTES + 1)
+        chunks: list[bytes] = []
+        remaining = MAX_OBSERVER_PROFILE_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, min(65_536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
     except OSError as error:
         raise ValueError("cover observer profile is invalid") from error
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError as error:
+                raise ValueError("cover observer profile is invalid") from error
     if not 1 <= len(payload) <= MAX_OBSERVER_PROFILE_BYTES:
         raise ValueError("cover observer profile is invalid")
     return payload
