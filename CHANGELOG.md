@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Record the non-authorizing F20 rich-metadata qualification candidate. No
+  fresh F20 holdout is available, so every automatic candidate is visibly
+  `insufficient_coverage`; `explicit` remains human-only, and narrators and
+  cover remain excluded. The focused Audiobookshelf fake proof covers the
+  rich target shapes without adding automatic authority. (#565)
+
 - Add the closed v2 rich-metadata policy vocabulary for manual preview: subtitle,
   series, exact list operations, bounded description text, and exact ISBN/ASIN
   choices. Rich-field automatic intent remains unavailable and this change does

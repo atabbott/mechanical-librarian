@@ -112,6 +112,13 @@ for at most 20 current cases per library. The HTTP response remains
 private/no-store. The equivalent CLI writes that private projection to stdout;
 operators must not place it in public logs or support artifacts.
 
+The public F20 rich-metadata qualification candidate contains only closed
+option identities, aggregate dispositions, contract digests, and zero-tolerance
+counts. It contains no corpus identity, case row, bibliographic value,
+identifier, path, source digest, receipt, or per-case result; the underlying
+retained development material remains owner-private. Any future holdout stays
+private and is not implied by this provisional candidate.
+
 The complete application SQLite database—including deterministic packets and
 outcomes—is exposed to whoever can read a backup. Store it and its backups as private
 application state with owner-scoped access and encrypted-at-rest backup
