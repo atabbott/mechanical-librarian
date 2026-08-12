@@ -11,8 +11,12 @@ from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.field_effects import GuardedApplicationError
+from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import FieldEffectError, SUPPORTED_DESTINATIONS
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_QUALIFICATION_CANDIDATE_SHA256,
+)
 
 
 class _Repository:
@@ -252,6 +256,86 @@ class _ConnectionUnavailableCapability:
 
 
 class ContinuousGuardedApplicationTests(unittest.TestCase):
+    @staticmethod
+    def _prior_f20_decision() -> AutomaticDecision:
+        def digest(value: object) -> str:
+            return hashlib.sha256(json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")).hexdigest()
+
+        current = AutomaticDecision.create(
+            review_case_id="review_case_" + "1" * 64,
+            report_id="report_" + "2" * 64,
+            proposal_set_id="proposal_set_" + "3" * 64,
+            proposal_id="review_proposal_" + "4" * 64,
+            target_fingerprint="b" * 64,
+            destination="genres",
+            outcome="candidate",
+            candidate_id="alternative_" + "5" * 64,
+            resolved_policy_id="resolved_policy_" + "6" * 64,
+            policy_generation=1,
+            rule_id="shadow_rule_" + "7" * 64,
+            policy_category="genres",
+            policy_option="add",
+            qualification_manifest_sha256=F20_QUALIFICATION_CANDIDATE_SHA256,
+            source_outcome_id="shadow_outcome_" + "8" * 64,
+            bundle_id=None,
+            occurred_at=1,
+        )
+        core = {
+            **current._core(),
+            "qualification_manifest_sha256": (
+                "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a"
+            ),
+        }
+        return AutomaticDecision(
+            decision_id="automatic_decision_" + digest({**core, "occurred_at": 1}),
+            **core,
+            idempotency_digest=digest(core),
+            occurred_at=1,
+        )
+
+    def test_schedule_and_activity_accept_a_prior_persisted_f20_decision(self) -> None:
+        decision = self._prior_f20_decision()
+
+        class Repository(_PagedRepository):
+            def pending_field_effect_decision_counts(self):
+                return ({
+                    "connection": "primary",
+                    "library": "alpha",
+                    "origin": "automatic",
+                    "count": 1,
+                },)
+
+            def field_effect_activity_data(self, _limit):
+                return {
+                    "consented_destinations": [],
+                    "consented_libraries": [],
+                    "counts": {},
+                    "events": [],
+                    "paused": False,
+                    "suspensions": [],
+                }
+
+        repository = Repository([decision])
+        service = ContinuousGuardedApplication(
+            repository,
+            {("primary", "alpha"): _Planner()},
+            {("primary", "alpha"): _AllowedCapability()},
+            _Authority(),
+            (("primary", "alpha"),),
+            lambda: 1,
+            lambda *_: None,
+        )
+
+        self.assertEqual(0, service.schedule())
+        activity = service.activity()
+        self.assertEqual("continuous-field-activity-v1", activity["schema_version"])
+        self.assertEqual(1, activity["prepared"]["automatic"])
+
     def test_return_to_automatic_releases_only_after_current_scan_completes(self) -> None:
         repository = _HoldRepository()
         scans = []

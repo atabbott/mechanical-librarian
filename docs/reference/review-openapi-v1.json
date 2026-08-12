@@ -1144,45 +1144,6 @@
         "title": "_ExplicitQualification",
         "type": "object"
       },
-      "_GenresFillQualification": {
-        "additionalProperties": false,
-        "properties": {
-          "automatic_available": {
-            "const": false,
-            "title": "Automatic Available",
-            "type": "boolean"
-          },
-          "candidate_sha256": {
-            "pattern": "^[0-9a-f]{64}$",
-            "title": "Candidate Sha256",
-            "type": "string"
-          },
-          "disposition": {
-            "const": "not_qualified",
-            "title": "Disposition",
-            "type": "string"
-          },
-          "field": {
-            "const": "genres",
-            "title": "Field",
-            "type": "string"
-          },
-          "option": {
-            "const": "fill_empty",
-            "title": "Option",
-            "type": "string"
-          }
-        },
-        "required": [
-          "candidate_sha256",
-          "automatic_available",
-          "disposition",
-          "field",
-          "option"
-        ],
-        "title": "_GenresFillQualification",
-        "type": "object"
-      },
       "_GenresQualification": {
         "additionalProperties": false,
         "properties": {
@@ -1208,6 +1169,7 @@
           },
           "option": {
             "enum": [
+              "fill_empty",
               "add",
               "replace"
             ],
@@ -1940,9 +1902,6 @@
                   "$ref": "#/components/schemas/_SeriesQualification"
                 },
                 {
-                  "$ref": "#/components/schemas/_GenresFillQualification"
-                },
-                {
                   "$ref": "#/components/schemas/_GenresQualification"
                 },
                 {
@@ -2044,9 +2003,6 @@
                 },
                 {
                   "$ref": "#/components/schemas/_SeriesQualification"
-                },
-                {
-                  "$ref": "#/components/schemas/_GenresFillQualification"
                 },
                 {
                   "$ref": "#/components/schemas/_GenresQualification"

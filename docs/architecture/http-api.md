@@ -295,6 +295,15 @@ library data require authentication.
 - Removing, renaming, or changing field semantics requires a new API version or
   a documented compatibility window.
 - Generated clients and schema snapshots run in CI to detect accidental drift.
+
+Before the first production release, the closed rich-metadata qualification
+records returned by metadata-policy endpoints have a compatibility window that
+ends at that first release. Their option vocabulary is stable, but evidence
+requalification may change `automatic_available`, `disposition`, and
+`candidate_sha256` for an existing option. Pre-release clients must regenerate
+from the exact server OpenAPI snapshot when those records change. After the
+first release, the normal versioning rules above apply without this window.
+
 ## Operational API
 
 `GET /health/live` and `GET /health/ready` return fixed anonymous text.

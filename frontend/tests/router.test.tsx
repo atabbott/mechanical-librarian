@@ -878,7 +878,7 @@ describe('typed review routes', () => {
       title_layout: 'title_and_subtitle', date_precision: 'year', language_rendering: 'display_name', contributor_names: 'canonical', publisher_preference: 'publisher', subtitle: 'fill_empty', series: 'primary_narrative', genres: 'fill_empty', tags: 'off', description_fill: 'safe_plain_text', isbn_form: 'preserve_exact', cover_order: 'fixed_source_order', asin: 'preserve_exact', explicit: 'unsupported',
     }
     const destinations = {
-      title_layout: 'ask', date_precision: 'ask', language_rendering: 'ask', contributor_names: 'ask', publisher_preference: 'ask', genres: 'ask', tags: 'ignore', description_fill: 'ask', isbn_form: 'ask', cover_order: 'ask', asin: 'ask', explicit: 'unsupported',
+      title_layout: 'ask', date_precision: 'ask', language_rendering: 'ask', contributor_names: 'ask', publisher_preference: 'ask', genres: 'automatic', tags: 'ignore', description_fill: 'ask', isbn_form: 'ask', cover_order: 'ask', asin: 'ask', explicit: 'unsupported',
     }
     let draftSaves = 0
     const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
@@ -897,6 +897,7 @@ describe('typed review routes', () => {
         { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'series', option: 'primary_narrative' },
         { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'series', option: 'source_order' },
         { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'series', option: 'all_qualified' },
+        { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'genres', option: 'fill_empty' },
         { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'isbn_form', option: 'preserve_exact' },
         { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'isbn_form', option: 'prefer_isbn13' },
         { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'passing_human_only', field: 'explicit', option: 'unsupported' },
@@ -919,6 +920,10 @@ describe('typed review routes', () => {
     expect(within(isbn).getByText(/Enter Preview mode before choosing qualified Automatic/)).toBeVisible()
     const series = screen.getByRole('group', { name: /Series memberships/ })
     expect(within(series).getByText(/Enter Preview mode before choosing qualified Automatic/)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /Open curation/i }))
+    const genres = screen.getByRole('group', { name: /^Genres/ })
+    expect(within(genres).getByRole('button', { name: 'Automatic' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(genres).getByText(/Enter Preview mode before choosing qualified Automatic/)).toBeVisible()
     await user.click(screen.getByRole('button', { name: /Open unsupported content/i }))
     const explicit = screen.getByRole('group', { name: /Explicit-content flag/ })
     expect(within(explicit).getByText(/remains unsupported and has no policy choice/)).toBeVisible()

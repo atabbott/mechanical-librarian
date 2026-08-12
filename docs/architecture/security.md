@@ -148,8 +148,8 @@ an existing database and creates no file or SQLite state.
 The F20 rich-metadata qualification candidate is aggregate-only. The runtime
 pins its public digest and closed per-option disposition before validation,
 decision construction, or presentation. The three `series` options, both
-`isbn_form` options, genre add/replace, tag fill/add/replace, and safe plaintext
-description have decision-only Automatic authority. Lists must remain one
+`isbn_form` options, genre fill/add/replace, tag fill/add/replace, and safe
+plaintext description have decision-only Automatic authority. Lists must remain one
 complete ordered work-bound source projection, and descriptions must remain
 exact safe work-bound text without rewriting or truncation;
 `not_qualified` and `insufficient_coverage` cannot be fallback authority,
@@ -157,6 +157,9 @@ exact safe work-bound text without rewriting or truncation;
 construct an effect. Each automatic decision binds the F19a or F20 digest that
 actually qualified its exact policy option. Effect consent, target concurrency,
 backup, apply, and read-back gates remain unchanged.
+Previously persisted F20 decisions remain readable only when their historical
+digest and option identity match the exact earlier passing set; new decisions
+always bind the current candidate, and a historical digest grants no new option.
 
 Activation is a separate authenticated CSRF-protected owner mutation with the
 same 16 KiB pre-parse request bound as policy drafts. It binds

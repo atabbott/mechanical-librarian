@@ -49,7 +49,7 @@ class MetadataPolicyTests(unittest.TestCase):
             resolve_policy(profile, "library", {"options": {"removed": "anything"}, "destinations": {}})
         with self.assertRaises(MetadataPolicyError):
             resolve_policy(profile, "library", {"options": {}, "destinations": {"explicit": "ask"}})
-        unavailable = {"genres", "tags", "cover_order", "asin"}
+        unavailable = {"tags", "cover_order", "asin"}
         automatic = resolve_policy(
             profile,
             "library",
@@ -65,6 +65,12 @@ class MetadataPolicyTests(unittest.TestCase):
             {field: automatic.qualification(field) for field in unavailable},
         )
         self.assertEqual("available", automatic.qualification("description_fill"))
+        genres = resolve_policy(
+            profile,
+            "library",
+            {"options": {}, "destinations": {"genres": "automatic"}},
+        )
+        self.assertEqual("available", genres.qualification("genres"))
         isbn = resolve_policy(
             profile,
             "library",
@@ -118,7 +124,7 @@ class MetadataPolicyTests(unittest.TestCase):
         self.assertEqual(
             (
                 "title_layout", "date_precision", "language_rendering",
-                "contributor_names", "publisher_preference", "series", "tags",
+                "contributor_names", "publisher_preference", "series", "genres", "tags",
                 "description_fill", "isbn_form",
             ),
             preview.libraries[0].affected_categories,
@@ -126,7 +132,7 @@ class MetadataPolicyTests(unittest.TestCase):
         self.assertEqual(
             (
                 "title_layout", "date_precision", "language_rendering",
-                "contributor_names", "publisher_preference", "series",
+                "contributor_names", "publisher_preference", "series", "genres",
                 "description_fill", "isbn_form",
             ),
             preview.libraries[1].affected_categories,
