@@ -376,21 +376,29 @@ a corpus rebuild.
 
 All eight combinations use bit order `promotional / tie-in / minimal`; `1`
 enables avoidance of promotional text, avoidance of tie-in branding, or
-preference for minimal composition respectively. "Exact full decision" means
-the acceptable set, recommendation, and status all agree.
+preference for minimal composition respectively. The frozen exact outcome
+triple means that the acceptable set, recommendation, and status all agree. It
+does not include reason-code equality. Exact reason agreement separately
+requires the complete ordered reason list to match; strict agreement requires
+both the outcome triple and ordered reasons.
 
 Development contained 50 rows in 50 packets. Exact acceptable-set,
-recommendation, status, and full-decision agreement were each 50/50 under every
-policy. Conservative identity made 46/50 packets ambiguous before semantic
+recommendation, status, and outcome-triple agreement were each 50/50 under every
+policy. Exact reason, strict row, and strict all-selected-row packet agreement
+were 50/50 for `000`, `010`, `100`, `101`, `110`, and `111`, and 49/50 for
+`001` and `011`. One development row under those two minimal-only combinations
+had the same acceptable set, recommendation, and status but differed on the
+`preferred_minimal` reason. Conservative identity made 46/50 packets ambiguous
+before semantic
 policy. The remaining four semantic-active packets had 4/4 exact selected-row
-full decisions under every policy. That active result is descriptive, not a
+outcome triples under every policy. That active result is descriptive, not a
 separate acceptance claim.
 
 The one-shot recovery-final cohort retained 48 admitted observation rows over
 29 packets. Two missing rows in one packet were represented as
 `observations_unavailable` and failed closed without imputation.
 
-| Policy bits | Acceptable set | Recommendation | Status | Exact full decision | Distinct packets with all selected rows exact |
+| Policy bits | Acceptable set | Recommendation | Status | Exact outcome triple | Distinct packets with all selected rows outcome-triple exact |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `000` | 50/50 | 50/50 | 50/50 | 50/50 (100%) | 29/29 |
 | `001` | 50/50 | 47/50 | 50/50 | 47/50 (94%) | 28/29 |
@@ -401,12 +409,26 @@ The one-shot recovery-final cohort retained 48 admitted observation rows over
 | `110` | 46/50 | 47/50 | 47/50 | 46/50 (92%) | 27/29 |
 | `111` | 46/50 | 47/50 | 47/50 | 46/50 (92%) | 27/29 |
 
+Reason-code equality and the stricter canonical outcome-plus-explanation view
+were:
+
+| Policy bits | Exact ordered reasons | Strict outcome plus reasons | Distinct packets with all selected rows strict |
+| --- | ---: | ---: | ---: |
+| `000` | 48/50 | 48/50 (96%) | 28/29 |
+| `001` | 47/50 | 44/50 (88%) | 26/29 |
+| `010` | 47/50 | 43/50 (86%) | 26/29 |
+| `011` | 46/50 | 40/50 (80%) | 25/29 |
+| `100` | 45/50 | 42/50 (84%) | 26/29 |
+| `101` | 44/50 | 42/50 (84%) | 26/29 |
+| `110` | 44/50 | 43/50 (86%) | 25/29 |
+| `111` | 43/50 | 42/50 (84%) | 25/29 |
+
 One packet had repeat-artifact decision variation, only for the four policies
 with promotional avoidance enabled. Conservative identity preempted semantic
 policy on 26/29 final packets. A post-hoc descriptive view of the remaining
 semantic-active subset contained only 3 packets and 8 selected rows:
 
-| Policy bits | Semantic-active exact full decisions |
+| Policy bits | Semantic-active exact outcome triples |
 | --- | ---: |
 | `000` | 8/8 |
 | `001` | 5/8 |
@@ -427,6 +449,13 @@ The four policies with promotional avoidance enabled also added three
 `observations_ambiguous` rows. The missing runtime rows were identity-ambiguous
 and did not reduce the semantic-active subset.
 
+The two missing rows also explain why `000` has only 48/50 exact ordered
+reasons even though its outcome triple is 50/50: the reference reason was
+`identity_ambiguous`, the tested reason was `observations_unavailable`, and both
+were the same abstained outcome triple. Other reason differences expose the
+already disclosed minimal, tie-in, promotional, and three promotional-policy
+`observations_ambiguous` explanation differences without adding case detail.
+
 | Violation or expanded authority | Observed |
 | --- | ---: |
 | Mapping violations | 0 |
@@ -443,8 +472,9 @@ The aggregate safety conclusion is derived from the zero component boundary
 and expanded-authority counters above. Safety was not an independently measured
 field in the receipt.
 
-The no-preference baseline is strong. Overall exact full-decision agreement is
-mixed to strong at 84–100% under the predeclared bands, but conservative
+The no-preference baseline is strong. Overall exact outcome-triple agreement is
+mixed to strong at 84–100% under the predeclared bands, and strict
+outcome-plus-reasons agreement is mixed to strong at 80–96%. Conservative
 identity preempted semantic policy on 26/29 final packets. In the very small
 semantic-active subset, only the `000` no-preference baseline was strong. All
 seven preference-enabled policies were below the frozen 75% useful threshold,
@@ -461,8 +491,8 @@ unit. Issue #541 separately passes its bounded typed observation contract and
 its aggregate-safe semantic usefulness and repeatability proof.
 Issue #543 retains its deterministic contract and historical real fail-closed
 abstention proof. Its reopened replay proves exact-bound deterministic policy
-conversion and reports identity-dominated mixed-to-strong overall policy
-agreement, while every preference-enabled result in the small semantic-active
-sample is insufficient.
+conversion and reports identity-dominated mixed-to-strong outcome-triple and
+strict outcome-plus-reasons agreement, while every preference-enabled result in
+the small semantic-active sample is insufficient.
 The tracked report contains no private corpus material, and #501 remains
 unpromoted.

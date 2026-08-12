@@ -102,24 +102,34 @@ The reopened policy qualification first completed twice-reviewed,
 evidence-adjudicated reference observations for all 232 candidate instances in
 the 79 retained packets. It then exercised all eight policies over the exact
 retained model observations. Development matched the reference acceptable set,
-recommendation, status, and complete decision for every one of 50 rows under
-every policy. In the one-shot final replay, exact complete-decision agreement
-ranged from 84% to 100% across the eight policies; all selected rows agreed in
-26 to 29 of the 29 distinct packets. Two unavailable observation rows in one
-packet failed closed without imputation, and one packet varied across retained
-repeat artifacts only when promotional avoidance was enabled. The exact
-aggregate table is in
+recommendation, and status for every one of 50 rows under every policy. This
+frozen exact outcome triple does not include reason codes. Development exact
+ordered reason-list and strict outcome-plus-reasons agreement were 49/50 for
+the `001` and `011` minimal-enabled policies and 50/50 otherwise: one row had
+the same outcome triple but differed on the `preferred_minimal` reason. In the
+one-shot final replay, exact outcome-triple agreement ranged from 84% to 100%,
+exact reason-list agreement from 86% to 96%, and strict outcome-plus-reasons
+agreement from 80% to 96% across the eight policies. All selected rows strictly
+agreed in 25 to 28 of the 29 distinct packets. Two unavailable observation rows
+in one packet failed closed without imputation. Under `000`, both reference and
+tested results abstained with the same outcome triple, but the ordered reasons
+were respectively `identity_ambiguous` and `observations_unavailable`. Other
+reason differences reflect the disclosed minimal, tie-in, promotional, and
+promotional-policy ambiguity explanations. One packet varied across
+retained repeat artifacts only when promotional avoidance was enabled. The
+exact aggregate tables are in
 [semantic cover corpus readiness](semantic-cover-corpus-readiness.md).
 
 Conservative identity preempted semantic policy on 46/50 development packets
 and 26/29 final packets. The post-hoc semantic-active final subset was only
-3 packets and 8 selected rows, with exact complete-decision agreement ranging
+3 packets and 8 selected rows, with exact outcome-triple agreement ranging
 from 0/8 to 8/8 across policies. Only the no-preference baseline was strong;
 every preference-enabled result was below the frozen 75% useful threshold.
-Overall policy scores remain mixed to strong because conservative identity
-preempted most semantic decisions, and they prove the deterministic,
-exact-bound, fail-closed pipeline. Semantic-active preference quality is
-insufficient, and runtime readiness is not established.
+Overall outcome-triple and strict outcome-plus-reasons scores remain mixed to
+strong because conservative identity preempted most semantic decisions, and
+they prove the deterministic, exact-bound, fail-closed pipeline.
+Semantic-active preference quality is insufficient, and runtime readiness is
+not established.
 The reference observations remain review judgements rather than human ground
 truth. The replay used no provider, external model, production library, write,
 or corpus rebuild. Its aggregate safety conclusion is derived from zero

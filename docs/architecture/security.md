@@ -595,11 +595,20 @@ observations before tested policy results were opened and reused the retained
 facts and media through a one-to-one binding-equivalent clean-schema
 reconstruction. Opaque references changed without changing any semantic or
 identity outcome. The final two missing observation rows were retained as
-`observations_unavailable` and not imputed. Exact full-decision agreement ranged
-from 84% to 100% across the eight closed policies, while the semantic-active
-final subset was only three packets and ranged from 0/8 to 8/8; no broad strong
+`observations_unavailable` and not imputed. The frozen exact outcome triple is
+the acceptable set, recommendation, and status; it excludes reason codes. Its
+agreement ranged from 84% to 100% across the eight closed policies. Exact
+ordered reason-list agreement ranged from 86% to 96%, and strict outcome-plus-
+reason agreement ranged from 80% to 96%. The two missing rows explain why the
+no-preference policy can retain the same abstained outcome triple while its
+reference `identity_ambiguous` reason differs from tested
+`observations_unavailable`. The semantic-active final subset was only three
+packets and ranged from 0/8 to 8/8 on the outcome triple; no broad strong
 semantic-policy claim follows. Only the no-preference baseline was strong; all
 seven preference-enabled policies were below the frozen 75% useful threshold.
+Development outcome triples were 50/50 under every policy; strict agreement was
+49/50 for the two minimal-only policies and 50/50 otherwise because one row's
+ordered reasons differed only on `preferred_minimal`.
 Mapping, binding, eligibility, explicit-policy, invented-reference, and privacy
 violations were all zero. The replay made no provider or external-model call,
 corpus rebuild, production-library access, or write, and added no runtime

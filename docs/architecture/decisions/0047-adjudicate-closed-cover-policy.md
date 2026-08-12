@@ -103,8 +103,16 @@ reconstruction, not a provider acquisition, model run, or corpus rebuild.
 
 All eight policies were applied with bit order `promotional / tie-in / minimal`,
 where `1` enables that policy. Development exact acceptable-set,
-recommendation, status, and full-decision agreement were each 50/50 for every
-policy. Conservative identity had already made 46 of those 50 packets
+recommendation, status, and outcome-triple agreement were each 50/50 for every
+policy. The outcome triple—acceptable set, recommendation, and status—is the
+frozen issue metric and does not include reason-code equality. Exact reason
+agreement requires the complete ordered reason list to match; strict agreement
+requires both the outcome triple and ordered reasons. Development exact reason,
+strict row, and strict all-selected-row packet agreement were 50/50 for `000`,
+`010`, `100`, `101`, `110`, and `111`, and 49/50 for `001` and `011`. One row
+under the two minimal-only combinations retained the same outcome triple while
+differing on the `preferred_minimal` reason. Conservative identity had already
+made 46 of those 50 packets
 ambiguous; on the four semantic-active packets, all four selected rows matched
 under every policy. That active result is descriptive because of its size.
 
@@ -112,7 +120,7 @@ The one-shot recovery-final replay retained 48 admitted observation rows over
 29 packets. Two missing rows in one packet produced
 `observations_unavailable` and were not imputed. Aggregate agreements were:
 
-| Policy bits | Acceptable set | Recommendation | Status | Exact full decision | Distinct packets with all selected rows exact |
+| Policy bits | Acceptable set | Recommendation | Status | Exact outcome triple | Distinct packets with all selected rows outcome-triple exact |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `000` | 50/50 | 50/50 | 50/50 | 50/50 (100%) | 29/29 |
 | `001` | 50/50 | 47/50 | 50/50 | 47/50 (94%) | 28/29 |
@@ -123,10 +131,23 @@ The one-shot recovery-final replay retained 48 admitted observation rows over
 | `110` | 46/50 | 47/50 | 47/50 | 46/50 (92%) | 27/29 |
 | `111` | 46/50 | 47/50 | 47/50 | 46/50 (92%) | 27/29 |
 
+The separate explanation and canonical strict views were:
+
+| Policy bits | Exact ordered reasons | Strict outcome plus reasons | Distinct packets with all selected rows strict |
+| --- | ---: | ---: | ---: |
+| `000` | 48/50 | 48/50 (96%) | 28/29 |
+| `001` | 47/50 | 44/50 (88%) | 26/29 |
+| `010` | 47/50 | 43/50 (86%) | 26/29 |
+| `011` | 46/50 | 40/50 (80%) | 25/29 |
+| `100` | 45/50 | 42/50 (84%) | 26/29 |
+| `101` | 44/50 | 42/50 (84%) | 26/29 |
+| `110` | 44/50 | 43/50 (86%) | 25/29 |
+| `111` | 43/50 | 42/50 (84%) | 25/29 |
+
 One packet had repeat-artifact decision variation, only when promotional
 avoidance was enabled. Conservative identity preempted semantic policy on 26 of
 the 29 final packets. The post-hoc descriptive semantic-active subset contained
-only 3 packets and 8 selected rows; exact full decisions for `000` through
+only 3 packets and 8 selected rows; exact outcome triples for `000` through
 `111` were respectively 8/8, 5/8, 3/8, 0/8, 2/8, 2/8, 4/8, and 4/8. This was
 not a frozen acceptance subset and prevents the identity-dominated overall
 score from being read as broad semantic preference quality.
@@ -142,10 +163,17 @@ zero. The aggregate safety conclusion is derived from those zero component
 boundary and authority counters; safety was not an independent receipt metric.
 
 The unchanged deterministic pipeline and fail-closed behavior are therefore
-proved. The no-preference baseline is strong and overall full-decision
-agreement across policies is mixed to strong at 84–100%, but those overall
-results are identity-dominated. On the very small semantic-active subset, the
-no-preference baseline was strong and every preference-enabled policy was below
-the frozen 75% useful threshold. Semantic-active preference evidence is
-therefore insufficient. This does not establish broad strong semantic-policy
-quality or runtime readiness, and it does not promote #501 / 0.15.1.
+proved. The no-preference baseline is strong and overall outcome-triple
+agreement across policies is mixed to strong at 84–100%, while strict
+outcome-plus-reasons agreement is mixed to strong at 80–96%. The two missing
+rows explain the `000` reason difference: both sides abstained with the same
+outcome triple, but the reference reason was `identity_ambiguous` and the tested
+reason was `observations_unavailable`. Other reason differences reflect the
+already disclosed minimal, tie-in, promotional, and three promotional-policy
+`observations_ambiguous` explanation differences without changing the frozen
+metric. Those overall results are identity-dominated. On the very small
+semantic-active subset, the no-preference baseline was strong and every
+preference-enabled policy was below the frozen 75% useful threshold.
+Semantic-active preference evidence is therefore insufficient. This does not
+establish broad strong semantic-policy quality or runtime readiness, and it
+does not promote #501 / 0.15.1.

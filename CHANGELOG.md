@@ -27,8 +27,14 @@
   results. A binding-equivalent current-schema reconstruction changed only
   opaque references. Development decisions matched the reference acceptable
   set, recommendation and status for all 50 rows under all eight policies. On
-  the 50-row recovery final cohort, exact full-decision agreement ranged from
-  84% to 100%; 29-packet all-selected-row agreement ranged from 26/29 to 29/29.
+  the 50-row recovery final cohort, exact outcome-triple agreement—the frozen
+  acceptable-set, recommendation, and status metric—ranged from 84% to 100%.
+  It does not include reason codes. Exact ordered reason-list agreement ranged
+  from 86% to 96%. A stricter view requiring both the outcome triple and reasons
+  ranged from 80% to 96%, with 25/29 to 28/29 packets having every selected row
+  agree. Development strict agreement was 49/50 for the two
+  minimal-only policy combinations and 50/50 otherwise because one row retained
+  the same outcome triple but differed on `preferred_minimal` explanation.
   Two unavailable tested observations failed closed without imputation. The
   three-packet semantic-active final subset remained too small and ranged from
   0/8 to 8/8: only the no-preference baseline was strong, while every enabled
