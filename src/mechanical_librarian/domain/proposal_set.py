@@ -898,9 +898,12 @@ def _ignored_policy_targets(
         raise ProposalValueError("proposal policy destinations are invalid")
     return frozenset(
         destination
-        for field, choice in destinations.items()
-        if choice == "ignore"
-        for destination in _POLICY_DESTINATIONS[field]
+        for destination in TargetDestination
+        if (owners := tuple(
+            field for field, values in _POLICY_DESTINATIONS.items()
+            if destination in values
+        ))
+        and all(destinations[field] == "ignore" for field in owners)
     )
 
 

@@ -5726,6 +5726,7 @@ class SQLiteMetadataReportRepository:
         if type(library) is not str or not library or type(limit) is not int or not 1 <= limit <= 20:
             raise MetadataReportError("policy preview is unavailable")
         try:
+            self._connection.execute("BEGIN")
             total_row = self._connection.execute(
                 "SELECT count(*) " + _CURRENT_REVIEW_FROM_SQL
                 + " WHERE c.library_name=?",
@@ -5762,8 +5763,11 @@ class SQLiteMetadataReportRepository:
             pairs = tuple(pairs_list)
             if len(pairs) > total_row[0]:
                 raise MetadataReportError("policy preview is unavailable")
+            self._connection.commit()
             return total_row[0], pairs
         except (sqlite3.Error, TypeError, ValueError) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
             raise MetadataReportError("policy preview is unavailable") from error
 
     def create_review_session(

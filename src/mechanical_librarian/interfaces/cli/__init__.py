@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import stat
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -14,6 +16,7 @@ from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 
 ReviewServeRunner = Callable[[Path, Path, Path, Path, str, int], None]
 PolicyPreviewRunner = Callable[[Path, Path, dict[str, object]], dict[str, object]]
+_MAX_PROFILE_BYTES = 16_384
 
 
 class _Parser(argparse.ArgumentParser):
@@ -29,6 +32,21 @@ def _port(value: str) -> int:
     if str(port) != value or not 1 <= port <= 65_535:
         raise argparse.ArgumentTypeError("invalid port")
     return port
+
+
+def _read_profile(path: Path) -> bytes:
+    """Read one bounded regular profile file without following links."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        information = os.fstat(descriptor)
+        if not stat.S_ISREG(information.st_mode) or not 1 <= information.st_size <= _MAX_PROFILE_BYTES:
+            raise ValueError("profile is invalid")
+        payload = os.read(descriptor, information.st_size + 1)
+        if len(payload) != information.st_size:
+            raise ValueError("profile is invalid")
+        return payload
+    finally:
+        os.close(descriptor)
 
 
 def _parser() -> _Parser:
@@ -62,7 +80,7 @@ def main(argv: Sequence[str] | None = None, *, review_serve_runner: ReviewServeR
         if arguments.command == "policy-preview":
             if policy_preview_runner is None:
                 raise RuntimeError("runtime composition unavailable")
-            value = json.loads(arguments.profile.read_text(encoding="utf-8"))
+            value = json.loads(_read_profile(arguments.profile).decode("utf-8", "strict"))
             if type(value) is not dict:
                 raise ValueError
             MetadataPolicyProfile.from_data(value)

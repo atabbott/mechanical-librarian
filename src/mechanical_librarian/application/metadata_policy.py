@@ -91,6 +91,9 @@ class PolicyPreview:
     libraries: tuple[LibraryPolicyImpact, ...]
 
 
+MAX_RICH_PREVIEW_CASES = 20
+
+
 @dataclass(frozen=True, slots=True)
 class ProposalPolicyBinding:
     """Immutable association for a ProposalSet; it changes no evidence."""
@@ -163,6 +166,7 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
     if type(profile) is not MetadataPolicyProfile or type(libraries) is not tuple or libraries != tuple(sorted(set(libraries))):
         raise MetadataPolicyApplicationError("policy preview is invalid")
     impacts: list[LibraryPolicyImpact] = []
+    remaining_cases = MAX_RICH_PREVIEW_CASES
     try:
         for library in libraries:
             resolved = resolve_policy(profile, library, overrides.get(library))
@@ -183,6 +187,8 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
                 library,
                 overrides.get(library),
             )
+            # Compatibility callers expose this aggregate separately; the
+            # concrete repository below proves it equals the read snapshot.
             count = repository.current_unapplied_count(library)
             if type(count) is not int or count < 0:
                 raise MetadataPolicyApplicationError("policy preview is unavailable")
@@ -197,7 +203,11 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
                 or resolved_destinations[field] != active_destinations[field]
             )
             pairs_total, pairs = (
-                repository.current_policy_impact_pairs(library, 20)
+                (count, ())
+                if remaining_cases == 0
+                else repository.current_policy_impact_pairs(
+                    library, min(20, remaining_cases)
+                )
                 if hasattr(repository, "current_policy_impact_pairs")
                 else (0, ())
             )
@@ -227,6 +237,7 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
                 )
                 for report, _ in pairs
             )
+            remaining_cases -= len(cases)
             impacts.append(LibraryPolicyImpact(library, categories, count, resolved.resolved_id, cases, pairs_total, pairs_total > len(pairs)))
     except MetadataPolicyApplicationError:
         raise

@@ -174,6 +174,8 @@ def _project(
     candidate = (
         _combination_member(proposal, TargetDestination.SERIES)
         if field == "series" and option == "primary_narrative"
+        else _series_candidate(result)
+        if field == "series"
         else _one_list_candidate(result)
         if field in {"genres", "tags"}
         else _candidate(result)
@@ -217,6 +219,18 @@ def _candidate(result: ProposalResult) -> ProposalAlternative | None:
         and result.alternatives[0].assessment is not ProposalAssessment.PRESERVES_TARGET
     ):
         return result.alternatives[0]
+    return None
+
+
+def _series_candidate(result: ProposalResult) -> ProposalAlternative | None:
+    """Series projection may narrow an admitted target-preserving alternative."""
+    if len(result.alternatives) != 1:
+        return None
+    alternative = result.alternatives[0]
+    if alternative.value.kind is not ProposalValueKind.SERIES:
+        return None
+    if result.outcome in {ProposalOutcome.PROPOSE_CHANGE, ProposalOutcome.KEEP}:
+        return alternative
     return None
 
 
