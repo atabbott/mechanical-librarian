@@ -54,19 +54,20 @@
   observations covering all 148 candidates. Across all eight policies, exact
   acceptable-set, recommendation and whole-decision agreement were 88.5%, 89%
   and 86%; every policy combination remained at or above the predeclared 75%
-  potentially-useful band, with zero safety or binding violations. A fresh
-  work-family-disjoint one-shot holdout then froze 10 complete packets with 44
-  candidates, two independent visual reviews, 12 evidence-only disagreement
-  adjudications, and 80 reference policy decisions. The run admitted only 2/10
-  packets and 9/44 candidates: eight serial dispatches failed at the contained
-  runtime boundary without retry. The admitted subset reached 12/16 exact
-  acceptable sets and whole decisions, 16/16 recommendations, statuses and
-  ordered reasons, and 12/16 strict decisions. That is positive evidence that
-  the end-to-end policy works when observations are admitted, but 20% packet
-  and 20.45% candidate coverage is insufficient to qualify final policy
-  quality. The exact runtime cause is unavailable because the final controller
-  retained only the generic typed runtime code instead of the contained
-  process's already value-free diagnostic count and digest. (#543)
+  potentially-useful band, with zero safety or binding violations. A later
+  engineering benchmark reused 10 independently reviewed complete packets with
+  36 candidates and 80 frozen policy decisions. Diagnosis traced the earlier
+  low coverage to Rust allocation aborts under a 512 MiB child limit; changing
+  only that limit to 1 GiB moved an exposed development A/B from 4/8 to 8/8
+  admitted packets. Under the corrected envelope the benchmark admitted all
+  10 packets and 36 candidates without retry or violation. The baseline prompt
+  was exact on 74/80 decisions but one combined policy reached only 7/10. One
+  bounded composition-rubric clarification raised exact whole decisions to
+  76/80, with every policy at 8/10 or better. Field agreement was 26/36
+  composition, 33/36 medium, 36/36 promotional text and 35/36 tie-in branding.
+  This proves useful reusable-benchmark behavior, not unseen generalisation;
+  composition remains the least certain field and had 12/36 independent human
+  review disagreements. (#543)
 
 - Recognize the one proven transient local contained-reviewer CLI abort without
   widening reviewer authority: only bounded strict pre-terminal JSONL on return

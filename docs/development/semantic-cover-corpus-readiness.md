@@ -372,7 +372,7 @@ result rather than prove the current idea. The next formal evidence is one fresh
 unused holdout under this unchanged configuration; these exposed development
 results are not that holdout.
 
-## Cover-policy formal holdout — insufficient coverage
+## Historical cover-policy holdout — insufficient coverage
 
 Before selection or exposure, the fresh holdout design excluded every earlier
 development, final and spent cohort across source, content, work, edition,
@@ -462,6 +462,53 @@ small admitted subset, and every apparent rate has only two packet units. The
 formal result is therefore **INSUFFICIENT COVERAGE**, not a negative proof that
 the model cannot do the work and not a policy-quality PASS.
 
+## Reusable cover-policy engineering benchmark — PASS
+
+Later diagnosis reproduced the historical short runtime failures as Rust
+allocation aborts under the 512 MiB child address-space limit. On a fixed
+exposed-development A/B, changing only that limit to 1 GiB moved coverage from
+4/8 to 8/8 packets, with no abort, retry, binding or authority change. The
+benchmark therefore uses 1 GiB memory, 32 tasks, the same one-MiB file limit,
+and the existing strict one-retry path only for a proven local CLI abort.
+
+The reusable benchmark contains 10 complete packets and 36 candidates with
+independent blinded labels. The reviewers agreed on 122/144 field cells; 22
+disagreements were resolved from the same pixels and taxonomy before tested
+outputs were opened. The accepted reference contains no unknowns and yields 80
+fixed decisions across all eight policies. Reuse is intentional: this is a
+versioned engineering benchmark for comparing prompt, packaging and resource
+changes, not an unseen-holdout claim.
+
+The corrected 1 GiB baseline admitted all packets and candidates without retry
+or violation. It agreed on 74/80 exact whole decisions (92.5%), but the combined
+tie-in-avoidance and minimal-preference policy reached 7/10, below the
+predeclared 75% per-policy floor. One prompt-only experiment then clarified
+that minimal composition means a simple focal layout rather than empty
+background alone. Images, labels, taxonomy, model, reasoning, limits, policy,
+packet order and thresholds remained fixed.
+
+| Reusable-benchmark measure | Baseline | Clarified composition rubric |
+| --- | ---: | ---: |
+| Packets / candidates admitted | 10/10 / 36/36 | 10/10 / 36/36 |
+| Composition exact | 25/36 (69.44%) | 26/36 (72.22%) |
+| Medium exact | 29/36 (80.56%) | 33/36 (91.67%) |
+| Promotional-text exact | 36/36 (100%) | 36/36 (100%) |
+| Tie-in-branding exact | 34/36 (94.44%) | 35/36 (97.22%) |
+| Acceptable-set exact | 76/80 (95%) | 78/80 (97.5%) |
+| Recommendation exact | 78/80 (97.5%) | 78/80 (97.5%) |
+| Status exact | 80/80 (100%) | 80/80 (100%) |
+| Whole-decision exact | 74/80 (92.5%) | 76/80 (95%) |
+| Lowest exact policy combination | 7/10 (70%) | 8/10 (80%) |
+| Retry / typed failure / safety violation | 0 / 0 / 0 | 0 / 0 / 0 |
+
+The clarified run passed the frozen coverage, per-policy and zero-violation
+gates. Composition remains the least certain field and the two human reviews
+also disagreed on 12/36 composition labels, so the 72.22% result is reported as
+mixed rather than optimized further. The experiment proves the general
+principle: admitted visual observations can support useful closed cover
+preferences and recommendations. It does not prove unseen generalisation or
+justify production activation by itself.
+
 ## Outcome
 
 Issue #546 passes as a best-effort general-principle proof of a bounded,
@@ -470,9 +517,10 @@ nor runtime activation, and it does not qualify a model or a later transport
 unit. Issue #541 separately passes its bounded typed observation contract and
 its aggregate-safe semantic usefulness and repeatability proof.
 Issue #543 retains its deterministic contract, current-packet-v2 development
-proof and historical real fail-closed abstention proof. Its fresh formal
-holdout shows the full path working on two packets, but eight contained-runtime
-failures leave semantic policy quality **insufficient coverage** rather than
-qualified or pending.
+proof and historical real fail-closed evidence. Its reusable engineering
+benchmark now passes at 10/10 packets, 36/36 candidates and 76/80 exact whole
+decisions, with every policy at 8/10 or better and zero violations. This
+establishes useful benchmark behavior while explicitly not claiming unseen
+generalisation.
 The tracked report contains no private corpus material, and #501 remains
 unpromoted.

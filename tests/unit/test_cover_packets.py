@@ -1536,6 +1536,10 @@ class CoverObservationTests(unittest.TestCase):
         value = json.loads(report.document)
 
         self.assertIn(TAXONOMY_DOCUMENT, instructions[0])
+        self.assertIn(
+            "a single dominant image or figure with a simple supporting layout is minimal",
+            instructions[0],
+        )
         self.assertTrue(
             isinstance(TAXONOMY, tuple)
             and all(

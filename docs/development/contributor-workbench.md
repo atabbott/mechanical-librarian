@@ -96,12 +96,13 @@ mixed and sparse class result. Final minimal-positive precision was 15/21
 (71.43%), below the useful band, and tie-in branded-positive recall was 2/4
 (50%). The later full-packet development policy replay found 90% exact agreement
 for minimal preference alone and 98% for tie-in avoidance alone. Promotional
-avoidance remained mixed at 78% exact across its four combinations; formal fresh
-holdout confirmation remained necessary for #543. That one-shot holdout later
-admitted only 2/10 packets and 9/44 candidates because eight dispatches failed
-at the typed contained-runtime boundary. Its admitted subset was encouraging,
-but the frozen coverage gate failed, so it does not qualify final policy
-quality or runtime readiness.
+avoidance remained mixed at 78% exact across its four combinations. The later
+reusable engineering benchmark diagnosed its initial low coverage as Rust
+allocation aborts under a 512 MiB child limit. A 1 GiB profile admitted all
+10 packets and 36 candidates. The baseline prompt was exact on 74/80 policy
+decisions; one bounded composition clarification reached 76/80 and every policy
+combination reached at least 8/10, with zero retries or violations. This is
+reusable-benchmark evidence rather than unseen-holdout generalisation.
 
 `cover-policy-report` is a deterministic consumer of the exact retained
 report, cover packet, closed observation report and `cover-policy-v1`. It
@@ -118,13 +119,13 @@ The current development proof reused 50 retained packet observations covering
 148 candidates and all eight policies. Exact acceptable-set, recommendation and
 whole-decision agreement were 88.5%, 89% and 86%, respectively, with every
 combination at or above the predeclared potentially-useful band and zero safety
-or binding violations. These exposed development results support the formal
-holdout run; they are not final-holdout evidence or runtime readiness. The
-fresh holdout scored 16/80 possible policy decisions because only two packets
-were admitted. It agreed on 12/16 acceptable sets, whole decisions and strict
-decision-plus-reason results, and on all 16 recommendations, statuses and
-ordered reasons. Eight typed runtime failures left final coverage insufficient;
-their exact cause was not retained, and the run was not retried.
+or binding violations. The reusable 10-packet, 36-candidate engineering
+benchmark complements that development proof. Its final prompt-bound run
+admitted every candidate and agreed on 78/80 acceptable sets and
+recommendations, 80/80 statuses and 76/80 exact whole decisions. Field
+agreement was 26/36 composition, 33/36 medium, 36/36 promotional text and
+35/36 tie-in branding. Composition remains the least stable field: its two
+blinded human reviews disagreed on 12/36 labels.
 
 The cover entry has one deliberately narrow recovery path for a locally proven
 CLI abort: only return code 134 with bounded strict JSONL that contains one
