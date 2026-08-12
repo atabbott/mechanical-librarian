@@ -34,10 +34,15 @@
   report packet, candidate, preview digest/variant, taxonomy, instruction,
   schema, and contained observer identity; invented, duplicate, hostile, or
   unbound results fail closed. The workbench-only proof adds no runtime,
-  provider, production-library, persistence, ranking, or write authority. A
-  random 100-case real-corpus replay proves exact packet admission and a 20-case
-  deterministic repeat, while honestly retaining the unavailable contained
-  semantic execution result rather than claiming model quality.
+  provider, production-library, persistence, ranking, or write authority.
+  Independent blinded reference judgements are not claimed human ground truth.
+  The first 50-case development configuration reached 84–98% per-field exact
+  agreement and a 20/20 exact shuffled repeat, so no further configuration was
+  run. A fresh one-shot final cohort admitted 48/50 cases, reached 83.33–97.92%
+  per-field agreement and 75% all-four agreement, and retained two
+  post-dispatch, pre-admission failures without retry or safety/binding
+  violation. Their exact shared cause was not proven; the nonzero 4%
+  missingness-bias risk remains within the frozen 5% tolerance.
   (#541)
 
 - Preserve bounded rich metadata evidence for manual review without widening

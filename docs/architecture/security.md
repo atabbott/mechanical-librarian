@@ -555,6 +555,25 @@ reference mismatch, 16.263-second end-to-end latency, and successful cleanup.
 The seam remains source-only/report-only; this is transport and schema-admission
 evidence, not semantic-quality proof or runtime activation.
 
+The subsequent semantic qualification reused retained report-bound artifacts
+and the same authority boundary. One development configuration admitted 50/50
+candidates with zero failures, retries, or violations; its seeded 20-case repeat
+matched every field and the joint result. A fresh one-shot final cohort admitted
+48/50 candidates, retaining two post-dispatch, pre-admission runtime failures
+without retry. Their exact shared cause was not retained or proven. Successful
+exact preflight and the other 48 admissions falsified a systemic authentication,
+profile, sandbox, binding, or schema failure, while bounded transient child,
+resource, or packet-interaction hypotheses remain. The resulting nonzero 4%
+missingness-bias risk is assessed low and remains within the frozen 5%
+tolerance. Qualification recorded zero binding or safety violations, provider
+calls, production-library accesses, or writes. An earlier final cohort was
+invalidated after a broad private JSON discovery scanner opened final-reference
+files without exposing values to tested or model-visible output; another was
+spent by credential-mount setup. Both supplied no semantic evidence and were
+replaced only by fresh disjoint cohorts after diagnosis. No model, prompt,
+schema, packaging, taxonomy, threshold, resource, provider, network, corpus,
+production, or write authority was widened.
+
 Authentication actions remain adapter-owned and create no product lifecycle. The
 kernel is reachable only through the source workbench, excluded from installed
 artifacts, and receives only synthetic or irreversibly sanitized inputs.

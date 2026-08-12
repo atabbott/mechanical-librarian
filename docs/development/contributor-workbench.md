@@ -71,12 +71,15 @@ plus opaque taxonomy, instruction, output-schema, and observer identities. It
 contains no title, creator, source identity, provider value, owner policy,
 eligibility, ranking, preference, or winner.
 
-The 0.15.0 qualification admitted the exact instruction, schema, packets, and
-ordered images for 100 randomly selected real candidates with zero binding
-mismatches; a shuffled 20-case development repeat reproduced the exact request
-and mapping. The contained observer itself did not execute under the preserved
-#542 transport result, so this evidence proves the workbench contract rather
-than semantic label quality or runtime readiness.
+The 0.15.0 qualification used independent blinded reference judgements frozen
+before tested outputs were opened; these are review judgements, not claimed
+human ground truth. The first development configuration admitted all 50
+candidates and cleared the predeclared useful agreement threshold for every
+field, so no second prompt/packaging configuration was run. A shuffled seeded
+20-case repeat matched every field and the joint result in all 20 cases. The
+fresh one-shot final cohort admitted 48 of 50 candidates with zero binding or
+safety violations. This proves bounded semantic usefulness and repeatability
+for the source-only workbench, not runtime readiness.
 
 `cover-policy-report` is a deterministic consumer of the exact retained
 report, cover packet, closed observation report and `cover-policy-v1`. It
@@ -245,3 +248,25 @@ bound, and ephemeral cleanup passed. The source-only/report-only transport
 therefore **QUALIFIED**. This is transport and schema-admission evidence, not a
 semantic-quality or runtime-activation claim. #501 / 0.15.1
 remains unpromoted.
+
+The subsequent policy-neutral observation qualification used only retained
+report-bound artifacts. Its development hypothesis was that the existing
+sealed-image packaging, fixed instruction, closed schema, and corrected bounded
+profile would produce admitted observations with at least 75% exact agreement
+for each field and stable repeats. The first configuration admitted 50/50
+candidates at 84–98% per-field exact agreement; its seeded 20-case repeat was
+20/20 identical per field and jointly. These results stopped development after
+one of the permitted three configurations.
+
+Two disjoint final cohorts supplied no semantic evidence: a broad private JSON
+discovery scanner opened final-reference files before the first could execute,
+without exposing values to tested or model-visible output, and the second was
+spent by credential-mount setup. After diagnosis and corrected preflight, the
+next fresh disjoint one-shot cohort admitted 48/50 candidates at 83.33–97.92%
+per-field agreement and 75% all-four agreement. Its two failures occurred after
+dispatch and before result admission; no exact shared cause was proven, and the
+4% missingness risk remains nonzero but within the frozen 5% tolerance. It
+recorded zero binding, safety, provider, production-access, or write violations.
+The full aggregate hypothesis, latency, repeatability, recovery, agreement, and
+interpretation record is in
+[semantic cover corpus readiness](semantic-cover-corpus-readiness.md).

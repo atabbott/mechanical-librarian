@@ -76,10 +76,24 @@ owner-private storage. Installed artifacts contain none of this capability.
   redacted typed scenario failure.
 - Architecture and installed-artifact checks prove the workbench remains
   outside the runtime distribution.
-- The aggregate-only best-effort receipt records 100 random real candidates,
-  the 50/50 development/final split, 100 exact admissions, zero binding
-  mismatches, and 20/20 shuffled deterministic request/mapping repeats.
-- The existing contained semantic observer did not execute under #542's
-  `contained_reviewer_invocation_insufficient` result. Semantic label counts,
-  semantic repeat agreement, and model quality are therefore not claimed; no
-  reviewer retry or authority widening was used to manufacture them.
+- Independent blinded reference judgements were frozen before tested outputs
+  were opened. The final reference judgements were independently reviewed twice
+  and adjudicated. These are review judgements, not claimed human ground truth;
+  public evidence remains aggregate-only.
+- The first development configuration admitted all 50 candidates. Exact
+  agreement was 86% for composition, 84% for medium, 92% for promotional text,
+  and 98% for tie-in branding. A shuffled seeded 20-case repeat matched every
+  field and the joint result in all 20 cases. Because every field cleared the
+  predeclared useful threshold and repeatability was exact, no second
+  prompt/packaging configuration was justified.
+- A fresh one-shot, work-family-disjoint final cohort admitted 48 of 50
+  candidates. Exact agreement was 83.33% for composition, 97.92% for medium,
+  93.75% for promotional text, and 95.83% for tie-in branding; 36 of 48
+  observations matched all four fields. Two post-dispatch runtime failures
+  occurred before result admission and were retained without retry. Their exact
+  shared cause was not proven; the resulting nonzero 4% missingness-bias risk
+  is assessed low and remains within the frozen 5% tolerance.
+- Qualification recorded zero binding or safety violations, provider calls,
+  production-library accesses, and writes. Earlier final cohorts invalidated or
+  spent by local setup failures supplied no semantic evidence and were replaced
+  only with fresh disjoint cohorts after diagnosis and corrected preflight.

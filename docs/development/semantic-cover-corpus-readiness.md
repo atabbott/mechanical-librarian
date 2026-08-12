@@ -148,40 +148,75 @@ It is not yet the 100-case semantic-quality or repeatability result below. No
 provider call, corpus rebuild, final-holdout exposure, production access, write,
 runtime activation, model change, or threshold reduction was used.
 
-## Cover-observation qualification — bounded contract PASS
+## Cover-observation qualification — semantic proof PASS
 
-After the observation contract and taxonomy binding passed independent code
-review, one recorded random seed selected 100 real report-bound preview
-candidates: 50 development and 50 final holdout. The sample contains 100
-distinct reports and 100 distinct selected preview digests. No case was
-selected by label, and the final holdout remained sealed until the development
-admission replay was complete.
+Independent blinded reference judgements were frozen before tested observer
+outputs were opened. The final reference judgements were independently reviewed
+twice and adjudicated. These are review judgements, not claimed human ground
+truth. Every replacement cohort was work-family-disjoint from the development
+cohort and the other final cohorts. Public evidence contains aggregates only.
 
-| Measure | Development | Final holdout | Combined |
-| --- | ---: | ---: | ---: |
-| Randomly selected cases | 50 | 50 | 100 |
-| Exact packet/image/request admissions | 50 | 50 | 100 |
-| Binding or mapping mismatches | 0 | 0 | 0 |
-| Shuffled deterministic repeat admissions | 20/20 | — | 20/20 |
-| Contained observer dispatches | 0 | 0 | 0 |
-| Admitted semantic observation results | 0 | 0 | 0 |
+The single development hypothesis was that the existing sealed-image packaging,
+fixed instruction, closed schema, and corrected bounded profile would admit the
+sample and reach at least 75% exact agreement for every field with stable
+repeats. The first configuration passed, so the permitted second and third
+configurations were not run.
 
-The real admission replay proves the closed instruction, taxonomy, output
-schema, packet, ordered-image, candidate, and byte bindings on the retained
-corpus. The final holdout caused no implementation or tuning change.
+| Development measure | Aggregate result |
+| --- | ---: |
+| Candidates admitted | 50/50 |
+| Composition exact agreement | 43/50 (86%) |
+| Medium exact agreement | 42/50 (84%) |
+| Promotional-text exact agreement | 46/50 (92%) |
+| Tie-in exact agreement | 49/50 (98%) |
+| Seeded repeat, each field and joint | 20/20 (100%) |
+| Initial p50 / p95 latency | 9.76 s / 13.73 s |
+| Repeat p50 / p95 latency | 8.95 s / 12.22 s |
+| Failures / retries / violations | 0 / 0 / 0 |
 
-The contained semantic observer **did not execute**. The inherited #542
-qualification result remains `contained_reviewer_invocation_insufficient`, so
-natural label counts, semantic repeat agreement, and semantic quality are not
-available. Historical #542 latency cannot be attributed to this head. This is
-an honest general-principle PASS for the deterministic typed contract and real
-admission boundary, not a model-quality result or runtime activation. No retry,
-profile, model, authority, limit, threshold, provider, or corpus change was
-used to manufacture a semantic result.
+One frozen final cohort was invalidated before execution because a broad private
+JSON discovery scanner opened final-reference files, although no reference
+values entered tested or model-visible output. Its fresh disjoint replacement
+was spent during setup with 0/50 cases run because a credential file was mounted
+at a directory target. Diagnosis corrected the preflight; neither attempt
+supplied semantic evidence. No prompt, model, schema, packaging, taxonomy,
+threshold, provider, corpus, network authority, or resource envelope changed.
 
-## Cover-policy qualification — deterministic contract PASS
+The next fresh disjoint final cohort passed an explicit preflight of the
+credential directory and file, lock, exact artifacts and version,
+authentication state, job root, namespace and sealed transport, and exact
+source/configuration/media/binding boundaries before its one shot.
 
-After the deterministic adjudicator passed independent code review, it replayed
+| Final-holdout measure | Aggregate result |
+| --- | ---: |
+| Candidates admitted | 48/50 (96%) |
+| Post-dispatch runtime failures / retries | 2 / 0 |
+| Composition exact agreement | 40/48 (83.33%) |
+| Medium exact agreement | 47/48 (97.92%) |
+| Promotional-text exact agreement | 45/48 (93.75%) |
+| Promotional-text unknown predictions | 2 |
+| Tie-in exact agreement | 46/48 (95.83%) |
+| All-four exact agreement | 36/48 (75%) |
+| p50 / p95 latency | 10.74 s / 14.83 s |
+| Safety or binding violations | 0 |
+
+Both runtime failures occurred after dispatch and before result admission. The
+exact shared cause was not retained and is not proven. Successful exact
+preflight plus 48 independently admitted cases falsified a systemic
+authentication, profile, sandbox, binding, or schema failure; bounded transient
+child, resource, or packet-interaction hypotheses remain. The failures were
+retained without remediation, retry, or another holdout. Their 4% missingness
+creates a nonzero but low assessed bias risk within the frozen 5% tolerance.
+Under the frozen bands, composition is mixed but useful, medium, promotional
+text, and tie-in branding are strong, and joint exact agreement lands exactly
+on the useful threshold. There were zero provider calls, production-library
+accesses, target or media writes, or runtime activations. #501 / 0.15.1 remains
+unpromoted.
+
+## Cover-policy qualification — historical deterministic contract PASS
+
+Before contained semantic execution was recovered, the deterministic
+adjudicator passed independent code review and replayed
 the unchanged random 100-packet cohort from the observation proof: 50
 development and 50 final holdout. Each packet was re-admitted with its exact
 images and locally derived identity report. All eight combinations of the three
@@ -209,16 +244,18 @@ cohort caused no implementation or tuning change.
 The deterministic policy contract therefore passes, while acceptable-set
 adherence and semantic policy quality remain **not established**. No second
 reviewer, retry, provider, corpus, threshold, profile, model, limit or authority
-change was used to manufacture a recommendation.
+change was used to manufacture a recommendation. The newly admitted semantic
+observations invalidate that all-abstention replay as current policy-quality
+evidence; #543 must requalify the unchanged policy against them.
 
 ## Outcome
 
 Issue #546 passes as a best-effort general-principle proof of a bounded,
 aggregate-safe provider-cover corpus. It establishes neither semantic quality
 nor runtime activation, and it does not qualify a model or a later transport
-unit. Issue #541 separately passes its bounded typed observation-contract and
-real-admission proof while preserving the negative semantic-execution result.
-Issue #543 passes its deterministic policy and real fail-closed abstention
-proof while making no semantic-quality or recommendation claim.
+unit. Issue #541 separately passes its bounded typed observation contract and
+its aggregate-safe semantic usefulness and repeatability proof.
+Issue #543 retains its deterministic contract and historical real fail-closed
+abstention proof, while semantic policy quality remains pending requalification.
 The tracked report contains no private corpus material, and #501 remains
 unpromoted.
