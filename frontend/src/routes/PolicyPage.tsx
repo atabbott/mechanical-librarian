@@ -69,8 +69,10 @@ const automaticQualified = (field: FieldDefinition, option: string, qualificatio
 const qualificationExplanation = (field: FieldDefinition, option: string, qualification: readonly { readonly automatic_available: boolean; readonly disposition: string; readonly field: string; readonly option: string }[]) => {
   const rich = qualification.find((entry) => entry.field === field.key && entry.option === option)
   if (!rich) return undefined
+  if (rich.automatic_available) return undefined
   if (rich.disposition === 'policy_only') return 'Automatic is unavailable: this policy option is intentionally off.'
   if (rich.disposition === 'passing_human_only') return 'Automatic is unavailable: this field remains unsupported and has no policy choice.'
+  if (rich.disposition === 'not_qualified') return 'Automatic is unavailable: this option did not meet the qualification gate and remains Ask me or Ignore.'
   return 'Automatic is unavailable: this option has insufficient qualification coverage and remains Ask me or Ignore.'
 }
 

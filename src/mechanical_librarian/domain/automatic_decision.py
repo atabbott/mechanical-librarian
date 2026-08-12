@@ -7,19 +7,36 @@ import json
 import re
 from dataclasses import dataclass
 
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_PASSING_AUTOMATIC_OPTIONS,
+    F20_QUALIFICATION_CANDIDATE_SHA256,
+)
+
 
 class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
 F19A_QUALIFICATION_MANIFEST_SHA256 = "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37"
-QUALIFIED_POLICY_OPTIONS = frozenset({
+F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
     "language_rendering:preserve", "language_rendering:display_name",
     "contributor_names:preserve", "contributor_names:canonical",
     "publisher_preference:publisher",
 })
+QUALIFIED_POLICY_OPTIONS = (
+    F19A_QUALIFIED_POLICY_OPTIONS | F20_PASSING_AUTOMATIC_OPTIONS
+)
+
+
+def qualification_manifest_sha256(policy_category: str, policy_option: str) -> str:
+    identity = f"{policy_category}:{policy_option}"
+    if identity in F19A_QUALIFIED_POLICY_OPTIONS:
+        return F19A_QUALIFICATION_MANIFEST_SHA256
+    if identity in F20_PASSING_AUTOMATIC_OPTIONS:
+        return F20_QUALIFICATION_CANDIDATE_SHA256
+    raise AutomaticDecisionError("invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,8 +169,10 @@ class AutomaticDecision:
             or any(type(v) is not str or not v for v in (self.destination, self.policy_category, self.policy_option))
             or any(re.fullmatch(r"[0-9a-f]{64}", v) is None for v in (self.target_fingerprint, self.qualification_manifest_sha256, self.idempotency_digest))
             or re.fullmatch(r"resolved_policy_[0-9a-f]{64}", self.resolved_policy_id) is None
-            or self.qualification_manifest_sha256 != F19A_QUALIFICATION_MANIFEST_SHA256
             or f"{self.policy_category}:{self.policy_option}" not in QUALIFIED_POLICY_OPTIONS
+            or self.qualification_manifest_sha256 != qualification_manifest_sha256(
+                self.policy_category, self.policy_option
+            )
             or (self.policy_category in {"title_layout", "date_precision"}
                 and (type(self.bundle_id) is not str or re.fullmatch(r"automatic_bundle_[0-9a-f]{64}", self.bundle_id) is None))
             or (self.policy_category not in {"title_layout", "date_precision"} and self.bundle_id is not None)

@@ -415,59 +415,67 @@ class _PolicyProfile(_ClosedModel):
 
 
 class _RichQualificationBase(_ClosedModel):
-    automatic_available: Literal[False]
     candidate_sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class _SubtitleQualification(_RichQualificationBase):
-    disposition: Literal["insufficient_coverage"]
+    automatic_available: Literal[False]
+    disposition: Literal["not_qualified"]
     field: Literal["subtitle"]
     option: Literal["fill_empty", "corroborated_split"]
 
 
 class _SeriesQualification(_RichQualificationBase):
-    disposition: Literal["insufficient_coverage"]
+    automatic_available: Literal[True]
+    disposition: Literal["passing_automatic"]
     field: Literal["series"]
     option: Literal["primary_narrative", "source_order", "all_qualified"]
 
 
 class _GenresQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
     disposition: Literal["insufficient_coverage"]
     field: Literal["genres"]
     option: Literal["fill_empty", "add", "replace"]
 
 
 class _TagsOffQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
     disposition: Literal["policy_only"]
     field: Literal["tags"]
     option: Literal["off"]
 
 
 class _TagsQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
     disposition: Literal["insufficient_coverage"]
     field: Literal["tags"]
     option: Literal["fill_empty", "add", "replace"]
 
 
 class _DescriptionQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
     disposition: Literal["insufficient_coverage"]
     field: Literal["description_fill"]
     option: Literal["safe_plain_text", "google_visible_text"]
 
 
 class _IsbnQualification(_RichQualificationBase):
-    disposition: Literal["insufficient_coverage"]
+    automatic_available: Literal[True]
+    disposition: Literal["passing_automatic"]
     field: Literal["isbn_form"]
     option: Literal["preserve_exact", "prefer_isbn13"]
 
 
 class _AsinQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
     disposition: Literal["insufficient_coverage"]
     field: Literal["asin"]
     option: Literal["preserve_exact", "ebook_manifestation"]
 
 
 class _ExplicitQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
     disposition: Literal["passing_human_only"]
     field: Literal["explicit"]
     option: Literal["unsupported"]
@@ -632,7 +640,7 @@ class _ShadowOutcomeSetResponse(_ClosedModel):
     report_id: str
     resolved_policy_id: str
     review_case_id: str
-    schema_version: Literal["shadow-outcome-set-v1"]
+    schema_version: Literal["shadow-outcome-set-v2"]
     source_decision_set_id: str
     target_fingerprint: str
 

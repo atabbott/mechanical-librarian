@@ -1,39 +1,55 @@
 # Rich-metadata qualification candidate
 
-The F20 candidate manifest is a public, aggregate-safe record of the frozen
-rich-metadata qualification contract. It is not an activation manifest and does
-not grant Automatic routing, effect consent, a target write, or a selector
-change.
+The F20 candidate manifest is the public, aggregate-safe record of the frozen
+rich-metadata qualification contract and its exact option-level decisions. It
+grants decision-only Automatic authority to the passing options; it does not
+grant effect consent, construct a target write, or change provider selection.
 
-The current candidate records no passing automatic option. The retained
-owner-private development material is not F20 holdout evidence; whether a
-separate fresh batch can be selected remains a private provenance decision.
-No fresh F20 qualification or final-holdout batch has been executed for this
-candidate, so its automatic dispositions are provisional
-`insufficient_coverage`, rather than a reason to reuse exposed material,
-weaken thresholds, or create a new authority.
+Qualification is field-option-local. Prior use of the same work for unrelated
+extraction, provider, cover, or metadata development does not disqualify it.
+A case is excluded only when its expected result was used to implement or tune
+the same field option, or when that option was changed after its current output
+was viewed without versioning the evaluator or rule. An unseen or final
+holdout is not required.
 
-The policy and preview compiler source identities are frozen in the candidate.
-Evaluator, threshold, and qualification-fake-service identities are explicitly
-`not_frozen_without_a_fresh_batch`; the synthetic target adapter test is only a
-representation proof and is not a qualification fake-service identity.
+The candidate replayed retained provider responses for 49 accepted real-work
+reports through the current provider adapters, proposal evaluator, and rich
+preview compiler without network access. Public output contains only aggregate
+metrics and contract identities; source material, expected values, and
+case-level outcomes remain private.
 
-`explicit:unsupported` remains a passing human-only invariant, and `tags:off`
-is a non-authorizing policy invariant rather than an automatic candidate.
-Narrators and cover are excluded from this checkpoint. The focused synthetic Audiobookshelf
-proof exercises read, plan, apply, and read-back for the remaining target
-shapes; it proves adapter representation only and does not substitute for a
-fresh field-local qualification cohort.
+The gate was frozen before scoring: at least three eligible cases, at least
+three automatic predictions, 100% automatic precision, and no zero-tolerance
+failure. Recall is reported but is not a pass gate. This favours safe
+abstention while avoiding a novelty requirement unrelated to the option being
+proved.
 
-Before a later candidate may name a passing automatic option, it must freeze
-work-, edition-, and identifier-disjoint qualification batches, reserve the
-second batch for one final once-only run, and bind the implementation,
-evaluator, option, threshold, target-shape, and fake-service identities before
-exposure. It must then retain aggregate-only, option-local results. Until then,
-the manifest's zero-tolerance controls are `not_observed`, not passing proof.
-Failed,
-unsupported, and insufficient options remain non-automatic. F20 activation is
-owned separately by #564.
+All three series policies passed after series correctness was separated from
+preference: a prediction is correct when it is a valid membership for the
+bound work, while the corpus value remains the preferred membership. Primary
+narrative made 19 correct predictions; source order and all qualified each
+made 20, all at 100% precision. The two ISBN policies also passed:
+`isbn_form:prefer_isbn13` made 22 correct predictions from 41 eligible
+opportunities and `isbn_form:preserve_exact` made 4, each at 100% precision.
+The admitted proposal and decision retain every qualified membership; the
+existing Audiobookshelf effect planner projects only the preferred first
+membership because that target accepts one series value.
+
+Subtitle was adjudicated more narrowly at ebook-manifestation scope. Only 2 of
+7 fill-empty predictions were valid: two other proposals duplicated text
+already present in the title, and the remainder were series marketing,
+proof-only, or later franchise descriptors. Corroborated split made no
+predictions. One valid proposal exactly matched a subtitle extracted from the
+ebook package. The other was established by revised-edition evidence that the
+current extractor does not yet expose as a structured subtitle claim. Two of
+the invalid proposals were nevertheless repeated by multiple catalogues, so
+provider count is not a safe substitute. A future subtitle candidate must bind
+the selected ebook manifestation, remain distinct from the title, and exclude
+marketing or status text. Both subtitle policies therefore remain
+`not_qualified`.
+Genres, tags, description, and ASIN remain `insufficient_coverage`. `tags:off` is policy-only,
+`explicit:unsupported` remains human-only, and narrators and cover remain
+excluded.
 
 The machine-readable candidate is
 [`f20-rich-metadata-qualification-candidate-v1.json`](../reference/f20-rich-metadata-qualification-candidate-v1.json).

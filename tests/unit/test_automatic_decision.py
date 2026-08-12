@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import unittest
 
-from mechanical_librarian.domain.automatic_decision import AutomaticDecision, AutomaticDecisionError, AutomaticSafetyState, F19A_QUALIFICATION_MANIFEST_SHA256, QUALIFIED_POLICY_OPTIONS
+from mechanical_librarian.domain.automatic_decision import (
+    AutomaticDecision,
+    AutomaticDecisionError,
+    AutomaticSafetyState,
+    F19A_QUALIFICATION_MANIFEST_SHA256,
+    QUALIFIED_POLICY_OPTIONS,
+)
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_QUALIFICATION_CANDIDATE_SHA256,
+)
 
 
 class AutomaticDecisionTests(unittest.TestCase):
@@ -49,6 +58,41 @@ class AutomaticDecisionTests(unittest.TestCase):
                     '"schema_version":"automatic-decision-v1"',
                     '"schema_version":"automatic-decision-v2"',
                 )
+            )
+
+    def test_qualified_isbn_decision_binds_the_f20_candidate(self) -> None:
+        value = AutomaticDecision.create(
+            review_case_id="review_case_" + "a" * 64,
+            report_id="report_" + "b" * 64,
+            proposal_set_id="proposal_set_" + "c" * 64,
+            proposal_id="review_proposal_" + "d" * 64,
+            target_fingerprint="e" * 64,
+            destination="isbn",
+            outcome="candidate",
+            candidate_id="alternative_" + "f" * 64,
+            resolved_policy_id="resolved_policy_" + "0" * 64,
+            policy_generation=1,
+            rule_id="shadow_rule_" + "1" * 64,
+            policy_category="isbn_form",
+            policy_option="prefer_isbn13",
+            qualification_manifest_sha256=F20_QUALIFICATION_CANDIDATE_SHA256,
+            source_outcome_id="shadow_outcome_" + "3" * 64,
+            occurred_at=1,
+            bundle_id=None,
+        )
+        self.assertEqual(
+            F20_QUALIFICATION_CANDIDATE_SHA256,
+            value.qualification_manifest_sha256,
+        )
+        with self.assertRaises(AutomaticDecisionError):
+            AutomaticDecision.create(
+                **{
+                    key: value
+                    for key, value in value._core().items()
+                    if key != "qualification_manifest_sha256"
+                },
+                qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
+                occurred_at=1,
             )
 
     def test_ignore_has_no_candidate(self) -> None:

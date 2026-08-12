@@ -21,6 +21,7 @@ from scripts.qualify_audiobookshelf_field_effect import (
     _require_installed_return_lineage_progress,
     _operator_epub,
     _require_installed_full_chain_coverage,
+    _require_installed_lifecycle_evidence,
 )
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetRecovery
 
@@ -253,6 +254,23 @@ class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
             activity_present=True,
             diagnostics={},
         )
+
+    def test_lifecycle_evidence_reads_cleanup_from_persistence_not_public_activity(self) -> None:
+        _require_installed_lifecycle_evidence(
+            activity_status=200,
+            suspensions=({"scope": "destination"},),
+            pending_cleanup_plan_ids=(),
+            event_documents=(("planned",), ("verified",)),
+        )
+        with self.assertRaisesRegex(
+            QualificationError, "installed_lifecycle_evidence_failed"
+        ):
+            _require_installed_lifecycle_evidence(
+                activity_status=200,
+                suspensions=({"scope": "destination"},),
+                pending_cleanup_plan_ids=("effect_plan_pending",),
+                event_documents=(("planned",),),
+            )
 
     def test_operator_overlay_preserves_content_and_binds_valid_isbn_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

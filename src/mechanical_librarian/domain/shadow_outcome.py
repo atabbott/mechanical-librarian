@@ -11,8 +11,18 @@ from mechanical_librarian.domain.metadata_policy import (
     OPTION_CATALOGUE,
     ResolvedMetadataPolicy,
 )
-from mechanical_librarian.domain.metadata_report import TargetDestination
-from mechanical_librarian.domain.proposal_set import MAX_BIBLIOGRAPHIC_COMBINATIONS
+from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
+from mechanical_librarian.domain.proposal_set import (
+    MAX_BIBLIOGRAPHIC_COMBINATIONS,
+    ProposalSet,
+)
+from mechanical_librarian.domain.rich_metadata_preview import (
+    RichFieldPreview,
+    compile_rich_metadata_preview,
+)
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_QUALIFICATION_CANDIDATE_SHA256,
+)
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_decision import (
     DECISION_POLICY_SHA256,
@@ -22,7 +32,7 @@ from mechanical_librarian.domain.shadow_decision import (
 from mechanical_librarian.domain.shadow_review import MAX_CITATIONS
 
 
-SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v1"
+SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v2"
 MAX_SHADOW_OUTCOME_BYTES = 1_048_576
 
 _POLICY_CATEGORY_BY_DESTINATION = {
@@ -34,10 +44,7 @@ _POLICY_CATEGORY_BY_DESTINATION = {
     "publisher": "publisher_preference",
     "title": "title_layout",
     "subtitle": "title_layout",
-    # Series is the third member of the atomic bibliographic tuple.  It has
-    # no independently configurable policy category, so it inherits the
-    # qualified title-layout policy rather than being silently unsupported.
-    "series": "title_layout",
+    "series": "series",
     "genres": "genres",
     "tags": "tags",
     "description": "description_fill",
@@ -192,6 +199,80 @@ class ShadowFieldOutcome:
         return {"outcome_id": self.outcome_id, **self._identity_data()}
 
 
+def _rich_field_outcome(
+    preview: RichFieldPreview,
+    *,
+    category: str,
+    destination: str,
+    policy_destination: str,
+    proposal_id: str,
+    catalogue_sha256: str,
+) -> ShadowFieldOutcome:
+    candidate_id = (
+        preview.source_candidate_id if preview.outcome == "projected" else None
+    )
+    disposition = (
+        "ignore" if policy_destination == "ignore"
+        else "manual" if policy_destination == "ask"
+        else "unsupported" if policy_destination == "unsupported"
+        else "candidate" if candidate_id is not None
+        else "keep_current" if preview.outcome == "no_op"
+        else "abstention"
+    )
+    reason_code = (
+        "unique_supported_candidate" if disposition == "candidate"
+        else "unique_supported_preservation" if disposition == "keep_current"
+        else "unsupported_destination" if disposition == "unsupported"
+        else "no_eligible_action"
+    )
+    action_id = "action_" + _digest({
+        "candidate_id": candidate_id,
+        "destination": destination,
+        "manifest_sha256": F20_QUALIFICATION_CANDIDATE_SHA256,
+        "option": preview.option,
+        "outcome": preview.outcome,
+        "proposal_id": proposal_id,
+    })
+    rule_id = "shadow_rule_" + _digest({
+        "category": category,
+        "decision_policy_sha256": DECISION_POLICY_SHA256,
+        "decision_policy_version": DECISION_POLICY_VERSION,
+        "destination": policy_destination,
+        "option": preview.option,
+    })
+    citation_ids = tuple(sorted(preview.source_evidence_references))
+    combination_ids = tuple(sorted(preview.source_combination_ids))
+    qualification_candidate_id = "qualification_candidate_" + _digest({
+        "action_id": action_id,
+        "candidate_id": candidate_id,
+        "catalogue_sha256": catalogue_sha256,
+        "citation_ids": list(citation_ids),
+        "combination_ids": list(combination_ids),
+        "rule_id": rule_id,
+    })
+    field_data = {
+        "action_id": action_id,
+        "candidate_id": candidate_id,
+        "citation_ids": list(citation_ids),
+        "combination_ids": list(combination_ids),
+        "destination": destination,
+        "disposition": disposition,
+        "policy_category": category,
+        "policy_destination": policy_destination,
+        "policy_option": preview.option,
+        "proposal_id": proposal_id,
+        "qualification_candidate_id": qualification_candidate_id,
+        "reason_code": reason_code,
+        "rule_id": rule_id,
+    }
+    return ShadowFieldOutcome(
+        "shadow_outcome_" + _digest(field_data), proposal_id, destination,
+        category, preview.option, policy_destination, disposition, action_id,
+        candidate_id, citation_ids, combination_ids, reason_code, rule_id,
+        qualification_candidate_id,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ShadowOutcomeSet:
     outcome_set_id: str
@@ -218,14 +299,21 @@ class ShadowOutcomeSet:
         decisions: ShadowDecisionSet,
         policy: ResolvedMetadataPolicy,
         policy_generation: int,
+        report: MetadataReport,
+        proposal: ProposalSet,
     ) -> "ShadowOutcomeSet":
         if (
             type(case) is not ReviewCase
             or type(decisions) is not ShadowDecisionSet
             or type(policy) is not ResolvedMetadataPolicy
+            or type(report) is not MetadataReport
+            or type(proposal) is not ProposalSet
             or type(policy_generation) is not int
             or policy_generation < 1
             or decisions.review_case_id != case.review_case_id
+            or report.report_id != case.report_id
+            or proposal.proposal_set_id != case.proposal_set_id
+            or proposal.to_json() != case.proposal_document
             or policy.resolved_id
             != json.loads(case.proposal_document)["resolved_policy_id"]
         ):
@@ -234,6 +322,8 @@ class ShadowOutcomeSet:
         options = dict(policy.options)
         fields: list[ShadowFieldOutcome] = []
         for decision in decisions.decisions:
+            if decision.destination in {"series", "isbn"}:
+                continue
             category = _POLICY_CATEGORY_BY_DESTINATION.get(decision.destination)
             policy_destination = (
                 "unsupported" if category is None else destinations[category]
@@ -304,6 +394,24 @@ class ShadowOutcomeSet:
                     decision.reason_code,
                     rule_id,
                     qualification_candidate_id,
+                )
+            )
+        rich = {
+            value.field: value
+            for value in compile_rich_metadata_preview(policy, report, proposal).fields
+        }
+        proposals = {
+            value["destination"]: value["proposal_id"] for value in case.proposals
+        }
+        for category, destination in (("series", "series"), ("isbn_form", "isbn")):
+            fields.append(
+                _rich_field_outcome(
+                    rich[category],
+                    category=category,
+                    destination=destination,
+                    policy_destination=destinations[category],
+                    proposal_id=proposals[destination],
+                    catalogue_sha256=decisions.catalogue_sha256,
                 )
             )
         core = {

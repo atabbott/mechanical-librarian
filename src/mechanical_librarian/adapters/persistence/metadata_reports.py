@@ -56,8 +56,8 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
     AutomaticSafetyState,
-    F19A_QUALIFICATION_MANIFEST_SHA256,
     QUALIFIED_POLICY_OPTIONS,
+    qualification_manifest_sha256,
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -86,6 +86,10 @@ from mechanical_librarian.domain.review_case import (
     ReviewCaseValueError,
     ReviewTransition,
     is_actionable,
+)
+from mechanical_librarian.domain.rich_metadata_preview import (
+    RichMetadataPreviewError,
+    project_f20_automatic_decision_value,
 )
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
@@ -488,7 +492,8 @@ _SHADOW_DECISION_OUTCOMES_SQL = (
     "proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), "
     "resolved_policy_id TEXT NOT NULL CHECK(resolved_policy_id GLOB 'resolved_policy_[0-9a-f]*' AND length(resolved_policy_id)=80), "
     "source_decision_set_id TEXT NOT NULL, evaluated_at INTEGER NOT NULL CHECK(evaluated_at>=0), "
-    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 1048576))"
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 1048576 "
+    "AND json_extract(document,'$.schema_version')='shadow-outcome-set-v2'))"
 )
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
@@ -928,6 +933,15 @@ class SQLiteMetadataReportRepository:
             if selected is None:
                 raise FieldEffectError("authority_binding")
             value = selected["value"]
+            if decision.policy_category in {"series", "isbn_form"}:
+                try:
+                    value = project_f20_automatic_decision_value(
+                        decision.policy_category,
+                        decision.policy_option,
+                        value,
+                    )
+                except RichMetadataPreviewError as error:
+                    raise FieldEffectError("authority_binding") from error
         lineage = self._connection.execute(
             "SELECT connection_name,library_name,item_id FROM current_review_case_lineages "
             "WHERE review_case_id=?", (decision.review_case_id,),
@@ -4755,12 +4769,12 @@ class SQLiteMetadataReportRepository:
                 row[0], "proposal", current_report_id, updated_at
             )
 
-    def _persisted_shadow_packet_source(
+    def _persisted_shadow_sources(
         self,
         review_case_id: str,
         *,
         include_policy_ignored: bool = False,
-    ) -> tuple[ReviewCase, ShadowReviewPacket]:
+    ) -> tuple[ReviewCase, ShadowReviewPacket, MetadataReport, ProposalSet]:
         case_row = self._connection.execute(
             "SELECT document FROM review_cases WHERE review_case_id=?",
             (review_case_id,),
@@ -4783,12 +4797,28 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("shadow outcome source is unavailable")
         proposal = ProposalSet.from_json(_validate_proposal_row(proposal_row))
         report = MetadataReport.from_json(_validate_report_row(report_row))
-        return case, ShadowReviewPacket.create(
+        return (
             case,
-            proposal,
+            ShadowReviewPacket.create(
+                case,
+                proposal,
+                report,
+                include_policy_ignored=include_policy_ignored,
+            ),
             report,
-            include_policy_ignored=include_policy_ignored,
+            proposal,
         )
+
+    def _persisted_shadow_packet_source(
+        self,
+        review_case_id: str,
+        *,
+        include_policy_ignored: bool = False,
+    ) -> tuple[ReviewCase, ShadowReviewPacket]:
+        case, packet, _, _ = self._persisted_shadow_sources(
+            review_case_id, include_policy_ignored=include_policy_ignored
+        )
+        return case, packet
 
     def _validate_shadow_outcome_row(
         self, row: tuple[object, ...] | sqlite3.Row
@@ -4810,7 +4840,7 @@ class SQLiteMetadataReportRepository:
             != row[:6]
         ):
             raise MetadataReportError("shadow outcome persistence is invalid")
-        case, packet = self._persisted_shadow_packet_source(
+        case, packet, report, proposal = self._persisted_shadow_sources(
             outcome.review_case_id, include_policy_ignored=True
         )
         library = case.target["library"]
@@ -4847,6 +4877,8 @@ class SQLiteMetadataReportRepository:
             decide_shadow_packet(packet),
             policy,
             outcome.policy_generation,
+            report,
+            proposal,
         )
         if expected.to_json() != row[7]:
             raise MetadataReportError("shadow outcome persistence is invalid")
@@ -4887,7 +4919,7 @@ class SQLiteMetadataReportRepository:
                 if owns_transaction:
                     self._connection.commit()
                 return "inactive"
-            case, packet = self._persisted_shadow_packet_source(
+            case, packet, report, proposal = self._persisted_shadow_sources(
                 review_case_id, include_policy_ignored=True
             )
             library = case.target["library"]
@@ -4901,7 +4933,7 @@ class SQLiteMetadataReportRepository:
             if policy is None:
                 raise MetadataReportError("shadow policy is unavailable")
             outcome = ShadowOutcomeSet.create(
-                case, decide_shadow_packet(packet), policy, state[0]
+                case, decide_shadow_packet(packet), policy, state[0], report, proposal
             )
             serialized = outcome.to_json()
             existing = self._connection.execute(
@@ -5013,9 +5045,9 @@ class SQLiteMetadataReportRepository:
         safety = self.automatic_safety_state()
         automatic_dispositions = {"candidate", "keep_current", "ignore"}
         required_bundles = {
-            # Subtitle and series are closed witnesses for the selected title
-            # combination, not supported automatic write destinations.  The
-            # title action's non-empty combination IDs bind all three fields.
+            # Subtitle remains a closed witness for the selected title
+            # combination. Independently qualified series decisions use their
+            # own category and preserve the proposal's combination evidence.
             "title_layout": ("title",),
             "date_precision": ("publishedDate", "publishedYear"),
         }
@@ -5081,7 +5113,9 @@ class SQLiteMetadataReportRepository:
                     rule_id=field.rule_id,
                     policy_category=field.policy_category,
                     policy_option=field.policy_option,
-                    qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
+                    qualification_manifest_sha256=qualification_manifest_sha256(
+                        field.policy_category, field.policy_option
+                    ),
                     source_outcome_id=field.outcome_id,
                     bundle_id=bundle_ids.get(field.policy_category),
                     occurred_at=occurred_at,

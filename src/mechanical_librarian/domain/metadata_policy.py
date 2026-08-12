@@ -12,6 +12,10 @@ import re
 from dataclasses import dataclass
 from typing import Final, Mapping
 
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_PASSING_AUTOMATIC_OPTIONS,
+)
+
 
 POLICY_SCHEMA_VERSION: Final = "metadata-policy-profile-v2"
 DESTINATIONS: Final = ("ask", "ignore", "automatic", "unsupported")
@@ -59,7 +63,9 @@ DEFAULT_OPTIONS: Final = {
 QUALIFIED_AUTOMATIC: Final[frozenset[str]] = frozenset({
     "title_layout", "date_precision", "language_rendering",
     "contributor_names", "publisher_preference",
-})
+}) | frozenset(
+    identity.split(":", 1)[0] for identity in F20_PASSING_AUTOMATIC_OPTIONS
+)
 _POLICY_ID: Final = re.compile(r"^policy_[0-9a-f]{64}$")
 
 

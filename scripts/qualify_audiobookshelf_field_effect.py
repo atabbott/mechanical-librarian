@@ -185,6 +185,24 @@ def _require_installed_full_chain_coverage(
     )
 
 
+def _require_installed_lifecycle_evidence(
+    *,
+    activity_status: int,
+    suspensions: tuple[object, ...],
+    pending_cleanup_plan_ids: tuple[object, ...],
+    event_documents: tuple[tuple[str, ...], ...],
+) -> None:
+    """Verify lifecycle state at its authoritative public and persistence seams."""
+    if (
+        activity_status == 200
+        and len(suspensions) == 1
+        and not pending_cleanup_plan_ids
+        and all(event_documents)
+    ):
+        return
+    raise QualificationError("installed_lifecycle_evidence_failed")
+
+
 def _png(red: int, green: int, blue: int) -> bytes:
     output = io.BytesIO()
     Image.new("RGB", (2, 2), (red, green, blue)).save(output, "PNG")
@@ -1522,14 +1540,19 @@ def _installed_continuous_qualification(
                 reason="unexpected_effect_behavior", changed_at=int(time.time()),
             )
             lifecycle_activity = client.get("/api/v1/activity")
-            if (lifecycle_activity.status_code != 200
-                    or len(lifecycle_activity.json().get("suspensions", [])) != 1
-                    or lifecycle_activity.json().get("cleanup", {}).get("pending") != 0
-                    or not all(
-                        repository.field_effect_event_documents(row["plan_id"])
-                        for row in installed_outcomes
-                    )):
-                raise QualificationError("installed_lifecycle_evidence_failed")
+            _require_installed_lifecycle_evidence(
+                activity_status=lifecycle_activity.status_code,
+                suspensions=tuple(
+                    lifecycle_activity.json().get("suspensions", [])
+                ),
+                pending_cleanup_plan_ids=tuple(
+                    repository.pending_field_effect_cleanups(1)
+                ),
+                event_documents=tuple(
+                    repository.field_effect_event_documents(row["plan_id"])
+                    for row in installed_outcomes
+                ),
+            )
     finally:
         client.close()
         cover_patch.stop()
