@@ -19,6 +19,10 @@
   Field-option-local offline qualification admits all three series policies,
   both exact ISBN policies, genre fill/add/replace, tag fill/add/replace, and safe
   plaintext description to decision-only Automatic at 100% precision.
+  Genre fill-empty is proved separately for missing, null, and empty target
+  states, with 4/4 exact projections in each state; populated targets remain
+  no-ops. Previously persisted F20 decisions retain validation only under the
+  exact earlier digest and option set that originally authorized them.
   Each passing option now reaches the existing persisted-decision and guarded
   effect-plan path; multi-series proposals retain every qualified membership
   while Audiobookshelf receives the preferred first value. It adds no new

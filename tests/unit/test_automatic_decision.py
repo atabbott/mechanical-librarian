@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import unittest
 
 from mechanical_librarian.domain.automatic_decision import (
@@ -15,6 +17,15 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 
 
 class AutomaticDecisionTests(unittest.TestCase):
+    @staticmethod
+    def _digest(value: object) -> str:
+        return hashlib.sha256(json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")).hexdigest()
+
     def test_candidate_is_immutable_and_binds_all_authority_inputs(self) -> None:
         value = AutomaticDecision.create(
             review_case_id="review_case_" + "a" * 64, report_id="report_" + "b" * 64,
@@ -92,6 +103,65 @@ class AutomaticDecisionTests(unittest.TestCase):
                     if key != "qualification_manifest_sha256"
                 },
                 qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
+                occurred_at=1,
+            )
+
+    def test_prior_f20_decision_remains_readable_without_granting_new_authority(self) -> None:
+        current = AutomaticDecision.create(
+            review_case_id="review_case_" + "a" * 64,
+            report_id="report_" + "b" * 64,
+            proposal_set_id="proposal_set_" + "c" * 64,
+            proposal_id="review_proposal_" + "d" * 64,
+            target_fingerprint="e" * 64,
+            destination="genres",
+            outcome="candidate",
+            candidate_id="alternative_" + "f" * 64,
+            resolved_policy_id="resolved_policy_" + "0" * 64,
+            policy_generation=1,
+            rule_id="shadow_rule_" + "1" * 64,
+            policy_category="genres",
+            policy_option="add",
+            qualification_manifest_sha256=F20_QUALIFICATION_CANDIDATE_SHA256,
+            source_outcome_id="shadow_outcome_" + "3" * 64,
+            occurred_at=1,
+            bundle_id=None,
+        )
+        prior_digest = (
+            "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a"
+        )
+        prior_core = {
+            **current._core(),
+            "qualification_manifest_sha256": prior_digest,
+        }
+        prior = AutomaticDecision(
+            decision_id="automatic_decision_" + self._digest(
+                {**prior_core, "occurred_at": 1}
+            ),
+            **prior_core,
+            idempotency_digest=self._digest(prior_core),
+            occurred_at=1,
+        )
+        self.assertEqual(prior, AutomaticDecision.from_json(prior.to_json()))
+        with self.assertRaises(AutomaticDecisionError):
+            AutomaticDecision.create(
+                **{
+                    key: value
+                    for key, value in current._core().items()
+                    if key != "qualification_manifest_sha256"
+                },
+                qualification_manifest_sha256=prior_digest,
+                occurred_at=2,
+            )
+
+        fill_core = {
+            **prior_core,
+            "policy_option": "fill_empty",
+        }
+        with self.assertRaises(AutomaticDecisionError):
+            AutomaticDecision(
+                decision_id="automatic_decision_" + "4" * 64,
+                **fill_core,
+                idempotency_digest="5" * 64,
                 occurred_at=1,
             )
 

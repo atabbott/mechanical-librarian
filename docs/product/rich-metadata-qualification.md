@@ -57,9 +57,10 @@ the selected ebook manifestation, remain distinct from the title, and exclude
 marketing or status text. Both subtitle policies therefore remain
 `not_qualified`.
 Genre add and replace each made 3 exact predictions. Genre fill-empty was
-evaluated with only the target genre field set empty while preserving the
-observed provider evidence; it made 4 exact predictions. Tag fill-empty, add,
-and replace each made 3, and safe plaintext description made 9. All were
+evaluated with only the target genre field varied across the supported
+`missing`, `null`, and `empty` states while preserving the observed provider
+evidence; it made 4/4 correct predictions in each state, 12 total. Tag
+fill-empty, add, and replace each made 3, and safe plaintext description made 9. All were
 correct under the provenance-and-operation model, with zero safety failures,
 so these options pass. Google visible-text made no predictions and remains
 `not_qualified`. ASIN remains `insufficient_coverage`. `tags:off` is still the

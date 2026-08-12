@@ -1,10 +1,24 @@
 {
   "automatic_authority": "decision_only",
-  "candidate_execution_count": 4,
+  "candidate_execution_count": 5,
   "evidence_method": {
     "evaluated_reports": 49,
     "exposure_unit": "case_field_option",
-    "genres_fill_empty_target_scenario": "empty_target_with_observed_provider_evidence_preserved",
+    "genres_fill_empty_correct_predictions_by_state": {
+      "empty": 4,
+      "missing": 4,
+      "null": 4
+    },
+    "genres_fill_empty_predictions_by_state": {
+      "empty": 4,
+      "missing": 4,
+      "null": 4
+    },
+    "genres_fill_empty_target_states": [
+      "missing",
+      "null",
+      "empty"
+    ],
     "network_access": false,
     "prior_unrelated_work_use_allowed": true,
     "replayed_provider_requests": 421,
@@ -24,19 +38,19 @@
     },
     "automatic_decision": {
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
-      "sha256": "dfa9e74911d8764849b599a246cb2766b5862c18673c9e18580d7c255a177401"
+      "sha256": "fd5ae8198bcb662b21da2d3a298dbfa2e11cad9bc82bae50e88206bee5cde44d"
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
       "sha256": "31f59fe2f00de0d77956c98030ad5b1b1a704261396081045224da54e92b0710"
     },
     "evaluator": {
-      "identity": "f20-field-local-evaluator-v4",
-      "sha256": "5782ae291d6d434d231575dd5432a26e78252172f1e89668a1f21c338af1fc0b"
+      "identity": "f20-field-local-evaluator-v5",
+      "sha256": "c7c0ee9b6f57c4e8829f4df02d8752ae83fd7760df681c1e61fa33869a852f99"
     },
     "evidence_execution": {
-      "identity": "offline-current-adapter-replay-v4",
-      "sha256": "c8932e70be2e99543d9c18176508afb2484d3f12010cd323370eafafbe4f4ae0"
+      "identity": "offline-current-adapter-replay-v5",
+      "sha256": "ef6577284f4e2e8480d331adfa9899cd453a9140664b6732e568870acff807a6"
     },
     "policy": {
       "identity": "src/mechanical_librarian/domain/metadata_policy.py",
@@ -123,11 +137,11 @@
     {
       "cohort_sufficiency": "sufficient",
       "disposition": "passing_automatic",
-      "eligible_opportunities": 49,
+      "eligible_opportunities": 147,
       "identity": "genres:fill_empty",
       "metrics": {
         "automatic_precision": 1.0,
-        "automatic_predictions": 4,
+        "automatic_predictions": 12,
         "automatic_recall": 0.08163265306122448,
         "structural_or_sensitive_violations": 0,
         "unsupported_output": 0

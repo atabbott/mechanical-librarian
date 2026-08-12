@@ -52,12 +52,18 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         self.assertEqual(passing, set(manifest["passing_automatic_options"]))
         self.assertEqual(["explicit:unsupported"], manifest["human_only_options"])
         self.assertEqual(["narrators", "cover"], manifest["excluded_destinations"])
-        self.assertEqual(4, manifest["candidate_execution_count"])
+        self.assertEqual(5, manifest["candidate_execution_count"])
         self.assertEqual(
             {
                 "evaluated_reports": 49,
                 "exposure_unit": "case_field_option",
-                "genres_fill_empty_target_scenario": "empty_target_with_observed_provider_evidence_preserved",
+                "genres_fill_empty_correct_predictions_by_state": {
+                    "empty": 4, "missing": 4, "null": 4,
+                },
+                "genres_fill_empty_predictions_by_state": {
+                    "empty": 4, "missing": 4, "null": 4,
+                },
+                "genres_fill_empty_target_states": ["missing", "null", "empty"],
                 "network_access": False,
                 "prior_unrelated_work_use_allowed": True,
                 "replayed_provider_requests": 421,
@@ -160,6 +166,9 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
             entry["metrics"]["automatic_precision"] == 1.0
             for entry in subjective.values()
         ))
+        genre_fill = subjective["genres:fill_empty"]
+        self.assertEqual(147, genre_fill["eligible_opportunities"])
+        self.assertEqual(12, genre_fill["metrics"]["automatic_predictions"])
 
     def test_candidate_exposes_only_closed_aggregate_contract_data(self) -> None:
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))

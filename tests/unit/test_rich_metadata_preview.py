@@ -68,11 +68,15 @@ class RichMetadataPreviewTests(unittest.TestCase):
             cover_sources=report.cover_sources,
         )
 
-    def _list_preview(self, field, option, current, alternatives=1):
+    def _list_preview(self, field, option, current, alternatives=1, state=None):
         from mechanical_librarian.domain.metadata_report import TargetDestination
         destination = TargetDestination[field.upper()]
         source = _report()
-        state = TargetFieldState.MISSING if current is None else TargetFieldState.VALUE
+        state = state or (
+            TargetFieldState.MISSING
+            if current is None
+            else TargetFieldState.VALUE
+        )
         report = MetadataReport.create(
             target=TargetFacts(source.target.connection, source.target.library, source.target.item, tuple(TargetField(value.destination, state, current) if value.destination is destination else value for value in source.target.fields)), file=source.file, local_claims=source.local_claims, local_reasons=source.local_reasons, providers=source.providers, cover_sources=source.cover_sources,
         )
@@ -196,6 +200,25 @@ class RichMetadataPreviewTests(unittest.TestCase):
         self.assertEqual(("Fantasy", "Epic"), replaced.desired_value)
         unchanged = self._list_preview("tags", "add", ("Fantasy", "Epic"))
         self.assertEqual(("no_op", "unchanged"), (unchanged.outcome, unchanged.reason))
+
+    def test_genre_fill_empty_projects_each_supported_empty_target_state(self) -> None:
+        for state in (
+            TargetFieldState.MISSING,
+            TargetFieldState.NULL,
+            TargetFieldState.EMPTY,
+        ):
+            with self.subTest(state=state.value):
+                preview = self._list_preview(
+                    "genres", "fill_empty", None, state=state
+                )
+                self.assertEqual(
+                    (state.value, "projected", ("Fantasy", "Epic")),
+                    (
+                        preview.target_state,
+                        preview.outcome,
+                        preview.desired_value,
+                    ),
+                )
 
     def test_list_add_abstains_when_exact_target_union_would_be_oversized(self) -> None:
         current = tuple(f"Existing {index}" for index in range(32))
