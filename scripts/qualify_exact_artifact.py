@@ -544,7 +544,10 @@ with tempfile.TemporaryDirectory() as directory:
 def _runtime_help_is_closed(value: str) -> bool:
     choices = re.findall(r"\{([^}\r\n]+)\}", value)
     commands = re.findall(r"^    ([a-z][a-z0-9-]*)  ", value, re.MULTILINE)
-    return choices == ["review-serve", "review-serve"] and commands == ["review-serve"]
+    expected = "review-serve,policy-preview"
+    return choices == [expected, expected] and commands == [
+        "review-serve", "policy-preview",
+    ]
 
 
 def _qualify_guarded_effect_lifecycle(

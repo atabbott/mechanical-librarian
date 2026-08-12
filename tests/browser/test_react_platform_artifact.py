@@ -640,6 +640,18 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.get_by_role("button", name="Recover Title suspension").wait_for()
             page.get_by_label("Policy name").fill("Edited synthetic policy")
             page.get_by_text("Draft differs from active policy", exact=True).wait_for()
+            page.get_by_role("button", name="Save draft").click()
+            page.get_by_text("Immutable draft saved.", exact=False).wait_for()
+            page.get_by_role("button", name="Preview impact").click()
+            page.get_by_text("Impact preview is current.", exact=False).wait_for()
+            page.get_by_text("Safe visible description <3", exact=False).wait_for()
+            page.get_by_text("explicit_unsupported", exact=False).wait_for()
+            page.get_by_text("Publication order", exact=False).wait_for()
+            page.get_by_text('[{"name":"Old order","sequence":"1"}]', exact=False).wait_for()
+            page.get_by_text('["Fantasy"] → ["Fantasy","Epic"]', exact=False).wait_for()
+            self.assertEqual(
+                page.locator(".policy-case-preview").count(), 1
+            )
             page.get_by_role("button", name="Sign out").click()
             page.get_by_text("Writes are blocked", exact=False).wait_for()
             fail_policy_persistently = True

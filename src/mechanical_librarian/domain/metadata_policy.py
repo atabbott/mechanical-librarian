@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Final, Mapping
 
 
-POLICY_SCHEMA_VERSION: Final = "metadata-policy-profile-v1"
+POLICY_SCHEMA_VERSION: Final = "metadata-policy-profile-v2"
 DESTINATIONS: Final = ("ask", "ignore", "automatic", "unsupported")
 
 # The product catalogue is deliberately closed.  A destination is an owner
@@ -25,12 +25,14 @@ OPTION_CATALOGUE: Final[dict[str, tuple[str, ...]]] = {
     "language_rendering": ("preserve", "display_name"),
     "contributor_names": ("preserve", "canonical"),
     "publisher_preference": ("publisher", "imprint"),
-    "genres": ("preserve", "catalogue"),
-    "tags": ("preserve", "catalogue"),
-    "description_fill": ("preserve", "fill_when_empty"),
-    "isbn_form": ("preserve", "isbn13"),
+    "subtitle": ("fill_empty", "corroborated_split"),
+    "series": ("primary_narrative", "source_order", "all_qualified"),
+    "genres": ("fill_empty", "add", "replace"),
+    "tags": ("off", "fill_empty", "add", "replace"),
+    "description_fill": ("safe_plain_text", "google_visible_text"),
+    "isbn_form": ("preserve_exact", "prefer_isbn13"),
     "cover_order": ("fixed_source_order",),
-    "asin": ("preserve", "canonical_asin"),
+    "asin": ("preserve_exact", "ebook_manifestation"),
     "explicit": ("unsupported",),
 }
 
@@ -40,12 +42,14 @@ DEFAULT_OPTIONS: Final = {
     "language_rendering": "display_name",
     "contributor_names": "canonical",
     "publisher_preference": "publisher",
-    "genres": "catalogue",
-    "tags": "catalogue",
-    "description_fill": "fill_when_empty",
-    "isbn_form": "isbn13",
+    "subtitle": "fill_empty",
+    "series": "primary_narrative",
+    "genres": "fill_empty",
+    "tags": "off",
+    "description_fill": "safe_plain_text",
+    "isbn_form": "preserve_exact",
     "cover_order": "fixed_source_order",
-    "asin": "canonical_asin",
+    "asin": "preserve_exact",
     "explicit": "unsupported",
 }
 

@@ -417,11 +417,23 @@ current schema remain retrievable internally by stable ID.
 The operation can read configured target metadata, read the selected mounted
 EPUB, contact explicitly enabled referenced providers, and append neutral
 reports. Its repository may initialize an absent database or open an exact
-current-schema database after schema-object, foreign-key, and SQLite-integrity
-checks. It validates report content and current-pointer scope only when selected
-by an exact-ID/current-scope read or involved in publication; opening the
-repository does not semantically audit unrelated history. It has no
+current-schema database after schema-object, foreign-key, SQLite-integrity, and
+exact-current metadata-policy document checks. It validates report content and
+current-pointer scope only when selected by an exact-ID/current-scope read or
+involved in publication; opening the repository otherwise does not semantically
+audit unrelated report history. It has no
 backward-compatibility authority. It cannot browse inventory, review or decide
 claims, apply changes, write a service or media file, run background work,
 retry, prune, repair, import, downgrade, retain selectively, or migrate any
 state.
+
+## Rich metadata policy preview
+
+The policy notebook and `policy-preview` CLI read at most 20 exact-current
+review lineages across the complete response, in stable library then
+connection/item/case order. The persisted
+pair establishes current lineage; preview replays the immutable report through
+the pure proposal evaluator under the requested resolved draft, then projects
+the eight closed rich-field choices. The response reports the total and whether
+the sample was truncated. It performs no provider request, database mutation,
+decision, activation, queue transition, target call, or media write.
