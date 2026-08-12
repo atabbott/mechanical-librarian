@@ -87,13 +87,21 @@ closed identity outcome for every retained candidate:
 `verified_manifestation_match`, `verified_work_match`, `plausible_match`,
 `unknown`, or `conflict`. Verification requires an exact retained provider
 identity binding plus compatible accepted identifier evidence (or, for a work,
-accepted or associated evidence). Unrelated identifier evidence, retained
-edition/work contradictions, incompatible manifestation publication/format
-evidence win over verification. Retained title, creator, language, publisher,
-and publication-date comparisons contribute only closed agreement, ambiguity,
-or insufficient-evidence reasons; disagreement alone does not prove a different
-identity, and only positive retained agreement supports `plausible_match`.
-Ambiguous or insufficient retained compatibility remains `unknown`. The projection binds report,
+accepted or associated evidence), except that an exact retrieved EPUB cover
+already bound by the report and packet verifies its source manifestation only.
+It never confers identity on a provider cover or Audiobookshelf incumbent.
+Unrelated identifier evidence, retained edition/work contradictions,
+incompatible manifestation publication/format evidence win over provider
+verification. An otherwise unresolved report-bound provider discovery cover is
+`plausible_match` only with retained title agreement and without a retained
+creator/contributor disagreement that has no creator/contributor agreement
+(including exact retained overlap), or a deterministic work contradiction.
+Missing creator values neither confirm nor veto it; pairwise comparison
+disagreements alongside an agreement do not veto it; edition-specific title alternatives,
+identifiers, language, publisher, date, or format disagreements do not erase
+positive title support. No title agreement, or unopposed creator/contributor
+disagreement, remains `unknown`. `plausible_match` is not verified identity.
+The projection binds report,
 packet, candidate, classifier, and opaque evidence references. It emits fixed
 reason codes only, never source/provider identities, metadata values, paths,
 URLs, or credentials, and makes no visual, provider, policy, persistence, or

@@ -452,10 +452,16 @@ identity classification is a local pre-review projection. It binds the exact
 report and already-admitted packet candidate identities, emits only opaque
 references and fixed outcome/reason codes, and gives retained identifier and
 edition/work contradictions plus incompatible manifestation publication/format
-evidence precedence over verification. Other retained bibliographic comparison
-disagreements remain bounded ambiguity evidence and cannot independently prove
-a conflicting identity. Only positive retained agreement supports a plausible
-match; ambiguous or insufficient compatibility remains unknown. Admission
+evidence precedence over provider verification. An exact report-and-packet-bound
+EPUB cover verifies its source manifestation only, never a provider cover or
+Audiobookshelf incumbent. An otherwise unresolved provider discovery cover is
+plausible only with retained title agreement and no unopposed
+creator/contributor disagreement or deterministic work contradiction. Exact
+retained creator/contributor overlap counts as agreement. Missing creator values
+are neutral; pairwise disagreement alongside agreement and edition-specific
+disagreement are not identity conflicts. Plausible is not
+verified, and no title agreement or an unopposed creator/contributor
+disagreement remains unknown. Admission
 recomputes exact report-bound candidate reference, provenance, incumbent,
 dimension, and variant facts, so digest-equal foreign packets fail closed.
 Retained date-evidence comparisons are included, and default provider covers

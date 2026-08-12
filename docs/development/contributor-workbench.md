@@ -41,12 +41,19 @@ Its five closed outcomes are `verified_manifestation_match`,
 contains only opaque report/packet/candidate/evidence references, classifier
 identity, and fixed reason codes. Unrelated identifiers, edition/work
 contradictions, and incompatible manifestation publication/format evidence
-produce `conflict` before verification. Other retained bibliographic
-disagreements produce a fixed ambiguity reason without independently proving a
-different identity. Only positive retained agreement supports
-`plausible_match`; ambiguous, insufficient, or unbound provider identity
-remains `unknown`. The scenario neither sends a provider request nor reads
-images as identity evidence.
+produce `conflict` before provider verification. An exact report-and-
+packet-bound EPUB cover verifies that source manifestation only, never a
+provider cover or Audiobookshelf incumbent. An otherwise unresolved provider
+discovery cover is `plausible_match` only with positive retained title agreement
+and no unopposed creator/contributor disagreement or deterministic work
+contradiction. Exact retained creator/contributor overlap counts as agreement.
+Missing creator values are neutral because cover-only discovery may not retain
+them; pairwise disagreement alongside creator/contributor agreement and
+edition-specific metadata disagreement do not erase title support.
+`plausible_match` is not verified identity; no title agreement, unopposed
+creator/contributor disagreement, or unbound provider identity remains
+`unknown`. The scenario neither sends a provider request nor reads images as
+identity evidence.
 Candidate references and normalized provenance are re-derived from the report;
 matching preview bytes cannot substitute a packet from another report. Date
 evidence links participate in compatibility, and a default provider cover with
