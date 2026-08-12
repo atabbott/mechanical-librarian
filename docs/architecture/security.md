@@ -590,6 +590,22 @@ replaced only by fresh disjoint cohorts after diagnosis. No model, prompt,
 schema, packaging, taxonomy, threshold, resource, provider, network, corpus,
 production, or write authority was widened.
 
+The reopened deterministic policy replay completed the independent reference
+observations before tested policy results were opened and reused the retained
+facts and media through a one-to-one binding-equivalent clean-schema
+reconstruction. Opaque references changed without changing any semantic or
+identity outcome. The final two missing observation rows were retained as
+`observations_unavailable` and not imputed. Exact full-decision agreement ranged
+from 84% to 100% across the eight closed policies, while the semantic-active
+final subset was only three packets and ranged from 0/8 to 8/8; no broad strong
+semantic-policy claim follows. Only the no-preference baseline was strong; all
+seven preference-enabled policies were below the frozen 75% useful threshold.
+Mapping, binding, eligibility, explicit-policy, invented-reference, and privacy
+violations were all zero. The replay made no provider or external-model call,
+corpus rebuild, production-library access, or write, and added no runtime
+authority. The aggregate safety conclusion is derived from those zero component
+boundary and authority counters, not an independently measured receipt field.
+
 Authentication actions remain adapter-owned and create no product lifecycle. The
 kernel is reachable only through the source workbench, excluded from installed
 artifacts, and receives only synthetic or irreversibly sanitized inputs.

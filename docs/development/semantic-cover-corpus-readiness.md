@@ -342,6 +342,116 @@ change was used to manufacture a recommendation. The newly admitted semantic
 observations invalidate that all-abstention replay as current policy-quality
 evidence; #543 must requalify the unchanged policy against them.
 
+## Cover-policy requalification — deterministic proof PASS, semantic evidence mixed
+
+The requalification preserves the historical all-abstention result above and
+uses the exact retained observation evidence from the reopened #541 proof. The
+original 100 independent reference judgements covered only the selected
+candidates, not every candidate in their packets. Before tested policy outputs
+were opened, the other 132 packet candidates were independently reviewed twice
+and evidence-adjudicated. This completed reference observations for 232
+candidate instances across 79 packets. References remain independent review
+judgements, not claimed human ground truth.
+
+At least one review field differed in 88 cases. Evidence adjudication reopened
+or corrected 139 fields:
+
+| Field | Reopened or corrected |
+| --- | ---: |
+| Composition | 26 |
+| Medium | 67 |
+| Promotional text | 39 |
+| Tie-in branding | 7 |
+
+Among those disputed fields, the accepted source was the first review for 121,
+the second review for 16, and the adjudicator for 2. Reference policy results
+were derived and frozen before tested policy results were opened.
+
+The retained report facts and media were transferred one-to-one from their v22
+shape into the exact clean v23 schema admitted by current main. Opaque report,
+packet, candidate, and preview references necessarily changed. Exact transfer
+checks found zero semantic or identity outcome changes. This was a
+binding-equivalent reconstruction, not provider reacquisition, a model call, or
+a corpus rebuild.
+
+All eight combinations use bit order `promotional / tie-in / minimal`; `1`
+enables avoidance of promotional text, avoidance of tie-in branding, or
+preference for minimal composition respectively. "Exact full decision" means
+the acceptable set, recommendation, and status all agree.
+
+Development contained 50 rows in 50 packets. Exact acceptable-set,
+recommendation, status, and full-decision agreement were each 50/50 under every
+policy. Conservative identity made 46/50 packets ambiguous before semantic
+policy. The remaining four semantic-active packets had 4/4 exact selected-row
+full decisions under every policy. That active result is descriptive, not a
+separate acceptance claim.
+
+The one-shot recovery-final cohort retained 48 admitted observation rows over
+29 packets. Two missing rows in one packet were represented as
+`observations_unavailable` and failed closed without imputation.
+
+| Policy bits | Acceptable set | Recommendation | Status | Exact full decision | Distinct packets with all selected rows exact |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `000` | 50/50 | 50/50 | 50/50 | 50/50 (100%) | 29/29 |
+| `001` | 50/50 | 47/50 | 50/50 | 47/50 (94%) | 28/29 |
+| `010` | 45/50 | 49/50 | 50/50 | 45/50 (90%) | 27/29 |
+| `011` | 45/50 | 46/50 | 50/50 | 42/50 (84%) | 26/29 |
+| `100` | 44/50 | 47/50 | 47/50 | 44/50 (88%) | 27/29 |
+| `101` | 44/50 | 47/50 | 47/50 | 44/50 (88%) | 27/29 |
+| `110` | 46/50 | 47/50 | 47/50 | 46/50 (92%) | 27/29 |
+| `111` | 46/50 | 47/50 | 47/50 | 46/50 (92%) | 27/29 |
+
+One packet had repeat-artifact decision variation, only for the four policies
+with promotional avoidance enabled. Conservative identity preempted semantic
+policy on 26/29 final packets. A post-hoc descriptive view of the remaining
+semantic-active subset contained only 3 packets and 8 selected rows:
+
+| Policy bits | Semantic-active exact full decisions |
+| --- | ---: |
+| `000` | 8/8 |
+| `001` | 5/8 |
+| `010` | 3/8 |
+| `011` | 0/8 |
+| `100` | 2/8 |
+| `101` | 2/8 |
+| `110` | 4/8 |
+| `111` | 4/8 |
+
+This subset was not part of the frozen acceptance calculation and is too small
+for a broad quality claim. Publishing it prevents the identity-dominated
+overall agreement from overstating semantic preference performance.
+
+Development reference and tested abstention categories matched exactly. Final
+tested decisions added two `observations_unavailable` rows under every policy.
+The four policies with promotional avoidance enabled also added three
+`observations_ambiguous` rows. The missing runtime rows were identity-ambiguous
+and did not reduce the semantic-active subset.
+
+| Violation or expanded authority | Observed |
+| --- | ---: |
+| Mapping violations | 0 |
+| Binding violations | 0 |
+| Eligibility violations | 0 |
+| Explicit-policy violations | 0 |
+| Invented-reference violations | 0 |
+| Privacy violations | 0 |
+| Provider or external-model calls | 0 |
+| Corpus rebuilds | 0 |
+| Production-library accesses or writes | 0 |
+
+The aggregate safety conclusion is derived from the zero component boundary
+and expanded-authority counters above. Safety was not an independently measured
+field in the receipt.
+
+The no-preference baseline is strong. Overall exact full-decision agreement is
+mixed to strong at 84–100% under the predeclared bands, but conservative
+identity preempted semantic policy on 26/29 final packets. In the very small
+semantic-active subset, only the `000` no-preference baseline was strong. All
+seven preference-enabled policies were below the frozen 75% useful threshold,
+so semantic-active preference evidence is insufficient. The unchanged
+deterministic pipeline and fail-closed behavior are proved; broad strong
+semantic preference quality and runtime readiness are not.
+
 ## Outcome
 
 Issue #546 passes as a best-effort general-principle proof of a bounded,
@@ -350,6 +460,9 @@ nor runtime activation, and it does not qualify a model or a later transport
 unit. Issue #541 separately passes its bounded typed observation contract and
 its aggregate-safe semantic usefulness and repeatability proof.
 Issue #543 retains its deterministic contract and historical real fail-closed
-abstention proof, while semantic policy quality remains pending requalification.
+abstention proof. Its reopened replay proves exact-bound deterministic policy
+conversion and reports identity-dominated mixed-to-strong overall policy
+agreement, while every preference-enabled result in the small semantic-active
+sample is insufficient.
 The tracked report contains no private corpus material, and #501 remains
 unpromoted.

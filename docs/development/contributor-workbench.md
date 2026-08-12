@@ -84,7 +84,8 @@ class-specific policy use or runtime readiness. Development minimal-positive
 precision was 11/14 (78.57%) and reference-minimal recall was 11/15 (73.33%), a
 mixed and sparse class result. Final minimal-positive precision was 15/21
 (71.43%), below the useful band, and tie-in branded-positive recall was 2/4
-(50%); prefer-minimal and avoid-tie-in usefulness both remain pending #543.
+(50%); those two preference uses therefore required the separate policy replay
+below rather than being inferred from field-level agreement.
 
 `cover-policy-report` is a deterministic consumer of the exact retained
 report, cover packet, closed observation report and `cover-policy-v1`. It
@@ -96,6 +97,35 @@ accepted. Conflict candidates are excluded, policy-relevant unknown evidence
 abstains, and a recommendation can name only one exact acceptable packet
 reference. When observations are unavailable, the closed result is
 `observations_unavailable`; the scenario never dispatches another reviewer.
+
+The reopened policy qualification first completed twice-reviewed,
+evidence-adjudicated reference observations for all 232 candidate instances in
+the 79 retained packets. It then exercised all eight policies over the exact
+retained model observations. Development matched the reference acceptable set,
+recommendation, status, and complete decision for every one of 50 rows under
+every policy. In the one-shot final replay, exact complete-decision agreement
+ranged from 84% to 100% across the eight policies; all selected rows agreed in
+26 to 29 of the 29 distinct packets. Two unavailable observation rows in one
+packet failed closed without imputation, and one packet varied across retained
+repeat artifacts only when promotional avoidance was enabled. The exact
+aggregate table is in
+[semantic cover corpus readiness](semantic-cover-corpus-readiness.md).
+
+Conservative identity preempted semantic policy on 46/50 development packets
+and 26/29 final packets. The post-hoc semantic-active final subset was only
+3 packets and 8 selected rows, with exact complete-decision agreement ranging
+from 0/8 to 8/8 across policies. Only the no-preference baseline was strong;
+every preference-enabled result was below the frozen 75% useful threshold.
+Overall policy scores remain mixed to strong because conservative identity
+preempted most semantic decisions, and they prove the deterministic,
+exact-bound, fail-closed pipeline. Semantic-active preference quality is
+insufficient, and runtime readiness is not established.
+The reference observations remain review judgements rather than human ground
+truth. The replay used no provider, external model, production library, write,
+or corpus rebuild. Its aggregate safety conclusion is derived from zero
+mapping, binding, eligibility, explicit-policy, invented-reference, privacy,
+and expanded-authority counters rather than a separate safety metric. #501 /
+0.15.1 remains unpromoted.
 
 ## Executing a scenario
 

@@ -21,7 +21,24 @@
   authority. A 100-packet retained-real replay across all eight policies
   produced the expected 800 typed unavailable-observation abstentions with zero
   binding mismatch, violation or invented reference; semantic quality is not
-  claimed. (#543)
+  claimed. The reopened qualification preserved that historical result and
+  completed independent twice-reviewed reference observations for all 232
+  candidate instances in the 79 retained packets before opening tested policy
+  results. A binding-equivalent current-schema reconstruction changed only
+  opaque references. Development decisions matched the reference acceptable
+  set, recommendation and status for all 50 rows under all eight policies. On
+  the 50-row recovery final cohort, exact full-decision agreement ranged from
+  84% to 100%; 29-packet all-selected-row agreement ranged from 26/29 to 29/29.
+  Two unavailable tested observations failed closed without imputation. The
+  three-packet semantic-active final subset remained too small and ranged from
+  0/8 to 8/8: only the no-preference baseline was strong, while every enabled
+  preference combination was below the frozen 75% useful threshold. The
+  deterministic pipeline and fail-closed behavior are therefore proved, while
+  semantic-active preference quality is insufficient and runtime readiness is
+  not established. The aggregate safety conclusion is derived from zero
+  mapping, binding, eligibility, explicit-policy, invented-reference, privacy,
+  and expanded-authority counters; it is not a separately measured metric.
+  (#543)
 
 - Reduce private Actions consumption without recombining the qualification
   suites that previously timed out: run the three exact-head pull-request jobs

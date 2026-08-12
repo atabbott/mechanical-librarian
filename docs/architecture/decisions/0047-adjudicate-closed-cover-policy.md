@@ -82,3 +82,70 @@ The entire surface remains source-only and excluded from installed artifacts.
   reopened semantic requalification.
 - Architecture and exact-installed-artifact gates prove no runtime surface,
   persistence or write authority.
+
+### Reopened semantic-policy qualification (2026-08-12)
+
+The reopened proof preserved the initial all-abstention replay above. The
+independent references originally covered only the 100 selected candidates.
+Before tested policy outputs were opened, the other 132 packet candidates were
+independently reviewed twice and evidence-adjudicated, completing reference
+observations for 232 candidate instances in 79 packets. At least one reviewer
+field differed in 88 cases. Evidence adjudication reopened or corrected 139
+fields: 26 composition, 67 medium, 39 promotional-text, and 7 tie-in fields.
+The accepted disputed-field source was the first review for 121 fields, the
+second review for 16, and the adjudicator for 2. These remain independent
+review judgements, not claimed human ground truth.
+
+The retained report facts and media were transferred one-to-one from the v22
+evidence shape into the exact clean v23 schema. Opaque references changed, but
+no semantic or identity outcome changed. This was a binding-equivalent
+reconstruction, not a provider acquisition, model run, or corpus rebuild.
+
+All eight policies were applied with bit order `promotional / tie-in / minimal`,
+where `1` enables that policy. Development exact acceptable-set,
+recommendation, status, and full-decision agreement were each 50/50 for every
+policy. Conservative identity had already made 46 of those 50 packets
+ambiguous; on the four semantic-active packets, all four selected rows matched
+under every policy. That active result is descriptive because of its size.
+
+The one-shot recovery-final replay retained 48 admitted observation rows over
+29 packets. Two missing rows in one packet produced
+`observations_unavailable` and were not imputed. Aggregate agreements were:
+
+| Policy bits | Acceptable set | Recommendation | Status | Exact full decision | Distinct packets with all selected rows exact |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `000` | 50/50 | 50/50 | 50/50 | 50/50 (100%) | 29/29 |
+| `001` | 50/50 | 47/50 | 50/50 | 47/50 (94%) | 28/29 |
+| `010` | 45/50 | 49/50 | 50/50 | 45/50 (90%) | 27/29 |
+| `011` | 45/50 | 46/50 | 50/50 | 42/50 (84%) | 26/29 |
+| `100` | 44/50 | 47/50 | 47/50 | 44/50 (88%) | 27/29 |
+| `101` | 44/50 | 47/50 | 47/50 | 44/50 (88%) | 27/29 |
+| `110` | 46/50 | 47/50 | 47/50 | 46/50 (92%) | 27/29 |
+| `111` | 46/50 | 47/50 | 47/50 | 46/50 (92%) | 27/29 |
+
+One packet had repeat-artifact decision variation, only when promotional
+avoidance was enabled. Conservative identity preempted semantic policy on 26 of
+the 29 final packets. The post-hoc descriptive semantic-active subset contained
+only 3 packets and 8 selected rows; exact full decisions for `000` through
+`111` were respectively 8/8, 5/8, 3/8, 0/8, 2/8, 2/8, 4/8, and 4/8. This was
+not a frozen acceptance subset and prevents the identity-dominated overall
+score from being read as broad semantic preference quality.
+
+Development reference and tested abstention categories matched exactly. Final
+tested results added two `observations_unavailable` rows under every policy;
+policies with promotional avoidance also added three
+`observations_ambiguous` rows. The missing rows were identity-ambiguous and did
+not reduce the semantic-active subset. Mapping, binding, eligibility, explicit
+policy, invented-reference, and privacy violations were all zero. Provider,
+external-model, corpus-rebuild, production-library, and write counts were also
+zero. The aggregate safety conclusion is derived from those zero component
+boundary and authority counters; safety was not an independent receipt metric.
+
+The unchanged deterministic pipeline and fail-closed behavior are therefore
+proved. The no-preference baseline is strong and overall full-decision
+agreement across policies is mixed to strong at 84–100%, but those overall
+results are identity-dominated. On the very small semantic-active subset, the
+no-preference baseline was strong and every preference-enabled policy was below
+the frozen 75% useful threshold. Semantic-active preference evidence is
+therefore insufficient. This does not establish broad strong semantic-policy
+quality or runtime readiness, and it does not promote #501 / 0.15.1.
