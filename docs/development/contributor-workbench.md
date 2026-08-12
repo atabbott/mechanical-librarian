@@ -24,14 +24,14 @@ is `cover-packet-review`. It accepts a report ID,
 reopens only that exact report, and reads only its bound
 `preview-320x480-rgba-png-v1` artifacts. The packet uses opaque references and
 contains no target, library, service, path, URL, credential, raw provider
-response, or provider work/edition identity. Digest duplicates collapse to one
-candidate; the inspectable incumbent is retained; other candidates are
-deterministically ordered using closed identity designation, original-cover
+response, or provider work/edition identity. Normalized-pixel-equal previews
+collapse to one candidate; the inspectable incumbent is retained; other
+candidates are deterministically ordered using closed identity designation, original-cover
 technical dimensions, and source diversity, with every omission recorded. The
 decoded preview dimensions are separate exact binding facts and do not alter
-that quality order. A digest-equal group uses the canonical best observed
-original dimensions by pixel area, width, then height, independent of source
-order. The fixed limits are 12
+that quality order. A normalized-pixel-equal group uses the canonical best
+observed original dimensions by pixel area, width, then height, independent of
+source order. The fixed limits are 12
 previews, 1 MiB each, and 8 MiB total. It is not a generic attachment surface.
 
 `cover-identity-report` replays that same exact report and packet locally and
@@ -166,25 +166,32 @@ child reopens and verifies each descriptor with an independent read cursor;
 Bubblewrap copies those cursors through descriptor-data mounts into private
 read-only sandbox files. Those files are supplied as repeatable ordered
 `--image` arguments, and the descriptors are closed with the job.
-The cover entry accepts only canonical `cover-review-packet-v1` input whose
+The cover entry accepts only canonical `cover-review-packet-v2` input whose
 content-bound packet reference, every closed candidate/provenance/context and
 omission field, byte/dimension and incumbent facts, omission reasons, and limits
 have passed one shared producer/admission validator. It also enforces the
 canonical candidate order, reason-specific omission preconditions, domain
-privacy-safe context text, and exact ordered candidate/image equality.
-Every admitted preview is fully parsed and decoded through Pillow before it is
+privacy-safe context text, source-to-derived transport bindings, and exact
+ordered transport/image equality. Packet preparation verifies each exact
+report-bound source digest, strips all ancillary/profile metadata, decodes one
+RGBA frame within the existing bounds, and deterministically re-encodes the
+same pixels. Source reference/digest bindings remain separate from the derived
+transport reference/digest.
+Every admitted transport is fully parsed and decoded through Pillow before it is
 mounted: its complete PNG structure and checksums, single-frame PNG format,
 RGBA mode, maximum 320-by-480 dimensions, and exact declared preview dimensions
 must all agree. The closed deterministic chunk profile accepts only exact IHDR,
-one or more consecutive IDAT chunks containing exactly one completed zlib
+one consecutive IDAT run containing exactly one completed zlib
 stream with no trailing data, and final IEND. ICC profiles, palette,
-transparency, every other ancillary, and every unknown chunk are rejected before
-mount; their bytes never cross the reviewer boundary.
+transparency, every other ancillary, and every unknown chunk are absent from the
+canonical derived transport; their source bytes never cross the reviewer
+boundary. Admission repeats the deterministic encoding and requires exact byte
+equality.
 Forged signatures, corrupt or truncated streams, trailing bytes, unsafe
 dimensions, and decoder warnings or failures become the same value-free typed
 format failure.
 Indistinguishable normalized provenance rows collapse to one. Every distinct
-source kind represented by a digest-equal group participates in diversity
+source kind represented by a normalized-pixel-equal group participates in diversity
 priority and counts; no lexicographic representative can hide another source.
 The generic
 request and adapter method have no image member or argument. A changed,
@@ -210,8 +217,8 @@ or constructing a private request shape cannot bypass packet validation.
 
 Duplicate omissions are finalized after selection and can reference only a
 retained representative. If byte, aggregate, or shortlist limits exclude the
-whole digest group, every member records that exclusion reason instead.
-Target/provider configuration additionally admits only loopback or `.invalid`
+whole normalized-pixel-equal group, every member records that exclusion reason
+instead. Target/provider configuration additionally admits only loopback or `.invalid`
 origins and confines credential, TLS, password, and media paths to the workbench
 workspace. The production composition refuses every enabled fixed-origin
 metadata provider because those origins cannot be rebound to an isolated fake;

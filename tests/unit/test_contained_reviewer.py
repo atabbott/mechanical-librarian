@@ -30,6 +30,9 @@ from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa
     admit_cover_review_request,
     canonical_json,
 )
+from mechanical_librarian_workbench.cover_packet_semantics import (  # noqa: E402
+    cover_transport_reference,
+)
 
 
 def _identity() -> ContainedReviewerIdentity:
@@ -55,6 +58,13 @@ def _cover_request() -> object:
     preview = output.getvalue()
     reference = "cover_ref_" + "a" * 64
     digest = hashlib.sha256(preview).hexdigest()
+    source_bindings = [{
+        "preview_sha256": digest,
+        "reference": reference,
+    }]
+    transport_reference = cover_transport_reference(
+        reference, source_bindings, digest
+    )
     candidate = {
         "height": 1,
         "incumbent": True,
@@ -69,12 +79,15 @@ def _cover_request() -> object:
             "source_kind": "abs",
         }],
         "reference": reference,
+        "source_bindings": source_bindings,
+        "transport_reference": transport_reference,
+        "transport_sha256": digest,
         "width": 1,
     }
     body = {
         "candidates": [candidate],
         "omissions": [],
-        "schema_version": "cover-review-packet-v1",
+        "schema_version": "cover-review-packet-v2",
     }
     packet = canonical_json({
         **body,
@@ -90,7 +103,7 @@ def _cover_request() -> object:
         "type": "object",
     })
     return admit_cover_review_request(
-        "Summarize.", packet, schema, ((reference, digest, preview),)
+        "Summarize.", packet, schema, ((transport_reference, digest, preview),)
     )
 
 
@@ -135,7 +148,7 @@ class ContainedReviewerTests(unittest.TestCase):
         forged = contract._CoverReviewRequest._admit(
             base,
             (contract._CoverReviewImage(
-                packet["candidates"][0]["reference"],
+                packet["candidates"][0]["transport_reference"],
                 forged_digest,
                 forged_payload,
             ),),
@@ -512,7 +525,7 @@ class ContainedReviewerTests(unittest.TestCase):
         first = request.images[0]  # type: ignore[attr-defined]
         second_payload = first.payload[:-1] + bytes([first.payload[-1] ^ 1])
         second = contract._CoverReviewImage(  # type: ignore[attr-defined]
-            "cover_ref_" + "b" * 64,
+            "cover_transport_ref_" + "b" * 64,
             hashlib.sha256(second_payload).hexdigest(),
             second_payload,
         )

@@ -1,6 +1,6 @@
 """Closed, report-local identity classification for retained cover previews.
 
-This projection is intentionally separate from ``cover-review-packet-v1``.  It
+This projection is intentionally separate from ``cover-review-packet-v2``.  It
 uses no provider client, image interpretation, persistence, or policy input;
 it merely binds the already-retained report evidence to the exact packet
 candidate references.
@@ -161,22 +161,34 @@ def classify_cover_identity(
 def _report_bound_candidate_sources(
     report: MetadataReport, candidate: dict[str, object]
 ) -> tuple[CoverSource, ...]:
+    bindings = {
+        (value["reference"], value["preview_sha256"])
+        for value in candidate["source_bindings"]
+    }
     sources = tuple(sorted(
         (
             source
             for source in report.cover_sources
             if source.state is CoverSourceState.RETRIEVED
             and source.artifact is not None
-            and source.artifact.preview_digest == candidate["preview_sha256"]
+            and (
+                cover_source_reference(report.report_id, source.source_id),
+                source.artifact.preview_digest,
+            ) in bindings
         ),
         key=lambda source: source.source_id,
     ))
     if not sources:
-        raise ValueError("identity candidate is not report-bound")
+        raise ValueError("identity candidate report binding is invalid")
     references = tuple(
         cover_source_reference(report.report_id, source.source_id)
         for source in sources
     )
+    if bindings != {
+        (reference, source.artifact.preview_digest)
+        for source, reference in zip(sources, references, strict=True)
+    }:
+        raise ValueError("identity candidate source binding is invalid")
     incumbent_references = tuple(
         reference
         for source, reference in zip(sources, references, strict=True)
@@ -214,6 +226,7 @@ def _report_bound_candidate_sources(
     ])
     if (
         candidate["reference"] != expected_reference
+        or candidate["preview_sha256"] != dict(bindings)[expected_reference]
         or candidate["incumbent"] != bool(incumbent_references)
         or candidate["width"] != best.artifact.width
         or candidate["height"] != best.artifact.height
