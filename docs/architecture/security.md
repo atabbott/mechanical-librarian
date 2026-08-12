@@ -490,13 +490,15 @@ exact retained source report instead of trusting a caller-authored identity
 document, and requires the current classifier, taxonomy, observer instruction
 and output-schema identities before using any candidate facts. Its policy is
 three canonical booleans, never prompt text.
-Conflict candidates cannot be rescued; unknown identity or policy-relevant
-unknown observations abstain. Missing, duplicate, invented, mismatched or
-hostile references fail before output. The report contains only opaque
-acceptable references, one exact admitted recommendation or null, closed
-reason codes and content identities. Unavailable observations produce the
-fixed `observations_unavailable` abstention. No image, path, URL, free text,
-production target, persistence or write authority enters this boundary.
+Conflict and unknown-identity candidates cannot be rescued and are excluded
+individually; identity abstains only when no eligible candidate remains.
+Policy-relevant unknown observations still abstain. Missing, duplicate,
+invented, mismatched or hostile references fail before output. The report
+contains only opaque acceptable references, one exact admitted recommendation
+or null, closed reason codes and content identities. Unavailable observations
+produce the fixed `observations_unavailable` abstention. No image, path, URL,
+free text, production target, persistence or write authority enters this
+boundary.
 
 Cover
 previews use opaque references, fixed 12-image/1-MiB-each/8-MiB-total limits,

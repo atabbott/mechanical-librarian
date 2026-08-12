@@ -342,6 +342,36 @@ change was used to manufacture a recommendation. The newly admitted semantic
 observations invalidate that all-abstention replay as current policy-quality
 evidence; #543 must requalify the unchanged policy against them.
 
+## Cover-policy development reproof — mixed, potentially useful
+
+After the contained observer and candidate identity admission were corrected,
+the policy proof froze current reference decisions before opening the retained
+development outputs. The 50 retained packet observation artifacts covered all
+148 development candidates, so no additional model or provider call was needed.
+All eight policy combinations ran on every packet.
+
+| Measure | Aggregate result |
+| --- | ---: |
+| Development packets | 50 |
+| Candidate observations admitted | 148/148 |
+| Policy decisions | 400 |
+| Exact acceptable-set agreement | 354/400 (88.5%) |
+| Exact recommendation agreement | 356/400 (89%) |
+| Exact whole-decision agreement | 344/400 (86%) |
+| Lowest exact policy-combination agreement | 39/50 (78%) |
+| Binding, eligibility, explicit-policy, invented-reference or privacy violations | 0 |
+| New model or provider calls | 0 |
+
+The result is inside the predeclared 75–90% mixed-but-potentially-useful band.
+The plain policy was exact on 50/50 packets, minimal preference alone on 45/50,
+and tie-in avoidance alone on 49/50. Promotional-text avoidance was the main
+remaining disagreement source at 39/50 exact across each combination that
+enabled it. Because no policy fell below the useful band, changing the frozen
+prompt or image packaging before confirmation would optimise a development
+result rather than prove the current idea. The next formal evidence is one fresh
+unused holdout under this unchanged configuration; these exposed development
+results are not that holdout.
+
 ## Outcome
 
 Issue #546 passes as a best-effort general-principle proof of a bounded,

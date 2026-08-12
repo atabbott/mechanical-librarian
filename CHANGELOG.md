@@ -15,13 +15,19 @@
 
 - Add a source-only deterministic cover-policy report over exact packet,
   identity and closed observation evidence. Three typed booleans can avoid
-  promotional text or tie-in branding and prefer minimal composition; unknown,
-  unavailable, conflicting or unbound evidence abstains or fails closed. The
+  promotional text or tie-in branding and prefer minimal composition. Unknown
+  and conflicting identities exclude only their candidate, so identity abstains
+  only when no eligible candidate remains; unavailable, policy-relevant unknown,
+  or unbound evidence still abstains or fails closed. The
   operation introduces no second model, provider, runtime, persistence or write
-  authority. A 100-packet retained-real replay across all eight policies
-  produced the expected 800 typed unavailable-observation abstentions with zero
-  binding mismatch, violation or invented reference; semantic quality is not
-  claimed. (#543)
+  authority. The historical 100-packet replay recorded 800 typed
+  unavailable-observation abstentions. After observation transport and identity
+  admission were corrected, a development reproof reused 50 retained packet
+  observations covering all 148 candidates. Across all eight policies, exact
+  acceptable-set, recommendation and whole-decision agreement were 88.5%, 89%
+  and 86%; every policy combination remained at or above the predeclared 75%
+  potentially-useful band, with zero safety or binding violations. Formal fresh
+  holdout confirmation remains separate. (#543)
 
 - Reduce private Actions consumption without recombining the qualification
   suites that previously timed out: run the three exact-head pull-request jobs

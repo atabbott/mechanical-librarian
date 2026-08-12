@@ -38,9 +38,10 @@ the complete packet and images, recomputes the identity report from the exact
 retained source report instead of accepting caller-supplied outcomes, requires
 the exact current identity classifier, observation taxonomy, instruction and
 output schema, and verifies every candidate/preview binding before deciding.
-Conflict candidates are excluded.
-Unknown identity, or unknown observation evidence needed by an enabled policy,
-produces an abstention. A policy cannot rescue an excluded candidate.
+Conflict and unknown-identity candidates are excluded individually. The packet
+abstains for identity only when no eligible candidate remains. Unknown
+observation evidence needed by an enabled policy still produces an abstention.
+A policy cannot rescue an excluded candidate.
 
 The acceptable set contains only exact admitted references that survive
 identity and enabled avoid rules. Packet order is the deterministic baseline.
@@ -61,7 +62,9 @@ free prose, write instruction or production authority.
 The policy proof is simpler and more auditable than a second semantic reviewer:
 the model cannot see policy and deterministic code owns every exclusion,
 abstention and recommendation. Adding a field or changing semantics requires a
-new policy version.
+new policy version. Correcting the initial candidate-admission defect establishes
+the candidate-local identity rule of `cover-policy-v1`; it does not add or alter
+an owner preference.
 
 Real packets without admitted semantic observations honestly return
 `observations_unavailable`. Synthetic exhaustive cases prove the closed
@@ -80,5 +83,13 @@ The entire surface remains source-only and excluded from installed artifacts.
   recommendations, policy violations, model/provider dispatches or private
   exposure. This records the initial qualification attempt, not the later
   reopened semantic requalification.
+- The reopened development reproof froze reference decisions first, then reused
+  50 retained packet observation artifacts covering all 148 candidates. Across
+  400 decisions, acceptable-set agreement was 354/400 (88.5%), recommendation
+  agreement was 356/400 (89%), and exact whole-decision agreement was 344/400
+  (86%). Every policy combination was at least 78% exact, with zero binding,
+  eligibility, invented-reference, policy, privacy or expanded-authority
+  violations and no new model or provider call. Fresh formal holdout
+  confirmation remains required.
 - Architecture and exact-installed-artifact gates prove no runtime surface,
   persistence or write authority.
