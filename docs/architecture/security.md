@@ -561,17 +561,26 @@ candidates with zero failures, retries, or violations; its seeded 20-case repeat
 matched every field and the joint result. A fresh one-shot final cohort admitted
 48/50 candidates, retaining two post-dispatch, pre-admission runtime failures
 without retry. Their exact shared cause was not retained or proven. Successful
-exact preflight and the other 48 admissions falsified systemic always-on
-authentication, profile, sandbox, binding, or schema failures, while bounded
-transient child, resource, or packet-interaction hypotheses remain. The 4%
-missingness rate remains within the frozen 5%
-tolerance, but its bias magnitude is unknown and conclusions are conditional on
-the 48 admitted cases. Overall per-field lower bounds remain useful or strong
-when both missing cases are counted as disagreements; joint agreement falls to
-72% and is not robustly useful across all dispatched cases. Tie-in branding is
+exact preflight and the admitted rows show that no cohort-wide always-on
+authentication, profile, sandbox, binding, or schema failure occurred, while
+bounded transient child, resource, or packet-interaction hypotheses remain.
+The 50 selected candidate rows came from 29 distinct packets and rows within a
+packet are correlated because one admitted packet result can score multiple
+selected rows. The two failures were packet invocations, but aggregate receipts
+do not retain enough mapping to report distinct successful or failed packet
+counts. The 4% candidate missingness rate
+remains within the frozen 5% candidate-coverage tolerance, but it is not a
+packet coverage rate; its bias magnitude is unknown and conclusions are
+conditional on the 48 admitted candidate rows. Overall per-field lower bounds
+remain useful or strong when both missing cases are counted as disagreements;
+joint agreement falls to 72% and is not robustly useful across all dispatched
+cases. Tie-in branding is
 also class-sensitive: absent-case specificity was 44/44, but branded-positive
 recall was 2/4 (50%), so the high overall agreement does not establish useful
-tie-in detection for an avoid-tie-in policy. Qualification recorded zero
+tie-in detection for an avoid-tie-in policy. Composition was also
+class-sensitive: minimal-positive precision was 15/21 (71.43%) despite 15/17
+(88.24%) reference-minimal recall, so prefer-minimal usefulness remains
+unproven. Qualification recorded zero
 binding or safety violations, provider calls, production-library accesses, or
 writes. An earlier final cohort was
 invalidated after a broad private JSON discovery scanner opened final-reference

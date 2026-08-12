@@ -206,6 +206,10 @@ Development aggregate confusion was:
 
 Observer `unknown` predictions were 0/50 for composition, 0/50 for medium,
 1/50 (2%) for promotional text, and 0/50 for tie-in branding.
+Development minimal-positive precision was 11/14 (78.57%) and
+reference-minimal recall was 11/15 (73.33%). The precision is in the mixed band,
+the recall is below the useful band, and 15 reference-minimal cases are sparse;
+development therefore did not establish prefer-minimal policy usefulness.
 Tie-in branded-positive recall was 1/1 and absent-case specificity was 48/48;
 the single positive is too sparse to support a strong detection claim. The one
 reference-unknown case was predicted absent and is excluded from both rates.
@@ -225,8 +229,10 @@ source/configuration/media/binding boundaries before its one shot.
 
 | Final-holdout measure | Aggregate result |
 | --- | ---: |
-| Candidates admitted | 48/50 (96%) |
-| Post-dispatch runtime failures / retries | 2 / 0 |
+| Candidate rows admitted | 48/50 (96%) |
+| Candidate-scoped packet invocations / failed invocations / retries | 50 / 2 / 0 |
+| Distinct selected packets / multi-choice packets | 29 / 25 |
+| Distinct successful / failed packet counts | unavailable / unavailable |
 | Composition exact agreement | 40/48 (83.33%) |
 | Medium exact agreement | 47/48 (97.92%) |
 | Promotional-text exact agreement | 45/48 (93.75%) |
@@ -236,7 +242,7 @@ source/configuration/media/binding boundaries before its one shot.
 | p50 / p95 latency | 10.74 s / 14.83 s |
 | Safety or binding violations | 0 |
 
-Final-holdout aggregate confusion among the 48 admitted results was:
+Final-holdout aggregate confusion among the 48 admitted candidate rows was:
 
 | Field | Reference → observer | Count |
 | --- | --- | ---: |
@@ -254,27 +260,43 @@ Final-holdout aggregate confusion among the 48 admitted results was:
 
 Observer `unknown` predictions were 0/48 for composition, 0/48 for medium,
 2/48 (4.17%) for promotional text, and 0/48 for tie-in branding.
+Minimal-positive precision was 15/21 (71.43%), below the 75% useful band, while
+reference-minimal recall was 15/17 (88.24%). The 83.33% overall composition
+agreement therefore does not establish useful prefer-minimal policy behavior;
+#543 must replay that policy and may validly fail it.
 Tie-in branded-positive recall was 2/4 (50%), below the 75% useful band, while
 absent-case specificity was 44/44 (100%). The high overall tie-in agreement is
 therefore driven by class prevalence and does not establish useful branded-cover
 detection for an avoid-tie-in policy.
 
-Both runtime failures occurred after dispatch and before result admission. The
-exact shared cause was not retained and is not proven. Successful exact
-preflight plus 48 independently admitted cases falsified systemic always-on
-authentication, profile, sandbox, binding, or schema failures; bounded
-transient child, resource, or packet-interaction hypotheses remain. The
-failures were retained without remediation, retry, or another holdout. The 4%
-missingness rate is within the frozen 5% tolerance, but its bias magnitude is
-unknown and every quality conclusion is conditional on the 48 admitted cases.
+Both failed packet invocations occurred after dispatch and before result
+admission. The
+exact shared cause was not retained and is not proven. The 50 selected candidate
+rows came from 29 distinct packets, including 25 multi-choice packets; rows
+from one packet share an atomic request/result boundary, one admitted packet
+result can score multiple selected rows, and those rows are correlated. The
+sealed aggregate receipts record 50 candidate-scoped packet invocations and
+two failures, but do not retain the opaque mapping needed to determine whether
+the failures affected two distinct packets or how many distinct packets
+produced at least one successful invocation. Distinct-packet dispatch coverage
+is therefore unavailable and is not inferred. Successful exact preflight and
+the admitted rows show that no cohort-wide always-on authentication, profile,
+sandbox, binding, or schema failure occurred; bounded transient child,
+resource, or packet-interaction hypotheses remain. The failures were retained
+without remediation, retry, or another holdout. The 4% candidate missingness
+rate is within the frozen 5% candidate-coverage tolerance, but it is not a
+packet coverage rate; its bias magnitude is unknown and every quality
+conclusion is conditional on the 48 admitted candidate rows.
 
-The primary frozen gate—at least 95% coverage, at least 75% exact agreement for
-each field, and zero safety or binding violations—passes. Under the frozen
-bands, admitted-case composition is mixed but useful, while medium,
-promotional text, and overall tie-in agreement are strong. Tie-in
-branded-positive recall is separately insufficient; #543 must report
-avoid-tie-in policy performance independently and may validly fail that policy
-proof. A conservative sensitivity calculation that treats both missing results
+The primary frozen gate—at least 95% candidate coverage, at least 75% overall
+exact agreement for each field, and zero safety or binding violations—passes.
+Under the frozen bands, admitted-row composition agreement is mixed, while
+medium, promotional text, and overall tie-in agreement are strong. These
+overall rates do not prove the class-specific policy uses: minimal-positive
+precision and tie-in branded-positive recall are separately insufficient. #543
+must report prefer-minimal and avoid-tie-in policy performance independently
+and may validly fail either proof. A conservative sensitivity calculation that
+treats both missing results
 as disagreements gives dispatched-cohort lower bounds of 40/50 (80%) for
 composition, 47/50 (94%) for medium, 45/50 (90%) for promotional text, and
 46/50 (92%) for tie-in branding;

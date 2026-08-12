@@ -76,11 +76,15 @@ judgements frozen before tested outputs were opened; these are review
 judgements, not claimed human ground truth. The first development configuration
 admitted all 50 candidates and cleared the predeclared useful agreement
 threshold for every field, so no second prompt/packaging configuration was run.
-A shuffled seeded 20-case repeat matched every field and the joint result in all 20 cases. The
-fresh one-shot final cohort admitted 48 of 50 candidates with zero binding or
-safety violations. This proves bounded overall-agreement usefulness and
-repeatability for the source-only workbench; it does not prove every
-class-specific policy use or runtime readiness.
+A shuffled seeded 20-case repeat matched every field and the joint result in all
+20 cases. The fresh one-shot final cohort admitted 48 of 50 candidates with zero
+binding or safety violations. This proves bounded overall-agreement usefulness
+and repeatability for the source-only workbench; it does not prove every
+class-specific policy use or runtime readiness. Development minimal-positive
+precision was 11/14 (78.57%) and reference-minimal recall was 11/15 (73.33%), a
+mixed and sparse class result. Final minimal-positive precision was 15/21
+(71.43%), below the useful band, and tie-in branded-positive recall was 2/4
+(50%); prefer-minimal and avoid-tie-in usefulness both remain pending #543.
 
 `cover-policy-report` is a deterministic consumer of the exact retained
 report, cover packet, closed observation report and `cover-policy-v1`. It
@@ -266,12 +270,21 @@ spent by credential-mount setup. After diagnosis and corrected preflight, the
 next fresh disjoint one-shot cohort admitted 48/50 candidates at 83.33–97.92%
 per-field agreement and 75% all-four agreement. Its two failures occurred after
 dispatch and before result admission; no exact shared cause was proven, and the
-4% missingness rate remains within the frozen 5% tolerance, but its bias
-magnitude is unknown. The primary field-level gate passes and survives treating
-both missing cases as disagreements; the 75% joint admitted-case result falls
+4% candidate missingness rate remains within the frozen 5% candidate-coverage
+tolerance, but its bias magnitude is unknown. The 50 selected candidate rows
+came from 29 distinct packets, including 25 multi-choice packets, and rows from
+the same packet are correlated because one admitted packet result can score
+multiple selected rows. The two failures were packet invocations, but aggregate
+receipts do not retain enough mapping to report distinct successful or failed
+packet counts, so packet-dispatch coverage is unavailable. The primary
+field-level gate passes and survives treating both missing cases as
+disagreements; the 75% joint admitted-case result falls
 to 72% under that sensitivity and is not robustly useful across all dispatched
-cases. Overall tie-in agreement was high, but branded-positive recall was only
-2/4 (50%) against 44/44 absent-case specificity; avoid-tie-in policy usefulness
+cases. Overall composition agreement was mixed, but minimal-positive precision
+was only 15/21 (71.43%) despite 15/17 (88.24%) reference-minimal recall;
+prefer-minimal usefulness remains separately unproven. Overall tie-in agreement
+was high, but branded-positive recall was only 2/4 (50%) against 44/44
+absent-case specificity; avoid-tie-in policy usefulness
 therefore remains separately unproven. The run recorded zero binding, safety,
 provider, production-access, or write violations. The full aggregate selection,
 confusion, unknown-rate, hypothesis, latency, repeatability, recovery,

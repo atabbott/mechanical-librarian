@@ -16,6 +16,8 @@ a second reviewer, or widen sandbox, network, model or corpus authority. The
 milestone was later reopened and requalified after bounded transport and
 environment remediation; admitted semantic observations now require a separate
 current policy-quality replay without erasing the initial negative result.
+In particular, sub-threshold minimal-positive precision and tie-in-positive
+recall leave both related policy uses unproven until that replay.
 
 ## Decision
 

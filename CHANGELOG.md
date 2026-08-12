@@ -38,14 +38,21 @@
   Independent blinded reference judgements are not claimed human ground truth.
   The first 50-case development configuration reached 84–98% per-field exact
   agreement and a 20/20 exact shuffled repeat, so no further configuration was
-  run. A fresh one-shot final cohort admitted 48/50 cases, reached 83.33–97.92%
+  run. Its minimal-positive precision was 11/14 (78.57%) and reference-minimal
+  recall was 11/15 (73.33%), a mixed and sparse result. A fresh one-shot final
+  cohort admitted 48/50 candidate rows, reached 83.33–97.92%
   per-field agreement and 75% all-four agreement, and retained two
   post-dispatch, pre-admission failures without retry or safety/binding
   violation. Their exact shared cause and bias magnitude are unknown. The 4%
-  missingness rate remains within the frozen 5% tolerance and does not change
-  overall per-field sensitivity bands, but the 75% joint admitted-case agreement
+  candidate missingness rate remains within the frozen 5% candidate-coverage
+  tolerance and does not change overall per-field sensitivity bands, but the
+  75% joint admitted-case agreement
   falls to 72% and is not robustly useful when both missing results count as
-  disagreements. Tie-in's 95.83% overall agreement also masks only 2/4 (50%)
+  disagreements. The 50 selected rows came from 29 packets and rows within a
+  packet are correlated; aggregate receipts cannot establish distinct-packet
+  dispatch coverage. Composition's 83.33% overall agreement masks only 15/21
+  (71.43%) minimal-positive precision, so prefer-minimal usefulness remains
+  unproven. Tie-in's 95.83% overall agreement also masks only 2/4 (50%)
   branded-positive recall against 44/44 absent-case specificity, so avoid-tie-in
   policy usefulness remains unproven.
   (#541)
