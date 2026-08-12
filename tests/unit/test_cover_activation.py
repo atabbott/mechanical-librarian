@@ -1,0 +1,273 @@
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+from mechanical_librarian.adapters.field_effect_authority import (
+    PersistedFieldEffectAuthority,
+)
+from mechanical_librarian.adapters.field_effect_fakes import (
+    FakeBackupReadiness,
+    FakeCapabilityObserver,
+    FakeConsentCurrentness,
+    FakeForwardReevaluation,
+    FakePreclaimHook,
+    FakeTargetService,
+    PrivateCoverRecoveryStore,
+)
+from mechanical_librarian.adapters.field_effect_runtime import (
+    PersistedEffectDependencies,
+)
+from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    MetadataReportError,
+    open_repository,
+)
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationService,
+)
+from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+)
+from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
+from tests.unit.test_cover_packets import _preview, _report, _source
+from tests.unit.test_field_effects import CAPABILITY, Clock
+
+
+class CoverActivationTests(unittest.TestCase):
+    def test_selected_original_reaches_verified_guarded_fake_service_application(
+        self,
+    ) -> None:
+        incumbent_preview = _preview(1)
+        alternative_preview = _preview(2)
+        sources = (
+            _source(1, incumbent_preview, incumbent=True),
+            _source(2, alternative_preview, embedded=True),
+        )
+        base = _report(sources)
+        incumbent = sources[0].artifact
+        assert incumbent is not None
+        fields = tuple(
+            TargetField(
+                field.destination,
+                TargetFieldState.VALUE,
+                incumbent.artifact_id,
+            )
+            if field.destination is TargetDestination.COVER
+            else field
+            for field in base.target.fields
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                base.target.connection,
+                base.target.library,
+                base.target.item,
+                fields,
+            ),
+            file=base.file,
+            local_claims=base.local_claims,
+            local_reasons=base.local_reasons,
+            providers=base.providers,
+            cover_sources=base.cover_sources,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.chmod(root, 0o700)
+            repository = open_repository(root / "application.sqlite3")
+            artifacts = CoverArtifactStore(root / "artifacts")
+            for index, (source, preview) in enumerate(
+                zip(
+                    sources,
+                    (incumbent_preview, alternative_preview),
+                    strict=True,
+                ),
+                1,
+            ):
+                assert source.artifact is not None
+                artifacts.stage(source.artifact, f"original-{index}".encode(), preview)
+
+            repository.publish(report, lambda: True)
+            proposal_set = evaluate_report(report)
+            repository.publish_proposal(proposal_set)
+            review_case_id = json.loads(repository.admit_review_case(proposal_set))[
+                "review_case_id"
+            ]
+            case = ReviewCase.create_from_data(
+                json.loads(repository.get_review_case(review_case_id))["case"]
+            )
+            proposal = next(
+                value for value in case.proposals if value["destination"] == "cover"
+            )
+            policy = CoverPolicy()
+            repository.bind_current_cover_policy(policy.reference)
+            consideration_now = [100]
+            consideration_service = CoverConsiderationService(
+                repository,
+                read_preview=lambda artifact_id, _variant: artifacts.read_preview_digest(
+                    next(
+                        source.artifact.preview_digest
+                        for source in sources
+                        if source.artifact is not None
+                        and source.artifact.artifact_id == artifact_id
+                    )
+                ),
+                read_preview_digest=artifacts.read_preview_digest,
+                clock=lambda: consideration_now[0],
+                policy=policy,
+            )
+            consideration = consideration_service.ensure(
+                review_case_id, report.to_json(), proposal
+            )
+            selected = next(
+                candidate
+                for candidate in consideration["candidates"]
+                if not candidate["incumbent"] and candidate["selectable"]
+            )
+            selected_value = {
+                "kind": "cover",
+                "value": selected["artifact_id"],
+            }
+            decision = HumanDecision.create(
+                case,
+                proposal_id=proposal["proposal_id"],
+                target_fingerprint=case.target_fingerprint,
+                destination="cover",
+                actor="owner",
+                outcome="accept",
+                selected_value=selected_value,
+                idempotency_key="cover-activation-0001",
+                occurred_at=101,
+            )
+            repository._connection.execute(
+                "CREATE TEMP TRIGGER synthetic_cover_outcome_failure "
+                "BEFORE INSERT ON cover_consideration_events "
+                "WHEN NEW.kind='selected' "
+                "BEGIN SELECT RAISE(ABORT,'synthetic'); END"
+            )
+            with self.assertRaises(MetadataReportError):
+                repository.record_human_decision(
+                    decision,
+                    cover_consideration_id=str(consideration["consideration_id"]),
+                )
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT count(*) FROM human_decisions"
+                ).fetchone(),
+                (0,),
+            )
+            repository._connection.execute(
+                "DROP TRIGGER synthetic_cover_outcome_failure"
+            )
+            repository.record_human_decision(
+                decision,
+                cover_consideration_id=str(consideration["consideration_id"]),
+            )
+
+            authority = PersistedFieldEffectAuthority(repository)
+            snapshot = authority.resolve(decision)
+            dependencies = PersistedEffectDependencies(repository)
+            consent = FakeConsentCurrentness(
+                repository.field_effect_consent_envelope_identity
+            )
+            consent.allow(
+                connection=snapshot.connection,
+                library=snapshot.library,
+                destination=snapshot.destination,
+            )
+            target = FakeTargetService()
+            application = GuardedFieldApplication(
+                repository,
+                target,
+                FakeBackupReadiness(),
+                FakeCapabilityObserver(CAPABILITY),
+                authority,
+                dependencies,
+                consent,
+                PrivateCoverRecoveryStore(
+                    root / "recovery", lambda _plan: b"incumbent-original"
+                ),
+                FakeForwardReevaluation(),
+                Clock(),
+                FakePreclaimHook(),
+                FakePreclaimHook(),
+                FakePreclaimHook(),
+            )
+            operation = application.plan(
+                decision,
+                connection=snapshot.connection,
+                library=snapshot.library,
+                work_id=snapshot.work_id,
+                destination=snapshot.destination,
+                pre_value=snapshot.pre_value,
+                desired_value=snapshot.decision_value,
+                target_fingerprint=snapshot.target_fingerprint,
+                target_version=snapshot.target_version,
+                dependency_digests=snapshot.dependency_digests,
+                capability_digest=CAPABILITY,
+            )
+            assert operation is not None
+            target.seed(operation.plan)
+
+            verified = application.apply(operation.plan.plan_id)
+
+            self.assertEqual("verified", verified.state)
+            self.assertEqual(selected["artifact_id"], target.read(operation.plan).value)
+            self.assertEqual(
+                ["selected", "considered"],
+                [event["kind"] for event in consideration_service.history(review_case_id)],
+            )
+            self.assertTrue(
+                repository.field_effect_dependencies_current(
+                    snapshot.dependency_digests
+                )
+            )
+            repository._connection.execute("BEGIN IMMEDIATE")
+            repository._retire_stale_cover_consideration(
+                verified, "stale", 102
+            )
+            repository._connection.commit()
+            self.assertIsNone(
+                repository.current_cover_consideration_document(review_case_id)
+            )
+            self.assertEqual(
+                decision.decision_id,
+                HumanDecision.from_json(
+                    repository.record_human_decision(
+                        decision,
+                        cover_consideration_id=str(
+                            consideration["consideration_id"]
+                        ),
+                    )
+                ).decision_id,
+            )
+            consideration_now[0] = 103
+            successor = consideration_service.ensure(
+                review_case_id, report.to_json(), proposal
+            )
+            self.assertEqual(
+                consideration["consideration_id"], successor["supersedes_id"]
+            )
+            self.assertEqual(
+                ["considered", "superseded", "stale", "selected", "considered"],
+                [
+                    event["kind"]
+                    for event in consideration_service.history(review_case_id)
+                ],
+            )
+            repository.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

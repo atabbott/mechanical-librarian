@@ -20,7 +20,9 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterator, cast
 
-from mechanical_librarian_workbench.contained_reviewer_contract import (
+from mechanical_librarian.application.contained_reviewer_contract import (
+    COVER_MEMORY_BYTES,
+    COVER_PROCESS_LIMIT,
     ContainedReviewRequest,
     ContainedReviewResult,
     ContainedReviewerAttempt,
@@ -70,6 +72,45 @@ class ContainedReviewerProcessError(ContainedReviewerError):
         super().__init__(code, count=self.count, digest=self.digest)
 
 
+def read_contained_reviewer_profile(path: Path) -> bytes:
+    """Read one owner-private bounded profile without following a final symlink."""
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | os.O_NONBLOCK
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.geteuid()
+            or before.st_nlink != 1
+            or before.st_mode & 0o077
+            or not 1 <= before.st_size <= MAX_PROFILE_BYTES
+        ):
+            raise ContainedReviewerProcessError("profile")
+        payload = os.read(descriptor, before.st_size + 1)
+        after = os.fstat(descriptor)
+        if (
+            len(payload) != before.st_size
+            or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+            != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+        ):
+            raise ContainedReviewerProcessError("profile")
+        load_contained_reviewer_profile_bytes(payload)
+        return payload
+    except ContainedReviewerProcessError:
+        raise
+    except OSError as error:
+        raise ContainedReviewerProcessError("profile") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 @dataclass(frozen=True, slots=True)
 class _SchemaBinding:
     serialized: bytes
@@ -84,6 +125,28 @@ class _SealedImage:
     digest: str
 
 
+def _linux_seal_constants() -> tuple[int, int, int] | None:
+    """Resolve the stable Linux UAPI even when Python omits symbolic names."""
+    if sys.platform != "linux":
+        return None
+    commands = (
+        getattr(fcntl, "F_ADD_SEALS", 1033),
+        getattr(fcntl, "F_GET_SEALS", 1034),
+    )
+    flags = tuple(
+        getattr(fcntl, name, fallback)
+        for name, fallback in (
+            ("F_SEAL_SEAL", 0x0001),
+            ("F_SEAL_SHRINK", 0x0002),
+            ("F_SEAL_GROW", 0x0004),
+            ("F_SEAL_WRITE", 0x0008),
+        )
+    )
+    if any(type(value) is not int for value in (*commands, *flags)):
+        return None
+    return commands[0], commands[1], flags[0] | flags[1] | flags[2] | flags[3]
+
+
 @contextmanager
 def _sealed_cover_images(
     images: tuple[_CoverReviewImage, ...],
@@ -94,24 +157,15 @@ def _sealed_cover_images(
         if not images:
             yield ()
             return
+        seal_constants = _linux_seal_constants()
         if (
             not hasattr(os, "memfd_create")
             or not hasattr(os, "MFD_ALLOW_SEALING")
             or not hasattr(os, "MFD_CLOEXEC")
-            or not hasattr(fcntl, "F_ADD_SEALS")
-            or not hasattr(fcntl, "F_GET_SEALS")
-            or not hasattr(fcntl, "F_SEAL_SEAL")
-            or not hasattr(fcntl, "F_SEAL_SHRINK")
-            or not hasattr(fcntl, "F_SEAL_GROW")
-            or not hasattr(fcntl, "F_SEAL_WRITE")
+            or seal_constants is None
         ):
             raise ContainedReviewerProcessError("setup")
-        seals = (
-            fcntl.F_SEAL_SEAL
-            | fcntl.F_SEAL_SHRINK
-            | fcntl.F_SEAL_GROW
-            | fcntl.F_SEAL_WRITE
-        )
+        add_seals, get_seals, seals = seal_constants
         admitted: list[_SealedImage] = []
         for image in images:
             descriptor = os.memfd_create(  # type: ignore[attr-defined]
@@ -126,8 +180,8 @@ def _sealed_cover_images(
                     raise OSError("sealed image write failed")
                 remaining = remaining[written:]
             os.fsync(descriptor)
-            fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, seals)
-            if fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) & seals != seals:
+            fcntl.fcntl(descriptor, add_seals, seals)
+            if fcntl.fcntl(descriptor, get_seals) & seals != seals:
                 raise OSError("sealed image flags changed")
             os.lseek(descriptor, 0, os.SEEK_SET)
             copied = bytearray()
@@ -163,12 +217,10 @@ def _isolate_child_image_descriptors(
     images: tuple[_SealedImage, ...],
 ) -> None:
     """Replace inherited image descriptors with verified independent readers."""
-    required_seals = (
-        fcntl.F_SEAL_SEAL
-        | fcntl.F_SEAL_SHRINK
-        | fcntl.F_SEAL_GROW
-        | fcntl.F_SEAL_WRITE
-    )
+    seal_constants = _linux_seal_constants()
+    if seal_constants is None:
+        raise OSError("sealed image support is unavailable")
+    _add_seals, get_seals, required_seals = seal_constants
     for image in images:
         inherited = os.fstat(image.descriptor)
         reopened = os.open(
@@ -183,7 +235,7 @@ def _isolate_child_image_descriptors(
                 != (inherited.st_dev, inherited.st_ino, inherited.st_size)
                 or fcntl.fcntl(reopened, fcntl.F_GETFL) & os.O_ACCMODE
                 != os.O_RDONLY
-                or fcntl.fcntl(reopened, fcntl.F_GET_SEALS) & required_seals
+                or fcntl.fcntl(reopened, get_seals) & required_seals
                 != required_seals
             ):
                 raise OSError("isolated image identity changed")
@@ -212,7 +264,7 @@ def _isolate_child_image_descriptors(
             or os.lseek(image.descriptor, 0, os.SEEK_CUR) != 0
             or fcntl.fcntl(image.descriptor, fcntl.F_GETFL) & os.O_ACCMODE
             != os.O_RDONLY
-            or fcntl.fcntl(image.descriptor, fcntl.F_GET_SEALS) & required_seals
+            or fcntl.fcntl(image.descriptor, get_seals) & required_seals
             != required_seals
         ):
             raise OSError("isolated image descriptor changed")
@@ -432,6 +484,11 @@ class ContainedReviewerAdapter:
     ) -> ContainedReviewResult:
         if type(request) is not _CoverReviewRequest:
             raise ContainedReviewerProcessError("response_format")
+        if (
+            self._profile.identity.memory_bytes != COVER_MEMORY_BYTES
+            or self._profile.identity.process_limit != COVER_PROCESS_LIMIT
+        ):
+            raise ContainedReviewerProcessError("profile")
         try:
             instruction = request.instruction
             input_document = request.input_document

@@ -59,8 +59,9 @@ context and consequences rather than reproducing code.
 | [0044](0044-activate-persistent-react-workspace.md) | accepted | Activate one persistent authenticated React workspace |
 | [0045](0045-bind-report-cover-packets.md) | accepted | Bind report cover packets to isolated reviewer images |
 | [0046](0046-observe-report-bound-covers.md) | accepted | Observe report-bound covers with a small closed vocabulary |
-| [0047](0047-adjudicate-closed-cover-policy.md) | accepted | Adjudicate closed cover policy deterministically |
+| [0047](0047-adjudicate-closed-cover-policy.md) | accepted; source-only activation provision superseded by 0049 | Adjudicate closed cover policy deterministically |
 | [0048](0048-compile-rich-metadata-policy-preview.md) | accepted | Compile closed rich-metadata policy previews |
+| [0049](0049-owner-confirmed-cover-considerations.md) | accepted | Activate owner-confirmed cover considerations |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

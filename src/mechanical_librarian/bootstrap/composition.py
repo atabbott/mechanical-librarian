@@ -12,6 +12,11 @@ from pathlib import Path
 
 import uvicorn
 
+from mechanical_librarian.bootstrap.contained_reviewer import (
+    run_contained_reviewer,
+    run_cover_packet_reviewer,
+)
+
 from mechanical_librarian.adapters.cover_artifacts import (
     CoverDecodeRejected,
     CoverDecodeTimeout,
@@ -48,6 +53,9 @@ from mechanical_librarian.adapters.private_recovery import (
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.batch_manifest import create as create_batch_manifest, read as read_batch_manifest
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.reviewers.contained_reviewer import (
+    read_contained_reviewer_profile,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
     open_shadow_preview_repository,
@@ -120,6 +128,8 @@ from mechanical_librarian.application.review_pipeline import (
 from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
+from mechanical_librarian.application.cover_consideration import CoverConsiderationService
+from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
@@ -1506,6 +1516,9 @@ def run_review_server(
                     "timing_records": len(timing_store.list()),
                 },
             ),))
+            cover_considerations = _compose_cover_considerations(
+                repository, artifact_store_path, review
+            )
             review_application = compose_review_application(
                 state_owner=repository,
                 session_store=repository,
@@ -1529,6 +1542,7 @@ def run_review_server(
                 operational_support=support_bundle,
                 operational_timer=timing,
                 field_application=field_application,
+                cover_considerations=cover_considerations,
             )
             app = create_review_app(review_application, review)
             uvicorn.run(
@@ -1551,6 +1565,116 @@ def run_review_server(
         except Exception:
             repository.close()
             raise
+
+
+def _compose_cover_considerations(
+    repository, artifact_store_path: Path, review
+) -> CoverConsiderationService:
+    artifacts: CoverArtifactStore | None = None
+
+    def artifact_store() -> CoverArtifactStore:
+        nonlocal artifacts
+        if artifacts is None:
+            artifacts = CoverArtifactStore(artifact_store_path, create=False)
+        return artifacts
+
+    reviewer_profile = (
+        None
+        if review.cover_reviewer_profile_file is None
+        else read_contained_reviewer_profile(Path(review.cover_reviewer_profile_file))
+    )
+    policy = CoverPolicy(
+        avoid_promotional_text=review.cover_avoid_promotional_text,
+        avoid_tie_in_branding=review.cover_avoid_tie_in_branding,
+        prefer_minimal_composition=review.cover_prefer_minimal_composition,
+    )
+    repository.bind_current_cover_policy(policy.reference)
+    return CoverConsiderationService(
+        repository,
+        read_preview=lambda artifact_id, variant: artifact_store().read_preview_digest(
+            repository.preview_digest_for_artifact(artifact_id, variant)
+        ),
+        read_preview_digest=lambda digest: artifact_store().read_preview_digest(digest),
+        clock=lambda: int(time.time()),
+        policy=policy,
+        reviewer_profile=reviewer_profile,
+        reviewer=None if reviewer_profile is None else run_cover_packet_reviewer,
+    )
+
+
+def run_cover_review(
+    config_path: Path,
+    database_path: Path,
+    artifact_store_path: Path,
+    review_case_id: str,
+    action: str,
+    artifact_id: str | None,
+    idempotency_key: str | None,
+) -> dict[str, object]:
+    """Project or record one cover outcome through the installed application seams."""
+    configuration = load_configuration_file(config_path)
+    if configuration.review is None:
+        raise ConfigurationError("review configuration is unavailable")
+    repository = open_repository(database_path, create=False)
+    try:
+        considerations = _compose_cover_considerations(
+            repository, artifact_store_path, configuration.review
+        )
+        application = compose_review_application(
+            state_owner=repository,
+            session_store=repository,
+            case_store=repository,
+            decision_store=repository,
+            library_store=repository,
+            policy_store=repository,
+            verify_password=lambda _: False,
+            clock=lambda: int(time.time()),
+            session_lifetime_seconds=1,
+            graceful_shutdown_seconds=1,
+            close_state_owner=False,
+            cover_considerations=considerations,
+        )
+        if action == "history":
+            return application.history(review_case_id)
+        if action == "show":
+            return application.prepare_cover_consideration(review_case_id)
+        detail = application.case_detail(review_case_id).to_data()
+        field = next(
+            value for value in detail["fields"]
+            if value["destination"] == "cover"
+        )
+        consideration = field["cover_consideration"]
+        assert type(consideration) is dict
+        outcome = {
+            "keep": "keep_current",
+            "select": "accept",
+            "no-action": "reject",
+        }[action]
+        selected_value = (
+            None
+            if action != "select"
+            else {"kind": "cover", "value": artifact_id}
+        )
+        if idempotency_key is None:
+            raise ValueError("idempotency key is required")
+        acknowledgement = application.record_decision(
+            review_case_id,
+            proposal_id=str(field["proposal_id"]),
+            target_fingerprint=str(field["target_fingerprint"]),
+            destination="cover",
+            actor="owner",
+            outcome=outcome,
+            selected_value=selected_value,
+            idempotency_key=idempotency_key,
+            consideration_id=str(consideration["consideration_id"]),
+        )
+        return {
+            "consideration_id": consideration["consideration_id"],
+            "decision": acknowledgement,
+            "schema_version": "cover-review-cli-v1",
+        }
+    finally:
+        repository.close()
 
 
 def run_policy_preview(
@@ -1609,6 +1733,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     return runtime_main(
         argv, review_serve_runner=run_review_server,
         policy_preview_runner=run_policy_preview,
+        cover_review_runner=run_cover_review,
     )
 
 
@@ -1617,5 +1742,6 @@ __all__ = [
     "reopen_cover_preview", "reopen_current_metadata_report",
     "reopen_metadata_report", "reopen_proposal_set", "admit_review_case", "reopen_review_case",
     "preview_shadow_decision_case", "run_batch",
-    "run_catalogue", "run_metadata_report",
+    "run_catalogue", "run_contained_reviewer", "run_cover_packet_reviewer",
+    "run_metadata_report",
 ]

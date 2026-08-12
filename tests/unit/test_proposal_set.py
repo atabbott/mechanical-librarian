@@ -4008,7 +4008,50 @@ class ProposalSetTests(unittest.TestCase):
         self.assertEqual(ProposalOutcome.DEFER, incomplete.outcome)
         self.assertIn("cover_gallery_incomplete", incomplete.reasons)
 
-    def test_populated_unverified_cover_is_never_replaced(self) -> None:
+    def test_verified_incumbent_and_alternative_require_owner_cover_choice(self) -> None:
+        incumbent = CoverArtifact.create(
+            b"incumbent", b"incumbent-preview", "image/png", 10, 20
+        )
+        alternative = CoverArtifact.create(
+            b"alternative", b"alternative-preview", "image/png", 12, 24
+        )
+        sources = (
+            CoverSource(
+                cover_source_id(CoverSourceKind.ABS, "current"),
+                CoverSourceKind.ABS,
+                CoverSourceState.RETRIEVED,
+                incumbent,
+            ),
+            CoverSource(
+                cover_source_id(CoverSourceKind.EPUB, "embedded"),
+                CoverSourceKind.EPUB,
+                CoverSourceState.RETRIEVED,
+                alternative,
+            ),
+        )
+        fields = tuple(
+            TargetField(
+                value.destination,
+                TargetFieldState.VALUE,
+                incumbent.artifact_id,
+            )
+            if value.destination is TargetDestination.COVER
+            else value
+            for value in _fields("Current title")
+        )
+        result = _result(
+            evaluate_report(_report(fields=fields, covers=sources)),
+            TargetDestination.COVER,
+        )
+
+        self.assertEqual(ProposalOutcome.UNRESOLVED_CHOICE, result.outcome)
+        self.assertEqual(
+            ("current_cover_verified", "owner_cover_choice_required"),
+            result.reasons,
+        )
+        self.assertEqual(2, len(result.alternatives))
+
+    def test_populated_unverified_cover_is_manual_only_with_typed_incumbent_gap(self) -> None:
         artifact = CoverArtifact.create(
             b"cover", b"preview", "image/png", 10, 20
         )
@@ -4034,8 +4077,17 @@ class ProposalSetTests(unittest.TestCase):
             evaluate_report(_report(fields=fields, covers=(source,))),
             TargetDestination.COVER,
         )
-        self.assertEqual(ProposalOutcome.DEFER, result.outcome)
-        self.assertIn("current_cover_unverified", result.reasons)
+        self.assertEqual(ProposalOutcome.UNRESOLVED_CHOICE, result.outcome)
+        self.assertEqual(
+            (
+                "current_cover_unavailable",
+                "current_cover_unverified",
+                "owner_cover_choice_required",
+            ),
+            result.reasons,
+        )
+        self.assertEqual(1, len(result.alternatives))
+        self.assertIsNone(result.selected_alternative_id)
 
     def test_non_google_markup_description_is_ineligible(self) -> None:
         claim = _claim("catalogue", "edition-1", ClaimKind.DESCRIPTION, "Summary <em>", scope=ClaimScope.WORK)

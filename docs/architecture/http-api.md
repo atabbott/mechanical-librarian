@@ -164,6 +164,19 @@ call, raw credential, unrestricted source dump, or library-wide evidence
 browser. The bundled detail page loads additional pages only on an explicit
 “Load more evidence” action and renders every value as text.
 
+An exact-current cover field can additionally contain one
+`cover-consideration-v1` projection. Its ordered candidates start with the
+incumbent and expose only application-owned preview references plus closed
+identity, observation, policy, selectable, and omission states. Authenticated
+same-origin image reads are bound to the case, current consideration, and
+candidate reference. An explicit advisory retry creates a successor
+consideration; it does not retry a decision or write. Cover decisions also
+supply the exact consideration ID, and an accepted value must be one displayed
+selectable non-incumbent `cover_<sha256>` original. Keep-current and reject
+carry no selected value. The ordinary decision route remains the only owner
+decision mutation and the ordinary Activity path remains the only apply
+authority.
+
 Representations expose deterministic disposition, human or qualified automatic
 decision, stale state, and apply readiness as separate fields. An omitted human
 decision must not be inferred from source evidence or deterministic proposals.

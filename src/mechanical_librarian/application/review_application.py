@@ -38,6 +38,10 @@ from mechanical_librarian.application.review_web import (
     ReviewSessionStore,
     SessionTokens,
 )
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationError,
+    CoverConsiderationService,
+)
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
 from mechanical_librarian.domain.field_effect import SUPPORTED_DESTINATIONS
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
@@ -284,6 +288,7 @@ class ReviewApplication:
         field_application: GuardedFieldApplication | ContinuousGuardedApplication | None,
         operations: OperationalStatus | None,
         gate: RLock,
+        cover_considerations: CoverConsiderationService | None = None,
     ) -> None:
         self._state_owner = state_owner
         self._sessions = sessions
@@ -301,6 +306,7 @@ class ReviewApplication:
         self._preparation = preparation
         self._field_application = field_application
         self._operations = operations
+        self._cover_considerations = cover_considerations
 
     @property
     def preparation_available(self) -> bool:
@@ -475,9 +481,24 @@ class ReviewApplication:
         outcome: str,
         selected_value: dict[str, object] | None,
         idempotency_key: str,
+        consideration_id: str | None = None,
     ) -> dict[str, object]:
-        result = self.serialized(
-            lambda: self._decisions.run(
+        if destination == "cover" and (
+            self._cover_considerations is None or consideration_id is None
+        ):
+            raise ReviewApplicationError("cover_consideration_required")
+
+        def record() -> dict[str, object]:
+            if destination == "cover":
+                assert self._cover_considerations is not None
+                assert consideration_id is not None
+                self._cover_considerations.validate_decision(
+                    review_case_id,
+                    consideration_id,
+                    outcome,
+                    selected_value,
+                )
+            return self._decisions.run(
                 review_case_id,
                 proposal_id=proposal_id,
                 target_fingerprint=target_fingerprint,
@@ -486,11 +507,56 @@ class ReviewApplication:
                 outcome=outcome,
                 selected_value=selected_value,
                 idempotency_key=idempotency_key,
+                consideration_id=consideration_id,
             )
-        )
+
+        try:
+            result = self.serialized(record)
+        except CoverConsiderationError as error:
+            raise ReviewApplicationError(error.code) from error
         if isinstance(self._field_application, ContinuousGuardedApplication):
             self._field_application.wake()
         return result
+
+    def cover_image(
+        self, review_case_id: str, consideration_id: str, reference: str
+    ) -> bytes:
+        if self._cover_considerations is None:
+            raise ReviewApplicationError("unavailable")
+        try:
+            return self.serialized(
+                lambda: self._cover_considerations.image(
+                    review_case_id, consideration_id, reference
+                )
+            )
+        except CoverConsiderationError as error:
+            raise ReviewApplicationError(error.code) from error
+
+    def retry_cover_consideration(self, review_case_id: str) -> dict[str, object]:
+        return self.prepare_cover_consideration(review_case_id, retry=True)
+
+    def prepare_cover_consideration(
+        self, review_case_id: str, *, retry: bool = False
+    ) -> dict[str, object]:
+        if self._cover_considerations is None:
+            raise ReviewApplicationError("unavailable")
+        def prepare() -> dict[str, object]:
+            detail, report, _ = self._cases._read(review_case_id)  # same serialized use case
+            cover = next(
+                field for field in detail["fields"]
+                if field["destination"] == "cover"
+            )
+            if retry and cover["human_decision"] is not None:
+                raise ReviewApplicationError("already_decided")
+            return self._cover_considerations.ensure(
+                review_case_id,
+                report.to_json(),
+                {
+                    "proposal_id": cover["proposal_id"],
+                },
+                retry=retry,
+            )
+        return self.serialized(prepare)
 
     @property
     def policy(self) -> PolicyOperations:
@@ -662,6 +728,7 @@ def compose_review_application(
     operational_timings: TimingRepository | None = None,
     operational_support: SupportExporter | None = None,
     operational_timer: StageTimer | None = None,
+    cover_considerations: CoverConsiderationService | None = None,
 ) -> ReviewApplication:
     """Compose every operation before the HTTP adapter is created."""
     gate = RLock()
@@ -692,7 +759,7 @@ def compose_review_application(
         sessions=OwnerSessionService(
             session_store, verify_password, clock, session_lifetime_seconds
         ),
-        cases=InspectCurrentReviewCase(case_store),
+        cases=InspectCurrentReviewCase(case_store, cover_considerations),
         decisions=RecordHumanDecision(decision_store, clock, timing),
         browse=BrowseReviewLibrary(library_store),
         policy=PolicyNotebook(
@@ -708,6 +775,7 @@ def compose_review_application(
         field_application=field_application,
         operations=operations,
         gate=gate,
+        cover_considerations=cover_considerations,
     )
     return application
 

@@ -15,6 +15,7 @@ import unittest
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from PIL import Image
@@ -22,15 +23,15 @@ from PIL import Image
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
 
-from mechanical_librarian_workbench import contained_reviewer as adapter  # noqa: E402
-from mechanical_librarian_workbench import contained_reviewer_contract as contract  # noqa: E402
-from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa: E402
+from mechanical_librarian.adapters.reviewers import contained_reviewer as adapter  # noqa: E402
+from mechanical_librarian.application import contained_reviewer_contract as contract  # noqa: E402
+from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
     ContainedReviewRequest,
     ContainedReviewerIdentity,
     admit_cover_review_request,
     canonical_json,
 )
-from mechanical_librarian_workbench.cover_packet_semantics import (  # noqa: E402
+from mechanical_librarian.application.cover_packet_semantics import (  # noqa: E402
     cover_transport_reference,
     normalize_cover_preview,
 )
@@ -39,7 +40,7 @@ from mechanical_librarian_workbench.cover_packet_semantics import (  # noqa: E40
 def _identity() -> ContainedReviewerIdentity:
     return ContainedReviewerIdentity(
         "a" * 64, "codex 1", "b" * 64, "bubblewrap 1", "reviewer", "medium",
-        30, 65_536, 268_435_456, 8, 131_072,
+        30, 65_536, 1_073_741_824, 32, 131_072,
     )
 
 
@@ -114,6 +115,29 @@ def _cover_request() -> object:
 
 
 class ContainedReviewerTests(unittest.TestCase):
+    def test_cover_rejects_nonqualified_resource_profile_before_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            profile = _profile(Path(directory))
+            profile = replace(
+                profile,
+                identity=replace(profile.identity, memory_bytes=536_870_912),
+            )
+            reviewer = adapter.ContainedReviewerAdapter(profile)
+            dispatched: list[object] = []
+            with self.assertRaisesRegex(Exception, "profile"):
+                reviewer.run_cover(
+                    _cover_request(), lambda *values: dispatched.append(values)
+                )  # type: ignore[arg-type]
+            self.assertEqual([], dispatched)
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux seal UAPI only")
+    def test_linux_seal_constants_cover_python_builds_without_names(self) -> None:
+        with patch.object(adapter, "fcntl", SimpleNamespace()):
+            self.assertEqual(
+                adapter._linux_seal_constants(),  # type: ignore[attr-defined]
+                (1033, 1034, 0x000F),
+            )
+
     def test_generic_request_and_adapter_are_structurally_image_free(self) -> None:
         schema = '{"additionalProperties":false,"properties":{},"type":"object"}'
         request = ContainedReviewRequest("Summarize.", '{"value":true}', schema)
@@ -216,8 +240,8 @@ class ContainedReviewerTests(unittest.TestCase):
                 "auth_store_path": str(root / "auth"),
                 "codex": {"path": str(root / "missing-codex"), "sha256": "a" * 64, "version": "codex 1"},
                 "job_root_path": str(root / "jobs"),
-                "limits": {"file_bytes": 131_072, "memory_bytes": 268_435_456,
-                           "output_bytes": 65_536, "processes": 8, "timeout_seconds": 30},
+                "limits": {"file_bytes": 131_072, "memory_bytes": 1_073_741_824,
+                           "output_bytes": 65_536, "processes": 32, "timeout_seconds": 30},
                 "model": "reviewer", "reasoning": "medium",
                 "sandbox": {"path": str(root / "missing-bwrap"), "sha256": "b" * 64, "version": "bubblewrap 1"},
                 "schema_version": "contained-reviewer-profile-v1",
@@ -746,14 +770,12 @@ class ContainedReviewerTests(unittest.TestCase):
         with adapter._sealed_cover_images(request.images) as images:  # type: ignore[attr-defined]
             self.assertEqual(len(images), 1)
             image = images[0]
-            required = (
-                fcntl.F_SEAL_SEAL
-                | fcntl.F_SEAL_SHRINK
-                | fcntl.F_SEAL_GROW
-                | fcntl.F_SEAL_WRITE
-            )
+            seal_constants = adapter._linux_seal_constants()  # type: ignore[attr-defined]
+            self.assertIsNotNone(seal_constants)
+            assert seal_constants is not None
+            _add_seals, get_seals, required = seal_constants
             self.assertEqual(
-                fcntl.fcntl(image.descriptor, fcntl.F_GET_SEALS) & required,
+                fcntl.fcntl(image.descriptor, get_seals) & required,
                 required,
             )
             self.assertEqual(os.lseek(image.descriptor, 0, os.SEEK_CUR), 0)

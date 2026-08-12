@@ -197,6 +197,12 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("insufficient_independent_corroboration",),
             ("field_policy_conflict",),
             ("no_safe_bibliographic_combination",),
+            ("current_cover_verified", "owner_cover_choice_required"),
+            (
+                "current_cover_unavailable",
+                "current_cover_unverified",
+                "owner_cover_choice_required",
+            ),
             ("populated_subjective_field",),
             ("work_publication_cannot_replace",),
         }
@@ -1708,6 +1714,19 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
         None,
     )
     if current is not None:
+        alternatives_for_review = tuple(
+            value
+            for value in ordered
+            if value.assessment is not ProposalAssessment.PRESERVES_TARGET
+        )
+        if alternatives_for_review:
+            return ProposalResult(
+                TargetDestination.COVER,
+                ProposalOutcome.UNRESOLVED_CHOICE,
+                ordered,
+                None,
+                ("current_cover_verified", "owner_cover_choice_required"),
+            )
         return ProposalResult(
             TargetDestination.COVER,
             ProposalOutcome.KEEP,
@@ -1716,6 +1735,23 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
             ("current_cover_verified",),
         )
     if target.state is TargetFieldState.VALUE:
+        candidates = tuple(
+            value
+            for value in ordered
+            if value.assessment is not ProposalAssessment.PRESERVES_TARGET
+        )
+        if candidates:
+            return ProposalResult(
+                TargetDestination.COVER,
+                ProposalOutcome.UNRESOLVED_CHOICE,
+                candidates,
+                None,
+                (
+                    "current_cover_unavailable",
+                    "current_cover_unverified",
+                    "owner_cover_choice_required",
+                ),
+            )
         return ProposalResult(
             TargetDestination.COVER,
             ProposalOutcome.DEFER,

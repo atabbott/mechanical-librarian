@@ -61,6 +61,7 @@ const createHttp = (): ReviewHttp => ({
   getCaseDetail: vi.fn(async () => detail),
   getEvidence: vi.fn(async () => ({ schema_version: 'review-case-evidence-v2', review_case_id: 'case-1', items: [], next_cursor: null })),
   getHistory: vi.fn(async () => ({ schema_version: 'review-case-history-v1', review_case_id: 'case-1', items: [], next_cursor: null })),
+  retryCoverConsideration: vi.fn(async () => { throw new Error('not configured') }),
   getPreparation: vi.fn(async (): Promise<PreparationView> => ({ schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [] })),
   preparationAction: vi.fn(async (): Promise<PreparationView> => ({ schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [] })),
   recordDecision: vi.fn(async () => ({ schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-1', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: 'proposal-1', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-1' })),
@@ -210,6 +211,38 @@ describe('typed review routes', () => {
     await user.click(screen.getByText('1 automatic or recorded field'))
     expect(screen.getByText('Resolved automatically · Atlas Cycle 2.5')).toBeVisible()
     expect(screen.getByText('Series already agrees with the deterministic policy.')).toBeVisible()
+  })
+
+  it('shows bound incumbent and manual alternatives and retries only failed advice', async () => {
+    const user = userEvent.setup()
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    const consideration = {
+      id: `cover_consideration_${'c'.repeat(64)}`,
+      current: true,
+      candidates: [
+        { artifactId: `cover_${'a'.repeat(64)}`, height: 1200, identity: { outcome: 'verified_manifestation_match' }, incumbent: true, observation: null, originalSha256: 'a'.repeat(64), ordinal: 0, previewSha256: '1'.repeat(64), reference: `cover_transport_ref_${'1'.repeat(64)}`, selectable: false, sourceKinds: ['audiobookshelf_current'], state: 'incumbent', width: 800 },
+        { artifactId: `cover_${'b'.repeat(64)}`, height: 1200, identity: { outcome: 'plausible_match' }, incumbent: false, observation: null, originalSha256: 'b'.repeat(64), ordinal: 1, previewSha256: '2'.repeat(64), reference: `cover_transport_ref_${'2'.repeat(64)}`, selectable: true, sourceKinds: ['provider'], state: 'acceptable', width: 800 },
+      ],
+      incumbent: { reference: `cover_transport_ref_${'1'.repeat(64)}`, state: 'available' as const },
+      omissions: [], policy: null,
+      policyPreferences: { avoidPromotionalText: false, avoidTieInBranding: false, preferMinimalComposition: false },
+      policyReference: `cover_policy_${'3'.repeat(64)}`,
+      reviewerStatus: 'failed', targetFingerprint: 'fingerprint-cover',
+    } as const
+    const coverField = { ...base, destination: 'cover', currentValue: `cover_${'a'.repeat(64)}`, currentRaw: `cover_${'a'.repeat(64)}`, proposalId: 'proposal-cover', targetFingerprint: 'fingerprint-cover', proposedValues: [{ kind: 'cover', value: `cover_${'b'.repeat(64)}` }], coverConsideration: consideration }
+    const retryCoverConsideration = vi.fn(async () => consideration)
+    const recordDecision = vi.fn(async () => ({ schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-cover', destination: 'cover', occurred_at: 1, outcome: 'accept' as const, proposal_id: 'proposal-cover', review_case_id: 'case-1', selected_value: { kind: 'cover', value: `cover_${'b'.repeat(64)}` }, target_fingerprint: 'fingerprint-cover' }))
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })), retryCoverConsideration, recordDecision }
+    renderRoute('/review/case-1?field=cover&subview=review', http)
+
+    expect(await screen.findByRole('heading', { name: 'Incumbent' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Acceptable' })).toBeVisible()
+    expect(screen.getByText(/Observation or recommendation is unavailable/u)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Retry advisory review' }))
+    await waitFor(() => expect(retryCoverConsideration).toHaveBeenCalledWith('case-1'))
+    await user.click(screen.getByRole('button', { name: 'Choose this cover' }))
+    await waitFor(() => expect(recordDecision).toHaveBeenCalledWith('case-1', expect.objectContaining({ considerationId: consideration.id, outcome: 'accept', selectedValue: { kind: 'cover', value: `cover_${'b'.repeat(64)}` } })))
   })
 
   it('keeps retained case provenance visible when supplemental evidence fails', async () => {

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from .cover_identity import (
     SCHEMA_VERSION as IDENTITY_SCHEMA_VERSION,
-    _CLASSIFIER_REFERENCE,
+    CLASSIFIER_REFERENCE,
     _preview_reference,
     classify_cover_identity,
 )
@@ -262,7 +262,7 @@ def _identity_rows(
         }
         or value["schema_version"] != IDENTITY_SCHEMA_VERSION
         or value["cover_packet_reference"] != packet_reference
-        or value["classifier_reference"] != _CLASSIFIER_REFERENCE
+        or value["classifier_reference"] != CLASSIFIER_REFERENCE
         or _REFERENCE.fullmatch(str(value["report_reference"])) is None
         or _REFERENCE.fullmatch(str(value["work_target_reference"])) is None
         or type(value["candidates"]) is not list

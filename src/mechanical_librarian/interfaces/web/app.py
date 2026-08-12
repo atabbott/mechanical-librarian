@@ -43,7 +43,10 @@ from mechanical_librarian.domain.field_effect import (
 )
 from mechanical_librarian.application.metadata_policy import MetadataPolicyApplicationError, PolicyTransition
 from mechanical_librarian.application.operations import OperationsError
-from mechanical_librarian.application.review_application import ReviewApplication
+from mechanical_librarian.application.review_application import (
+    ReviewApplication,
+    ReviewApplicationError,
+)
 from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyError
 from mechanical_librarian.interfaces.web import review_frontend
@@ -129,6 +132,90 @@ class _ActivityConsentRequest(_ClosedModel):
     grants: list[_ActivityConsentGrant] = Field(min_length=1, max_length=64)
 
 
+class _CoverIdentity(_ClosedModel):
+    candidate_reference: str
+    evidence_references: list[str]
+    outcome: str
+    preview_reference: str
+    reasons: list[str]
+
+
+class _CoverObservation(_ClosedModel):
+    candidate_reference: str
+    composition: str
+    medium: str
+    preview_sha256: str
+    preview_variant: str
+    promotional_text: str
+    tie_in_branding: str
+
+
+class _CoverCandidate(_ClosedModel):
+    artifact_id: str
+    height: int
+    identity: _CoverIdentity
+    incumbent: bool
+    observation: _CoverObservation | None
+    original_sha256: str
+    ordinal: int
+    preview_sha256: str
+    reference: str
+    selectable: bool
+    source_kinds: list[str]
+    state: str
+    transport_sha256: str
+    width: int
+
+
+class _CoverOmission(_ClosedModel):
+    preview_bytes: int | None = None
+    preview_sha256: str | None = None
+    reason: str
+    reference: str
+    retained_reference: str | None = None
+
+
+class _CoverIncumbent(_ClosedModel):
+    reference: str | None
+    state: Literal["absent", "available", "unavailable"]
+
+
+class _CoverPolicyPreferences(_ClosedModel):
+    avoid_promotional_text: bool
+    avoid_tie_in_branding: bool
+    prefer_minimal_composition: bool
+    schema_version: Literal["cover-policy-v1"]
+
+
+class _CoverPolicyReport(_ClosedModel):
+    acceptable_candidate_references: list[str]
+    cover_packet_reference: str
+    identity_classifier_reference: str
+    identity_report_sha256: str
+    observation_report_sha256: str | None
+    observation_taxonomy_reference: str
+    policy_reference: str
+    reasons: list[str]
+    recommended_candidate_reference: str | None
+    schema_version: str
+    status: str
+
+
+class _CoverConsiderationResponse(_ClosedModel):
+    candidates: list[_CoverCandidate]
+    consideration_id: str
+    current: bool
+    incumbent: _CoverIncumbent
+    omissions: list[_CoverOmission]
+    policy: _CoverPolicyReport | None
+    policy_preferences: _CoverPolicyPreferences
+    policy_reference: str
+    reviewer_status: str
+    schema_version: Literal["cover-consideration-v1"]
+    supersedes_id: str | None
+    target_fingerprint: str
+
+
 class _ReviewField(_ClosedModel):
     current: _TargetField
     deterministic_disposition: str
@@ -145,6 +232,7 @@ class _ReviewField(_ClosedModel):
     proposal_id: str
     target_fingerprint: str
     uncertainty: list[str]
+    cover_consideration: _CoverConsiderationResponse | None = None
 
 
 class _TargetIdentity(_ClosedModel):
@@ -220,8 +308,19 @@ class _HistoryAutomaticItem(_ClosedModel):
     schema_version: Literal["automatic-decision-history-event-v1"]
 
 
+class _HistoryCoverItem(_ClosedModel):
+    consideration_id: str
+    decision_id: str | None
+    kind: Literal[
+        "considered", "superseded", "selected", "kept_incumbent", "no_action", "stale"
+    ]
+    occurred_at: int
+    review_case_id: str
+    schema_version: Literal["cover-consideration-event-v1"]
+
+
 class _HistoryResponse(_ClosedModel):
-    items: list[_HistoryTransitionItem | _HistoryDecisionItem | _HistoryShadowItem | _HistoryAutomaticItem]
+    items: list[_HistoryTransitionItem | _HistoryDecisionItem | _HistoryShadowItem | _HistoryAutomaticItem | _HistoryCoverItem]
     next_cursor: str | None
     review_case_id: str
     schema_version: str
@@ -390,6 +489,9 @@ class _DecisionRequest(_ClosedModel):
     proposal_id: StrictStr = Field(pattern=r"^review_proposal_[0-9a-f]{64}$")
     selected_value: _ProposedValue | None = None
     target_fingerprint: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+    consideration_id: StrictStr | None = Field(
+        default=None, pattern=r"^cover_consideration_[0-9a-f]{64}$"
+    )
 
 
 class _DecisionAcknowledgement(_DecisionProjection):
@@ -1333,6 +1435,58 @@ def _register_case_and_effect_routes(
         detail = _case_call(lambda: application.case_detail(review_case_id))
         return _CaseDetailResponse.model_validate(detail.to_data())
 
+    @app.get(
+        "/api/v1/review-cases/{review_case_id}/cover-considerations/{consideration_id}/images/{reference}",
+        response_class=Response,
+        responses={
+            200: {"content": {"image/png": {"schema": {"type": "string", "format": "binary"}}}},
+            **{status: {"model": _ErrorResponse} for status in (401, 404, 409, 422, 503)},
+        },
+    )
+    def cover_consideration_image(
+        review_case_id: str,
+        consideration_id: str,
+        reference: str,
+        ml_session: str | None = Security(session_cookie),
+    ) -> Response:
+        _require_session(sessions, ml_session)
+        _require_case_id(review_case_id)
+        if (
+            re.fullmatch(r"cover_consideration_[0-9a-f]{64}", consideration_id) is None
+            or re.fullmatch(r"cover_ref_[0-9a-f]{64}", reference) is None
+        ):
+            raise HTTPException(404, detail={"code": "not_found"})
+        payload = _case_call(
+            lambda: application.cover_image(
+                review_case_id, consideration_id, reference
+            )
+        )
+        return Response(
+            content=payload,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "private, no-store",
+                "Content-Security-Policy": "default-src 'none'",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.post(
+        "/api/v1/review-cases/{review_case_id}/cover-considerations/retry",
+        response_model=_CoverConsiderationResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 403, 404, 409, 422, 503)},
+    )
+    def retry_cover_consideration(
+        review_case_id: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _CoverConsiderationResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        _require_case_id(review_case_id)
+        return _CoverConsiderationResponse.model_validate(
+            _case_call(lambda: application.retry_cover_consideration(review_case_id))
+        )
+
     @app.post(
         "/api/v1/review-cases/{review_case_id}/decisions",
         response_model=_DecisionAcknowledgement,
@@ -1367,6 +1521,7 @@ def _register_case_and_effect_routes(
                         else payload.selected_value.model_dump(mode="json")
                     ),
                     idempotency_key=idempotency_key,
+                    consideration_id=payload.consideration_id,
                 )
             )
         )
@@ -1858,11 +2013,15 @@ def _require_case_id(value: str) -> None:
         raise HTTPException(404, detail={"code": "not_found"})
 
 
-def _case_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
+def _case_call(call):
     try:
         return call()
-    except ReviewWebError as error:
-        status = {"request": 400, "stale": 409}.get(error.code, 404)
+    except (ReviewWebError, ReviewApplicationError) as error:
+        status = {
+            "request": 400,
+            "stale": 409,
+            "already_decided": 409,
+        }.get(error.code, 404)
         raise HTTPException(status, detail={"code": error.code}) from None
 
 
@@ -1877,13 +2036,15 @@ def _query_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
 def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
     try:
         return call()
-    except ReviewWebError as error:
+    except (ReviewWebError, ReviewApplicationError) as error:
         status = {
             "stale": 409,
             "already_decided": 409,
             "idempotency_conflict": 409,
             "invalid": 422,
             "invalid_selection": 422,
+            "invalid_choice": 422,
+            "cover_consideration_required": 422,
             "not_found": 404,
             "unsupported": 422,
             "persistence": 503,

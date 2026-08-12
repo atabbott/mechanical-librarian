@@ -12,12 +12,23 @@ from pathlib import Path
 from typing import TypeAlias
 
 from .context import WorkbenchContext
-from .contained_reviewer import ContainedReviewerProcessError
-from .contained_reviewer_contract import ContainedReviewerAttempt
-from .cover_identity import classify_cover_identity
-from .cover_observation import MAX_OBSERVER_PROFILE_BYTES, observe_cover_packet
-from .cover_packets import PreparedCoverPacket, prepare_cover_packet
-from .cover_policy import CoverPolicy, adjudicate_cover_policy
+from mechanical_librarian.application.contained_reviewer_contract import (
+    ContainedReviewerAttempt,
+    ContainedReviewerError,
+)
+from mechanical_librarian.application.cover_identity import classify_cover_identity
+from mechanical_librarian.application.cover_observation import (
+    MAX_OBSERVER_PROFILE_BYTES,
+    observe_cover_packet,
+)
+from mechanical_librarian.application.cover_packets import (
+    PreparedCoverPacket,
+    prepare_cover_packet,
+)
+from mechanical_librarian.application.cover_policy import (
+    CoverPolicy,
+    adjudicate_cover_policy,
+)
 from .results import WorkbenchResult
 
 Operation = Callable[..., object]
@@ -353,16 +364,12 @@ class WorkbenchOperations:
         """Bind source workbench scenarios to the same application composition seams."""
         from mechanical_librarian.bootstrap import composition
 
-        from .reviewer import run_contained_reviewer, run_cover_packet_reviewer
-
-        return cls(**{
-            name: {
-                "run_contained_reviewer": run_contained_reviewer,
-                "run_cover_packet_reviewer": run_cover_packet_reviewer,
-            }[name] if name.startswith("run_") and name.endswith("_reviewer")
-            else getattr(composition, name)
-            for name in cls.__dataclass_fields__
-        })
+        return cls(
+            **{
+                name: getattr(composition, name)
+                for name in cls.__dataclass_fields__
+            }
+        )
 
 
 def _complete(
@@ -705,8 +712,10 @@ def execute(
         return _execute(context, request, operations)
     except PermissionError:
         raise WorkbenchFailure("refused") from None
-    except ContainedReviewerProcessError as error:
-        raise WorkbenchFailure("failed", attempts=error.attempts) from None
+    except ContainedReviewerError as error:
+        raise WorkbenchFailure(
+            "failed", attempts=getattr(error, "attempts", ())
+        ) from None
     except (TypeError, ValueError):
         raise WorkbenchFailure("invalid") from None
     except Exception:

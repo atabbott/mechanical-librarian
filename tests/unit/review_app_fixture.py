@@ -98,6 +98,7 @@ def create_transport_test_app(
     operational_support: SupportExporter | None = None,
     operational_timer: StageTimer | None = None,
     react_asset_loader: ReactAssetLoader | None = None,
+    cover_considerations=None,
 ):
     """Wire synthetic store capabilities before creating the HTTP adapter."""
     application = compose_review_application(
@@ -120,6 +121,7 @@ def create_transport_test_app(
         operational_timings=operational_timings,
         operational_support=operational_support,
         operational_timer=operational_timer,
+        cover_considerations=cover_considerations,
     )
     with patch(
         "mechanical_librarian.interfaces.web.app.ReactAssetLoader",

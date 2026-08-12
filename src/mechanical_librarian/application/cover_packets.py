@@ -13,7 +13,9 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
-from mechanical_librarian_workbench.cover_packet_semantics import (
+
+SCHEMA_VERSION = "cover-review-packet-v2"
+from mechanical_librarian.application.cover_packet_semantics import (
     MAX_COVER_PACKET_BYTES,
     MAX_COVER_PREVIEW_BYTES,
     MAX_COVER_PREVIEWS,
@@ -302,7 +304,7 @@ def _finalize_cover_packet(
     packet_body = {
         "candidates": candidate_data,
         "omissions": omissions,
-        "schema_version": "cover-review-packet-v2",
+        "schema_version": SCHEMA_VERSION,
     }
     packet = {
         **packet_body,
@@ -324,6 +326,7 @@ def _finalize_cover_packet(
 
 
 __all__ = [
+    "SCHEMA_VERSION",
     "CoverPacketImage",
     "MAX_COVER_PACKET_BYTES",
     "MAX_COVER_PREVIEW_BYTES",

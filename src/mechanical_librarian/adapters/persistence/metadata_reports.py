@@ -312,6 +312,35 @@ _HUMAN_DECISION_EVENTS_SQL = (
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536))"
 )
+_COVER_CONSIDERATIONS_SQL = (
+    "CREATE TABLE cover_considerations ("
+    "consideration_id TEXT PRIMARY KEY NOT NULL CHECK(consideration_id GLOB 'cover_consideration_[0-9a-f]*' AND length(consideration_id)=84), "
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "replay_digest TEXT NOT NULL CHECK(length(replay_digest)=64 AND replay_digest NOT GLOB '*[^0-9a-f]*'), "
+    "document_digest TEXT NOT NULL CHECK(length(document_digest)=64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
+    "supersedes_id TEXT REFERENCES cover_considerations(consideration_id), "
+    "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 12582912))"
+)
+_CURRENT_COVER_CONSIDERATIONS_SQL = (
+    "CREATE TABLE current_cover_considerations ("
+    "review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), "
+    "consideration_id TEXT NOT NULL UNIQUE REFERENCES cover_considerations(consideration_id))"
+)
+_COVER_CONSIDERATION_EVENTS_SQL = (
+    "CREATE TABLE cover_consideration_events ("
+    "event_id TEXT PRIMARY KEY NOT NULL CHECK(event_id GLOB 'cover_consideration_event_[0-9a-f]*' AND length(event_id)=90), "
+    "consideration_id TEXT NOT NULL REFERENCES cover_considerations(consideration_id), "
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "kind TEXT NOT NULL CHECK(kind IN ('considered','superseded','selected','kept_incumbent','no_action','stale')), "
+    "decision_id TEXT, occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 4096))"
+)
+_COVER_CONSIDERATION_NO_UPDATE_SQL = "CREATE TRIGGER cover_considerations_no_update BEFORE UPDATE ON cover_considerations BEGIN SELECT RAISE(ABORT, 'cover considerations are append-only'); END"
+_COVER_CONSIDERATION_NO_DELETE_SQL = "CREATE TRIGGER cover_considerations_no_delete BEFORE DELETE ON cover_considerations BEGIN SELECT RAISE(ABORT, 'cover considerations are append-only'); END"
+_COVER_CONSIDERATION_EVENT_NO_UPDATE_SQL = "CREATE TRIGGER cover_consideration_events_no_update BEFORE UPDATE ON cover_consideration_events BEGIN SELECT RAISE(ABORT, 'cover consideration events are append-only'); END"
+_COVER_CONSIDERATION_EVENT_NO_DELETE_SQL = "CREATE TRIGGER cover_consideration_events_no_delete BEFORE DELETE ON cover_consideration_events BEGIN SELECT RAISE(ABORT, 'cover consideration events are append-only'); END"
 _AUTOMATIC_DECISIONS_SQL = (
     "CREATE TABLE automatic_decisions ("
     "decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'automatic_decision_[0-9a-f]*' AND length(decision_id)=83), "
@@ -901,6 +930,13 @@ class SQLiteMetadataReportRepository:
         self._binding = binding
         self.identity = identity
         self._review_pipeline_claim: PipelineAction | None = None
+        self._current_cover_policy_reference: str | None = None
+
+    def bind_current_cover_policy(self, reference: str) -> None:
+        """Bind guarded cover effects to this process's validated policy."""
+        if re.fullmatch(r"cover_policy_[0-9a-f]{64}", reference) is None:
+            raise ValueError("cover policy reference is invalid")
+        self._current_cover_policy_reference = reference
 
     def field_effect_authority_source(
         self, decision: HumanDecision | AutomaticDecision
@@ -970,6 +1006,46 @@ class SQLiteMetadataReportRepository:
                 )
             except RichMetadataPreviewError as error:
                 raise FieldEffectError("authority_binding") from error
+        dependency_digests = (decision.target_fingerprint,)
+        if type(decision) is HumanDecision and decision.destination == "cover":
+            consideration_row = self._connection.execute(
+                "SELECT consideration.document FROM current_cover_considerations current "
+                "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+                "JOIN cover_consideration_events event ON event.consideration_id=consideration.consideration_id "
+                "WHERE current.review_case_id=? AND event.kind='selected' AND event.decision_id=?",
+                (decision.review_case_id, decision.decision_id),
+            ).fetchone()
+            if consideration_row is None:
+                raise FieldEffectError("authority_binding")
+            consideration = json.loads(consideration_row[0])
+            selected_artifact = (
+                value.get("value") if type(value) is dict else None
+            )
+            selected_candidate = next(
+                (
+                    candidate
+                    for candidate in consideration.get("candidates", ())
+                    if type(candidate) is dict
+                    and candidate.get("artifact_id") == selected_artifact
+                    and candidate.get("selectable") is True
+                    and candidate.get("incumbent") is False
+                ),
+                None,
+            )
+            incumbent_digest = consideration.get("incumbent_digest")
+            if (
+                selected_candidate is None
+                or consideration.get("target_fingerprint") != decision.target_fingerprint
+                or (
+                    incumbent_digest is not None
+                    and pre_value != "cover_" + str(incumbent_digest)
+                )
+            ):
+                raise FieldEffectError("authority_binding")
+            dependency_digests = (
+                decision.target_fingerprint,
+                hashlib.sha256(consideration_row[0].encode("utf-8")).hexdigest(),
+            )
         return {"connection": lineage[0], "library": lineage[1], "work_id": lineage[2],
                 "destination": decision.destination,
                 "review_case_id": decision.review_case_id,
@@ -977,7 +1053,7 @@ class SQLiteMetadataReportRepository:
                 "target_version": field_value_version(decision.destination, pre_value),
                 "decision_value": value, "source": "persisted_review_case",
                 "pre_value": pre_value,
-                "dependency_digests": (decision.target_fingerprint,)}
+                "dependency_digests": dependency_digests}
 
     def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool:
         current = (self._connection.execute(
@@ -1291,8 +1367,15 @@ class SQLiteMetadataReportRepository:
                 "SELECT pending.document FROM ("
                 "SELECT human.decision_id,human.occurred_at,human.document "
                 "FROM human_decisions human WHERE human.outcome='accept' AND "
-                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
-                "WHERE lineage.review_case_id=human.review_case_id) AND "
+                "(EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
+                "WHERE lineage.review_case_id=human.review_case_id) OR ("
+                "human.destination='cover' AND EXISTS (SELECT 1 FROM "
+                "cover_consideration_events selected JOIN current_cover_considerations current "
+                "ON current.consideration_id=selected.consideration_id "
+                "WHERE selected.decision_id=human.decision_id AND selected.kind='selected' "
+                "AND current.review_case_id=human.review_case_id) AND NOT EXISTS ("
+                "SELECT 1 FROM cover_consideration_events stale WHERE "
+                "stale.decision_id=human.decision_id AND stale.kind='stale'))) AND "
                 "human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
                 "WHERE current.review_case_id=human.review_case_id AND "
                 "current.destination=human.destination) AND NOT EXISTS ("
@@ -1657,12 +1740,25 @@ class SQLiteMetadataReportRepository:
                 or any(type(value) is not str or len(value) != 64 for value in digests)):
             return False
         try:
-            return all(self._connection.execute(
-                "SELECT 1 FROM current_review_case_lineages lineage "
-                "JOIN review_cases review ON review.review_case_id=lineage.review_case_id "
-                "WHERE json_extract(review.document,'$.target_fingerprint')=? LIMIT 1",
-                (digest,),
-            ).fetchone() == (1,) for digest in digests)
+            return all(
+                self._connection.execute(
+                    "SELECT 1 FROM current_review_case_lineages lineage "
+                    "JOIN review_cases review ON review.review_case_id=lineage.review_case_id "
+                    "WHERE json_extract(review.document,'$.target_fingerprint')=? LIMIT 1",
+                    (digest,),
+                ).fetchone()
+                == (1,)
+                or self._connection.execute(
+                    "SELECT 1 FROM current_cover_considerations current "
+                    "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+                    "JOIN current_review_case_lineages lineage ON lineage.review_case_id=current.review_case_id "
+                    "WHERE consideration.document_digest=? "
+                    "AND json_extract(consideration.document,'$.policy_reference')=? LIMIT 1",
+                    (digest, self._current_cover_policy_reference),
+                ).fetchone()
+                == (1,)
+                for digest in digests
+            )
         except sqlite3.Error:
             return False
 
@@ -2197,6 +2293,7 @@ class SQLiteMetadataReportRepository:
             )
             self._update_field_effect(operation, expected_state)
             self._record_field_effect_event(operation, state, changed_at)
+            self._retire_stale_cover_consideration(operation, state, changed_at)
             self._schedule_field_effect_cleanup(operation, changed_at)
             self._connection.commit()
             return operation
@@ -2331,6 +2428,7 @@ class SQLiteMetadataReportRepository:
             )
             self._update_field_effect(operation, "reconciling")
             self._record_field_effect_event(operation, state, changed_at)
+            self._retire_stale_cover_consideration(operation, state, changed_at)
             action = self._connection.execute(
                 "SELECT attempt FROM field_effect_actions WHERE plan_id=? "
                 "AND kind='targeted_read' AND state='claimed'",
@@ -2351,6 +2449,58 @@ class SQLiteMetadataReportRepository:
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
+
+    def _retire_stale_cover_consideration(
+        self,
+        operation: FieldEffectOperation,
+        state: str,
+        changed_at: int,
+    ) -> None:
+        if state != "stale" or operation.plan.destination != "cover":
+            return
+        row = self._connection.execute(
+            "SELECT event.consideration_id,event.review_case_id "
+            "FROM cover_consideration_events event "
+            "JOIN current_cover_considerations current "
+            "ON current.consideration_id=event.consideration_id "
+            "WHERE event.decision_id=? AND event.kind='selected' "
+            "AND current.review_case_id=event.review_case_id",
+            (operation.plan.authority.decision_id,),
+        ).fetchone()
+        if row is None:
+            return
+        consideration_id, review_case_id = str(row[0]), str(row[1])
+        self._record_cover_consideration_event(
+            consideration_id,
+            review_case_id,
+            "stale",
+            changed_at,
+            operation.plan.authority.decision_id,
+        )
+
+    def retire_stale_cover_decision(
+        self, decision_id: str, changed_at: int
+    ) -> bool:
+        """Retire a selected cover whose case ceased to be current before planning."""
+        with self._connection:
+            row = self._connection.execute(
+                "SELECT event.consideration_id,event.review_case_id "
+                "FROM cover_consideration_events event "
+                "JOIN current_cover_considerations current "
+                "ON current.consideration_id=event.consideration_id "
+                "WHERE event.decision_id=? AND event.kind='selected' "
+                "AND current.review_case_id=event.review_case_id "
+                "AND NOT EXISTS (SELECT 1 FROM cover_consideration_events stale "
+                "WHERE stale.consideration_id=event.consideration_id "
+                "AND stale.kind='stale' AND stale.decision_id=event.decision_id)",
+                (decision_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            self._record_cover_consideration_event(
+                str(row[0]), str(row[1]), "stale", changed_at, decision_id
+            )
+        return True
 
     def claim_next_field_effect_action(self, changed_at: int,
                                        plan_id: str | None = None) -> dict[str, object] | None:
@@ -4283,6 +4433,16 @@ class SQLiteMetadataReportRepository:
                     else self.get_review_case_history(review_case_id, history_limit)
                 ),
                 automatic_attention_destinations=self._automatic_attention_destinations(review_case_id),
+                cover_consideration_document=(
+                    self.current_cover_consideration_document(review_case_id)
+                ),
+                cover_history=(
+                    ()
+                    if history_limit is None
+                    else self.cover_consideration_history(
+                        review_case_id, history_limit
+                    )
+                ),
             )
         return snapshot
 
@@ -5953,6 +6113,184 @@ class SQLiteMetadataReportRepository:
         except (sqlite3.Error, HumanDecisionError, TypeError) as error:
             raise MetadataReportError("human decision is unavailable") from error
 
+    def current_cover_consideration(
+        self, review_case_id: str, replay_digest: str
+    ) -> str | None:
+        row = self._connection.execute(
+            "SELECT consideration.document FROM current_cover_considerations current "
+            "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+            "JOIN current_review_case_lineages lineage ON lineage.review_case_id=current.review_case_id "
+            "WHERE current.review_case_id=? AND consideration.replay_digest=? "
+            "AND NOT EXISTS (SELECT 1 FROM cover_consideration_events event "
+            "WHERE event.consideration_id=consideration.consideration_id "
+            "AND event.kind='stale')",
+            (review_case_id, replay_digest),
+        ).fetchone()
+        return None if row is None else str(row[0])
+
+    def current_cover_consideration_document(
+        self, review_case_id: str
+    ) -> str | None:
+        row = self._connection.execute(
+            "SELECT consideration.document FROM current_cover_considerations current "
+            "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+            "JOIN current_review_case_lineages lineage ON lineage.review_case_id=current.review_case_id "
+            "WHERE current.review_case_id=? "
+            "AND NOT EXISTS (SELECT 1 FROM cover_consideration_events event "
+            "WHERE event.consideration_id=consideration.consideration_id "
+            "AND event.kind='stale')",
+            (review_case_id,),
+        ).fetchone()
+        return None if row is None else str(row[0])
+
+    def latest_cover_consideration_document(
+        self, review_case_id: str
+    ) -> str | None:
+        row = self._connection.execute(
+            "SELECT consideration.document FROM current_cover_considerations current "
+            "JOIN cover_considerations consideration "
+            "ON consideration.consideration_id=current.consideration_id "
+            "JOIN current_review_case_lineages lineage "
+            "ON lineage.review_case_id=current.review_case_id "
+            "WHERE current.review_case_id=?",
+            (review_case_id,),
+        ).fetchone()
+        return None if row is None else str(row[0])
+
+    def _record_cover_consideration_event(
+        self,
+        consideration_id: str,
+        review_case_id: str,
+        kind: str,
+        occurred_at: int,
+        decision_id: str | None = None,
+    ) -> None:
+        if decision_id is not None and self._connection.execute(
+            "SELECT 1 FROM cover_consideration_events WHERE consideration_id=? AND kind=? AND decision_id=?",
+            (consideration_id, kind, decision_id),
+        ).fetchone() == (1,):
+            return
+        document = _canonical_json(
+            {
+                "consideration_id": consideration_id,
+                "decision_id": decision_id,
+                "kind": kind,
+                "occurred_at": occurred_at,
+                "review_case_id": review_case_id,
+                "schema_version": "cover-consideration-event-v1",
+            }
+        )
+        event_id = "cover_consideration_event_" + hashlib.sha256(
+            document.encode("utf-8")
+        ).hexdigest()
+        self._connection.execute(
+            "INSERT OR IGNORE INTO cover_consideration_events(event_id,consideration_id,review_case_id,kind,decision_id,occurred_at,document) VALUES(?,?,?,?,?,?,?)",
+            (
+                event_id,
+                consideration_id,
+                review_case_id,
+                kind,
+                decision_id,
+                occurred_at,
+                document,
+            ),
+        )
+
+    def record_cover_consideration(
+        self,
+        document: str,
+        *,
+        review_case_id: str,
+        report_id: str,
+        replay_digest: str,
+        supersedes_id: str | None,
+        occurred_at: int,
+    ) -> str:
+        try:
+            value = json.loads(document)
+            if (
+                type(value) is not dict
+                or value.get("schema_version") != "cover-consideration-v1"
+                or value.get("review_case_id") != review_case_id
+                or value.get("report_id") != report_id
+                or value.get("replay_digest") != replay_digest
+                or value.get("supersedes_id") != supersedes_id
+                or _canonical_json(value) != document
+            ):
+                raise ValueError
+            consideration_id = value["consideration_id"]
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise MetadataReportError("cover consideration is invalid") from error
+        with self._connection:
+            existing = self._connection.execute(
+                "SELECT document FROM cover_considerations WHERE consideration_id=?",
+                (consideration_id,),
+            ).fetchone()
+            if existing is not None:
+                if existing != (document,):
+                    raise MetadataReportError("cover consideration disagrees")
+                return document
+            current = self._connection.execute(
+                "SELECT consideration_id FROM current_cover_considerations WHERE review_case_id=?",
+                (review_case_id,),
+            ).fetchone()
+            actual_supersedes = None if current is None else current[0]
+            if actual_supersedes != supersedes_id:
+                raise MetadataReportError("cover consideration changed")
+            self._connection.execute(
+                "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    consideration_id,
+                    review_case_id,
+                    report_id,
+                    replay_digest,
+                    hashlib.sha256(document.encode("utf-8")).hexdigest(),
+                    supersedes_id,
+                    occurred_at,
+                    document,
+                ),
+            )
+            if supersedes_id is not None:
+                self._record_cover_consideration_event(
+                    supersedes_id, review_case_id, "superseded", occurred_at
+                )
+            self._connection.execute(
+                "INSERT INTO current_cover_considerations(review_case_id,consideration_id) VALUES(?,?) "
+                "ON CONFLICT(review_case_id) DO UPDATE SET consideration_id=excluded.consideration_id",
+                (review_case_id, consideration_id),
+            )
+            self._record_cover_consideration_event(
+                consideration_id, review_case_id, "considered", occurred_at
+            )
+        return document
+
+    def record_cover_consideration_outcome(
+        self,
+        consideration_id: str,
+        kind: str,
+        occurred_at: int,
+        decision_id: str | None = None,
+    ) -> None:
+        row = self._connection.execute(
+            "SELECT review_case_id FROM cover_considerations WHERE consideration_id=?",
+            (consideration_id,),
+        ).fetchone()
+        if row is None:
+            raise MetadataReportError("cover consideration is unavailable")
+        with self._connection:
+            self._record_cover_consideration_event(
+                consideration_id, str(row[0]), kind, occurred_at, decision_id
+            )
+
+    def cover_consideration_history(
+        self, review_case_id: str, limit: int = 50
+    ) -> tuple[dict[str, object], ...]:
+        rows = self._connection.execute(
+            "SELECT document FROM cover_consideration_events WHERE review_case_id=? ORDER BY occurred_at DESC,event_id DESC LIMIT ?",
+            (review_case_id, min(max(limit, 1), 50)),
+        ).fetchall()
+        return tuple(json.loads(row[0]) for row in rows)
+
     def find_human_decision(self, idempotency_digest: str) -> str | None:
         try:
             row = self._connection.execute(
@@ -5988,7 +6326,84 @@ class SQLiteMetadataReportRepository:
         except (sqlite3.Error, HumanDecisionError, TypeError) as error:
             raise MetadataReportError("human decision is unavailable") from error
 
-    def record_human_decision(self, decision: HumanDecision) -> str:
+    def _record_cover_decision_outcome(
+        self,
+        decision: HumanDecision,
+        consideration_id: str | None,
+    ) -> None:
+        if decision.destination != "cover":
+            if consideration_id is not None:
+                raise HumanDecisionError("invalid_choice")
+            return
+        if consideration_id is None:
+            raise HumanDecisionError("stale")
+        kind = {
+            "accept": "selected",
+            "keep_current": "kept_incumbent",
+            "reject": "no_action",
+        }.get(decision.outcome)
+        if kind is None:
+            raise HumanDecisionError("invalid_choice")
+        existing = self._connection.execute(
+            "SELECT consideration_id,kind FROM cover_consideration_events "
+            "WHERE decision_id=? AND kind IN "
+            "('selected','kept_incumbent','no_action')",
+            (decision.decision_id,),
+        ).fetchone()
+        if existing is not None:
+            if existing != (consideration_id, kind):
+                raise HumanDecisionError("idempotency_conflict")
+            return
+        row = self._connection.execute(
+            "SELECT consideration.document FROM current_cover_considerations current "
+            "JOIN cover_considerations consideration "
+            "ON consideration.consideration_id=current.consideration_id "
+            "WHERE current.review_case_id=? AND current.consideration_id=?",
+            (decision.review_case_id, consideration_id),
+        ).fetchone()
+        if row is None:
+            raise HumanDecisionError("stale")
+        try:
+            consideration = json.loads(row[0])
+            if (
+                consideration["proposal_id"] != decision.proposal_id
+                or consideration["target_fingerprint"] != decision.target_fingerprint
+            ):
+                raise HumanDecisionError("stale")
+            if decision.outcome == "accept":
+                selected = next(
+                    (
+                        candidate
+                        for candidate in consideration["candidates"]
+                        if decision.selected_value
+                        == {"kind": "cover", "value": candidate["artifact_id"]}
+                    ),
+                    None,
+                )
+                if (
+                    selected is None
+                    or selected["incumbent"] is True
+                    or selected["selectable"] is not True
+                ):
+                    raise HumanDecisionError("invalid_choice")
+            elif decision.selected_value is not None:
+                raise HumanDecisionError("invalid_choice")
+        except (KeyError, TypeError, json.JSONDecodeError) as error:
+            raise MetadataReportError("cover consideration is unavailable") from error
+        self._record_cover_consideration_event(
+            consideration_id,
+            decision.review_case_id,
+            kind,
+            decision.occurred_at,
+            decision.decision_id,
+        )
+
+    def record_human_decision(
+        self,
+        decision: HumanDecision,
+        *,
+        cover_consideration_id: str | None = None,
+    ) -> str:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             replay = self._connection.execute(
@@ -6010,6 +6425,9 @@ class SQLiteMetadataReportRepository:
                     or stored.request_digest != replay[0]
                 ):
                     raise MetadataReportError("human decision persistence failed")
+                self._record_cover_decision_outcome(
+                    stored, cover_consideration_id
+                )
                 self._connection.commit()
                 return stored.to_json()
             case_envelope = json.loads(self.get_review_case(decision.review_case_id))
@@ -6066,6 +6484,9 @@ class SQLiteMetadataReportRepository:
                     decision.occurred_at,
                     decision.to_json(),
                 ),
+            )
+            self._record_cover_decision_outcome(
+                decision, cover_consideration_id
             )
             event_id = "human_decision_event_" + hashlib.sha256(
                 ("human-decision-event-v1:" + decision.decision_id).encode("utf-8")
@@ -6593,6 +7014,19 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             raise MetadataReportError("persisted cover is unavailable") from error
 
+    def preview_digest_for_artifact(self, artifact_id: str, preview_variant: str) -> str:
+        """Resolve the one immutable preview identity shared by report references."""
+        try:
+            rows = self._connection.execute(
+                "SELECT DISTINCT preview_digest FROM metadata_report_cover_references WHERE artifact_id=? AND preview_variant=?",
+                (artifact_id, preview_variant),
+            ).fetchall()
+        except sqlite3.Error as error:
+            raise MetadataReportError("persisted cover is unavailable") from error
+        if len(rows) != 1 or type(rows[0][0]) is not str:
+            raise MetadataReportError("persisted cover is unavailable")
+        return rows[0][0]
+
     def artifact_is_referenced(self, digest: str) -> bool:
         """Check one cleanup candidate without semantically auditing history."""
         if (
@@ -6928,6 +7362,9 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_REVIEW_LOGIN_FAILURES_SQL)
             connection.execute(_HUMAN_DECISIONS_SQL)
             connection.execute(_HUMAN_DECISION_EVENTS_SQL)
+            connection.execute(_COVER_CONSIDERATIONS_SQL)
+            connection.execute(_CURRENT_COVER_CONSIDERATIONS_SQL)
+            connection.execute(_COVER_CONSIDERATION_EVENTS_SQL)
             connection.execute(_AUTOMATIC_DECISIONS_SQL)
             connection.execute(_AUTOMATIC_SAFETY_SQL)
             connection.execute("INSERT INTO automatic_safety_state(singleton,paused,global_suspension,category_suspensions_document,updated_at) VALUES(1,0,NULL,'[]',0)")
@@ -6957,6 +7394,10 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_HUMAN_DECISION_NO_DELETE_SQL)
             connection.execute(_HUMAN_DECISION_EVENT_NO_UPDATE_SQL)
             connection.execute(_HUMAN_DECISION_EVENT_NO_DELETE_SQL)
+            connection.execute(_COVER_CONSIDERATION_NO_UPDATE_SQL)
+            connection.execute(_COVER_CONSIDERATION_NO_DELETE_SQL)
+            connection.execute(_COVER_CONSIDERATION_EVENT_NO_UPDATE_SQL)
+            connection.execute(_COVER_CONSIDERATION_EVENT_NO_DELETE_SQL)
             connection.execute(_AUTOMATIC_DECISION_NO_UPDATE_SQL)
             connection.execute(_AUTOMATIC_DECISION_NO_DELETE_SQL)
             connection.execute(_FIELD_EFFECT_EVENT_NO_UPDATE_SQL)
@@ -7243,6 +7684,10 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_human_decision_events_2", None),
         ("index", "sqlite_autoindex_human_decisions_1", None),
         ("index", "sqlite_autoindex_human_decisions_2", None),
+        ("index", "sqlite_autoindex_cover_considerations_1", None),
+        ("index", "sqlite_autoindex_current_cover_considerations_1", None),
+        ("index", "sqlite_autoindex_current_cover_considerations_2", None),
+        ("index", "sqlite_autoindex_cover_consideration_events_1", None),
         ("index", "sqlite_autoindex_automatic_decisions_1", None),
         ("index", "sqlite_autoindex_automatic_decisions_2", None),
         ("index", "sqlite_autoindex_automatic_decisions_3", None),
@@ -7287,6 +7732,9 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "current_metadata_reports", _CURRENT_SQL),
         ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
         ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
+        ("table", "cover_considerations", _COVER_CONSIDERATIONS_SQL),
+        ("table", "current_cover_considerations", _CURRENT_COVER_CONSIDERATIONS_SQL),
+        ("table", "cover_consideration_events", _COVER_CONSIDERATION_EVENTS_SQL),
         ("table", "human_decision_events", _HUMAN_DECISION_EVENTS_SQL),
         ("table", "human_decisions", _HUMAN_DECISIONS_SQL),
         ("table", "automatic_decisions", _AUTOMATIC_DECISIONS_SQL),
@@ -7327,6 +7775,10 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("trigger", "human_decision_events_no_update", _HUMAN_DECISION_EVENT_NO_UPDATE_SQL),
         ("trigger", "human_decisions_no_delete", _HUMAN_DECISION_NO_DELETE_SQL),
         ("trigger", "human_decisions_no_update", _HUMAN_DECISION_NO_UPDATE_SQL),
+        ("trigger", "cover_considerations_no_delete", _COVER_CONSIDERATION_NO_DELETE_SQL),
+        ("trigger", "cover_considerations_no_update", _COVER_CONSIDERATION_NO_UPDATE_SQL),
+        ("trigger", "cover_consideration_events_no_delete", _COVER_CONSIDERATION_EVENT_NO_DELETE_SQL),
+        ("trigger", "cover_consideration_events_no_update", _COVER_CONSIDERATION_EVENT_NO_UPDATE_SQL),
         ("trigger", "automatic_decisions_no_delete", _AUTOMATIC_DECISION_NO_DELETE_SQL),
         ("trigger", "automatic_decisions_no_update", _AUTOMATIC_DECISION_NO_UPDATE_SQL),
         ("trigger", "field_effect_events_no_delete", _FIELD_EFFECT_EVENT_NO_DELETE_SQL),

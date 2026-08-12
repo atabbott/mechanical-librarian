@@ -9,13 +9,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from mechanical_librarian_workbench.cover_packet_semantics import (
+from mechanical_librarian.application.cover_packet_semantics import (
     MAX_COVER_PREVIEW_BYTES as MAX_IMAGE_BYTES,
     bind_cover_packet,
 )
 
 MAX_INPUT_BYTES = 1_048_576
 MAX_SCHEMA_BYTES = 65_536
+COVER_MEMORY_BYTES = 1_073_741_824
+COVER_PROCESS_LIMIT = 32
 _COVER_REFERENCE = re.compile(r"^cover_transport_ref_[0-9a-f]{64}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 

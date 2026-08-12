@@ -1,15 +1,15 @@
-"""Source-only binding for the contained reviewer kernel."""
+"""Compose the installed contained reviewer behind application-owned contracts."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 
-from mechanical_librarian_workbench.contained_reviewer import (
+from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     ContainedReviewerAdapter,
     load_contained_reviewer_profile_bytes,
 )
-from mechanical_librarian_workbench.contained_reviewer_contract import (
+from mechanical_librarian.application.contained_reviewer_contract import (
     ContainedReviewRequest,
     _CoverReviewRequest,
     admit_cover_review_request,

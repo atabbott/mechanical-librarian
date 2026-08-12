@@ -30,10 +30,11 @@ from scripts.qualify_exact_artifact import (
 class ExactArtifactQualificationTests(unittest.TestCase):
     def test_runtime_probe_requires_packaged_react_assets_for_product(self) -> None:
         help_output = (
-            b"usage: mechanical-librarian {review-serve,policy-preview}\n"
-            b"{review-serve,policy-preview}\n"
+            b"usage: mechanical-librarian {review-serve,policy-preview,cover-review}\n"
+            b"{review-serve,policy-preview,cover-review}\n"
             b"    review-serve  service\n"
             b"    policy-preview  preview\n"
+            b"    cover-review  cover decision\n"
         )
         completed = (
             subprocess.CompletedProcess(("console", "--help"), 0, help_output, b""),
@@ -55,10 +56,11 @@ class ExactArtifactQualificationTests(unittest.TestCase):
 
     def test_runtime_probe_decodes_help_and_requires_workbench_absence(self) -> None:
         help_output = (
-            b"usage: mechanical-librarian {review-serve,policy-preview}\n"
-            b"{review-serve,policy-preview}\n"
+            b"usage: mechanical-librarian {review-serve,policy-preview,cover-review}\n"
+            b"{review-serve,policy-preview,cover-review}\n"
             b"    review-serve  service\n"
             b"    policy-preview  preview\n"
+            b"    cover-review  cover decision\n"
         )
         completed = (
             subprocess.CompletedProcess(("console", "--help"), 0, help_output, b""),

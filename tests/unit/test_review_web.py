@@ -40,7 +40,12 @@ from mechanical_librarian.application.review_web import (
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import PipelineProgress
+from mechanical_librarian.application.review_application import (
+    ReviewApplication,
+    ReviewApplicationError,
+)
 from mechanical_librarian.interfaces.cli import main as cli_main
+from mechanical_librarian.interfaces.web.app import _CoverOmission
 from mechanical_librarian.bootstrap.composition import run_review_server
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.metadata_report import (
@@ -70,6 +75,11 @@ from mechanical_librarian.application.metadata_policy import PolicyTransition
 from mechanical_librarian.adapters.operational_evidence import LocalTimingStore, SupportBundle
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
 from tests.unit.test_review_case_persistence import _report
+from tests.unit.test_cover_packets import (
+    _preview as _cover_preview,
+    _report as _cover_report,
+    _source as _cover_source,
+)
 from tests.unit.test_proposal_set import (
     _claim as _proposal_claim,
     _provider as _proposal_provider,
@@ -263,7 +273,13 @@ class _Repository:
             None,
         )
 
-    def record_human_decision(self, decision: HumanDecision) -> str:
+    def record_human_decision(
+        self,
+        decision: HumanDecision,
+        *,
+        cover_consideration_id: str | None = None,
+    ) -> str:
+        del cover_consideration_id
         existing = self.decisions.get(decision.destination)
         if existing is not None:
             return existing
@@ -610,6 +626,184 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.client.headers["x-ml-build-identity"] = TEST_REACT_BUILD_IDENTITY
         return response.json()
+
+    def test_cover_omission_response_models_every_valid_shape(self) -> None:
+        duplicate = _CoverOmission.model_validate({
+            "preview_sha256": "a" * 64,
+            "reason": "duplicate_preview",
+            "reference": "cover_ref_" + "b" * 64,
+            "retained_reference": "cover_ref_" + "c" * 64,
+        })
+        bounded = _CoverOmission.model_validate({
+            "preview_bytes": 1_048_577,
+            "reason": "preview_byte_limit",
+            "reference": "cover_ref_" + "d" * 64,
+        })
+        unavailable = _CoverOmission.model_validate({
+            "reason": "source_unavailable",
+            "reference": "cover_ref_" + "e" * 64,
+        })
+
+        self.assertEqual(duplicate.preview_sha256, "a" * 64)
+        self.assertEqual(
+            duplicate.retained_reference, "cover_ref_" + "c" * 64
+        )
+        self.assertEqual(bounded.preview_bytes, 1_048_577)
+        self.assertIsNone(unavailable.preview_bytes)
+
+    def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(self) -> None:
+        payloads = (_cover_preview(1), _cover_preview(2))
+        sources = (
+            _cover_source(1, payloads[0], incumbent=True),
+            _cover_source(2, payloads[1], embedded=True),
+        )
+        base = _cover_report(sources)
+        incumbent_artifact = sources[0].artifact
+        assert incumbent_artifact is not None
+        report = MetadataReport.create(
+            target=TargetFacts(
+                base.target.connection,
+                base.target.library,
+                base.target.item,
+                tuple(
+                    TargetField(
+                        field.destination,
+                        TargetFieldState.VALUE,
+                        incumbent_artifact.artifact_id,
+                    )
+                    if field.destination is TargetDestination.COVER
+                    else field
+                    for field in base.target.fields
+                ),
+            ),
+            file=base.file,
+            local_claims=base.local_claims,
+            local_reasons=base.local_reasons,
+            providers=base.providers,
+            cover_sources=base.cover_sources,
+        )
+        case = ReviewCase.create(evaluate_report(report), report)
+        repository = _Repository(case, report)
+        candidate_reference = "cover_ref_" + "a" * 64
+        consideration_id = "cover_consideration_" + "b" * 64
+        view = {
+            "candidates": [
+                {
+                    "artifact_id": "cover_" + "c" * 64,
+                    "height": 1200,
+                    "identity": {
+                        "candidate_reference": candidate_reference,
+                        "evidence_references": [],
+                        "outcome": "verified_work_match",
+                        "preview_reference": "cover_preview_" + "d" * 64,
+                        "reasons": [],
+                    },
+                    "incumbent": True,
+                    "observation": None,
+                    "original_sha256": "e" * 64,
+                    "ordinal": 0,
+                    "preview_sha256": "f" * 64,
+                    "reference": candidate_reference,
+                    "selectable": True,
+                    "source_kinds": ["abs"],
+                    "state": "available",
+                    "transport_sha256": "1" * 64,
+                    "width": 800,
+                }
+            ],
+            "consideration_id": consideration_id,
+            "current": True,
+            "incumbent": {"reference": candidate_reference, "state": "available"},
+            "omissions": [],
+            "policy": None,
+            "policy_preferences": {
+                "avoid_promotional_text": False,
+                "avoid_tie_in_branding": False,
+                "prefer_minimal_composition": False,
+                "schema_version": "cover-policy-v1",
+            },
+            "policy_reference": "cover_policy_" + "2" * 64,
+            "reviewer_status": "unavailable",
+            "schema_version": "cover-consideration-v1",
+            "supersedes_id": None,
+            "target_fingerprint": case.target_fingerprint,
+        }
+        covers = Mock()
+        covers.project.return_value = view
+        covers.ensure.return_value = view
+        covers.image.return_value = b"\x89PNG\r\n\x1a\nsynthetic"
+        configuration = ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(self.hash_path),
+            session_lifetime_seconds=600,
+        )
+        self.client.close()
+        self.client = TestClient(
+            create_transport_test_app(
+                repository,
+                configuration,
+                clock=lambda: self.now,
+                cover_considerations=covers,
+            ),
+            base_url="https://review.test",
+        )
+        image_path = (
+            f"/api/v1/review-cases/{case.review_case_id}"
+            f"/cover-considerations/{consideration_id}/images/{candidate_reference}"
+        )
+        self.assertEqual(self.client.get(image_path).status_code, 401)
+        login = self._login()
+        image = self.client.get(image_path)
+        self.assertEqual(200, image.status_code)
+        self.assertEqual("image/png", image.headers["content-type"])
+        self.assertEqual(
+            {"no-store", "private"},
+            {value.strip() for value in image.headers["cache-control"].split(",")},
+        )
+        self.assertEqual("nosniff", image.headers["x-content-type-options"])
+        retry_path = (
+            f"/api/v1/review-cases/{case.review_case_id}"
+            "/cover-considerations/retry"
+        )
+        self.assertEqual(self.client.post(retry_path, headers=self.origin).status_code, 422)
+        denied = self.client.post(
+            retry_path,
+            headers={
+                "Origin": "https://hostile.test",
+                "X-CSRF-Token": str(login["csrf_token"]),
+            },
+        )
+        self.assertEqual(403, denied.status_code)
+        retried = self.client.post(
+            retry_path,
+            headers={
+                **self.origin,
+                "X-CSRF-Token": str(login["csrf_token"]),
+            },
+        )
+        self.assertEqual(200, retried.status_code, retried.text)
+        detail = self.client.get(
+            f"/api/v1/review-cases/{case.review_case_id}"
+        ).json()
+        cover = next(field for field in detail["fields"] if field["destination"] == "cover")
+        decision = self.client.post(
+            f"/api/v1/review-cases/{case.review_case_id}/decisions",
+            headers={
+                **self.origin,
+                "X-CSRF-Token": str(login["csrf_token"]),
+                "Idempotency-Key": "protected-cover-outcome-0001",
+            },
+            json={
+                "consideration_id": consideration_id,
+                "destination": "cover",
+                "outcome": "keep_current",
+                "proposal_id": cover["proposal_id"],
+                "selected_value": None,
+                "target_fingerprint": cover["target_fingerprint"],
+            },
+        )
+        self.assertEqual(200, decision.status_code, decision.text)
+        covers.validate_decision.assert_called_once()
 
     def test_shutdown_timeout_preserves_shared_repository_for_live_worker(self) -> None:
         closed = []
@@ -1868,6 +2062,14 @@ class ReviewWebTests(unittest.TestCase):
                 ("post", "/api/v1/metadata-policy/validate"),
                 ("get", "/api/v1/review-preparation"),
                 ("get", "/api/v1/review-cases/{review_case_id}"),
+                (
+                    "get",
+                    "/api/v1/review-cases/{review_case_id}/cover-considerations/{consideration_id}/images/{reference}",
+                ),
+                (
+                    "post",
+                    "/api/v1/review-cases/{review_case_id}/cover-considerations/retry",
+                ),
                 ("get", "/api/v1/review-cases/{review_case_id}/evidence"),
                 ("get", "/api/v1/review-cases/{review_case_id}/history"),
                 ("post", "/api/v1/review-cases/{review_case_id}/decisions"),
@@ -2204,6 +2406,10 @@ class ReviewWebTests(unittest.TestCase):
                 "mechanical_librarian.bootstrap.composition.create_review_pipeline",
                 return_value=Mock(),
             ),
+            patch(
+                "mechanical_librarian.bootstrap.composition.CoverArtifactStore",
+                return_value=Mock(),
+            ),
             patch("mechanical_librarian.bootstrap.composition.uvicorn.run"),
         ):
             run_review_server(
@@ -2235,6 +2441,107 @@ class ReviewWebTests(unittest.TestCase):
 
 
 class ReviewSessionPersistenceTests(unittest.TestCase):
+    def test_cover_state_is_inside_the_current_case_read_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "application.sqlite3"
+            reader = open_repository(database)
+            report = _report()
+            reader.publish(report, lambda: True)
+            proposal_set = evaluate_report(report)
+            reader.publish_proposal(proposal_set)
+            case_id = json.loads(reader.admit_review_case(proposal_set))["review_case_id"]
+            replay_digest = "b" * 64
+            consideration_id = "cover_consideration_" + "c" * 64
+            document = json.dumps(
+                {
+                    "consideration_id": consideration_id,
+                    "replay_digest": replay_digest,
+                    "report_id": report.report_id,
+                    "review_case_id": case_id,
+                    "schema_version": "cover-consideration-v1",
+                    "supersedes_id": None,
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            inserted = threading.Event()
+            finished = threading.Event()
+            writer_errors: list[BaseException] = []
+            writer_path = database if reader._binding is None else reader._binding.alias_path
+
+            def write_consideration() -> None:
+                writer = None
+                try:
+                    connection = sqlite3.connect(writer_path, isolation_level=None)
+                    connection.execute("PRAGMA foreign_keys=ON")
+                    connection.execute("PRAGMA busy_timeout=5000")
+                    writer = SQLiteMetadataReportRepository(connection)
+                    writer._connection.set_trace_callback(
+                        lambda statement: inserted.set()
+                        if statement.startswith("INSERT INTO cover_considerations")
+                        else None
+                    )
+                    writer.record_cover_consideration(
+                        document,
+                        review_case_id=case_id,
+                        report_id=report.report_id,
+                        replay_digest=replay_digest,
+                        supersedes_id=None,
+                        occurred_at=1_000,
+                    )
+                except BaseException as error:
+                    writer_errors.append(error)
+                finally:
+                    if writer is not None:
+                        writer.close()
+                    finished.set()
+
+            original = reader.get_review_case
+            started = False
+
+            def interleave(review_case_id: str) -> str:
+                nonlocal started
+                value = original(review_case_id)
+                if not started:
+                    started = True
+                    threading.Thread(target=write_consideration, daemon=True).start()
+                    self.assertTrue(inserted.wait(5))
+                return value
+
+            with patch.object(reader, "get_review_case", side_effect=interleave):
+                before = reader.read_current_review_case(case_id, 50)
+            self.assertIsNone(before.cover_consideration_document)
+            self.assertEqual((), before.cover_history)
+            self.assertTrue(finished.wait(5))
+            self.assertEqual([], writer_errors)
+            after = reader.read_current_review_case(case_id, 50)
+            self.assertEqual(document, after.cover_consideration_document)
+            self.assertEqual("considered", after.cover_history[0]["kind"])
+            reader.close()
+
+    def test_cover_retry_stops_after_an_owner_outcome(self) -> None:
+        application = object.__new__(ReviewApplication)
+        application._cover_considerations = Mock()
+        application._cases = Mock()
+        application._cases._read.return_value = (
+            {
+                "fields": [
+                    {
+                        "destination": "cover",
+                        "human_decision": {"outcome": "accept"},
+                        "proposal_id": "review_proposal_" + "d" * 64,
+                    }
+                ]
+            },
+            _report(),
+            None,
+        )
+        application.serialized = lambda call: call()
+
+        with self.assertRaisesRegex(ReviewApplicationError, "already_decided"):
+            application.retry_cover_consideration("review_case_" + "e" * 64)
+        application._cover_considerations.ensure.assert_not_called()
+
     def test_current_case_snapshot_cannot_mix_concurrent_supersession(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "application.sqlite3"

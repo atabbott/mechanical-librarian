@@ -50,12 +50,12 @@ from mechanical_librarian.domain.metadata_report import (
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
 
-from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa: E402
+from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
     ContainedReviewRequest,
     admit_cover_review_request,
     canonical_json,
 )
-from mechanical_librarian_workbench.cover_observation import (  # noqa: E402
+from mechanical_librarian.application.cover_observation import (  # noqa: E402
     INSTRUCTION,
     LEGACY_INSTRUCTION_SHA256,
     OUTPUT_SCHEMA_VERSION,
@@ -67,24 +67,24 @@ from mechanical_librarian_workbench.cover_observation import (  # noqa: E402
     _observer_reference,
     _output_schema,
 )
-from mechanical_librarian_workbench.cover_packets import (  # noqa: E402
+from mechanical_librarian.application.cover_packets import (  # noqa: E402
     MAX_COVER_PREVIEWS,
     prepare_cover_packet,
 )
-from mechanical_librarian_workbench.cover_identity import (  # noqa: E402
+from mechanical_librarian.application.cover_identity import (  # noqa: E402
     SCHEMA_VERSION,
     _CLASSIFIER_REFERENCE,
     _preview_reference,
     _classify_sources,
     classify_cover_identity,
 )
-from mechanical_librarian_workbench.cover_policy import (  # noqa: E402
+from mechanical_librarian.application.cover_policy import (  # noqa: E402
     CoverPolicy,
     adjudicate_cover_policy,
 )
-from mechanical_librarian_workbench import cover_packets as packet_builder  # noqa: E402
-from mechanical_librarian_workbench import reviewer as reviewer_binding  # noqa: E402
-from mechanical_librarian_workbench import contained_reviewer as reviewer_adapter  # noqa: E402
+from mechanical_librarian.application import cover_packets as packet_builder  # noqa: E402
+from mechanical_librarian.bootstrap import contained_reviewer as reviewer_binding  # noqa: E402
+from mechanical_librarian.adapters.reviewers import contained_reviewer as reviewer_adapter  # noqa: E402
 from mechanical_librarian_workbench import (  # noqa: E402
     CoverIdentityRequest,
     CoverObservationRequest,
@@ -2210,7 +2210,7 @@ class CoverIdentityTests(unittest.TestCase):
             local_claims=(),
         )
         with mock.patch(
-            "mechanical_librarian_workbench.cover_identity.manifestation_publication_compatible",
+            "mechanical_librarian.application.cover_identity.manifestation_publication_compatible",
             return_value=True,
         ):
             self.assertEqual(
@@ -2399,7 +2399,7 @@ class CoverIdentityTests(unittest.TestCase):
             providers=(provider,), identifier_evidence=(accepted,), local_claims=()
         )
         with mock.patch(
-            "mechanical_librarian_workbench.cover_identity.manifestation_publication_compatible",
+            "mechanical_librarian.application.cover_identity.manifestation_publication_compatible",
             return_value=False,
         ):
             self.assertEqual(
@@ -2431,7 +2431,7 @@ class CoverIdentityTests(unittest.TestCase):
             (item.reference, item.digest, item.payload)
             for item in packet.images
         )
-        with mock.patch("mechanical_librarian_workbench.cover_identity.MetadataReport.from_json", return_value=report):
+        with mock.patch("mechanical_librarian.application.cover_identity.MetadataReport.from_json", return_value=report):
             document = _classify_identity(
                 report_document,
                 packet.document,
@@ -2656,7 +2656,7 @@ class CoverPolicyTests(unittest.TestCase):
             assert callable(observation_mutation)
             observation_mutation(observation)
         with mock.patch(
-            "mechanical_librarian_workbench.cover_policy.classify_cover_identity",
+            "mechanical_librarian.application.cover_policy.classify_cover_identity",
             return_value=SimpleNamespace(document=canonical_json(identity)),
         ):
             result = adjudicate_cover_policy(
@@ -2995,7 +2995,7 @@ class CoverPolicyTests(unittest.TestCase):
                 )
                 mutation(observation)
                 with mock.patch(
-                    "mechanical_librarian_workbench.cover_policy.classify_cover_identity",
+                    "mechanical_librarian.application.cover_policy.classify_cover_identity",
                     return_value=SimpleNamespace(document=canonical_json(identity)),
                 ):
                     with self.assertRaises(ValueError):

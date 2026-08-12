@@ -458,6 +458,9 @@ class MetadataPersistenceTests(unittest.TestCase):
                 [
                     ("automatic_decisions",),
                     ("automatic_safety_state",),
+                    ("cover_consideration_events",),
+                    ("cover_considerations",),
+                    ("current_cover_considerations",),
                     ("current_metadata_report_lineages",),
                     ("current_metadata_reports",),
                     ("current_review_case_lineages",),

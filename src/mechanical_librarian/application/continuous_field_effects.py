@@ -303,7 +303,17 @@ class ContinuousGuardedApplication:
         for document in documents:
             decision = self._decision(document)
             self._schedule_cursor = (decision.occurred_at, decision.decision_id)
-            snapshot = self._authority.resolve(decision)
+            try:
+                snapshot = self._authority.resolve(decision)
+            except (FieldEffectError, GuardedApplicationError, ValueError):
+                if (
+                    decision.destination == "cover"
+                    and self._repository.retire_stale_cover_decision(
+                        decision.decision_id, self._clock()
+                    )
+                ):
+                    continue
+                raise
             key = (snapshot.connection, snapshot.library)
             application = self._applications.get(key)
             capability = self._capabilities.get(key)

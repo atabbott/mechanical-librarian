@@ -769,6 +769,461 @@
         "title": "_CaseDetailResponse",
         "type": "object"
       },
+      "_CoverCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "height": {
+            "title": "Height",
+            "type": "integer"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/_CoverIdentity"
+          },
+          "incumbent": {
+            "title": "Incumbent",
+            "type": "boolean"
+          },
+          "observation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_CoverObservation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "original_sha256": {
+            "title": "Original Sha256",
+            "type": "string"
+          },
+          "preview_sha256": {
+            "title": "Preview Sha256",
+            "type": "string"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "selectable": {
+            "title": "Selectable",
+            "type": "boolean"
+          },
+          "source_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Kinds",
+            "type": "array"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "transport_sha256": {
+            "title": "Transport Sha256",
+            "type": "string"
+          },
+          "width": {
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "height",
+          "identity",
+          "incumbent",
+          "observation",
+          "original_sha256",
+          "ordinal",
+          "preview_sha256",
+          "reference",
+          "selectable",
+          "source_kinds",
+          "state",
+          "transport_sha256",
+          "width"
+        ],
+        "title": "_CoverCandidate",
+        "type": "object"
+      },
+      "_CoverConsiderationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/_CoverCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "consideration_id": {
+            "title": "Consideration Id",
+            "type": "string"
+          },
+          "current": {
+            "title": "Current",
+            "type": "boolean"
+          },
+          "incumbent": {
+            "$ref": "#/components/schemas/_CoverIncumbent"
+          },
+          "omissions": {
+            "items": {
+              "$ref": "#/components/schemas/_CoverOmission"
+            },
+            "title": "Omissions",
+            "type": "array"
+          },
+          "policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_CoverPolicyReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_preferences": {
+            "$ref": "#/components/schemas/_CoverPolicyPreferences"
+          },
+          "policy_reference": {
+            "title": "Policy Reference",
+            "type": "string"
+          },
+          "reviewer_status": {
+            "title": "Reviewer Status",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "cover-consideration-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "supersedes_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Id"
+          },
+          "target_fingerprint": {
+            "title": "Target Fingerprint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidates",
+          "consideration_id",
+          "current",
+          "incumbent",
+          "omissions",
+          "policy",
+          "policy_preferences",
+          "policy_reference",
+          "reviewer_status",
+          "schema_version",
+          "supersedes_id",
+          "target_fingerprint"
+        ],
+        "title": "_CoverConsiderationResponse",
+        "type": "object"
+      },
+      "_CoverIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_reference": {
+            "title": "Candidate Reference",
+            "type": "string"
+          },
+          "evidence_references": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence References",
+            "type": "array"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "preview_reference": {
+            "title": "Preview Reference",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidate_reference",
+          "evidence_references",
+          "outcome",
+          "preview_reference",
+          "reasons"
+        ],
+        "title": "_CoverIdentity",
+        "type": "object"
+      },
+      "_CoverIncumbent": {
+        "additionalProperties": false,
+        "properties": {
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          },
+          "state": {
+            "enum": [
+              "absent",
+              "available",
+              "unavailable"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reference",
+          "state"
+        ],
+        "title": "_CoverIncumbent",
+        "type": "object"
+      },
+      "_CoverObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_reference": {
+            "title": "Candidate Reference",
+            "type": "string"
+          },
+          "composition": {
+            "title": "Composition",
+            "type": "string"
+          },
+          "medium": {
+            "title": "Medium",
+            "type": "string"
+          },
+          "preview_sha256": {
+            "title": "Preview Sha256",
+            "type": "string"
+          },
+          "preview_variant": {
+            "title": "Preview Variant",
+            "type": "string"
+          },
+          "promotional_text": {
+            "title": "Promotional Text",
+            "type": "string"
+          },
+          "tie_in_branding": {
+            "title": "Tie In Branding",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_reference",
+          "composition",
+          "medium",
+          "preview_sha256",
+          "preview_variant",
+          "promotional_text",
+          "tie_in_branding"
+        ],
+        "title": "_CoverObservation",
+        "type": "object"
+      },
+      "_CoverOmission": {
+        "additionalProperties": false,
+        "properties": {
+          "preview_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Bytes"
+          },
+          "preview_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Sha256"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "retained_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retained Reference"
+          }
+        },
+        "required": [
+          "reason",
+          "reference"
+        ],
+        "title": "_CoverOmission",
+        "type": "object"
+      },
+      "_CoverPolicyPreferences": {
+        "additionalProperties": false,
+        "properties": {
+          "avoid_promotional_text": {
+            "title": "Avoid Promotional Text",
+            "type": "boolean"
+          },
+          "avoid_tie_in_branding": {
+            "title": "Avoid Tie In Branding",
+            "type": "boolean"
+          },
+          "prefer_minimal_composition": {
+            "title": "Prefer Minimal Composition",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "const": "cover-policy-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "avoid_promotional_text",
+          "avoid_tie_in_branding",
+          "prefer_minimal_composition",
+          "schema_version"
+        ],
+        "title": "_CoverPolicyPreferences",
+        "type": "object"
+      },
+      "_CoverPolicyReport": {
+        "additionalProperties": false,
+        "properties": {
+          "acceptable_candidate_references": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Acceptable Candidate References",
+            "type": "array"
+          },
+          "cover_packet_reference": {
+            "title": "Cover Packet Reference",
+            "type": "string"
+          },
+          "identity_classifier_reference": {
+            "title": "Identity Classifier Reference",
+            "type": "string"
+          },
+          "identity_report_sha256": {
+            "title": "Identity Report Sha256",
+            "type": "string"
+          },
+          "observation_report_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observation Report Sha256"
+          },
+          "observation_taxonomy_reference": {
+            "title": "Observation Taxonomy Reference",
+            "type": "string"
+          },
+          "policy_reference": {
+            "title": "Policy Reference",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "recommended_candidate_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommended Candidate Reference"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "acceptable_candidate_references",
+          "cover_packet_reference",
+          "identity_classifier_reference",
+          "identity_report_sha256",
+          "observation_report_sha256",
+          "observation_taxonomy_reference",
+          "policy_reference",
+          "reasons",
+          "recommended_candidate_reference",
+          "schema_version",
+          "status"
+        ],
+        "title": "_CoverPolicyReport",
+        "type": "object"
+      },
       "_DecisionAcknowledgement": {
         "additionalProperties": false,
         "properties": {
@@ -897,6 +1352,18 @@
       "_DecisionRequest": {
         "additionalProperties": false,
         "properties": {
+          "consideration_id": {
+            "anyOf": [
+              {
+                "pattern": "^cover_consideration_[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consideration Id"
+          },
           "destination": {
             "maxLength": 64,
             "minLength": 1,
@@ -1283,6 +1750,61 @@
         "title": "_HistoryAutomaticItem",
         "type": "object"
       },
+      "_HistoryCoverItem": {
+        "additionalProperties": false,
+        "properties": {
+          "consideration_id": {
+            "title": "Consideration Id",
+            "type": "string"
+          },
+          "decision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Id"
+          },
+          "kind": {
+            "enum": [
+              "considered",
+              "superseded",
+              "selected",
+              "kept_incumbent",
+              "no_action",
+              "stale"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "cover-consideration-event-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "consideration_id",
+          "decision_id",
+          "kind",
+          "occurred_at",
+          "review_case_id",
+          "schema_version"
+        ],
+        "title": "_HistoryCoverItem",
+        "type": "object"
+      },
       "_HistoryDecisionItem": {
         "additionalProperties": false,
         "properties": {
@@ -1362,6 +1884,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/_HistoryAutomaticItem"
+                },
+                {
+                  "$ref": "#/components/schemas/_HistoryCoverItem"
                 }
               ]
             },
@@ -2281,6 +2806,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/_AutomaticDecisionProjection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cover_consideration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_CoverConsiderationResponse"
               },
               {
                 "type": "null"
@@ -5982,6 +6517,222 @@
           }
         ],
         "summary": "Case Detail"
+      }
+    },
+    "/api/v1/review-cases/{review_case_id}/cover-considerations/retry": {
+      "post": {
+        "operationId": "retry_cover_consideration_api_v1_review_cases__review_case_id__cover_considerations_retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_case_id",
+            "required": true,
+            "schema": {
+              "title": "Review Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_CoverConsiderationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Retry Cover Consideration"
+      }
+    },
+    "/api/v1/review-cases/{review_case_id}/cover-considerations/{consideration_id}/images/{reference}": {
+      "get": {
+        "operationId": "cover_consideration_image_api_v1_review_cases__review_case_id__cover_considerations__consideration_id__images__reference__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_case_id",
+            "required": true,
+            "schema": {
+              "title": "Review Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "consideration_id",
+            "required": true,
+            "schema": {
+              "title": "Consideration Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "reference",
+            "required": true,
+            "schema": {
+              "title": "Reference",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Cover Consideration Image"
       }
     },
     "/api/v1/review-cases/{review_case_id}/decisions": {

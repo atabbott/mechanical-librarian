@@ -38,10 +38,10 @@ from mechanical_librarian_workbench import (  # noqa: E402
     WorkbenchResult,
     execute,
 )
-from mechanical_librarian_workbench.contained_reviewer import (  # noqa: E402
+from mechanical_librarian.adapters.reviewers.contained_reviewer import (  # noqa: E402
     ContainedReviewerProcessError,
 )
-from mechanical_librarian_workbench.contained_reviewer_contract import (  # noqa: E402
+from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
     ContainedReviewerAttempt,
 )
 from mechanical_librarian_workbench import scenarios  # noqa: E402
@@ -91,10 +91,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
     def test_default_bindings_are_the_shared_application_composition(self) -> None:
         operations = WorkbenchOperations.production_operations()
         for name in WorkbenchOperations.__dataclass_fields__:
-            if name in {"run_contained_reviewer", "run_cover_packet_reviewer"}:
-                self.assertEqual(getattr(operations, name).__module__, "mechanical_librarian_workbench.reviewer")
-            else:
-                self.assertIs(getattr(operations, name), getattr(composition, name))
+            self.assertIs(getattr(operations, name), getattr(composition, name))
 
     def test_every_catalogued_scenario_executes_through_typed_requests(self) -> None:
         digest = "a" * 64

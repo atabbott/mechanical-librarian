@@ -511,6 +511,36 @@
           "title": "Canonical Origin",
           "type": "string"
         },
+        "cover_avoid_promotional_text": {
+          "default": false,
+          "title": "Cover Avoid Promotional Text",
+          "type": "boolean"
+        },
+        "cover_avoid_tie_in_branding": {
+          "default": false,
+          "title": "Cover Avoid Tie In Branding",
+          "type": "boolean"
+        },
+        "cover_prefer_minimal_composition": {
+          "default": false,
+          "title": "Cover Prefer Minimal Composition",
+          "type": "boolean"
+        },
+        "cover_reviewer_profile_file": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cover Reviewer Profile File"
+        },
         "diagnostic_timings_enabled": {
           "default": false,
           "title": "Diagnostic Timings Enabled",

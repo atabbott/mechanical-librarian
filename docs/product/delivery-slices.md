@@ -566,6 +566,18 @@ Automatic while preserving the F19a manifest and all guarded-effect controls;
 tags remain off by default and the remaining rich options stay human-routed
 with aggregate-safe terminal explanations.
 
+## Delivery checkpoint 0.15.1: owner-confirmed semantic cover decisions
+
+| Outcome | Issue | Demonstrable result | Planning state |
+| --- | --- | --- | --- |
+| F21 Owner-confirmed cover decisions | #501 | One exact-current cover review shows the incumbent and safe report-bound alternatives, presents contained observation and deterministic policy only as advice, persists an explicit owner keep/select/no-action outcome and its successor history, and applies a selected original through the existing guarded Audiobookshelf path. | Activation candidate open for maintainer review. |
+
+F21 reuses the 0.15.0 packet, identity, observer, policy, containment, and
+versioned engineering benchmark evidence. Observation or recommendation
+unavailability keeps identity-admitted manual selection fully supported.
+Automatic model-selected writes, bulk reevaluation, silent learning, new
+providers, release, tag, and deployment work are excluded.
+
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit
