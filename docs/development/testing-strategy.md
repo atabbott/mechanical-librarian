@@ -334,7 +334,7 @@ The suite covers:
   source ordinals, scopes, roles, field states and diagnostics byte-for-byte.
   Application tests merge parser, attempt and incomplete-outcome diagnostics
   once before persistence and prove reopen does not inflate them. Persistence
-  rejects `metadata-report-v22` before mutation and a direct regression proves
+  rejects `metadata-report-v23` before mutation and a direct regression proves
   the prior database bytes remain unchanged;
 - cover-gallery provider/aggregate bounds, safe provenance, timeout/rejection
   states, visible truncation, and digest deduplication with all provenance;
@@ -426,7 +426,7 @@ split labels in one ancestor, repeated equal complete/split siblings, multiple
 assembled labels, scanning/production/workflow label values, promotion cues
 inside labels, the exact 16-fact rear cap, front/rear NFC and whitespace
 normalization, `metadata-report-v24`
-canonical replay, clean database creation, and byte-unchanged rejection of v22
+canonical replay, clean database creation, and byte-unchanged rejection of v23
 state. Only aggregate expected, found, and false-positive counts are asserted
 or exported; fixture rows and source text remain private.
 

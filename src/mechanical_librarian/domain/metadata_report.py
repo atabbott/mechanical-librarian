@@ -1467,7 +1467,10 @@ class EditionEnrichmentOverflow:
             raise ReportValueError("edition overflow identity bindings are invalid")
         references = tuple(author.reference for author in self.authors)
         identities = tuple(binding.identity for binding in self.identity_bindings)
-        names = tuple(author.value for author in self.authors)
+        names = tuple(
+            normalize_title(author.value or "").casefold()
+            for author in self.authors
+        )
         if (
             len(set(references)) != len(references)
             or len(set(identities)) != len(identities)

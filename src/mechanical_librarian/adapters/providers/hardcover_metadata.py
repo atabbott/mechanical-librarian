@@ -50,7 +50,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidence, ProviderEvidenceKind, ProviderIdentityBinding,
     ProviderObservation,
     ProviderQueryKind, ProviderStatus, canonical_json, comparison_links,
-    finalize_candidate_comparisons, isbn_family, normalize_date_value,
+    finalize_candidate_comparisons, isbn_family, normalize_date_value, normalize_title,
     provider_access_time,
 )
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text, validate_role_projection
@@ -1049,6 +1049,7 @@ def _parse_edition_enrichment_overflow(
         raise ValueError("provider overflow work is incomplete")
     contribution_ids: set[int] = set()
     author_ids: dict[int, str] = {}
+    author_names: set[str] = set()
     authors: list[ProviderClaim] = []
     bindings: list[ProviderIdentityBinding] = []
     for ordinal, raw in enumerate(contributions):
@@ -1060,11 +1061,13 @@ def _parse_edition_enrichment_overflow(
         if (
             contribution_id in contribution_ids
             or author_id in author_ids
+            or normalize_title(author["name"]).casefold() in author_names
             or validate_role_projection(contribution["contribution"]).casefold() != "author"
         ):
             raise ValueError("provider overflow authors are contradictory")
         contribution_ids.add(contribution_id)
         author_ids[author_id] = author["name"]
+        author_names.add(normalize_title(author["name"]).casefold())
         claim = _claim(provider, work_identity, ClaimKind.CREATOR, author["name"], ClaimScope.WORK, "not_applicable", "author", (), ordinal)
         if claim.state is not FieldState.VALID:
             raise ValueError("provider overflow work is incomplete")

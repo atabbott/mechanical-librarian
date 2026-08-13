@@ -365,6 +365,13 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ),
             ),
             (
+                "immediate previous v23",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v23",
+                ),
+            ),
+            (
                 "previous proposal policy v3",
                 lambda connection: _create_prior_schema(
                     connection,
@@ -2515,6 +2522,10 @@ class ProviderAdapterTests(unittest.TestCase):
             [
                 {"id": 1, "contribution": "Translator", "author": {"id": 7, "name": "Ada Example"}},
             ],
+            [
+                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
+                {"id": 2, "contribution": "Author", "author": {"id": 8, "name": "ada example"}},
+            ],
         )
         for contributions in variants:
             payload = self._envelope(rows, [{**base, "contributions": contributions}])
@@ -2531,6 +2542,28 @@ class ProviderAdapterTests(unittest.TestCase):
                     json.dumps(self._envelope(malformed_rows, [base])).encode(),
                     "catalogue",
                 )
+
+    def test_edition_overflow_probe_has_exact_five_six_seven_boundary(self) -> None:
+        book = [{
+            "id": 10,
+            "title": "Anchored work",
+            "contributions": [{
+                "id": 1, "contribution": "Author",
+                "author": {"id": 7, "name": "Ada Example"},
+            }],
+        }]
+        for count in (5, 6, 7):
+            payload = json.dumps(self._envelope(
+                [{"id": index, "book_id": 10} for index in range(1, count + 1)],
+                book,
+            )).encode()
+            with self.subTest(count=count):
+                if count == 7:
+                    with self.assertRaises(hardcover_metadata._CandidateLimit):
+                        hardcover_metadata._parse_edition_enrichment_overflow(payload, "catalogue")
+                else:
+                    value = hardcover_metadata._parse_edition_enrichment_overflow(payload, "catalogue")
+                    self.assertEqual(count == 6, value is not None)
 
     def test_mixed_discovery_retains_only_the_work_overflow_witness(self) -> None:
         fields = tuple(
