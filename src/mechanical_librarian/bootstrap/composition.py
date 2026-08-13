@@ -12,10 +12,7 @@ from pathlib import Path
 
 import uvicorn
 
-from mechanical_librarian.bootstrap.contained_reviewer import (
-    run_contained_reviewer,
-    run_cover_packet_reviewer,
-)
+from mechanical_librarian.bootstrap.contained_reviewer import run_cover_packet_reviewer
 
 from mechanical_librarian.adapters.cover_artifacts import (
     CoverDecodeRejected,
@@ -1612,7 +1609,7 @@ def _compose_cover_considerations(
         prefer_minimal_composition=review.cover_prefer_minimal_composition,
     )
     repository.bind_current_cover_policy(policy.reference)
-    return CoverConsiderationService(
+    service = CoverConsiderationService(
         repository,
         read_preview=lambda artifact_id, variant: artifact_store().read_preview_digest(
             repository.preview_digest_for_artifact(artifact_id, variant)
@@ -1623,6 +1620,8 @@ def _compose_cover_considerations(
         reviewer_profile=reviewer_profile,
         reviewer=None if reviewer_profile is None else run_cover_packet_reviewer,
     )
+    repository.bind_current_cover_replay(service.replay_reference)
+    return service
 
 
 def run_cover_review(
@@ -1784,6 +1783,6 @@ __all__ = [
     "reopen_cover_preview", "reopen_current_metadata_report",
     "reopen_metadata_report", "reopen_proposal_set", "admit_review_case", "reopen_review_case",
     "preview_shadow_decision_case", "run_batch",
-    "run_catalogue", "run_contained_reviewer", "run_cover_packet_reviewer",
+    "run_catalogue", "run_cover_packet_reviewer",
     "run_metadata_report",
 ]

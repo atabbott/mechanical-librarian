@@ -2542,6 +2542,88 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             application.retry_cover_consideration("review_case_" + "e" * 64)
         application._cover_considerations.ensure.assert_not_called()
 
+    def test_cover_observer_runs_outside_the_global_application_gate(self) -> None:
+        application = object.__new__(ReviewApplication)
+        application._gate = threading.RLock()
+        application.serialized = ReviewApplication.serialized.__get__(application)
+        application._cases = Mock()
+        application._cases._read.return_value = (
+            {
+                "fields": [
+                    {
+                        "destination": "cover",
+                        "human_decision": None,
+                        "proposal_id": "review_proposal_" + "d" * 64,
+                    }
+                ]
+            },
+            _report(),
+            None,
+        )
+        service = Mock()
+        service.current.return_value = None
+        service.existing.return_value = None
+        service.latest_id.return_value = None
+        service.prepare_observation.return_value = object()
+        expected = {"consideration_id": "cover_consideration_" + "f" * 64}
+        service.ensure.return_value = expected
+
+        def observe(*_args):
+            acquired: list[bool] = []
+
+            def probe() -> None:
+                held = application._gate.acquire(blocking=False)
+                acquired.append(held)
+                if held:
+                    application._gate.release()
+
+            thread = threading.Thread(target=probe)
+            thread.start()
+            thread.join(5)
+            self.assertEqual([True], acquired)
+            return object()
+
+        service.observe.side_effect = observe
+        application._cover_considerations = service
+
+        self.assertEqual(
+            expected,
+            application.prepare_cover_consideration("review_case_" + "e" * 64),
+        )
+        service.ensure.assert_called_once()
+
+    def test_cover_retry_allows_a_successor_after_stale_retirement(self) -> None:
+        application = object.__new__(ReviewApplication)
+        application._cover_considerations = Mock()
+        application._cases = Mock()
+        application._cases._read.return_value = (
+            {
+                "fields": [
+                    {
+                        "destination": "cover",
+                        "human_decision": {"outcome": "accept"},
+                        "proposal_id": "review_proposal_" + "d" * 64,
+                    }
+                ]
+            },
+            _report(),
+            None,
+        )
+        application._cover_considerations.current.return_value = None
+        application._cover_considerations.latest_id.return_value = (
+            "cover_consideration_" + "a" * 64
+        )
+        successor = {"consideration_id": "cover_consideration_" + "b" * 64}
+        application._cover_considerations.ensure.return_value = successor
+        application._cover_considerations.prepare_observation.return_value = object()
+        application._cover_considerations.observe.return_value = object()
+        application.serialized = lambda call: call()
+
+        self.assertEqual(
+            successor,
+            application.retry_cover_consideration("review_case_" + "e" * 64),
+        )
+
     def test_current_case_snapshot_cannot_mix_concurrent_supersession(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "application.sqlite3"

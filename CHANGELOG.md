@@ -17,7 +17,12 @@
   selected original uses the existing verified Audiobookshelf
   cover effect path; observer failure preserves the model-free manual path.
   The retained versioned engineering benchmark remains a judgement-labelled,
-  aggregate-safe proof rather than an unseen-generalisation claim. (#501)
+  aggregate-safe proof rather than an unseen-generalisation claim. Observer
+  execution releases the global application gate and revalidates the captured
+  case before persistence; changed replay contracts and stale effects require a
+  successor owner decision. Generic reviewer invocation and authentication
+  remain source-workbench-only, and missing preview artifacts degrade through
+  the typed unavailable response. (#501)
 
 - Reconcile the 0.15.0 source-only semantic-cover workbench into one
   aggregate-safe maintainer review package. The retained real-provider corpus,

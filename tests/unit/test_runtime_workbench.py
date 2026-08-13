@@ -91,7 +91,14 @@ class RuntimeWorkbenchTests(unittest.TestCase):
     def test_default_bindings_are_the_shared_application_composition(self) -> None:
         operations = WorkbenchOperations.production_operations()
         for name in WorkbenchOperations.__dataclass_fields__:
-            self.assertIs(getattr(operations, name), getattr(composition, name))
+            if name == "run_contained_reviewer":
+                self.assertEqual(
+                    "scripts.workbench_contained_reviewer",
+                    getattr(operations, name).__module__,
+                )
+                self.assertFalse(hasattr(composition, name))
+            else:
+                self.assertIs(getattr(operations, name), getattr(composition, name))
 
     def test_every_catalogued_scenario_executes_through_typed_requests(self) -> None:
         digest = "a" * 64

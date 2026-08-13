@@ -191,6 +191,49 @@ class CoverConsiderationTests(unittest.TestCase):
         )
         self.assertEqual(persisted["policy_reference"], value["policy_reference"])
 
+    def test_changed_reviewer_contract_makes_the_prior_consideration_noncurrent(self) -> None:
+        case_id = "review_case_" + "f" * 64
+        first = self.service.ensure(case_id, self.report.to_json(), self.proposal)
+        changed = CoverConsiderationService(
+            self.store,
+            read_preview=lambda artifact, _variant: self.payload_by_artifact[artifact],
+            read_preview_digest=lambda digest: self.payload_by_preview[digest],
+            clock=lambda: self.now + 1,
+            reviewer_profile=b"changed-profile",
+        )
+
+        self.assertIsNone(changed.project(self.store.current[case_id]))
+        with self.assertRaisesRegex(CoverConsiderationError, "stale"):
+            changed.validate_decision(
+                case_id,
+                str(first["consideration_id"]),
+                "keep_current",
+                None,
+            )
+        successor = changed.ensure(case_id, self.report.to_json(), self.proposal)
+        self.assertEqual(first["consideration_id"], successor["supersedes_id"])
+
+    def test_preview_store_failure_is_typed_unavailable(self) -> None:
+        case_id = "review_case_" + "1" * 64
+        value = self.service.ensure(case_id, self.report.to_json(), self.proposal)
+
+        def unavailable(_digest: str) -> bytes:
+            raise RuntimeError("synthetic store failure")
+
+        broken = CoverConsiderationService(
+            self.store,
+            read_preview=lambda artifact, _variant: self.payload_by_artifact[artifact],
+            read_preview_digest=unavailable,
+            clock=lambda: self.now,
+        )
+        candidate = value["candidates"][0]
+        with self.assertRaisesRegex(CoverConsiderationError, "unavailable"):
+            broken.image(
+                case_id,
+                str(value["consideration_id"]),
+                str(candidate["reference"]),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

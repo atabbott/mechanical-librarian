@@ -90,6 +90,21 @@ ReviewRunner = Callable[[bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes
 
 
 @dataclass(frozen=True, slots=True)
+class _ReviewerEvidence:
+    replay_digest: str
+    observation_document: str | None
+    reviewer_status: str
+    reviewer_failure: dict[str, object] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ObservationRequest:
+    replay_digest: str
+    packet_payload: bytes | None
+    image_payloads: tuple[tuple[str, str, bytes], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CoverConsideration:
     document: str
 
@@ -127,6 +142,139 @@ class CoverConsiderationService:
         self._reviewer_profile = reviewer_profile
         self._reviewer = reviewer
 
+    @property
+    def replay_reference(self) -> str:
+        identity = canonical_packet_json(
+            {
+                "policy": self._policy.document,
+                "contracts": {
+                    "classifier_reference": CLASSIFIER_REFERENCE,
+                    "identity_schema": IDENTITY_SCHEMA_VERSION,
+                    "instruction_sha256": hashlib.sha256(
+                        INSTRUCTION.encode("utf-8")
+                    ).hexdigest(),
+                    "observation_schema": OBSERVATION_SCHEMA_VERSION,
+                    "observer_output_schema": OUTPUT_SCHEMA_VERSION,
+                    "packet_schema": PACKET_SCHEMA_VERSION,
+                    "policy_report_schema": POLICY_REPORT_SCHEMA_VERSION,
+                    "policy_schema": POLICY_SCHEMA_VERSION,
+                    "taxonomy_reference": TAXONOMY_REFERENCE,
+                },
+                "profile_sha256": (
+                    None
+                    if self._reviewer_profile is None
+                    else hashlib.sha256(self._reviewer_profile).hexdigest()
+                ),
+                "schema_version": SCHEMA_VERSION,
+            }
+        )
+        return "cover_replay_" + hashlib.sha256(identity.encode()).hexdigest()
+
+    def _replay_digest(self, review_case_id: str, report_id: str) -> str:
+        return hashlib.sha256(
+            canonical_packet_json(
+                {
+                    "replay_reference": self.replay_reference,
+                    "report": report_id,
+                    "review_case_id": review_case_id,
+                }
+            ).encode()
+        ).hexdigest()
+
+    def existing(
+        self, review_case_id: str, report_document: str
+    ) -> dict[str, object] | None:
+        report = MetadataReport.from_json(report_document)
+        document = self._store.current_cover_consideration(
+            review_case_id, self._replay_digest(review_case_id, report.report_id)
+        )
+        return None if document is None else self._project(document, current=True)
+
+    def latest_id(self, review_case_id: str) -> str | None:
+        document = self._store.latest_cover_consideration_document(review_case_id)
+        return None if document is None else str(json.loads(document)["consideration_id"])
+
+    def prepare_observation(
+        self, review_case_id: str, report_document: str
+    ) -> _ObservationRequest:
+        """Capture bounded observer inputs while mutable product state is serialized."""
+        report = MetadataReport.from_json(report_document)
+        replay_digest = self._replay_digest(review_case_id, report.report_id)
+        try:
+            packet = prepare_cover_packet(report_document, self._read_preview)
+        except ValueError as error:
+            if str(error) != "cover packet has no retrieved previews":
+                raise
+            packet = None
+        if packet is None:
+            return _ObservationRequest(replay_digest, None, ())
+        return _ObservationRequest(
+            replay_digest,
+            packet.document.encode(),
+            tuple(
+                (image.reference, image.digest, image.payload)
+                for image in packet.images
+            ),
+        )
+
+    def observe(self, request: _ObservationRequest) -> _ReviewerEvidence:
+        """Run optional external advice over an immutable captured request."""
+        if request.packet_payload is None:
+            return _ReviewerEvidence(
+                request.replay_digest, None, "unavailable", None
+            )
+        return self._observe_payloads(
+            request.replay_digest,
+            request.packet_payload,
+            request.image_payloads,
+        )
+
+    def _observe_packet(
+        self, replay_digest: str, packet: PreparedCoverPacket
+    ) -> _ReviewerEvidence:
+        return self._observe_payloads(
+            replay_digest,
+            packet.document.encode(),
+            tuple(
+                (image.reference, image.digest, image.payload)
+                for image in packet.images
+            ),
+        )
+
+    def _observe_payloads(
+        self,
+        replay_digest: str,
+        packet_payload: bytes,
+        image_payloads: tuple[tuple[str, str, bytes], ...],
+    ) -> _ReviewerEvidence:
+        if self._reviewer_profile is None or self._reviewer is None:
+            return _ReviewerEvidence(replay_digest, None, "unavailable", None)
+        try:
+            observation_document = observe_cover_packet(
+                self._reviewer_profile,
+                packet_payload,
+                image_payloads,
+                self._reviewer,
+            ).document
+            return _ReviewerEvidence(
+                replay_digest, observation_document, "completed", None
+            )
+        except Exception as error:
+            attempts = getattr(error, "attempts", ())
+            failure: dict[str, object] = {
+                "attempts": [
+                    {
+                        "diagnostic_bytes": getattr(item, "diagnostic_bytes", 0),
+                        "diagnostic_sha256": getattr(item, "diagnostic_sha256", None),
+                        "dispatched": getattr(item, "dispatched", False),
+                        "failure_code": getattr(item, "failure_code", "runtime"),
+                    }
+                    for item in attempts
+                ],
+                "code": str(getattr(error, "code", "runtime")),
+            }
+            return _ReviewerEvidence(replay_digest, None, "failed", failure)
+
     def ensure(
         self,
         review_case_id: str,
@@ -134,36 +282,15 @@ class CoverConsiderationService:
         cover_proposal: dict[str, object],
         *,
         retry: bool = False,
+        reviewer_evidence: _ReviewerEvidence | None = None,
     ) -> dict[str, object]:
         report = MetadataReport.from_json(report_document)
-        replay_digest = hashlib.sha256(
-            canonical_packet_json(
-                {
-                    "policy": self._policy.document,
-                    "contracts": {
-                        "classifier_reference": CLASSIFIER_REFERENCE,
-                        "identity_schema": IDENTITY_SCHEMA_VERSION,
-                        "instruction_sha256": hashlib.sha256(
-                            INSTRUCTION.encode("utf-8")
-                        ).hexdigest(),
-                        "observation_schema": OBSERVATION_SCHEMA_VERSION,
-                        "observer_output_schema": OUTPUT_SCHEMA_VERSION,
-                        "packet_schema": PACKET_SCHEMA_VERSION,
-                        "policy_report_schema": POLICY_REPORT_SCHEMA_VERSION,
-                        "policy_schema": POLICY_SCHEMA_VERSION,
-                        "taxonomy_reference": TAXONOMY_REFERENCE,
-                    },
-                    "profile_sha256": (
-                        None
-                        if self._reviewer_profile is None
-                        else hashlib.sha256(self._reviewer_profile).hexdigest()
-                    ),
-                    "report": report.report_id,
-                    "review_case_id": review_case_id,
-                    "schema_version": SCHEMA_VERSION,
-                }
-            ).encode()
-        ).hexdigest()
+        replay_digest = self._replay_digest(review_case_id, report.report_id)
+        if (
+            reviewer_evidence is not None
+            and reviewer_evidence.replay_digest != replay_digest
+        ):
+            raise CoverConsiderationError("stale")
         if not retry:
             existing = self._store.current_cover_consideration(
                 review_case_id, replay_digest
@@ -183,6 +310,7 @@ class CoverConsiderationService:
             cover_proposal,
             replay_digest,
             previous_id,
+            reviewer_evidence,
         )
         persisted = self._store.record_cover_consideration(
             document,
@@ -202,6 +330,7 @@ class CoverConsiderationService:
         cover_proposal: dict[str, object],
         replay_digest: str,
         supersedes_id: str | None,
+        reviewer_evidence: _ReviewerEvidence | None,
     ) -> str:
         packet: PreparedCoverPacket | None
         try:
@@ -211,9 +340,7 @@ class CoverConsiderationService:
                 raise
             packet = None
 
-        observation_document: str | None = None
-        reviewer_status = "unavailable"
-        reviewer_failure: dict[str, object] | None = None
+        evidence = reviewer_evidence
         if packet is not None:
             image_payloads = tuple(
                 (image.reference, image.digest, image.payload) for image in packet.images
@@ -224,30 +351,11 @@ class CoverConsiderationService:
                 image_payloads,
                 read_preview=self._read_preview,
             ).document
-            if self._reviewer_profile is not None and self._reviewer is not None:
-                try:
-                    observation_document = observe_cover_packet(
-                        self._reviewer_profile,
-                        packet.document.encode(),
-                        image_payloads,
-                        self._reviewer,
-                    ).document
-                    reviewer_status = "completed"
-                except Exception as error:
-                    reviewer_status = "failed"
-                    attempts = getattr(error, "attempts", ())
-                    reviewer_failure = {
-                        "attempts": [
-                            {
-                                "diagnostic_bytes": getattr(item, "diagnostic_bytes", 0),
-                                "diagnostic_sha256": getattr(item, "diagnostic_sha256", None),
-                                "dispatched": getattr(item, "dispatched", False),
-                                "failure_code": getattr(item, "failure_code", "runtime"),
-                            }
-                            for item in attempts
-                        ],
-                        "code": str(getattr(error, "code", "runtime")),
-                    }
+            if evidence is None:
+                evidence = self._observe_packet(replay_digest, packet)
+            observation_document = evidence.observation_document
+            reviewer_status = evidence.reviewer_status
+            reviewer_failure = evidence.reviewer_failure
             policy_report_document = adjudicate_cover_policy(
                 report_document,
                 packet.document,
@@ -266,6 +374,9 @@ class CoverConsiderationService:
             )
             packet_document = packet.document
         else:
+            observation_document = None
+            reviewer_status = "unavailable"
+            reviewer_failure = None
             identity_document = None
             policy_report_document = None
             packet_document = None
@@ -305,6 +416,7 @@ class CoverConsiderationService:
             "report_document": report_document,
             "report_id": report.report_id,
             "replay_digest": replay_digest,
+            "replay_reference": self.replay_reference,
             "review_case_id": review_case_id,
             "reviewer_failure": reviewer_failure,
             "reviewer_status": reviewer_status,
@@ -452,7 +564,10 @@ class CoverConsiderationService:
         if document is None:
             raise CoverConsiderationError("not_found")
         value = json.loads(document)
-        if value["consideration_id"] != consideration_id:
+        if (
+            value["consideration_id"] != consideration_id
+            or not self._document_current(value)
+        ):
             raise CoverConsiderationError("stale")
         candidate = next(
             (item for item in value["candidates"] if item["reference"] == reference),
@@ -460,18 +575,35 @@ class CoverConsiderationService:
         )
         if candidate is None:
             raise CoverConsiderationError("not_found")
-        payload = self._read_preview_digest(str(candidate["preview_sha256"]))
+        try:
+            payload = self._read_preview_digest(str(candidate["preview_sha256"]))
+        except Exception as error:
+            raise CoverConsiderationError("unavailable") from error
         if hashlib.sha256(payload).hexdigest() != candidate["preview_sha256"]:
             raise CoverConsiderationError("unavailable")
         return payload
 
     def current(self, review_case_id: str) -> dict[str, object] | None:
         document = self._store.current_cover_consideration_document(review_case_id)
-        return None if document is None else self._project(document, current=True)
+        return self.project(document)
 
     def project(self, document: str | None) -> dict[str, object] | None:
         """Project a consideration captured inside its caller's read snapshot."""
-        return None if document is None else self._project(document, current=True)
+        if document is None:
+            return None
+        value = json.loads(document)
+        return None if not self._document_current(value) else self._project(document, current=True)
+
+    def _document_current(self, value: dict[str, object]) -> bool:
+        review_case_id = value.get("review_case_id")
+        report_id = value.get("report_id")
+        return (
+            type(review_case_id) is str
+            and type(report_id) is str
+            and value.get("replay_reference") == self.replay_reference
+            and value.get("replay_digest")
+            == self._replay_digest(review_case_id, report_id)
+        )
 
     def project_historical(self, document: str) -> dict[str, object]:
         """Project immutable consideration evidence without granting current authority."""
@@ -488,7 +620,10 @@ class CoverConsiderationService:
         if document is None:
             raise CoverConsiderationError("stale")
         value = json.loads(document)
-        if value["consideration_id"] != consideration_id:
+        if (
+            value["consideration_id"] != consideration_id
+            or not self._document_current(value)
+        ):
             raise CoverConsiderationError("stale")
         if outcome == "accept":
             selected = next(

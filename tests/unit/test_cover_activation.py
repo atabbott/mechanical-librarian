@@ -32,6 +32,7 @@ from mechanical_librarian.application.cover_consideration import (
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -128,6 +129,9 @@ class CoverActivationTests(unittest.TestCase):
                 clock=lambda: consideration_now[0],
                 policy=policy,
             )
+            repository.bind_current_cover_replay(
+                consideration_service.replay_reference
+            )
             consideration = consideration_service.ensure(
                 review_case_id, report.to_json(), proposal
             )
@@ -177,6 +181,27 @@ class CoverActivationTests(unittest.TestCase):
             )
 
             authority = PersistedFieldEffectAuthority(repository)
+            changed_profile = CoverConsiderationService(
+                repository,
+                read_preview=lambda artifact_id, _variant: artifacts.read_preview_digest(
+                    next(
+                        source.artifact.preview_digest
+                        for source in sources
+                        if source.artifact is not None
+                        and source.artifact.artifact_id == artifact_id
+                    )
+                ),
+                read_preview_digest=artifacts.read_preview_digest,
+                clock=lambda: consideration_now[0],
+                policy=policy,
+                reviewer_profile=b"changed-profile",
+            )
+            repository.bind_current_cover_replay(changed_profile.replay_reference)
+            with self.assertRaisesRegex(FieldEffectError, "authority_binding"):
+                authority.resolve(decision)
+            repository.bind_current_cover_replay(
+                consideration_service.replay_reference
+            )
             snapshot = authority.resolve(decision)
             dependencies = PersistedEffectDependencies(repository)
             consent = FakeConsentCurrentness(
@@ -219,6 +244,66 @@ class CoverActivationTests(unittest.TestCase):
                 capability_digest=CAPABILITY,
             )
             assert operation is not None
+            stale = repository.transition_field_effect(
+                operation.plan.plan_id,
+                "planned",
+                "stale",
+                102,
+                "authority",
+            )
+            self.assertEqual("stale", stale.state)
+            self.assertIsNone(
+                repository.current_cover_consideration_document(review_case_id)
+            )
+            stale_detail = InspectCurrentReviewCase(
+                repository, consideration_service
+            ).run(review_case_id)
+            stale_cover = next(
+                field
+                for field in stale_detail["fields"]
+                if field["destination"] == "cover"
+            )
+            self.assertIsNone(stale_cover["human_decision"])
+            self.assertIsNone(stale_cover["cover_consideration"])
+            self.assertTrue(stale_cover["needs_attention"])
+
+            consideration_now[0] = 103
+            successor = consideration_service.ensure(
+                review_case_id, report.to_json(), proposal
+            )
+            self.assertEqual(
+                consideration["consideration_id"], successor["supersedes_id"]
+            )
+            replacement = HumanDecision.create(
+                case,
+                proposal_id=proposal["proposal_id"],
+                target_fingerprint=case.target_fingerprint,
+                destination="cover",
+                actor="owner",
+                outcome="accept",
+                selected_value=selected_value,
+                idempotency_key="cover-activation-0002",
+                occurred_at=104,
+            )
+            repository.record_human_decision(
+                replacement,
+                cover_consideration_id=str(successor["consideration_id"]),
+            )
+            snapshot = authority.resolve(replacement)
+            operation = application.plan(
+                replacement,
+                connection=snapshot.connection,
+                library=snapshot.library,
+                work_id=snapshot.work_id,
+                destination=snapshot.destination,
+                pre_value=snapshot.pre_value,
+                desired_value=snapshot.decision_value,
+                target_fingerprint=snapshot.target_fingerprint,
+                target_version=snapshot.target_version,
+                dependency_digests=snapshot.dependency_digests,
+                capability_digest=CAPABILITY,
+            )
+            assert operation is not None
             target.seed(operation.plan)
 
             verified = application.apply(operation.plan.plan_id)
@@ -226,7 +311,7 @@ class CoverActivationTests(unittest.TestCase):
             self.assertEqual("verified", verified.state)
             self.assertEqual(selected["artifact_id"], target.read(operation.plan).value)
             self.assertEqual(
-                ["selected", "considered"],
+                ["selected", "superseded", "considered", "stale", "selected", "considered"],
                 [event["kind"] for event in consideration_service.history(review_case_id)],
             )
             history = InspectCurrentReviewCase(
@@ -255,50 +340,17 @@ class CoverActivationTests(unittest.TestCase):
                 set(selected_history["decision"]),
             )
             self.assertEqual(
-                consideration["candidates"],
+                successor["candidates"],
                 selected_history["consideration"]["candidates"],
             )
             self.assertEqual(
-                consideration["policy"],
+                successor["policy"],
                 selected_history["consideration"]["policy"],
             )
             self.assertTrue(
                 repository.field_effect_dependencies_current(
                     snapshot.dependency_digests
                 )
-            )
-            repository._connection.execute("BEGIN IMMEDIATE")
-            repository._retire_stale_cover_consideration(
-                verified, "stale", 102
-            )
-            repository._connection.commit()
-            self.assertIsNone(
-                repository.current_cover_consideration_document(review_case_id)
-            )
-            self.assertEqual(
-                decision.decision_id,
-                HumanDecision.from_json(
-                    repository.record_human_decision(
-                        decision,
-                        cover_consideration_id=str(
-                            consideration["consideration_id"]
-                        ),
-                    )
-                ).decision_id,
-            )
-            consideration_now[0] = 103
-            successor = consideration_service.ensure(
-                review_case_id, report.to_json(), proposal
-            )
-            self.assertEqual(
-                consideration["consideration_id"], successor["supersedes_id"]
-            )
-            self.assertEqual(
-                ["considered", "superseded", "stale", "selected", "considered"],
-                [
-                    event["kind"]
-                    for event in consideration_service.history(review_case_id)
-                ],
             )
             repository.close()
 

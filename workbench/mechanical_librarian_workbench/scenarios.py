@@ -363,10 +363,15 @@ class WorkbenchOperations:
     def production_operations(cls) -> "WorkbenchOperations":
         """Bind source workbench scenarios to the same application composition seams."""
         from mechanical_librarian.bootstrap import composition
+        from scripts.workbench_contained_reviewer import run_contained_reviewer
 
         return cls(
             **{
-                name: getattr(composition, name)
+                name: (
+                    run_contained_reviewer
+                    if name == "run_contained_reviewer"
+                    else getattr(composition, name)
+                )
                 for name in cls.__dataclass_fields__
             }
         )

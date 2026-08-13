@@ -40,6 +40,16 @@ credentials or target-write authority and cannot admit identity, select a
 candidate, record an owner outcome, or apply a cover. Every other generic or
 experimental contained-reviewer use remains source-only and excluded from the
 wheel and container.
+The generic invocation and authentication wrapper therefore lives only in the
+source workbench; the installed bootstrap exports only the exact cover-packet
+entry point.
+
+The application captures the exact current case, report, proposal, and prior
+consideration under its serialization gate, releases that gate while the
+optional external observer runs, then reacquires it and revalidates every
+captured binding before persistence. A stable replay reference binds the
+policy, observer profile, instruction, schemas, taxonomy, and classifier into
+both current projection and the guarded effect dependency check.
 
 `review-activity` opens only the configured application database and composes
 the shared query-only Activity projection. Its CLI accepts only configuration

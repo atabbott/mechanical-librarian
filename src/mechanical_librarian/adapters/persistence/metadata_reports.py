@@ -931,12 +931,19 @@ class SQLiteMetadataReportRepository:
         self.identity = identity
         self._review_pipeline_claim: PipelineAction | None = None
         self._current_cover_policy_reference: str | None = None
+        self._current_cover_replay_reference: str | None = None
 
     def bind_current_cover_policy(self, reference: str) -> None:
         """Bind guarded cover effects to this process's validated policy."""
         if re.fullmatch(r"cover_policy_[0-9a-f]{64}", reference) is None:
             raise ValueError("cover policy reference is invalid")
         self._current_cover_policy_reference = reference
+
+    def bind_current_cover_replay(self, reference: str) -> None:
+        """Bind guarded cover effects to the current observer/contract profile."""
+        if re.fullmatch(r"cover_replay_[0-9a-f]{64}", reference) is None:
+            raise ValueError("cover replay reference is invalid")
+        self._current_cover_replay_reference = reference
 
     def field_effect_authority_source(
         self, decision: HumanDecision | AutomaticDecision
@@ -1036,6 +1043,10 @@ class SQLiteMetadataReportRepository:
             if (
                 selected_candidate is None
                 or consideration.get("target_fingerprint") != decision.target_fingerprint
+                or consideration.get("policy_reference")
+                != self._current_cover_policy_reference
+                or consideration.get("replay_reference")
+                != self._current_cover_replay_reference
                 or (
                     incumbent_digest is not None
                     and pre_value != "cover_" + str(incumbent_digest)
@@ -1753,8 +1764,13 @@ class SQLiteMetadataReportRepository:
                     "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
                     "JOIN current_review_case_lineages lineage ON lineage.review_case_id=current.review_case_id "
                     "WHERE consideration.document_digest=? "
-                    "AND json_extract(consideration.document,'$.policy_reference')=? LIMIT 1",
-                    (digest, self._current_cover_policy_reference),
+                    "AND json_extract(consideration.document,'$.policy_reference')=? "
+                    "AND json_extract(consideration.document,'$.replay_reference')=? LIMIT 1",
+                    (
+                        digest,
+                        self._current_cover_policy_reference,
+                        self._current_cover_replay_reference,
+                    ),
                 ).fetchone()
                 == (1,)
                 for digest in digests
@@ -6466,7 +6482,7 @@ class SQLiteMetadataReportRepository:
             if previous is not None:
                 effect = self._connection.execute(
                     "SELECT 1 FROM field_effects WHERE decision_id=? AND state NOT IN "
-                    "('planned','retryable','superseded','abandoned') LIMIT 1",
+                    "('planned','retryable','stale','superseded','abandoned') LIMIT 1",
                     (previous[0],),
                 ).fetchone()
                 if effect is not None:

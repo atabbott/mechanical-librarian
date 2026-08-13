@@ -540,23 +540,94 @@ class ReviewApplication:
     ) -> dict[str, object]:
         if self._cover_considerations is None:
             raise ReviewApplicationError("unavailable")
-        def prepare() -> dict[str, object]:
+
+        def capture() -> tuple[
+            dict[str, object] | None, str, str, str | None, object | None
+        ]:
             detail, report, _ = self._cases._read(review_case_id)  # same serialized use case
             cover = next(
                 field for field in detail["fields"]
                 if field["destination"] == "cover"
             )
-            if retry and cover["human_decision"] is not None:
+            current = self._cover_considerations.current(review_case_id)
+            if retry and cover["human_decision"] is not None and current is not None:
                 raise ReviewApplicationError("already_decided")
-            return self._cover_considerations.ensure(
-                review_case_id,
-                report.to_json(),
-                {
-                    "proposal_id": cover["proposal_id"],
-                },
-                retry=retry,
+            report_document = report.to_json()
+            existing = (
+                None
+                if retry
+                else self._cover_considerations.existing(
+                    review_case_id, report_document
+                )
             )
-        return self.serialized(prepare)
+            return (
+                existing,
+                report_document,
+                str(cover["proposal_id"]),
+                self._cover_considerations.latest_id(review_case_id),
+                (
+                    None
+                    if existing is not None
+                    else self._cover_considerations.prepare_observation(
+                        review_case_id, report_document
+                    )
+                ),
+            )
+
+        try:
+            (
+                existing,
+                report_document,
+                proposal_id,
+                previous_id,
+                observation_request,
+            ) = self.serialized(capture)
+            if existing is not None:
+                return existing
+            assert observation_request is not None
+
+            # The optional process-bound observer receives only the immutable,
+            # report-bound snapshot and never holds the application's global gate.
+            evidence = self._cover_considerations.observe(observation_request)
+
+            def persist() -> dict[str, object]:
+                detail, current_report, _ = self._cases._read(review_case_id)
+                cover = next(
+                    field
+                    for field in detail["fields"]
+                    if field["destination"] == "cover"
+                )
+                if (
+                    current_report.to_json() != report_document
+                    or str(cover["proposal_id"]) != proposal_id
+                ):
+                    raise ReviewApplicationError("stale")
+                current = self._cover_considerations.current(review_case_id)
+                if (
+                    retry
+                    and cover["human_decision"] is not None
+                    and current is not None
+                ):
+                    raise ReviewApplicationError("already_decided")
+                if not retry:
+                    reopened = self._cover_considerations.existing(
+                        review_case_id, report_document
+                    )
+                    if reopened is not None:
+                        return reopened
+                if self._cover_considerations.latest_id(review_case_id) != previous_id:
+                    raise ReviewApplicationError("stale")
+                return self._cover_considerations.ensure(
+                    review_case_id,
+                    report_document,
+                    {"proposal_id": proposal_id},
+                    retry=retry,
+                    reviewer_evidence=evidence,
+                )
+
+            return self.serialized(persist)
+        except CoverConsiderationError as error:
+            raise ReviewApplicationError(error.code) from error
 
     @property
     def policy(self) -> PolicyOperations:

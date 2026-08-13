@@ -33,6 +33,11 @@ field-effect machinery; immediately before application that path revalidates
 the current case, consideration, process policy, target fingerprint, incumbent
 cover digest, selected original digest, consent, capability, backup readiness,
 and ordinary verification/reconciliation gates.
+If those checks retire the effect as stale, the prior decision remains immutable
+history but no longer resolves the current interaction: the owner may prepare a
+successor consideration and record one replacement decision. A changed observer
+profile or other replay-bound contract similarly makes the old consideration
+noncurrent and blocks its decision from reaching the guarded write path.
 
 Authenticated image transport exposes only the bounded application-owned PNG
 preview for the exact current consideration. It is private/no-store and is not

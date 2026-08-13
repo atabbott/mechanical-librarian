@@ -262,6 +262,17 @@ class InspectCurrentReviewCase:
             value["destination"]: value
             for value in report.target.to_data()["fields"]  # type: ignore[index]
         }
+        current_cover_consideration = (
+            None
+            if self._cover_considerations is None
+            else self._cover_considerations.project(
+                snapshot.cover_consideration_document
+            )
+        )
+        if current_cover_consideration is None:
+            # A stale or replay-obsolete cover decision remains immutable history,
+            # but it no longer resolves the current owner interaction.
+            decisions.pop("cover", None)
         fields = []
         for proposal in case.proposals:
             result = proposal["result"]
@@ -319,9 +330,7 @@ class InspectCurrentReviewCase:
                     ),
                 }
             if destination == "cover" and self._cover_considerations is not None:
-                field["cover_consideration"] = self._cover_considerations.project(
-                    snapshot.cover_consideration_document
-                )
+                field["cover_consideration"] = current_cover_consideration
             fields.append(field)
         fields.sort(key=lambda value: not value["needs_attention"])
         return {

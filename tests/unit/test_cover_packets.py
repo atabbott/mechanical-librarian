@@ -658,14 +658,7 @@ class CoverPacketTests(unittest.TestCase):
     def test_only_cover_entry_accepts_exact_packet_bound_images(self) -> None:
         packet, exact = _packet_case()
 
-        self.assertNotIn(
-            "image_payloads",
-            inspect.signature(reviewer_binding.run_contained_reviewer).parameters,
-        )
-        with self.assertRaises(TypeError):
-            reviewer_binding.run_contained_reviewer(
-                b"", "invoke", b"instruction", b"{}", b"{}", exact  # type: ignore[call-arg]
-            )
+        self.assertFalse(hasattr(reviewer_binding, "run_contained_reviewer"))
         admitted = admit_cover_review_request(
             "Inspect.", packet.document,
             '{"additionalProperties":false,"properties":{},"type":"object"}',
