@@ -38,6 +38,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     TargetField,
     TargetFieldState,
+    isbn_family,
     TargetSeries,
     canonical_json,
     complete_creator_identity_bindings,
@@ -51,7 +52,7 @@ from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 
 
 PROPOSAL_SCHEMA = "proposal-set-v4"
-POLICY_VERSION = "fixed-conservative-v6"
+POLICY_VERSION = "fixed-conservative-v7"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -2024,8 +2025,17 @@ def _alternatives(
         ),
     ):
         values = grouped[key]
+        proposal_values = tuple(value.value for value in values)
+        if destination is TargetDestination.ISBN:
+            isbn13_values = tuple(
+                value
+                for value in proposal_values
+                if type(value.value) is str and isbn_family(value.value) == value.value
+            )
+            if isbn13_values:
+                proposal_values = isbn13_values
         proposal_value = min(
-            (value.value for value in values),
+            proposal_values,
             key=lambda value: canonical_json(value.to_data()),
         )
         if target.state is TargetFieldState.VALUE and _matches(
@@ -2131,6 +2141,8 @@ def _observation_key(destination: TargetDestination, value: ProposalValue) -> st
         and type(value.value) is str
     ):
         normalized = value.value
+    elif destination is TargetDestination.ISBN and type(value.value) is str:
+        normalized = isbn_family(value.value) or value.value
     elif type(value.value) is str:
         normalized = _comparison(destination, value.value)
     else:

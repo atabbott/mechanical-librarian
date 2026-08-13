@@ -39,7 +39,7 @@ bound work, while the corpus value remains the preferred membership. Primary
 narrative made 19 correct predictions; source order and all qualified each
 made 20, all at 100% precision. The two ISBN policies also passed:
 `isbn_form:prefer_isbn13` made 22 correct predictions from 41 eligible
-opportunities and `isbn_form:preserve_exact` made 4, each at 100% precision.
+opportunities and both ISBN-form options made 22, each at 100% precision.
 The admitted proposal and decision retain every qualified membership; the
 existing Audiobookshelf effect planner projects only the preferred first
 membership because that target accepts one series value.

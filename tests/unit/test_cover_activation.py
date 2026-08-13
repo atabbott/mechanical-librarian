@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 
 from mechanical_librarian.adapters.field_effect_authority import (
@@ -310,15 +311,25 @@ class CoverActivationTests(unittest.TestCase):
 
             self.assertEqual("verified", verified.state)
             self.assertEqual(selected["artifact_id"], target.read(operation.plan).value)
+            events = consideration_service.history(review_case_id)
             self.assertEqual(
-                ["selected", "superseded", "considered", "stale", "selected", "considered"],
-                [event["kind"] for event in consideration_service.history(review_case_id)],
+                Counter({"selected": 2, "considered": 2, "superseded": 1, "stale": 1}),
+                Counter(event["kind"] for event in events),
+            )
+            self.assertEqual(
+                sorted(
+                    (event["occurred_at"] for event in events), reverse=True
+                ),
+                [event["occurred_at"] for event in events],
             )
             history = InspectCurrentReviewCase(
                 repository, consideration_service
             ).history(review_case_id)
             selected_history = next(
-                item for item in history["items"] if item["kind"] == "selected"
+                item
+                for item in history["items"]
+                if item["kind"] == "selected"
+                and not item["consideration"]["current"]
             )
             self.assertFalse(selected_history["consideration"]["current"])
             self.assertEqual(

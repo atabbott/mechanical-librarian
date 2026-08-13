@@ -1,6 +1,6 @@
 {
   "automatic_authority": "decision_only",
-  "candidate_execution_count": 5,
+  "candidate_execution_count": 7,
   "evidence_method": {
     "evaluated_reports": 49,
     "exposure_unit": "case_field_option",
@@ -38,19 +38,19 @@
     },
     "automatic_decision": {
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
-      "sha256": "fd5ae8198bcb662b21da2d3a298dbfa2e11cad9bc82bae50e88206bee5cde44d"
+      "sha256": "d904386bbb2afda771c0399b8a972ae1974e5dd9e555f7fdea27c3bea0d83988"
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
-      "sha256": "31f59fe2f00de0d77956c98030ad5b1b1a704261396081045224da54e92b0710"
+      "sha256": "9990b19072aa4b19145ae87a7035e8e7eb6a7c680266b9e006b49c3f223f6508"
     },
     "evaluator": {
-      "identity": "f20-field-local-evaluator-v5",
-      "sha256": "c7c0ee9b6f57c4e8829f4df02d8752ae83fd7760df681c1e61fa33869a852f99"
+      "identity": "f20-field-local-evaluator-v7",
+      "sha256": "7cccb4ee7622da38c1e11de4fe721d6451eadcd3bfc21eeda0e7d766b1d6bd81"
     },
     "evidence_execution": {
-      "identity": "offline-current-adapter-replay-v5",
-      "sha256": "ef6577284f4e2e8480d331adfa9899cd453a9140664b6732e568870acff807a6"
+      "identity": "offline-current-adapter-and-guarded-effect-replay-v7",
+      "sha256": "08217c88a3ae079adec249afd729a57c337c91b840033d6fb6e9abdd625e09a7"
     },
     "policy": {
       "identity": "src/mechanical_librarian/domain/metadata_policy.py",
@@ -245,8 +245,8 @@
       "identity": "isbn_form:preserve_exact",
       "metrics": {
         "automatic_precision": 1.0,
-        "automatic_predictions": 4,
-        "automatic_recall": 0.0975609756097561,
+        "automatic_predictions": 22,
+        "automatic_recall": 0.5365853658536586,
         "structural_or_sensitive_violations": 0,
         "unsupported_output": 0
       }

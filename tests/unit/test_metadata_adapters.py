@@ -70,6 +70,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState, cover_source_id,
 )
 from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.proposal_set import POLICY_VERSION
 
 
 class _InterruptedProviderStream(httpx.SyncByteStream):
@@ -181,7 +182,7 @@ def _create_prior_schema(
         metadata_persistence._COVER_ARTIFACT_INDEX_SQL,
         metadata_persistence._COVER_PREVIEW_INDEX_SQL,
         metadata_persistence._PROPOSAL_SETS_SQL.replace(
-            "= 'fixed-conservative-v6'",
+            f"= '{POLICY_VERSION}'",
             f"= '{proposal_policy}'",
         ),
         metadata_persistence._REVIEW_CASES_SQL,
@@ -302,6 +303,14 @@ class MetadataPersistenceTests(unittest.TestCase):
             (
                 "previous v9",
                 _create_prior_schema,
+            ),
+            (
+                "current report schema with stale proposal policy",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v23",
+                    "fixed-conservative-v6",
+                ),
             ),
             (
                 "previous v12",
