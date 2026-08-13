@@ -3361,12 +3361,12 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 "primary", "fiction", "lib-1", "f" * 64, 1
             )
             repository.set_review_pipeline_paused(True, 2)
-            binding = repository._binding
-            self.assertIsNotNone(binding)
-            assert binding is not None
+            authority = repository.authority
+            self.assertIsNotNone(authority)
+            assert authority is not None
             preparation = ReviewPreparationPipeline(
                 repository_factory=lambda: open_repository(
-                    database, authority=binding
+                    database, authority=authority
                 ),
                 libraries=(("primary", "fiction", "lib-1", "f" * 64),),
                 discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
@@ -3388,35 +3388,34 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 base_url="https://review.test",
             )
             started = threading.Event()
+            advance = threading.Event()
+            committed = threading.Event()
+            commit_count = [0]
+            commit_lock = threading.Lock()
             writer_errors: list[BaseException] = []
 
             def churn_journal_descriptors() -> None:
-                connection = None
+                writer_repository = None
                 try:
-                    connection = sqlite3.connect(binding.alias_path, isolation_level=None)
-                    connection.execute("PRAGMA busy_timeout=5000")
-                    for updated_at in range(3, 103):
-                        paused = updated_at % 2 == 1
-                        state = "queued" if paused else "processing"
-                        connection.execute("BEGIN IMMEDIATE")
-                        connection.execute(
-                            "UPDATE review_preparation_control "
-                            "SET paused=?,updated_at=? WHERE singleton=1",
-                            (paused, updated_at),
+                    writer_repository = open_repository(
+                        database, authority=authority
+                    )
+                    for updated_at in range(3, 28):
+                        writer_repository.set_review_pipeline_paused(
+                            updated_at % 2 == 1, updated_at
                         )
-                        connection.execute(
-                            "UPDATE review_preparation_scans "
-                            "SET state=?,updated_at=? WHERE connection_name='primary' "
-                            "AND library_name='fiction'",
-                            (state, updated_at),
-                        )
-                        connection.execute("COMMIT")
+                        with commit_lock:
+                            commit_count[0] += 1
+                        committed.set()
                         started.set()
+                        if not advance.wait(5):
+                            self.fail("authenticated status polling did not advance writer churn")
+                        advance.clear()
                 except BaseException as error:
                     writer_errors.append(error)
                 finally:
-                    if connection is not None:
-                        connection.close()
+                    if writer_repository is not None:
+                        writer_repository.close()
 
             writer = threading.Thread(target=churn_journal_descriptors)
             try:
@@ -3429,22 +3428,33 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 client.headers["x-ml-build-identity"] = TEST_REACT_BUILD_IDENTITY
                 writer.start()
                 self.assertTrue(started.wait(5))
-                for _ in range(25):
+                for poll in range(25):
+                    self.assertTrue(committed.wait(5))
+                    with commit_lock:
+                        before = commit_count[0]
                     status = client.get("/api/v1/review-preparation")
                     self.assertEqual(status.status_code, 200, status.text)
                     payload = status.json()
                     self.assertIn(
                         (payload["paused"], payload["libraries"][0]["state"]),
-                        ((True, "queued"), (False, "processing")),
+                        ((True, "queued"), (False, "queued")),
                     )
                     self.assertEqual(payload["libraries"][0]["connection"], "primary")
                     self.assertEqual(payload["libraries"][0]["library"], "fiction")
+                    committed.clear()
+                    advance.set()
+                    if poll < 24:
+                        self.assertTrue(committed.wait(5))
+                        with commit_lock:
+                            self.assertGreater(commit_count[0], before)
             finally:
+                advance.set()
                 writer.join(5)
                 client.close()
                 repository.close()
             self.assertFalse(writer.is_alive())
             self.assertEqual(writer_errors, [])
+            self.assertEqual(commit_count, [25])
 
     def test_sqlite_library_and_attention_queries_are_current_and_bounded(
         self,
