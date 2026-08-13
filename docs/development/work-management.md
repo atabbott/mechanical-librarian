@@ -323,10 +323,12 @@ requests and reconcile their issues and Project items. It does not authorize
 bypasses, force pushes, administrative merges, production access, release
 publication, unrelated tracking changes, or closure of incomplete work. The
 trusted controller, validators, and evidence remain maintainer-owned and
-ignored under `.codex/**`. Private Free-plan delivery uses the explicitly
-accepted `CLIENT_ENFORCED_FREE_PLAN` mode and records
-`EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED` on every success. Server settings are
-observational; exact PR/head/check/review/connector, conditional merge, and
+ignored under `.codex/**`. Its receipt-bound `CLIENT_ENFORCED_FREE_PLAN`
+validation mode identifier remains for evidence compatibility. GitHub Pro's
+active default-branch ruleset independently enforces pull requests and strict
+required checks, while its observations do not become client-side merge
+authority. The controller records `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED` on
+every success; exact PR/head/check/review/connector, conditional merge, and
 post-merge verification remain mandatory.
 
 The instruction `Deliver the next slice` selects only the highest-priority
@@ -391,8 +393,11 @@ closing issue nor the `tracking-exempt` label. This exception applies only when
 GitHub identifies the pull-request author as `renovate[bot]`; it is not
 transferable through a title, label, branch name, commit author, or human
 account. Renovate pull requests follow the bounded update, qualification,
-review, and recovery rules in [dependency updates](dependency-updates.md).
-Human-authored dependency changes remain material tracked work.
+review, merge-classification, and recovery rules in
+[dependency updates](dependency-updates.md). Only its named low-risk classes
+may use GitHub-native auto-merge after strict required checks; all other classes
+retain maintainer merge control. Human-authored dependency changes remain
+material tracked work.
 
 No pull-request-target workflow or workflow token evaluates this policy. The
 trusted controller remains local, candidate-independent, and outside the

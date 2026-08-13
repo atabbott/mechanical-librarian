@@ -57,9 +57,11 @@ Renovate-authored dependency pull requests are the sole automation exception
 to that tracking rule. They require neither an issue nor the
 `tracking-exempt` label because `.github/renovate.json` is their maintainer-
 reviewed authority boundary. They remain subject to the documented dependency
-update policy, exact-head qualification, connector review, and maintainer-owned
-merge controller; no other bot or human-authored pull request inherits this
-exception.
+update policy and exact-head qualification. Only the low-risk classes explicitly
+enabled there may use GitHub-native pull-request auto-merge after all required
+checks pass. Every other Renovate pull request requires the ordinary connector
+review and maintainer-owned merge controller; no other bot or human-authored
+pull request inherits this exception.
 
 Every change must include the smallest appropriate combination of:
 
@@ -134,15 +136,17 @@ decision with rationale and review.
   maintainer decision blocks safe progress. A partially merged transaction is
   recoverable `In progress` work, not a rollback trigger or a completed slice.
 - The trusted controller, validators, and evidence remain maintainer-owned and
-  ignored under `.codex/**`. On the private Free plan, autonomous delivery uses
-  the receipt-bound `CLIENT_ENFORCED_FREE_PLAN` mode. Server protection and
-  ruleset settings are observational rather than merge authority. Every
-  successful receipt records `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED`: another
-  credentialed actor can change or race `main`, and GitHub's conditional merge
-  locks the pull-request head but not the base SHA. Exact local, connector,
-  check, review, exact repository/branch provenance, internally persisted
-  dry-run, conditional-merge, exact closing-reference, and post-merge gates
-  remain mandatory.
+  ignored under `.codex/**`. The controller retains the receipt-bound
+  `CLIENT_ENFORCED_FREE_PLAN` validation mode identifier for evidence
+  compatibility. On GitHub Pro, the active default-branch ruleset independently
+  enforces pull requests and strict required checks; its observations do not
+  become client-side merge authority. Every successful receipt still records
+  `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED`: another qualified pull request or an
+  administrator changing enforcement can move or race `main`, and GitHub's
+  conditional merge locks the pull-request head but not the base SHA. Exact
+  local, connector, check, review, exact repository/branch provenance,
+  internally persisted dry-run, conditional-merge, exact closing-reference,
+  and post-merge gates remain mandatory.
   Dry-run freshness ends at the trusted mutation-attempt instant, not terminal
   completion. Activation permits at most 99 constituents plus its tracker;
   non-activation permits at most 100 constituents.
