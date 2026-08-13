@@ -759,6 +759,23 @@ all other automatic intent is rejected, and no automatic outcome itself grants
 effect or target-write authority. The deterministic F19 projection includes
 exact `policy_ignored` proposals; the external-review packet remains unchanged.
 
+### Authenticated Activity history
+
+The authenticated Activity endpoint is a private, `no-store`, read-only history
+projection. Its bounded event type, date range, page, page size, and search
+inputs are validated before a parameterized SQL query selects one page and its
+count from the same durable ledger projection. The response has no export,
+write, target, provider, or recovery authority. Stored documents are hostile
+input: malformed, oversized, or inconsistent rows fail closed rather than
+exposing a raw row, private path, or invented verification claim. The projection
+contains only bounded readable labels and source-recorded facts. Current waiting
+work is independently read from the present field-effect state, so filtering or
+pagination cannot make completed historical work appear active. Count and page
+are snapshot-consistent only for the individual read transaction; concurrent
+append-only activity can change a later request. Focused repository,
+application, API, and browser tests cover bounds, redaction, malformed rows,
+current-state recovery, and private-cache headers.
+
 Guarded field effects add the first persisted mutation boundary. The installed
 product composes the API-key Audiobookshelf target only after authenticated,
 library-scoped consent for the exact eligible destination subset disclosed in

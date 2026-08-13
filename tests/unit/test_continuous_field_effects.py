@@ -147,6 +147,12 @@ class _PagedRepository:
     def field_effect_backup_ready(self):
         return True
 
+    def field_effect_activity_page(self, **_query):
+        return {
+            "events": [], "report_documents": {}, "current_waiting": None,
+            "page": 1, "page_count": 1, "page_size": 25, "total": 0,
+        }
+
     def grant_field_effect_consent_matrix(self, *arguments):
         raise AssertionError("consent must not be granted before capability proof")
 
@@ -392,7 +398,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
 
         self.assertEqual(0, service.schedule())
         activity = service.activity()
-        self.assertEqual("continuous-field-activity-v1", activity["schema_version"])
+        self.assertEqual("continuous-field-activity-v2", activity["schema_version"])
         self.assertEqual(1, activity["prepared"]["automatic"])
 
     def test_return_to_automatic_releases_only_after_current_scan_completes(self) -> None:
@@ -745,6 +751,14 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
                     "suspensions": [],
                 }
 
+            def field_effect_activity_page(self, **_query):
+                data = self.field_effect_activity_data(50)
+                return {
+                    "events": data.get("events", []), "report_documents": data.get("report_documents", {}),
+                    "current_waiting": None, "page": 1, "page_count": 1,
+                    "page_size": 25, "total": 2,
+                }
+
         def service(cleanup):
             return ContinuousGuardedApplication(
                 Repository(cleanup), {("primary", "alpha"): _Planner()},
@@ -772,6 +786,14 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
                     "counts": {}, "events": [dict(event), dict(event)],
                     "paused": False, "report_documents": {"report-1": "{}"},
                     "suspensions": [],
+                }
+
+            def field_effect_activity_page(self, **_query):
+                data = self.field_effect_activity_data(50)
+                return {
+                    "events": data["events"], "report_documents": data["report_documents"],
+                    "current_waiting": None, "page": 1, "page_count": 1,
+                    "page_size": 25, "total": 2,
                 }
 
         service = ContinuousGuardedApplication(

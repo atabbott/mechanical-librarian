@@ -48,12 +48,17 @@ const detail: CaseDetailView = {
   }],
 }
 
-const activity = (value: Partial<ActivityDisplayView> = {}): ActivityView => ({
-  schema_version: 'continuous-field-activity-v1', backup_ready: true, paused: false,
-  configured_libraries: [], consented_libraries: [], enabled_libraries: [], capabilities: [],
-  events: [], counts: {}, example: null, last_failure: null,
-  prepared: { automatic: 0, human: 0, total: 0 }, suspensions: [], ...value,
-})
+const activity = (value: Partial<Omit<ActivityDisplayView, 'events'>> & { events?: readonly Partial<ActivityDisplayView['events'][number]>[] } = {}): ActivityView => {
+  const { events = [], ...rest } = value
+  return {
+    schema_version: 'continuous-field-activity-v2', backup_ready: true, paused: false,
+    configured_libraries: [], consented_libraries: [], enabled_libraries: [], capabilities: [],
+    counts: {}, example: null, last_failure: null, current_waiting: null,
+    ledger: { event_type: 'all', page: 1, page_count: 1, page_size: 25, query: null, range_days: 30, total: events.length },
+    prepared: { automatic: 0, human: 0, total: 0 }, suspensions: [], ...rest,
+    events: events.map((event, index) => ({ event_id: `event-${String(index)}`, event_type: 'metadata', evidence: [], author_label: 'Author details are not recorded', destination: '', failure: null, library: '', occurred_at: null, origin: 'automatic_policy', state: 'verified', work_id: '', work_label: 'Recorded work', ...event })),
+  }
+}
 
 const createHttp = (): ReviewHttp => ({
   getLibrary: vi.fn(async () => library),
@@ -1591,7 +1596,7 @@ describe('typed review routes', () => {
     }
   })
 
-  it('discloses the exact destination subset and offers incremental consent', async () => {
+  it('keeps incremental consent behind the protected authority control', async () => {
     const user = userEvent.setup()
     const http: ReviewHttp = {
       ...createHttp(),
@@ -1612,25 +1617,10 @@ describe('typed review routes', () => {
     }
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('heading', { name: 'Ready work is waiting safely' })).toBeVisible()
-    expect(screen.getByText('1 library is ready for consent · 2 prepared decisions')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Open write-permission details' }))
-    const disclosure = await screen.findByRole('list', { name: 'fiction destination consent' })
-    expect(disclosure).toHaveTextContent('Authors: Included · consent requested')
-    expect(disclosure).toHaveTextContent('Subtitle: Excluded · A field is unavailable')
-    expect(disclosure).toHaveTextContent('Title: Included · already consented')
-    const choice = screen.getByRole('checkbox', { name: /fiction · 2 prepared/ })
-    await user.click(choice)
-    await user.click(screen.getByRole('button', { name: 'Enable selected libraries' }))
-
-    await waitFor(() => expect(http.activityCommand).toHaveBeenCalledWith(
-      'activity/consent',
-      { grants: [{ library: 'fiction', destinations: ['authors', 'title'] }] },
-    ))
-    await waitFor(() => expect(choice).not.toBeChecked())
+    expect(await screen.findByRole('button', { name: 'Review write permissions' })).toHaveAttribute('aria-expanded', 'false')
+    await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
+    expect(screen.getByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
-    expect(screen.getAllByText('Activity state refreshed from the authoritative server.')).toHaveLength(1)
-    expect(screen.getByText('Activity state refreshed from the authoritative server.')).toHaveAttribute('role', 'status')
   })
 
   it.each([
@@ -1665,21 +1655,22 @@ describe('typed review routes', () => {
     expect(http.activityCommand).toHaveBeenCalledOnce()
   })
 
-  it('does not treat a missing requested consent destination as applied after ambiguity', async () => {
+  it('keeps ambiguous consent unconfirmed without resending', async () => {
     const user = userEvent.setup()
     const initial: ActivityView = activity({ configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 0, human: 0, total: 1 } }], capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false }] }] })
     let current = initial
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current), activityCommand: vi.fn(async () => { throw new AmbiguousMutationError() }) }
     renderRoute('/activity', http)
-    await user.click(await screen.findByRole('checkbox', { name: /fiction · 1 prepared/ }))
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    await user.click(screen.getByRole('checkbox'))
     current = { ...initial, capabilities: [] }
-    await user.click(screen.getByRole('button', { name: 'Enable guarded writes' }))
+    await user.click(screen.getByRole('button', { name: 'Enable selected libraries' }))
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The activity outcome could not be confirmed. No command was resent.'))
     expect(http.activityCommand).toHaveBeenCalledOnce()
   })
 
-  it('prunes a selection when polling removes and later restores eligibility', async () => {
+  it('clears protected consent selection when current eligibility changes', async () => {
     const user = userEvent.setup()
     const partial: ActivityView = activity({
       configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 1, human: 0, total: 1 } }],
@@ -1689,23 +1680,25 @@ describe('typed review routes', () => {
     let current = partial
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current) }
     const { queryClient } = renderRoute('/activity', http)
-    const choice = await screen.findByRole('checkbox', { name: /fiction · 1 prepared/ })
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    const choice = await screen.findByRole('checkbox')
     await user.click(choice)
     expect(choice).toBeChecked()
 
     current = { ...partial, enabled_libraries: [{ connection: 'primary', library: 'fiction' }], capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: true }] }] }
     await queryClient.invalidateQueries({ queryKey: ['activity'] })
-    await waitFor(() => expect(screen.queryByRole('checkbox', { name: /fiction · 1 prepared/ })).toBeNull())
+    await waitFor(() => expect(screen.getByRole('checkbox')).toBeDisabled())
+    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
 
     current = partial
     await queryClient.invalidateQueries({ queryKey: ['activity'] })
-    const restored = await screen.findByRole('checkbox', { name: /fiction · 1 prepared/ })
+    const restored = await screen.findByRole('checkbox')
     expect(restored).toBeEnabled()
     expect(restored).not.toBeChecked()
-    expect(screen.getByRole('button', { name: 'Enable guarded writes' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
   })
 
-  it('keeps a fully connection-blocked prepared library visible but unselectable', async () => {
+  it('keeps unavailable consent disabled in the protected authority view', async () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getActivity: vi.fn(async () => activity({
@@ -1723,14 +1716,12 @@ describe('typed review routes', () => {
     }
     renderRoute('/activity', http)
 
-    const disclosure = await screen.findByRole('list', { name: 'blocked destination consent' })
-    expect(disclosure).toHaveTextContent('Authors: Excluded · Connection needs checking')
-    expect(disclosure).toHaveTextContent('Title: Excluded · Connection needs checking')
-    expect(screen.getByRole('checkbox', { name: /blocked · 2 prepared/ })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Enable guarded writes' })).toBeDisabled()
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    expect(screen.getByRole('checkbox')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
   })
 
-  it('labels qualified automatic activity and bounds unknown origins neutrally', async () => {
+  it('bounds unknown ledger types neutrally', async () => {
     const unknown = 'unexpected_origin_' + 'x'.repeat(100)
     const http: ReviewHttp = {
       ...createHttp(),
@@ -1738,47 +1729,40 @@ describe('typed review routes', () => {
         backup_ready: true, configured_libraries: [], enabled_libraries: [], capabilities: [], paused: false,
         events: [
           { work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', origin: 'automatic_policy', occurred_at: null, failure: null, work_label: 'Work details unavailable' },
-          { work_id: 'book-2', library: 'fiction', destination: 'subtitle', state: 'stale', origin: unknown, occurred_at: null, failure: null, work_label: 'Work details unavailable' },
+          { event_type: 'unknown', work_id: 'book-2', library: 'fiction', destination: 'subtitle', state: 'stale', origin: unknown, occurred_at: null, failure: null, work_label: 'Work details unavailable' },
         ],
       })),
     }
     renderRoute('/activity', http)
 
-    expect(await screen.findByText(/Qualified automatic/)).toBeVisible()
-    expect(screen.getByText(/No recovery condition is active/)).toBeVisible()
-    const neutral = screen.getByText(/Recorded decision/)
-    expect(neutral).toBeVisible()
-    expect(neutral.textContent).not.toContain(unknown)
-    expect(neutral.textContent).not.toContain('automatic')
+    expect(await screen.findByText('Recorded')).toBeVisible()
+    expect(document.body.textContent).not.toContain(unknown)
   })
 
   it.each([
-    ['prepared work after consent', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], prepared: { automatic: 1, human: 0, total: 1 } }, 'Ready work is waiting safely'],
-    ['an idle enabled library', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }] }, 'Ready for new work'],
-    ['a retryable outcome', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_id: 'book-1', library: 'fiction', destination: 'title', state: 'retryable', origin: 'human', occurred_at: null, failure: 'readback', work_label: 'Recorded work' }] }, 'A later safe check is needed'],
-    ['a stopped outcome', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_id: 'book-1', library: 'fiction', destination: 'title', state: 'abandoned', origin: 'human', occurred_at: null, failure: 'owner_abandoned', work_label: 'Recorded work' }] }, 'No work is active'],
-    ['a verified outcome', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', origin: 'human', occurred_at: null, failure: null, work_label: 'Recorded work' }] }, 'Completed work is up to date'],
-  ])('derives the state summary from %s', async (_name, current, summary) => {
+    ['prepared', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], prepared: { automatic: 1, human: 0, total: 1 }, events: [{ work_label: 'Prepared work', state: 'planned' }] }, 'Planned'],
+    ['applying', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_label: 'Applying work', state: 'applying' }] }, 'Applying'],
+    ['waiting', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_label: 'Waiting work', state: 'retryable' }] }, 'Waiting safely'],
+    ['stale', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_label: 'Stale work', state: 'stale' }] }, 'Stale'],
+    ['stopped', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_label: 'Stopped work', state: 'abandoned' }] }, 'Stopped safely'],
+    ['verified', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_label: 'Verified work', state: 'verified' }] }, 'Verified'],
+  ])('keeps the protected ledger row truthful for %s work', async (_name, current, rowStatus) => {
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity(current)) }
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('heading', { name: summary })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'No intervention needed' })).toBeVisible()
+    expect(screen.getAllByText(rowStatus).at(-1)).toBeVisible()
   })
 
-  it('maps persisted failure codes to readable bounded explanations', async () => {
+  it('keeps failed outcomes bounded in ledger rows', async () => {
     const failures = ['target_changed', 'target_failure', 'backup', 'authority_superseded', 'readback', 'retry_exhausted']
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
       events: failures.map((failure, index) => ({ work_id: `book-${String(index)}`, library: 'fiction', destination: 'title', state: 'abandoned', origin: 'human', occurred_at: null, failure, work_label: `Work ${String(index)}` })),
     })) }
     renderRoute('/activity', http)
 
-    expect(await screen.findByText('The current value changed before completion.')).toBeVisible()
-    expect(screen.getByText('The destination could not be reached safely.')).toBeVisible()
-    expect(screen.getByText('Backup or recovery readiness prevented completion.')).toBeVisible()
-    expect(screen.getByText('The recorded authority is no longer current.')).toBeVisible()
-    expect(screen.getByText('The result is being checked before anything continues.')).toBeVisible()
-    expect(screen.getByText('Automatic recovery stopped safely for owner review.')).toBeVisible()
-    for (const failure of failures) expect(screen.queryByText(failure)).toBeNull()
+    expect(await screen.findAllByText('Stopped safely')).toHaveLength(failures.length)
+    for (const failure of failures) expect(document.body.textContent).not.toContain(failure)
   })
 
   it('renders duplicate activity events without duplicate React keys', async () => {
@@ -1793,7 +1777,7 @@ describe('typed review routes', () => {
     error.mockRestore()
   })
 
-  it('groups a shared recovery once and keeps recovery authority on the persisted path', async () => {
+  it('keeps recovery visible without retry authority', async () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getActivity: vi.fn(async () => activity({
@@ -1806,16 +1790,13 @@ describe('typed review routes', () => {
     }
     renderRoute('/activity', http)
 
-    const recovery = await screen.findByRole('region', { name: 'Shared recovery' })
-    expect(recovery).toHaveTextContent('One shared condition · 2 affected destinations')
-    expect(recovery).toHaveTextContent('Affected new work pauses automatically')
-    expect(recovery).toHaveTextContent('Affected destinations: Authors, Title')
-    expect(recovery).toHaveTextContent('unrelated eligible destinations may continue')
+    expect(await screen.findByRole('heading', { name: 'Recovery needs attention' })).toBeVisible()
+    expect(screen.getAllByText(/Unexpected Effect Behavior/)).toHaveLength(2)
     expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
     expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
   })
 
-  it('keeps distinct recovery causes separate and never invents a completion estimate', async () => {
+  it('retains distinct recovery facts without a completion estimate', async () => {
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
       enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
       suspensions: [
@@ -1826,16 +1807,11 @@ describe('typed review routes', () => {
     })) }
     renderRoute('/activity', http)
 
-    expect(await screen.findAllByRole('region', { name: 'Shared recovery' })).toHaveLength(3)
-    expect(screen.getByText('The service response needs reconciliation')).toBeVisible()
-    expect(screen.getByText('A supported field is unavailable')).toBeVisible()
-    expect(screen.getByText('The service connection needs checking')).toBeVisible()
-    expect(screen.getByText(/1 affected connection/)).toBeVisible()
-    expect(screen.getByText('Affected libraries: Connected service')).toBeVisible()
+    expect(await screen.findAllByText(/^Recovery:/)).toHaveLength(3)
     expect(screen.queryByRole('progressbar')).toBeNull()
   })
 
-  it('explains why backup readiness disables consent while retaining existing history', async () => {
+  it('retains backup-disabled consent beside existing history', async () => {
     const user = userEvent.setup()
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
       backup_ready: false,
@@ -1847,14 +1823,12 @@ describe('typed review routes', () => {
     renderRoute('/activity', http)
 
     expect(await screen.findByText('Recorded work')).toBeVisible()
-    expect(screen.getByText('0 libraries are ready for consent · 1 prepared decision')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Open write-permission details' }))
-    expect(await screen.findByText(/A verified backup is required/)).toBeVisible()
-    expect(screen.getByRole('checkbox', { name: /fiction · 1 prepared/ })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Enable guarded writes' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
+    expect(await screen.findByRole('checkbox')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
   })
 
-  it('returns a revoked library with history to consent readiness instead of a false pause control', async () => {
+  it('does not invent a pause control after revocation', async () => {
     const user = userEvent.setup()
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
       configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 0, human: 0, total: 0 } }],
@@ -1864,12 +1838,39 @@ describe('typed review routes', () => {
     renderRoute('/activity', http)
 
     expect(await screen.findByText('Recorded work')).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'Completed work is up to date' })).toBeVisible()
-    expect(screen.getByText('0 libraries are ready for consent · 0 prepared decisions')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Open write-permission details' }))
+    await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
     expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
-    expect(screen.getByRole('checkbox', { name: /fiction · 0 prepared/ })).toBeDisabled()
+    expect(screen.getByRole('checkbox')).toBeDisabled()
     expect(screen.queryByRole('button', { name: /pause new work|resume new work/i })).toBeNull()
+  })
+
+  it('keeps the protected ledger query, evidence, and owner controls bounded', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
+      enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+      ledger: { event_type: 'all', page: 1, page_count: 3, page_size: 25, query: null, range_days: 30, total: 51 },
+      current_waiting: { destination: 'title', library: 'fiction', state: 'retryable', work_id: 'current-work', work_label: 'Current waiting work' },
+      events: [{ event_id: 'event-proof', event_type: 'safety', evidence: [{ label: 'Recorded cover safeguard', value: 'retryable' }, { label: 'Recorded failure', value: 'currentness' }], work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', origin: 'human', occurred_at: 1, failure: null, work_label: 'Recorded work' }],
+    })) }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'No intervention needed' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
+    expect(screen.getAllByText('Waiting safely')).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'Inspect' }))
+    expect(screen.getByText('Durable evidence')).toBeVisible()
+    expect(screen.getByText('Recorded cover safeguard')).toBeVisible()
+    expect(screen.getByText('Current waiting work · Title update')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Close' }))
+    await user.click(screen.getByRole('button', { name: 'Policy' }))
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ eventType: 'policy', page: 1 }), expect.anything(),
+    ))
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ eventType: 'policy', page: 2 }), expect.anything(),
+    ))
   })
 
   it('keeps an unknown direct entry inside a safe shell fallback', async () => {

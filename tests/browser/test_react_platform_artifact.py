@@ -123,7 +123,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 ("/policy?section=publication", "Library policy"),
                 ("/policy?section=curation", "Library policy"),
                 ("/policy?section=unsupported", "Library policy"),
-                ("/activity", "Activity"),
+                ("/activity", "Activity and recovery"),
             )
             for path, heading in routes:
                 fail_activity_once = path == "/activity"
@@ -145,27 +145,28 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertIsNone(page.evaluate("() => window.__metadataExecuted"))
                 if path == "/activity":
                     page.get_by_role(
-                        "button", name="Open write-permission details"
+                        "button", name="Review write permissions"
                     ).click()
-                    page.get_by_label("Household ebooks destination consent").get_by_text(
-                        "Subtitle: Excluded · A field is unavailable"
+                    page.get_by_role("heading", name="Enable guarded writes").wait_for()
+                    page.locator(".activity-consent-library").filter(
+                        has_text="Household ebooks"
+                    ).get_by_text("5 prepared · Some destinations are ready").wait_for()
+                    page.get_by_role("heading", name="Activity ledger").wait_for()
+                    page.get_by_label("Search activity").wait_for()
+                    page.get_by_role("button", name="Reviews").wait_for()
+                    page.get_by_role("button", name="Inspect").first.click()
+                    page.get_by_text("Durable evidence").wait_for()
+                    page.get_by_text("Recorded origin").wait_for()
+                    page.locator(".cm-activity-evidence").get_by_text(
+                        "Outcome", exact=True
                     ).wait_for()
-                    page.get_by_text(
-                        "Qualified automatic decision", exact=False
-                    ).first.wait_for()
-                    page.get_by_text("Human decision", exact=False).first.wait_for()
-                    page.get_by_text(
-                        "The result is being checked", exact=False
-                    ).first.wait_for()
-                    page.get_by_text("Affected destinations: Authors, Title").wait_for()
-                    page.get_by_text("Recorded decision", exact=False).wait_for()
                     self.assertNotIn(
                         "future_provider_origin",
-                        page.locator(".activity-ledger").inner_text(),
+                        page.locator(".cm-activity-ledger").inner_text(),
                     )
-                    page.get_by_role(
-                        "checkbox", name="Spoken stories · 2 prepared"
-                    ).check()
+                    page.locator(".activity-consent-library").filter(
+                        has_text="Spoken stories"
+                    ).get_by_role("checkbox").check()
                     page.get_by_role("button", name="Enable selected libraries").click()
                     page.get_by_text(
                         "Activity state refreshed from the authoritative server."

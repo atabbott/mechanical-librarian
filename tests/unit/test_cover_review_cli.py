@@ -81,7 +81,7 @@ class CoverReviewCliTests(unittest.TestCase):
                     database,
                 )
 
-            self.assertEqual("continuous-field-activity-v1", activity["schema_version"])
+            self.assertEqual("continuous-field-activity-v2", activity["schema_version"])
             self.assertEqual(before_bytes, database.read_bytes())
             self.assertEqual(before_entries, {path.name for path in root.iterdir()})
             self.assertFalse((root / "private").exists())
