@@ -5,9 +5,10 @@
 The Mend-hosted Renovate GitHub App is an external repository-maintenance
 actor. It reads dependency manifests, lockfiles, Dockerfiles, GitHub workflows,
 release metadata, and GitHub vulnerability alerts. It may create branches,
-commits, issues, and pull requests. Repository configuration disables all
-Renovate and platform-native auto-merge paths; only the maintainer-owned
-exact-head controller may merge an update.
+commits, issues, and pull requests. For explicitly low-risk update classes it
+may also request GitHub-native pull-request auto-merge. It cannot write directly
+to `main` or bypass the default-branch ruleset. Every other update remains under
+the maintainer-owned exact-head controller.
 
 The App receives no Mechanical Librarian application credential, owner
 password, target-service credential, reviewer credential, production path,
@@ -29,11 +30,16 @@ The current controls are:
 - ordinary releases age for seven days before a pull request;
 - manifests pin direct dependencies while exact lockfiles and image/Action pins
   make the complete proposed artifact reviewable;
-- Renovate groups routine library updates but cannot merge them;
-- infrastructure, workflows, major and pre-1.0 minor updates, Playwright, and
-  setuptools require dashboard approval;
-- platform-native and Renovate auto-merge are disabled; successful exact-head
-  checks are evidence for the maintainer-owned merge controller, not authority;
+- Renovate may request platform auto-merge only for ordinary patches, stable
+  library minors, Playwright patches, and lockfile maintenance;
+- pre-1.0 minors, infrastructure, workflows, runtimes, the current frontend
+  compiler/bundler/linter/generator/test toolchain, Python build backends, and
+  Playwright minors open without auto-merge;
+- majors and replacements require Dependency Dashboard approval and do not
+  auto-merge;
+- the active default-branch ruleset requires pull requests and strict current
+  `fast-source`, `exact-installed`, and `protected-browser` results from GitHub
+  Actions, with no Renovate bypass actor;
 - CI installs without npm lifecycle scripts, verifies lock currency, audits
   npm dependencies and licences, builds deterministically, and exercises the
   exact installed Python and protected browser artifacts;
@@ -49,8 +55,10 @@ unexpected branch, workflow, configuration, or merge activity.
 ## Failure and recovery
 
 Registry unavailability, an unsupported manifest, a lockfile conflict, a
-failed update command, or a failing check leaves the update unmerged for
-maintainer inspection. The supported recovery is to close or rebase the pull
-request, correct the repository configuration through tracked work, or suspend
-the App. No dependency automation failure authorizes a direct `main` write,
-test bypass, production-service access, or unreviewed compatibility expansion.
+failed update command, a failing check, or base drift leaves the update
+unmerged for maintainer inspection. The supported recovery is to close or
+rebase the pull request, correct the repository configuration through tracked
+work, or suspend the App. Revert an unsuitable merged update through the normal
+tracked defect workflow. No dependency automation failure authorizes a direct
+`main` write, test bypass, production-service access, or unreviewed
+compatibility expansion.

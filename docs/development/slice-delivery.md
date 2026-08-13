@@ -123,13 +123,15 @@ access, or unrelated changes.
 
 Trusted merge control, validators, and evidence are maintainer-owned and remain
 ignored under `.codex/**`, independently qualified from candidate content.
-Private Free-plan delivery uses the receipt-bound
-`CLIENT_ENFORCED_FREE_PLAN` mode. Protection and ruleset responses are retained
-as observations but do not authorize or block delivery. Autonomous local and
-connector review evidence remains mandatory and exact-head. Every successful
-receipt records `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED`, acknowledging that a
-credentialed actor can change or race `main` and that the conditional merge
-locks only the pull-request head, not the base SHA.
+The controller retains the receipt-bound `CLIENT_ENFORCED_FREE_PLAN` validation
+mode identifier for evidence compatibility. On GitHub Pro, the active ruleset
+independently enforces pull requests and strict required checks. Its responses
+remain observations rather than client-side merge authority. Autonomous local
+and connector review evidence remains mandatory and exact-head. Every
+successful receipt records `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED`,
+acknowledging that another qualified pull request or an administrator changing
+enforcement can move or race `main` and that the conditional merge locks only
+the pull-request head, not the base SHA.
 The live PR head must also name the exact bounded repository and delivery
 branch. Each mutating invocation internally persists a canonical dry-run
 receipt, repeats the full live preflight immediately before the conditional
