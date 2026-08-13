@@ -544,9 +544,9 @@ with tempfile.TemporaryDirectory() as directory:
 def _runtime_help_is_closed(value: str) -> bool:
     choices = re.findall(r"\{([^}\r\n]+)\}", value)
     commands = re.findall(r"^    ([a-z][a-z0-9-]*)  ", value, re.MULTILINE)
-    expected = "review-serve,policy-preview,cover-review"
+    expected = "review-serve,policy-preview,cover-review,review-activity"
     return choices == [expected, expected] and commands == [
-        "review-serve", "policy-preview", "cover-review",
+        "review-serve", "policy-preview", "cover-review", "review-activity",
     ]
 
 
