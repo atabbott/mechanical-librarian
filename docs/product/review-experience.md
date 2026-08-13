@@ -247,6 +247,29 @@ retry using the exact preserved command and idempotency key; mutations are
 never retried automatically. An ambiguous or unreconciled outcome remains
 locked until a later authoritative current-case read proves a safe state.
 
+## Protected Library workflow
+
+The protected Library workflow keeps the work index, stable selected-work
+identity, full-width field rail, decision/evidence surface, and completion
+boundary in one responsive route. On wide entry it selects the first
+server-ordered reviewable work without recording a decision; compact entry is
+list-first. The rail preserves its ordered fields after a recorded decision,
+allows direct revisiting, compresses labels before scrolling, and is never
+replaced by a competing review back control.
+
+Current values and exact eligible changes are the commands. Pointer selection
+may show recording and recorded acknowledgement before authoritative
+advancement, but ambiguous, stale, failed, and reconciliation states never
+advance or claim success. A completed work lists each field and recorded
+outcome, retains work identity, and offers deliberate next-work continuation.
+It does not imply external application or verification.
+
+Cover review remains advisory: small eligible sets compare current and
+candidates equally; larger sets retain the incumbent while exposing the full
+eligible gallery. Excluded candidates remain subordinate with their recorded
+reason. Reduced motion preserves the same status text, success state, focus,
+and polite announcement without nonessential movement.
+
 An unresolved field with no eligible proposal still presents its current value
 as the one direct choice; automatic, resolved, and stale fields never present a
 false choice.
