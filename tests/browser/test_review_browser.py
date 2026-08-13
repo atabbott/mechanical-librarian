@@ -278,22 +278,65 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     attention_rail.wait_for()
                     expect(attention_rail).to_be_focused()
                     page.get_by_role("link", name="Policy", exact=True).click()
-                    page.get_by_role(
-                        "heading", name="Choose meaning before automation."
-                    ).wait_for()
-                    chapter = page.get_by_role("combobox", name="Policy chapter")
-                    self.assertTrue(chapter.is_visible())
-                    chapter.select_option("curation")
+                    page.get_by_role("heading", name="Library policy").wait_for()
+                    page.get_by_role("button", name="Curation").click()
                     page.wait_for_url("**/policy?section=curation")
                     expect(page.locator("#policy-curation")).to_be_focused()
                     self.assertLessEqual(
-                        page.evaluate("() => document.documentElement.scrollWidth"), 390
+                        page.evaluate("() => document.documentElement.scrollWidth"),
+                        390,
+                        page.evaluate(
+                            """() => [...document.querySelectorAll('*')]
+                            .filter(node => node.scrollWidth > node.clientWidth)
+                            .map(node => [node.tagName, node.className, node.textContent?.slice(0, 40), node.clientWidth, node.scrollWidth, getComputedStyle(node).gridTemplateColumns])"""
+                        ),
                     )
-                    page.get_by_role("button", name="Save draft").click()
-                    page.get_by_text(
-                        "Immutable draft saved. Preview its impact before activation."
-                    ).wait_for()
-                    page.get_by_role("button", name="Preview impact").click()
+                    genres = page.get_by_role("region", name="Genres")
+                    representation = genres.get_by_role(
+                        "combobox", name="Genres representation"
+                    )
+                    representation.focus()
+                    page.keyboard.press("Enter")
+                    page.get_by_role("listbox", name="Genres representation").wait_for()
+                    page.keyboard.press("Escape")
+                    expect(representation).to_be_focused()
+                    representation.click()
+                    menu_box = page.get_by_role(
+                        "listbox", name="Genres representation"
+                    )
+                    expect(menu_box).to_have_css("scale", "none")
+                    menu_box = menu_box.bounding_box()
+                    self.assertIsNotNone(menu_box)
+                    assert menu_box is not None
+                    self.assertGreaterEqual(menu_box["x"], 8)
+                    self.assertLessEqual(menu_box["x"] + menu_box["width"], 382)
+                    for option in page.get_by_role("option").all():
+                        self.assertGreaterEqual(option.bounding_box()["height"], 44)
+                    page.keyboard.press("Escape")
+                    for control in page.locator(
+                        ".cm-policy-sidebar nav button, .cm-policy-posture button, "
+                        ".cm-dropdown-trigger, .cm-policy-finish-actions button"
+                    ).all():
+                        self.assertGreaterEqual(control.bounding_box()["height"], 44)
+                    self.assertEqual(
+                        page.locator(".cm-policy-field").first.evaluate(
+                            "node => getComputedStyle(node).gridTemplateColumns.split(' ').length"
+                        ),
+                        1,
+                    )
+                    self.assertEqual(
+                        page.locator(".cm-policy-finish").evaluate(
+                            "node => getComputedStyle(node).position"
+                        ),
+                        "static",
+                    )
+                    page.emulate_media(reduced_motion="reduce")
+                    self.assertEqual(
+                        page.locator(".cm-dropdown-menu").count(),
+                        0,
+                    )
+                    genres.get_by_role("button", name="Ignore").click()
+                    page.get_by_role("button", name="Validate and preview").click()
                     page.get_by_text(
                         "Impact preview is current. The active policy is unchanged."
                     ).wait_for()
@@ -301,85 +344,27 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         "button", name="Review activation"
                     )
                     review_activation.click()
-                    activation_dialog = page.get_by_role(
-                        "dialog", name="Apply this policy to current unapplied work?"
-                    )
-                    cancel_activation = activation_dialog.get_by_role(
-                        "button", name="Cancel"
-                    )
-                    activate_policy = activation_dialog.get_by_role(
-                        "button", name="Activate policy"
-                    )
-                    self.assertTrue(
-                        cancel_activation.evaluate(
-                            "node => node === document.activeElement"
-                        )
-                    )
-                    page.keyboard.press("Tab")
-                    self.assertTrue(
-                        activate_policy.evaluate(
-                            "node => node === document.activeElement"
-                        )
-                    )
-                    page.keyboard.press("Tab")
-                    self.assertTrue(
-                        cancel_activation.evaluate(
-                            "node => node === document.activeElement"
-                        )
-                    )
-                    page.keyboard.press("Shift+Tab")
-                    self.assertTrue(
-                        activate_policy.evaluate(
-                            "node => node === document.activeElement"
-                        )
-                    )
-                    page.keyboard.press("Escape")
-                    self.assertEqual(activation_dialog.count(), 0)
-                    expect(review_activation).to_be_focused()
-                    page.get_by_role("button", name="Use dark mode").click()
-                    self.assertEqual(
-                        page.evaluate("() => document.documentElement.dataset.theme"),
-                        "dark",
-                    )
+                    page.get_by_text("Activate this reviewed draft?").wait_for()
+                    self.assertEqual(page.get_by_role("dialog").count(), 0)
+                    page.get_by_role("button", name="Back to preview").click()
+                    review_activation.wait_for()
+                    dark_mode = page.get_by_role("button", name="Use dark mode")
+                    dark_mode.click()
+                    page.get_by_role("button", name="Use light mode").wait_for()
                     page.set_viewport_size({"width": 1440, "height": 900})
                     self.assertTrue(
                         page.get_by_role("navigation", name="Policy chapters").is_visible()
                     )
                     review_activation.click()
-                    activation_dialog = page.get_by_role(
-                        "dialog", name="Apply this policy to current unapplied work?"
-                    )
-                    cancel_activation = activation_dialog.get_by_role(
-                        "button", name="Cancel"
-                    )
-                    activate_policy = activation_dialog.get_by_role(
-                        "button", name="Activate policy"
-                    )
-                    self.assertTrue(
-                        cancel_activation.evaluate(
-                            "node => node === document.activeElement"
-                        )
-                    )
-                    page.keyboard.press("Shift+Tab")
-                    self.assertTrue(
-                        activate_policy.evaluate(
-                            "node => node === document.activeElement"
-                        )
-                    )
-                    page.keyboard.press("Tab")
-                    self.assertTrue(
-                        cancel_activation.evaluate(
-                            "node => node === document.activeElement"
-                        )
-                    )
-                    cancel_activation.click()
-                    self.assertEqual(activation_dialog.count(), 0)
-                    expect(review_activation).to_be_focused()
+                    page.get_by_role("button", name="Back to preview").click()
+                    review_activation.wait_for()
                     self.assertLessEqual(
                         page.evaluate("() => document.documentElement.scrollWidth"), 1440
                     )
                     page.set_viewport_size({"width": 390, "height": 844})
-                    page.get_by_role("button", name="Use light mode").click()
+                    light_mode = page.get_by_role("button", name="Use light mode")
+                    light_mode.click()
+                    page.get_by_role("button", name="Use dark mode").wait_for()
                     activity_requests = 0
 
                     def activity_poll(route) -> None:
@@ -423,9 +408,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     )
                     page.get_by_role("button", name="series", exact=True).click()
                     page.get_by_role("button", name="Use dark mode").click()
-                    self.assertEqual(
-                        page.locator("html").get_attribute("data-theme"), "dark"
-                    )
+                    page.get_by_role("button", name="Use light mode").wait_for()
                     page.get_by_role("button", name="Choose current value:", exact=False).first.click()
                     page.get_by_text("Decision recorded.", exact=False).wait_for()
                     page.get_by_role("button", name="series", exact=True).click()

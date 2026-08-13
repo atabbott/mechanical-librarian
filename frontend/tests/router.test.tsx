@@ -1221,9 +1221,11 @@ describe('typed review routes', () => {
     const destinations = {
       title_layout: 'ask', date_precision: 'ask', language_rendering: 'ask', contributor_names: 'ask', publisher_preference: 'ask', genres: 'automatic', tags: 'ignore', description_fill: 'ask', isbn_form: 'ask', cover_order: 'ask', asin: 'ask', explicit: 'unsupported',
     }
+    let validationCalls = 0
     let draftSaves = 0
     const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
-      if (path === 'validate' && (body as { name?: string }).name === '') throw new ApiError(422, 'invalid_policy')
+      void body
+      if (path === 'validate' && ++validationCalls === 1) throw new ApiError(422, 'invalid_policy')
       if (path === 'drafts' && ++draftSaves > 1) throw new AmbiguousMutationError()
       if (path === 'drafts') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v2' }
       if (path === 'preview') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-preview-v1', libraries: [{ library: 'Hostile <script> library', affected_categories: ['title_layout', 'tags'], cases: [], cases_total: 0, cases_truncated: false, current_unapplied_count: 3, resolved_policy_id: 'resolved-policy' }] }
@@ -1247,80 +1249,52 @@ describe('typed review routes', () => {
     }
     renderRoute('/policy?section=publication', http)
 
-    expect(await screen.findByRole('heading', { name: 'Choose meaning before automation.' })).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'Identity' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Library policy' })).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Publication' })).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'Curation' })).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'Unsupported content' })).toBeVisible()
-    expect(screen.getByRole('combobox', { name: 'Policy chapter' })).toHaveValue('publication')
+    expect(screen.queryByRole('heading', { name: 'Identity' })).toBeNull()
     expect(screen.queryByText('opaque-policy-identity')).toBeNull()
-    const isbn = screen.getByRole('group', { name: /ISBN/ })
+    expect(screen.queryByRole('textbox', { name: /Policy name/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull()
+    const isbn = screen.getByRole('region', { name: 'ISBN' })
     expect(within(isbn).getByRole('button', { name: 'Automatic' })).toBeDisabled()
-    expect(within(isbn).getByText(/Enter Preview mode before choosing qualified Automatic/)).toBeVisible()
-    await user.selectOptions(within(isbn).getByRole('combobox', { name: 'ISBN representation' }), 'prefer_isbn13')
-    expect(within(isbn).getByText(/Enter Preview mode before choosing qualified Automatic/)).toBeVisible()
-    const series = screen.getByRole('group', { name: /Series memberships/ })
-    expect(within(series).getByText(/Enter Preview mode before choosing qualified Automatic/)).toBeVisible()
-    await user.click(screen.getByRole('button', { name: /Open curation/i }))
-    const genres = screen.getByRole('group', { name: /^Genres/ })
+    expect(within(isbn).getByText('Enter Preview for Automatic')).toBeVisible()
+    const isbnRepresentation = within(isbn).getByRole('combobox', { name: 'ISBN representation' })
+    await user.click(isbnRepresentation)
+    await screen.findByRole('option', { name: 'Preserve exact ISBN' })
+    await user.keyboard('{ArrowDown}{Enter}')
+    await waitFor(() => expect(isbnRepresentation).toHaveTextContent('Prefer ISBN-13'))
+    expect(isbnRepresentation).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: /Curation/ }))
+    const genres = screen.getByRole('region', { name: 'Genres' })
     expect(within(genres).getByRole('button', { name: 'Automatic' })).toHaveAttribute('aria-pressed', 'true')
-    expect(within(genres).getByText(/Enter Preview mode before choosing qualified Automatic/)).toBeVisible()
-    await user.click(screen.getByRole('button', { name: /Open unsupported content/i }))
-    const explicit = screen.getByRole('group', { name: /Explicit-content flag/ })
-    expect(within(explicit).getByText(/remains unsupported and has no policy choice/)).toBeVisible()
-    expect(screen.queryByRole('group', { name: /Title and subtitle/ })).toBeNull()
-    expect(screen.getByRole('button', { name: /Open identity/i })).toBeVisible()
-
-    await user.clear(screen.getByRole('textbox', { name: 'Policy name' }))
-    await user.click(screen.getByRole('button', { name: 'Check draft' }))
-    expect(await screen.findByText('The draft is not valid. Review the highlighted policy intent and try again.')).toBeVisible()
-    await user.type(screen.getByRole('textbox', { name: 'Policy name' }), 'Qualified draft')
-    await user.click(screen.getByRole('button', { name: /Open identity/i }))
-    const titleLayout = screen.getByRole('group', { name: /Title and subtitle/ })
-    const subtitle = screen.getByRole('group', { name: /^Subtitle/ })
-    expect(within(subtitle).getByText(/did not meet the qualification gate/)).toBeVisible()
-    await user.selectOptions(within(titleLayout).getByRole('combobox', { name: 'Title and subtitle representation' }), 'preserve')
-    expect(within(titleLayout).getByText('Draft changed')).toBeVisible()
+    expect(within(genres).getByText('Enter Preview for Automatic')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /Unsupported/ }))
+    const explicit = screen.getByRole('region', { name: 'Explicit-content flag' })
+    expect(within(explicit).getByText(/remains unsupported and has no policy choice/i)).toBeVisible()
+    expect(screen.queryByRole('region', { name: 'Title and subtitle' })).toBeNull()
     expect(screen.getAllByText('Draft has unreviewed changes').length).toBeGreaterThan(0)
-    await user.click(screen.getByRole('button', { name: 'Check draft' }))
-    expect(await screen.findByText('Draft is valid. The active policy is unchanged.')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Save draft' }))
-    expect(await screen.findByText('Immutable draft saved. Preview its impact before activation.')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Preview impact' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+    expect(await screen.findByText('The draft is not valid. Review its field choices and try again.')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+    expect(await screen.findByText('Impact preview is current. The active policy is unchanged.')).toBeVisible()
     expect(await screen.findByText('Hostile <script> library')).toBeVisible()
     expect(screen.getByText(/Title and subtitle, Tags/)).toBeVisible()
     const reviewActivation = screen.getByRole('button', { name: 'Review activation' })
     await user.click(reviewActivation)
-    let activationDialog = screen.getByRole('dialog', { name: 'Apply this policy to current unapplied work?' })
-    const cancelActivation = within(activationDialog).getByRole('button', { name: 'Cancel' })
-    const activatePolicy = within(activationDialog).getByRole('button', { name: 'Activate policy' })
-    expect(cancelActivation).toHaveFocus()
-    await user.tab()
-    expect(activatePolicy).toHaveFocus()
-    await user.tab()
-    expect(cancelActivation).toHaveFocus()
-    await user.tab({ shift: true })
-    expect(activatePolicy).toHaveFocus()
-    await user.keyboard('{Escape}')
-    await waitFor(() => expect(reviewActivation).toHaveFocus())
     expect(screen.queryByRole('dialog')).toBeNull()
-
-    await user.click(reviewActivation)
-    activationDialog = screen.getByRole('dialog', { name: 'Apply this policy to current unapplied work?' })
-    await user.click(within(activationDialog).getByRole('button', { name: 'Cancel' }))
-    await waitFor(() => expect(reviewActivation).toHaveFocus())
-
-    await user.click(reviewActivation)
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Activate policy' }))
-
+    expect(screen.getByText('Activate this reviewed draft?')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Back to preview' }))
+    expect(screen.getByRole('button', { name: 'Review activation' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Review activation' }))
+    await user.click(screen.getByRole('button', { name: 'Activate policy' }))
     expect(await screen.findByText('The active policy changed before activation. Review the refreshed policy and create a new draft.')).toBeVisible()
-    await waitFor(() => expect(reviewActivation).toHaveFocus())
-    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+    await user.click(screen.getByRole('button', { name: 'Back to editing' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(await screen.findByText('The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.')).toBeVisible()
-    expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate', 'validate', 'drafts', 'preview', 'activate', 'drafts'])
+    expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate', 'validate', 'drafts', 'preview', 'activate', 'validate', 'drafts'])
   })
 
-  it('tracks truthful Policy cadence stages and resets them after a draft edit', async () => {
+  it('tracks the protected whole-draft cadence and invalidates preview after an edit', async () => {
     const user = userEvent.setup()
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
       if (path === 'drafts') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v2' }
@@ -1332,39 +1306,24 @@ describe('typed review routes', () => {
 
     const cadence = await screen.findByRole('list', { name: 'Policy activation steps' })
     const step = (name: string) => within(cadence).getByText(name).closest('li')
-    expect(step('Validate')).toHaveAttribute('data-complete', 'false')
-    expect(step('Preview')).toHaveTextContent('Not started')
-    expect(step('Inspect impact')).toHaveAttribute('data-complete', 'false')
-
-    await user.click(screen.getByRole('button', { name: 'Check draft' }))
-    expect(await screen.findByText('Draft is valid. The active policy is unchanged.')).toBeVisible()
-    expect(step('Validate')).toHaveAttribute('data-complete', 'true')
-    expect(step('Preview')).toHaveAttribute('data-complete', 'false')
-
-    await user.click(screen.getByRole('button', { name: 'Save draft' }))
-    expect(await screen.findByText('Immutable draft saved. Preview its impact before activation.')).toBeVisible()
-    expect(step('Preview')).toHaveAttribute('data-complete', 'false')
-    expect(step('Preview')).toHaveAttribute('data-current', 'true')
-    expect(step('Preview')).toHaveTextContent('Draft saved')
-
-    await user.click(screen.getByRole('button', { name: 'Preview impact' }))
+    expect(step('Validate')).toHaveAttribute('aria-current', 'step')
+    expect(step('Validate')).not.toHaveClass('done')
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    const representation = within(title).getByRole('combobox', { name: 'Title and subtitle representation' })
+    await user.click(representation)
+    await user.click(await screen.findByRole('option', { name: 'Separate title and subtitle' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(await screen.findByText('Impact preview is current. The active policy is unchanged.')).toBeVisible()
-    expect(step('Preview')).toHaveAttribute('data-complete', 'true')
-    expect(step('Inspect impact')).toHaveAttribute('data-complete', 'false')
-
+    expect(step('Validate')).toHaveClass('done')
+    expect(step('Preview')).toHaveAttribute('aria-current', 'step')
     await user.click(screen.getByRole('button', { name: 'Review activation' }))
-    expect(step('Inspect impact')).toHaveAttribute('data-complete', 'true')
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Review activation' })).toHaveFocus())
-
-    await user.type(screen.getByRole('textbox', { name: 'Policy name' }), ' revised')
-    await waitFor(() => {
-      for (const name of ['Validate', 'Preview', 'Inspect impact', 'Activate']) {
-        expect(step(name)).toHaveAttribute('data-complete', 'false')
-      }
-    })
-    expect(step('Preview')).toHaveTextContent('Not started')
-    expect(screen.getByRole('button', { name: 'Review activation' })).toBeDisabled()
+    expect(step('Preview')).toHaveClass('done')
+    expect(step('Activate')).toHaveAttribute('aria-current', 'step')
+    await user.click(within(title).getByRole('button', { name: 'Ignore' }))
+    expect(step('Validate')).toHaveAttribute('aria-current', 'step')
+    expect(step('Validate')).not.toHaveClass('done')
+    expect(screen.queryByText('Validated and saved')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Review activation' })).toBeNull()
   })
 
   it('keeps every completed Policy cadence marker after successful activation', async () => {
@@ -1378,18 +1337,18 @@ describe('typed review routes', () => {
     const http: ReviewHttp = { ...createHttp(), policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T> }
     renderRoute('/policy?section=identity', http)
 
-    await user.click(await screen.findByRole('button', { name: 'Check draft' }))
-    await user.click(screen.getByRole('button', { name: 'Save draft' }))
-    await user.click(screen.getByRole('button', { name: 'Preview impact' }))
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    await user.click(within(title).getByRole('button', { name: 'Ignore' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+    expect(await screen.findByText('Impact preview is current. The active policy is unchanged.')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Review activation' }))
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Activate policy' }))
+    await user.click(screen.getByRole('button', { name: 'Activate policy' }))
 
     expect(await screen.findByText('Policy activated. Current unapplied work is being reconciled.')).toBeVisible()
     const cadence = screen.getByRole('list', { name: 'Policy activation steps' })
-    for (const name of ['Validate', 'Preview', 'Inspect impact', 'Activate']) {
-      expect(within(cadence).getByText(name).closest('li')).toHaveAttribute('data-complete', 'true')
+    for (const name of ['Validate', 'Preview', 'Activate']) {
+      expect(within(cadence).getByText(name).closest('li')).toHaveClass('done')
     }
-    expect(within(cadence).getByText('Activate').closest('li')).toHaveTextContent('Activated')
     expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate', 'drafts', 'preview', 'activate'])
   })
 

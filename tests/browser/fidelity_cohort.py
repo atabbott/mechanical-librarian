@@ -626,6 +626,15 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 "destinations": {"title_layout": "ask", "date_precision": "ask", "language_rendering": "ask", "contributor_names": "ask", "publisher_preference": "ask", "subtitle": "ask", "series": "ask", "genres": "automatic", "tags": "ask", "description_fill": "ask", "isbn_form": "ask", "cover_order": "ask", "asin": "ask", "explicit": "unsupported"},
             },
         }
+    if path == "/api/v1/metadata-policy/validate":
+        state = rich_payload("/api/v1/metadata-policy/state")
+        assert isinstance(state, dict)
+        return {
+            "schema_version": "metadata-policy-profile-v2",
+            "policy_id": "policy_" + "d" * 64,
+            "profile": state["profile"],
+            "rich_qualification": state["rich_qualification"],
+        }
     if path == "/api/v1/metadata-policy/drafts":
         return {
             "policy_id": "policy_" + "d" * 64,

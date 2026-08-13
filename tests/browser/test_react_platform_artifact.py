@@ -119,10 +119,10 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 ("/library?lens=all", "Every work, with exceptions first"),
                 ("/attention", "Needs your attention"),
                 ("/review/case-1?field=title&subview=review", "Current review case"),
-                ("/policy?section=identity", "Choose meaning before automation."),
-                ("/policy?section=publication", "Choose meaning before automation."),
-                ("/policy?section=curation", "Choose meaning before automation."),
-                ("/policy?section=unsupported", "Choose meaning before automation."),
+                ("/policy?section=identity", "Library policy"),
+                ("/policy?section=publication", "Library policy"),
+                ("/policy?section=curation", "Library policy"),
+                ("/policy?section=unsupported", "Library policy"),
                 ("/activity", "Activity"),
             )
             for path, heading in routes:
@@ -135,10 +135,10 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 if path.startswith("/policy"):
                     section = path.rsplit("=", 1)[-1]
                     expect(page.locator(f"#policy-{section}")).to_be_focused()
-                    self.assertEqual(
-                        page.get_by_role("combobox", name="Policy chapter").input_value(),
-                        section,
-                    )
+                    expect(
+                        page.get_by_role("navigation", name="Policy chapters")
+                        .locator("button[aria-current='page']")
+                    ).to_have_count(1)
                     self.assertTrue(page.url.endswith(path), f"{path} restored as {page.url}")
                 self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
                 self.assertEqual(page.locator("img, script:not([src])").count(), 0)
@@ -646,33 +646,29 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertLessEqual(page.evaluate("() => document.documentElement.scrollWidth"), 390)
             self.assertEqual(documents, before_navigation)
             page.get_by_role("link", name="Policy", exact=True).click()
-            page.get_by_role(
-                "heading", name="Choose meaning before automation."
+            page.get_by_role("heading", name="Library policy").wait_for()
+            page.locator(".cm-policy-finish").get_by_text(
+                "Draft matches the active policy", exact=True
             ).wait_for()
-            page.locator(".policy-impact").get_by_text(
-                "Draft matches active policy", exact=True
+            page.locator(".cm-policy-mode summary").click()
+            page.get_by_text("Outcomes remain non-authoritative.", exact=True).wait_for()
+            page.get_by_text(
+                "2 recent non-authoritative outcome sets.", exact=True
             ).wait_for()
-            page.locator(".policy-safety summary").click()
-            page.get_by_text("Preview mode is on.", exact=False).wait_for()
-            page.get_by_text("2 field outcomes · non-authoritative", exact=True).wait_for()
-            page.get_by_text("1 field outcomes · non-authoritative", exact=True).wait_for()
             page.get_by_role("heading", name="Activation completed with failures").wait_for()
             page.get_by_role("button", name="Retry failed reconciliation").wait_for()
             page.get_by_role("button", name="Recover Title suspension").wait_for()
-            page.get_by_label("Policy name").fill("Edited synthetic policy")
-            page.get_by_text("Draft differs from active policy", exact=True).wait_for()
-            page.get_by_role("button", name="Save draft").click()
-            page.get_by_text("Immutable draft saved.", exact=False).wait_for()
-            page.get_by_role("button", name="Preview impact").click()
+            page.get_by_role("region", name="Title and subtitle").get_by_role(
+                "button", name="Ignore"
+            ).click()
+            page.get_by_text("1 draft change", exact=True).wait_for()
+            page.get_by_role("button", name="Validate and preview").click()
             page.get_by_text("Impact preview is current.", exact=False).wait_for()
             page.get_by_text("Safe visible description <3", exact=False).wait_for()
-            page.get_by_text("explicit_unsupported", exact=False).wait_for()
-            page.get_by_text("Publication order", exact=False).wait_for()
             page.get_by_text('[{"name":"Old order","sequence":"1"}]', exact=False).wait_for()
             page.get_by_text('["Fantasy"] → ["Fantasy","Epic"]', exact=False).wait_for()
-            self.assertEqual(
-                page.locator(".policy-case-preview").count(), 1
-            )
+            page.get_by_text("Plus 2 more exact field outcomes", exact=False).wait_for()
+            self.assertEqual(page.locator(".cm-policy-preview-list > div").count(), 6)
             page.get_by_role("button", name="Sign out").click()
             page.get_by_text("Writes are blocked", exact=False).wait_for()
             fail_policy_persistently = True

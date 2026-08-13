@@ -136,12 +136,12 @@ safe-recovery copy carry its error-prevention burden.
 
 | # | Nielsen heuristic | Score | Post-remediation disposition |
 | --- | --- | --- | --- |
-| 1 | Visibility of system status | 4/4 | Current Activity state, recovery, outcomes, Policy stage, queue position, and mutation status lead their surfaces. |
+| 1 | Visibility of system status | 4/4 | Current Activity state, recovery, outcomes, the Policy draft/preview/activation stage, queue position, and mutation status lead their surfaces. |
 | 2 | Match between system and real world | 3/4 | Bibliographic language and purpose labels are strong; a bounded amount of safety vocabulary remains. |
-| 3 | User control and freedom | 3/4 | URL-owned context, Back/Forward restoration, retry, pause, revoke, and disclosures are explicit; protected value choices remain immediate. |
+| 3 | User control and freedom | 3/4 | URL-owned context, Back/Forward restoration, retry, pause, revoke, disclosures, and reversible Policy activation review are explicit; protected value choices remain immediate. |
 | 4 | Consistency and standards | 4/4 | The shell, workspace, notebook, ledger, focus, and responsive language now form one coherent system. |
 | 5 | Error prevention | 4/4 | Currentness, CSRF, guarded commands, ambiguity lockout, and direct-value eligibility remain intact. |
-| 6 | Recognition rather than recall | 4/4 | Work, field, queue, choice, source, Policy chapter, and Activity state stay visible at the point of use. |
+| 6 | Recognition rather than recall | 4/4 | Work, field, queue, choice, source, Policy chapter, field meaning, qualification, representation, and Activity state stay visible at the point of use. |
 | 7 | Flexibility and efficiency | 4/4 | Search, lenses, contextual queue, cross-work advance, compact adaptation, and keyboard operation support sustained review. |
 | 8 | Aesthetic and minimalist design | 4/4 | Decision-led allocation, one-chapter disclosure, state-first Activity, readable type, and the asymmetric mark restore hierarchy without decoration. |
 | 9 | Error recovery | 4/4 | Failed, stale, ambiguous, missing-case, asset, consent, and reconciliation paths expose bounded recovery. |
