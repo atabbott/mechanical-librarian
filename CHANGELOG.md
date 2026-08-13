@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Implement the protected Library policy notebook: one active policy and one
+  mutable draft now present as four focused chapters, with field meaning,
+  review mode, qualification, and representation kept together. A single
+  whole-draft action validates, saves an immutable snapshot, and produces a
+  current no-write impact preview before reversible, guarded activation.
+  Keyboard-complete portal dropdowns, compact document flow, reduced motion,
+  light/dark treatment, stale-preview invalidation, and explicit failure
+  recovery preserve owner authority throughout. (#590)
+
 - Implement the protected Library review workflow: wide entry now selects the
   first ordered reviewable work, retains a stable scrollable field rail, makes
   current-versus-exact-value choices one command, supports the protected cover
