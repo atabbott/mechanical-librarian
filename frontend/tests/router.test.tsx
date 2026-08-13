@@ -93,6 +93,10 @@ const renderRoute = (entry: string, http = createHttp()) => {
   return { http, queryClient, router }
 }
 
+const openActivityAuthority = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(await screen.findByText('Authority and recovery'))
+}
+
 describe('typed review routes', () => {
   it('fails closed while classifying every authoritative Activity command outcome', () => {
     expect(activityOutcome({}, { path: 'field-effects/pause' })).toBe('unknown')
@@ -1617,7 +1621,8 @@ describe('typed review routes', () => {
     }
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('button', { name: 'Review write permissions' })).toHaveAttribute('aria-expanded', 'false')
+    await openActivityAuthority(user)
+    expect(screen.getByRole('button', { name: 'Review write permissions' })).toHaveAttribute('aria-expanded', 'false')
     await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
     expect(screen.getByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
@@ -1632,7 +1637,7 @@ describe('typed review routes', () => {
     let current = initial
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current), activityCommand: vi.fn(async () => { throw new AmbiguousMutationError() }) }
     renderRoute('/activity', http)
-    await screen.findByRole('button', { name: 'Pause new work' })
+    await openActivityAuthority(user)
     current = { ...initial, paused }
     await user.click(screen.getByRole('button', { name: 'Pause new work' }))
 
@@ -1647,7 +1652,7 @@ describe('typed review routes', () => {
     let available = true
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => { if (!available) throw new Error('offline'); return initial }), activityCommand: vi.fn(async () => { throw new AmbiguousMutationError() }) }
     renderRoute('/activity', http)
-    await screen.findByRole('button', { name: 'Pause new work' })
+    await openActivityAuthority(user)
     available = false
     await user.click(screen.getByRole('button', { name: 'Pause new work' }))
 
@@ -1661,7 +1666,8 @@ describe('typed review routes', () => {
     let current = initial
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current), activityCommand: vi.fn(async () => { throw new AmbiguousMutationError() }) }
     renderRoute('/activity', http)
-    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    await openActivityAuthority(user)
+    await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
     await user.click(screen.getByRole('checkbox'))
     current = { ...initial, capabilities: [] }
     await user.click(screen.getByRole('button', { name: 'Enable selected libraries' }))
@@ -1680,7 +1686,8 @@ describe('typed review routes', () => {
     let current = partial
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current) }
     const { queryClient } = renderRoute('/activity', http)
-    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    await openActivityAuthority(user)
+    await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
     const choice = await screen.findByRole('checkbox')
     await user.click(choice)
     expect(choice).toBeChecked()
@@ -1716,7 +1723,9 @@ describe('typed review routes', () => {
     }
     renderRoute('/activity', http)
 
-    await userEvent.setup().click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    const user = userEvent.setup()
+    await openActivityAuthority(user)
+    await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
     expect(screen.getByRole('checkbox')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
   })
@@ -1778,6 +1787,7 @@ describe('typed review routes', () => {
   })
 
   it('keeps recovery visible without retry authority', async () => {
+    const user = userEvent.setup()
     const http: ReviewHttp = {
       ...createHttp(),
       getActivity: vi.fn(async () => activity({
@@ -1791,12 +1801,14 @@ describe('typed review routes', () => {
     renderRoute('/activity', http)
 
     expect(await screen.findByRole('heading', { name: 'Recovery needs attention' })).toBeVisible()
+    await openActivityAuthority(user)
     expect(screen.getAllByText(/Unexpected Effect Behavior/)).toHaveLength(2)
     expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
     expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
   })
 
   it('retains distinct recovery facts without a completion estimate', async () => {
+    const user = userEvent.setup()
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
       enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
       suspensions: [
@@ -1807,6 +1819,7 @@ describe('typed review routes', () => {
     })) }
     renderRoute('/activity', http)
 
+    await openActivityAuthority(user)
     expect(await screen.findAllByText(/^Recovery:/)).toHaveLength(3)
     expect(screen.queryByRole('progressbar')).toBeNull()
   })
@@ -1823,6 +1836,7 @@ describe('typed review routes', () => {
     renderRoute('/activity', http)
 
     expect(await screen.findByText('Recorded work')).toBeVisible()
+    await openActivityAuthority(user)
     await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
     expect(await screen.findByRole('checkbox')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
@@ -1838,10 +1852,27 @@ describe('typed review routes', () => {
     renderRoute('/activity', http)
 
     expect(await screen.findByText('Recorded work')).toBeVisible()
+    await openActivityAuthority(user)
     await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
     expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
     expect(screen.getByRole('checkbox')).toBeDisabled()
     expect(screen.queryByRole('button', { name: /pause new work|resume new work/i })).toBeNull()
+  })
+
+  it('requires an explicit resume for current waiting work while paused', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
+      paused: true,
+      enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+      current_waiting: { destination: 'title', library: 'fiction', state: 'retryable', work_id: 'current-work', work_label: 'Current waiting work' },
+    })) }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByText('New work paused')).toBeVisible()
+    expect(screen.getByText('Resume new work when you are ready. No automatic check will start while new work is paused.')).toBeVisible()
+    expect(screen.queryByText('Next exact-current check runs automatically. No action is required.')).toBeNull()
+    await openActivityAuthority(user)
+    expect(screen.getByRole('button', { name: 'Resume new work' })).toBeVisible()
   })
 
   it('keeps the protected ledger query, evidence, and owner controls bounded', async () => {
@@ -1856,6 +1887,7 @@ describe('typed review routes', () => {
 
     expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
     expect(screen.getByRole('heading', { name: 'No intervention needed' })).toBeVisible()
+    await openActivityAuthority(user)
     expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
     expect(screen.getAllByText('Waiting safely')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Inspect' }))

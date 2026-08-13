@@ -144,6 +144,27 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertEqual(page.locator("img, script:not([src])").count(), 0)
                 self.assertIsNone(page.evaluate("() => window.__metadataExecuted"))
                 if path == "/activity":
+                    self.assertTrue(
+                        page.locator(".cm-activity-ledger").evaluate(
+                            "node => node.previousElementSibling?.classList.contains('cm-activity-status')"
+                        )
+                    )
+                    long_activity_title = page.locator(
+                        ".cm-activity-outcome > strong"
+                    ).filter(has_text=LONG_TITLE)
+                    self.assertEqual(long_activity_title.get_attribute("title"), LONG_TITLE)
+                    self.assertEqual(
+                        long_activity_title.evaluate(
+                            "node => getComputedStyle(node).webkitLineClamp"
+                        ),
+                        "2",
+                    )
+                    self.assertLessEqual(long_activity_title.bounding_box()["height"], 36)
+                    self.assertLessEqual(
+                        long_activity_title.locator("xpath=ancestor::article").bounding_box()["height"],
+                        190,
+                    )
+                    page.get_by_text("Authority and recovery", exact=True).click()
                     page.get_by_role(
                         "button", name="Review write permissions"
                     ).click()
