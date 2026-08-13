@@ -1,8 +1,15 @@
 # Runtime Dependency Review
 
+Application manifests declare the reviewed compatibility envelope; `uv.lock`
+and `frontend/package-lock.json` retain the exact resolved versions installed
+by development, CI, builds, and production. Build backends, language and
+package-manager toolchains, container images, and GitHub Actions remain exact
+pins because the application lockfiles do not govern them. Automated changes
+follow [dependency updates](dependency-updates.md).
+
 The F03 configuration boundary adds one direct runtime dependency. The exact
-graph is locked by hashes in `uv.lock` and was reviewed from installed package
-metadata and bundled licence files.
+resolved graph is locked by hashes in `uv.lock` and was reviewed from installed
+package metadata and bundled licence files.
 
 | Package | Version | Relationship | SPDX licence | Product authority |
 | --- | --- | --- | --- | --- |
@@ -98,7 +105,7 @@ qualification input and future release-SBOM concern, not runtime content.
 
 ## React platform build dependencies
 
-Issue #495 adds an exact development/build graph. Node 24.19.0 (Krypton LTS)
+Issue #495 adds an exact resolved development/build graph. Node 24.19.0 (Krypton LTS)
 and its bundled npm 11.17.0 are required exactly; neither enters the runtime
 image. The lockfile binds every transitive integrity hash, `npm ci` disables
 package lifecycle scripts, generated DTOs consume only the committed OpenAPI

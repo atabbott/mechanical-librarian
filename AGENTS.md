@@ -53,6 +53,13 @@ dependencies or lockfiles, build/CI/workflow, release, configuration,
 migration, security, architecture, governance, product-contract, or
 delivery-plan changes.
 
+Renovate-authored dependency pull requests are the sole automation exception
+to that tracking rule. They require neither an issue nor the
+`tracking-exempt` label because `.github/renovate.json` is their maintainer-
+reviewed authority boundary. They remain subject to the documented dependency
+update policy, exact-head qualification, and configured review or auto-merge
+rules; no other bot or human-authored pull request inherits this exception.
+
 Every change must include the smallest appropriate combination of:
 
 - tests proving behavior and failure handling;

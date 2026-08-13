@@ -385,6 +385,15 @@ delivery plan. Those changes require an open repository issue and a supported
 closing reference. Issue #198 and pull request #196 are material tracked work,
 not examples eligible for the exemption.
 
+Renovate-authored dependency pull requests are separately authorized by the
+maintainer-reviewed `.github/renovate.json` policy and require neither a
+closing issue nor the `tracking-exempt` label. This exception applies only when
+GitHub identifies the pull-request author as `renovate[bot]`; it is not
+transferable through a title, label, branch name, commit author, or human
+account. Renovate pull requests follow the bounded update, qualification,
+review, and recovery rules in [dependency updates](dependency-updates.md).
+Human-authored dependency changes remain material tracked work.
+
 No pull-request-target workflow or workflow token evaluates this policy. The
 trusted controller remains local, candidate-independent, and outside the
 pull-request credential boundary.
