@@ -286,11 +286,20 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             excerpt="0306406152", applicability="ebook", checksum="valid_isbn_10",
             applicability_basis="ebook", scope=ClaimScope.EDITION,
         )
-        isbn13 = LocalClaim.create(
-            kind=ClaimKind.ISBN, observed="9780306406157",
-            canonical="9780306406157", excerpt="9780306406157",
-            applicability="ebook", checksum="valid_isbn_13",
-            applicability_basis="ebook", scope=ClaimScope.EDITION,
+        isbn_family_provider = _provider(
+            "catalogue", "edition-1", (
+                _claim(
+                    "catalogue", "edition-1", ClaimKind.ISBN,
+                    "9780306406157", scope=ClaimScope.EDITION,
+                    applicability="ebook",
+                ),
+            ),
+        )
+        isbn_family_report = _proposal_report(
+            fields=_fields(isbn=TargetField(
+                TargetDestination.ISBN, TargetFieldState.MISSING
+            )),
+            local_claims=(isbn10,), providers=(isbn_family_provider,),
         )
         series_claims = (
             _claim("catalogue", "edition-1", ClaimKind.TITLE, "Book",
@@ -399,18 +408,10 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             ("description_fill", "safe_plain_text", description_report,
              "description", {"kind": "text", "value":
                               "An exact source-bound description."}),
-            ("isbn_form", "preserve_exact", _proposal_report(
-                fields=_fields(isbn=TargetField(
-                    TargetDestination.ISBN, TargetFieldState.MISSING
-                )),
-                local_claims=(isbn10,),
-            ), "isbn", {"kind": "text", "value": "0306406152"}),
-            ("isbn_form", "prefer_isbn13", _proposal_report(
-                fields=_fields(isbn=TargetField(
-                    TargetDestination.ISBN, TargetFieldState.MISSING
-                )),
-                local_claims=(isbn13,),
-            ), "isbn", {"kind": "text", "value": "9780306406157"}),
+            ("isbn_form", "preserve_exact", isbn_family_report, "isbn",
+             {"kind": "text", "value": "0306406152"}),
+            ("isbn_form", "prefer_isbn13", isbn_family_report, "isbn",
+             {"kind": "text", "value": "9780306406157"}),
         )
         for category, option, report, destination, expected in cases:
             with self.subTest(option=f"{category}:{option}"), tempfile.TemporaryDirectory() as temporary:

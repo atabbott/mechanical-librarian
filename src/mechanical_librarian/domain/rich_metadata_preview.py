@@ -177,7 +177,7 @@ def _project(
     if field == "description_fill":
         return _description(field, option, target, result, retained_claims)
     if field == "isbn_form":
-        return _isbn(field, option, target, result, report, retained_claims)
+        return _isbn(field, option, target, result, report)
     if field == "asin":
         return _asin(field, option, target, result, retained_claims)
     candidate = (
@@ -394,7 +394,6 @@ def _isbn(
     target: TargetField,
     result: ProposalResult,
     report: MetadataReport,
-    retained_claims: dict[str, _RetainedClaim],
 ) -> RichFieldPreview:
     alternatives = _typed_alternatives(result, ProposalValueKind.TEXT)
     candidate, reason = _one_typed_candidate(result, ProposalValueKind.TEXT)
@@ -402,12 +401,7 @@ def _isbn(
         return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
     if option not in {"preserve_exact", "prefer_isbn13"}:
         return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
-    accepted = {
-        evidence.reference
-        for evidence in report.identifier_evidence
-        if evidence.relation is IdentifierRelation.ACCEPTED
-    }
-    value = _isbn_value(candidate, option, accepted, retained_claims)
+    value = select_isbn_representation(report, candidate, option)
     if value is None:
         return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
     return RichFieldPreview(
@@ -418,19 +412,25 @@ def _isbn(
 
 
 
-def _isbn_value(
-    alternative: ProposalAlternative,
+def select_isbn_representation(
+    report: MetadataReport,
+    candidate: ProposalAlternative,
     option: str,
-    accepted: set[str],
-    retained_claims: dict[str, _RetainedClaim],
 ) -> str | None:
+    """Select one policy-admitted exact ISBN lexical from retained evidence."""
+    accepted = {
+        evidence.reference
+        for evidence in report.identifier_evidence
+        if evidence.relation is IdentifierRelation.ACCEPTED
+    }
+    retained_claims = _retained_claims(report)
     family = isbn_family(
-        alternative.value.value if type(alternative.value.value) is str else None
+        candidate.value.value if type(candidate.value.value) is str else None
     )
-    if family is None or not alternative.evidence_references:
+    if family is None or not candidate.evidence_references:
         return None
     values: list[tuple[str, bool]] = []
-    for reference in alternative.evidence_references:
+    for reference in candidate.evidence_references:
         retained = retained_claims.get(reference)
         claim = None if retained is None else retained.claim
         value = getattr(claim, "value", getattr(claim, "canonical", None))
@@ -631,4 +631,5 @@ def _data_value(value: object) -> object:
 __all__ = [
     "RichFieldPreview", "RichMetadataPreview", "RichMetadataPreviewError",
     "compile_rich_metadata_preview", "project_f20_automatic_decision_value",
+    "select_isbn_representation",
 ]
