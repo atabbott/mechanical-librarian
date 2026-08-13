@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Implement the protected Library review workflow: wide entry now selects the
+  first ordered reviewable work, retains a stable scrollable field rail, makes
+  current-versus-exact-value choices one command, supports the protected cover
+  comparison in Library, and presents a truthful review-complete boundary
+  before deliberate next-work continuation. Recorded decisions remain separate
+  from preparation, authorization, apply, and read-back verification. (#589)
+
 - Activate owner-confirmed semantic cover decisions in the installed review
   product. One exact-current cover field now shows the incumbent and up to 12
   safe report-bound alternatives, runs the contained observer and deterministic

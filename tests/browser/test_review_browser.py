@@ -8,12 +8,14 @@ import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 import uvicorn
 from argon2 import PasswordHasher
 from playwright.sync_api import (
+    BrowserContext,
     Page,
     TimeoutError as PlaywrightTimeoutError,
     expect,
@@ -194,10 +196,19 @@ def _server(
 
 
 def _login(page: Page, origin: str) -> None:
+    page.route("**/favicon.ico", lambda route: route.fulfill(status=204, body=""))
     page.goto(f"{origin}/login")
     page.get_by_label("Password").fill(_PASSWORD)
     page.get_by_role("button", name="Sign in").click()
     page.wait_for_url(f"{origin}/library")
+
+
+@contextmanager
+def _closing_context(context: BrowserContext) -> Iterator[None]:
+    try:
+        yield
+    finally:
+        context.close()
 
 
 class ReviewBrowserQualificationTests(unittest.TestCase):
@@ -234,7 +245,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     certificate=certificate,
                     key=key,
                     port=_unused_port(),
-                ) as (origin, case_id):
+                ) as (origin, case_id), _closing_context(context):
                     _login(page, origin)
                     try:
                         page.get_by_role("heading", name="Every work, with exceptions first").wait_for(
@@ -262,8 +273,10 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
 
                     page.on("request", count_document)
                     initial_documents = documents
-                    page.locator(".attention-toggle").click()
-                    page.locator(".attention-rail").wait_for()
+                    page.get_by_role("button", name="Attention queue").click()
+                    attention_rail = page.locator(".attention-rail")
+                    attention_rail.wait_for()
+                    expect(attention_rail).to_be_focused()
                     page.get_by_role("link", name="Policy", exact=True).click()
                     page.get_by_role(
                         "heading", name="Choose meaning before automation."
@@ -429,7 +442,6 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     page.get_by_role("heading", name="Evidence and source ledger").wait_for()
                     self.assertEqual(documents, initial_documents + 1)
                     self.assertEqual(errors, [])
-                context.close()
                 browser.close()
 
     def test_protected_cover_round_trip_preserves_explicit_owner_authority(self) -> None:
@@ -470,8 +482,11 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     key=key,
                     port=_unused_port(),
                     cover=True,
-                ) as (origin, case_id):
+                ) as (origin, case_id), _closing_context(context):
                     _login(page, origin)
+                    page.get_by_role(
+                        "heading", name="Every work, with exceptions first"
+                    ).wait_for()
                     page.goto(f"{origin}/review/{case_id}?field=cover&subview=review")
                     page.get_by_role("button", name="Prepare cover comparison").click()
                     page.get_by_role("heading", name="Available").first.wait_for()
@@ -507,7 +522,9 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertEqual(
                         page.get_by_role("button", name="Choose this cover").count(), 0
                     )
-                    page.get_by_role("button", name="History", exact=True).click()
+                    history_button = page.get_by_role("button", name="History", exact=True)
+                    history_button.focus()
+                    page.keyboard.press("Enter")
                     selected_history = page.get_by_role(
                         "heading", name="Cover selected"
                     ).locator("..")
@@ -528,7 +545,44 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertTrue(responses)
                     self.assertTrue(all(status == 200 for _, status in responses), responses)
                     self.assertEqual(errors, [])
-                context.close()
+                browser.close()
+
+    def test_z_compact_uncached_library_detail_keeps_visible_focus(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.chmod(root, 0o700)
+            hash_path = root / "owner.hash"
+            hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+            os.chmod(hash_path, 0o600)
+            certificate, key = _certificate(root)
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                context = browser.new_context(
+                    ignore_https_errors=True,
+                    viewport={"width": 390, "height": 844},
+                )
+                page = context.new_page()
+                with _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=_unused_port(),
+                ) as (origin, case_id), _closing_context(context):
+                    def delay_selected_detail(route) -> None:
+                        if route.request.url.endswith(f"/api/v1/review-cases/{case_id}"):
+                            time.sleep(0.3)
+                        route.continue_()
+
+                    page.route("**/api/v1/review-cases/**", delay_selected_detail)
+                    _login(page, origin)
+                    page.locator(".work-select").first.click()
+                    page.get_by_text("Loading selected work…").wait_for()
+                    pending_detail = page.locator(".workspace-detail")
+                    expect(pending_detail).to_be_focused()
+                    self.assertIsNotNone(pending_detail.bounding_box())
+                    page.get_by_role("button", name="Choose current value:", exact=False).wait_for()
+                    page.unroute("**/api/v1/review-cases/**", delay_selected_detail)
                 browser.close()
 
 

@@ -151,6 +151,14 @@ describe('typed review routes', () => {
     },
   )
 
+  it('keeps the selected-work header as the only Library route-focus target', async () => {
+    renderRoute('/library?lens=all&preview=case-1&field=title')
+    expect(await screen.findByText('Progressive detail')).toBeVisible()
+    const targets = document.querySelectorAll('[data-route-focus]')
+    expect(targets).toHaveLength(1)
+    expect(targets[0]).toHaveClass('selected-work-header')
+  })
+
   it('loads the critical library query and progressively reveals detail', async () => {
     const user = userEvent.setup()
     const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, title: 'item-1', subtitle: 'internal identity' })) }
@@ -202,8 +210,9 @@ describe('typed review routes', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
-    expect(await screen.findByText('Current: Old title')).toBeVisible()
+    expect(await screen.findByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
     expect(screen.getByText('Eligible for guarded planning')).toBeVisible()
+    await user.click(screen.getByText('Source ledger'))
     expect(await screen.findByText('Open Library')).toBeVisible()
     expect(screen.getByText('New title', { selector: '[role="cell"]' })).toBeVisible()
     expect(screen.getByText('Provider claim · Title')).toBeVisible()
@@ -249,6 +258,113 @@ describe('typed review routes', () => {
     await waitFor(() => expect(getHistory).toHaveBeenCalledTimes(3))
   })
 
+  it('keeps the current cover pinned beside a complete eligible gallery and retains advisory reasons', async () => {
+    const user = userEvent.setup()
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    const reference = (index: number) => `cover_transport_ref_${String(index).repeat(64)}`
+    const candidate = (index: number, incumbent = false) => ({
+      artifactId: `cover_${String(index).repeat(64)}`,
+      height: 1200,
+      identity: { outcome: 'plausible_match' },
+      incumbent,
+      observation: null,
+      originalSha256: String(index).repeat(64),
+      ordinal: index,
+      previewSha256: String(index).repeat(64),
+      reference: reference(index),
+      selectable: !incumbent,
+      sourceKinds: [incumbent ? 'audiobookshelf_current' : 'provider'],
+      state: incumbent ? 'incumbent' : 'acceptable',
+      width: 800,
+    })
+    const consideration = {
+      id: `cover_consideration_${'c'.repeat(64)}`,
+      current: true,
+      candidates: [candidate(1, true), candidate(2), candidate(3), candidate(4), { ...candidate(5), selectable: false, identity: { outcome: 'verified_work_match', reasons: ['accepted_work_identifier'] }, observation: { composition: 'dense', medium: 'photographic', promotional_text: 'absent', tie_in_branding: 'absent' } }, { ...candidate(6), selectable: false, identity: { outcome: 'verified_work_match', reasons: ['accepted_work_identifier'] }, observation: { composition: 'dense', medium: 'photographic', promotional_text: 'present', tie_in_branding: 'absent' } }],
+      incumbent: { reference: reference(1), state: 'available' as const },
+      omissions: [{ reason: 'preview_unavailable', reference: 'retained-unavailable-source' }],
+      policy: { recommended_candidate_reference: reference(3), acceptable_candidate_references: [reference(2), reference(3), reference(4)], status: 'abstained', reasons: ['observations_ambiguous'] },
+      policyPreferences: { avoidPromotionalText: true, avoidTieInBranding: false, preferMinimalComposition: false },
+      policyReference: `cover_policy_${'3'.repeat(64)}`,
+      reviewerStatus: 'completed', targetFingerprint: 'fingerprint-cover',
+    } as const
+    const coverField = {
+      ...base,
+      destination: 'cover',
+      currentValue: `cover_${'1'.repeat(64)}`,
+      currentRaw: `cover_${'1'.repeat(64)}`,
+      proposalId: 'proposal-cover',
+      targetFingerprint: 'fingerprint-cover',
+      proposedValues: [{ kind: 'cover', value: `cover_${'2'.repeat(64)}` }],
+      coverConsideration: consideration,
+    }
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })) }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+
+    const comparison = await screen.findByLabelText('Choose a cover')
+    expect(within(comparison).getByText('One candidate is recommended as advice only.')).toBeVisible()
+    expect(within(comparison).getByText(/Recommended/u)).toBeVisible()
+    await user.click(within(comparison).getByText('Reasons retained'))
+    expect(within(comparison).getByText('Preview unavailable')).toBeVisible()
+    expect(within(comparison).getByText('Observations ambiguous')).toBeVisible()
+    expect(within(comparison).getByText('Promotional text excluded by policy')).toBeVisible()
+    expect(comparison.querySelector('.library-cover-pinned')).not.toBeNull()
+    expect(comparison.querySelectorAll('.library-cover-gallery .library-cover-card')).toHaveLength(3)
+  })
+
+  it('retains an explicit keep-current control when the incumbent preview is unavailable', async () => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    const consideration = {
+      id: `cover_consideration_${'u'.repeat(64)}`,
+      current: true,
+      candidates: [{ artifactId: `cover_${'a'.repeat(64)}`, height: 1200, identity: { outcome: 'plausible_match' }, incumbent: false, observation: null, originalSha256: 'a'.repeat(64), ordinal: 1, previewSha256: 'a'.repeat(64), reference: `cover_transport_ref_${'a'.repeat(64)}`, selectable: true, sourceKinds: ['provider'], state: 'acceptable', width: 800 }],
+      incumbent: { reference: `cover_transport_ref_${'b'.repeat(64)}`, state: 'unavailable' as const }, omissions: [], policy: null,
+      policyPreferences: { avoidPromotionalText: false, avoidTieInBranding: false, preferMinimalComposition: false }, policyReference: `cover_policy_${'u'.repeat(64)}`, reviewerStatus: 'completed', targetFingerprint: 'fingerprint-cover',
+    } as const
+    const coverField = { ...base, destination: 'cover', proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }], coverConsideration: consideration }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })) })
+
+    expect(await screen.findByRole('button', { name: /Current cover.*Unavailable/u })).toBeVisible()
+    expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('3')
+  })
+
+  it('prepares a missing cover comparison inside the Library workflow', async () => {
+    const user = userEvent.setup()
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    const consideration = {
+      id: `cover_consideration_${'p'.repeat(64)}`, current: true,
+      candidates: [{ artifactId: `cover_${'a'.repeat(64)}`, height: 1200, identity: { outcome: 'plausible_match' }, incumbent: false, observation: null, originalSha256: 'a'.repeat(64), ordinal: 1, previewSha256: 'a'.repeat(64), reference: `cover_transport_ref_${'a'.repeat(64)}`, selectable: true, sourceKinds: ['provider'], state: 'acceptable', width: 800 }],
+      incumbent: { reference: `cover_transport_ref_${'b'.repeat(64)}`, state: 'unavailable' as const }, omissions: [], policy: null,
+      policyPreferences: { avoidPromotionalText: false, avoidTieInBranding: false, preferMinimalComposition: false }, policyReference: `cover_policy_${'p'.repeat(64)}`, reviewerStatus: 'completed', targetFingerprint: 'fingerprint-cover',
+    } as const
+    const absent: CaseDetailView['fields'][number] = { ...base, destination: 'cover', proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }], coverConsideration: null }
+    const prepared: CaseDetailView['fields'][number] = { ...absent, coverConsideration: consideration }
+    let field: CaseDetailView['fields'][number] = absent
+    let preparationAttempts = 0
+    const retryCoverConsideration = vi.fn(async () => {
+      preparationAttempts += 1
+      if (preparationAttempts === 1) throw new Error('temporary preparation failure')
+      field = prepared
+      return consideration
+    })
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, fields: [field] })), retryCoverConsideration }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+
+    const prepare = await screen.findByRole('button', { name: 'Prepare cover comparison' })
+    expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('0')
+    await user.click(prepare)
+    expect(await screen.findByRole('alert')).toHaveTextContent('The comparison could not be prepared. The existing cover remains unchanged.')
+    expect(prepare).toBeEnabled()
+    await user.click(prepare)
+    await waitFor(() => expect(retryCoverConsideration).toHaveBeenCalledTimes(2))
+    expect(retryCoverConsideration).toHaveBeenLastCalledWith('case-1')
+    expect(await screen.findByLabelText('Choose a cover')).toBeVisible()
+    expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('3')
+  })
+
   it('shows immutable historical cover evidence and the exact owner choice', async () => {
     const reference = `cover_transport_ref_${'1'.repeat(64)}`
     const history: HistoryView = {
@@ -276,6 +392,7 @@ describe('typed review routes', () => {
   })
 
   it('keeps retained case provenance visible when supplemental evidence fails', async () => {
+    const user = userEvent.setup()
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const http: ReviewHttp = {
@@ -285,7 +402,8 @@ describe('typed review routes', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
-    expect(await screen.findByText('Supplemental evidence could not be loaded. Retained case provenance remains below.')).toHaveAttribute('role', 'alert')
+    expect(await screen.findByText(/Supplemental evidence could not be loaded/u)).toHaveAttribute('role', 'alert')
+    await user.click(screen.getByText('Source ledger'))
     expect(screen.getByText('Local catalogue record')).toBeVisible()
     expect(screen.getByText('retained current value')).toBeVisible()
     expect(screen.getByText(/1 named source below/u)).toBeVisible()
@@ -317,11 +435,11 @@ describe('typed review routes', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
-    expect((await screen.findByText('2 of 2 · needs review')).closest('button')).toHaveTextContent('Authors')
+    expect(await screen.findByRole('button', { name: /Authors.*Needs review/u })).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Choose current value: Old title' }))
     expect(await screen.findByText('Decision recorded. Continuing with authors.')).toBeVisible()
-    expect((await screen.findByText('2 of 2 · active')).closest('button')).toHaveTextContent('Authors')
-    expect(screen.queryByText(/1 of 1/u)).toBeNull()
+    await waitFor(() => expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).toHaveAttribute('aria-current', 'true'))
+    expect(screen.getByRole('button', { name: /Title.*Decision recorded/u })).toBeVisible()
   })
 
   it('retries the embedded Library decision with the exact preserved command and idempotency key', async () => {
@@ -350,6 +468,7 @@ describe('typed review routes', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
     expect(await screen.findByText('The decision was not recorded. Your choice is unchanged.')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).not.toHaveTextContent('Recording…')
     const retry = screen.getByRole('button', { name: 'Try the same decision again' })
     expect(retry).toHaveFocus()
     const firstCommand = recordDecision.mock.calls[0]?.[1]
@@ -358,7 +477,98 @@ describe('typed review routes', () => {
     await waitFor(() => expect(recordDecision).toHaveBeenCalledTimes(2))
     expect(recordDecision.mock.calls[1]?.[1]).toEqual(firstCommand)
     expect(recordDecision.mock.calls[1]?.[1].idempotencyKey).toBe(firstCommand?.idempotencyKey)
-    expect(await screen.findByText('Decision recorded from the authoritative case.')).toBeVisible()
+    expect(await screen.findByText('Review complete')).toBeVisible()
+    expect(screen.getByRole('button', { name: /Title.*Current value retained.*Old title/u })).toBeVisible()
+    expect(document.activeElement).toHaveClass('review-complete')
+  })
+
+  it('marks the exact choice while recording and focuses authoritative confirmation before advancing', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const authorsField = { ...titleField, destination: 'authors', proposalId: 'proposal-authors', targetFingerprint: 'fingerprint-authors' }
+    const settled: CaseDetailView = { ...detail, fields: [{ ...titleField, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }, authorsField] }
+    let current: CaseDetailView = { ...detail, fields: [titleField, authorsField] }
+    let release: (() => void) | undefined
+    const deferred = new Promise<void>((resolve) => { release = resolve })
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { await deferred; current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }) }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    const choice = await screen.findByRole('button', { name: 'Choose current value: Old title' })
+    await user.click(choice)
+    expect(choice).toHaveAttribute('aria-pressed', 'true')
+    expect(choice).toHaveTextContent('Recording…')
+    expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).not.toHaveAttribute('aria-current', 'true')
+
+    await act(async () => { release?.() })
+    const confirmationText = await screen.findByText('The authoritative case confirms this exact field outcome.')
+    const confirmed = confirmationText.closest<HTMLElement>('[role="status"]')
+    if (!confirmed) throw new Error('authoritative confirmation region is required')
+    expect(confirmed).toHaveTextContent('The authoritative case confirms this exact field outcome.')
+    expect(confirmed).toHaveFocus()
+    await waitFor(() => expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).toHaveAttribute('aria-current', 'true'))
+  })
+
+  it('clears authoritative confirmation when the reviewer navigates during its dwell', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const authorsField = { ...titleField, destination: 'authors', proposalId: 'proposal-authors', targetFingerprint: 'fingerprint-authors' }
+    const settled: CaseDetailView = { ...detail, fields: [{ ...titleField, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }, authorsField] }
+    let current: CaseDetailView = { ...detail, fields: [titleField, authorsField] }
+    let rejectAuthors: ((error: unknown) => void) | undefined
+    const authorsDecision = new Promise<never>((_resolve, reject) => { rejectAuthors = reject })
+    const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async (_id, command) => { if (command.destination === 'authors') return authorsDecision; current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } })
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    expect(await screen.findByText('The authoritative case confirms this exact field outcome.')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /Authors.*Needs review/u }))
+    const authorsChoice = screen.getByRole('button', { name: 'Choose current value: Old title' })
+    await user.click(authorsChoice)
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 360)) })
+
+    expect(screen.queryByText('The authoritative case confirms this exact field outcome.')).toBeNull()
+    expect(authorsChoice).toHaveTextContent('Recording…')
+    await act(async () => { rejectAuthors?.(new ApiError(503, 'decision_failed')) })
+    expect(await screen.findByRole('button', { name: 'Try the same decision again' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /Title.*Decision recorded/u }))
+    expect(screen.getByText(/The recorded value remains Old title/u)).toBeVisible()
+  })
+
+  it('preserves final completion when navigation ends the confirmation dwell', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const recordedAuthors = { ...titleField, destination: 'authors', needsAttention: false, proposalId: 'proposal-authors', targetFingerprint: 'fingerprint-authors', humanDecision: { actor: 'owner', decision_id: 'decision-authors', destination: 'authors', occurred_at: 1, outcome: 'keep_current' as const, proposal_id: 'proposal-authors', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-authors' } }
+    const settled: CaseDetailView = { ...detail, fields: [{ ...titleField, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }, recordedAuthors] }
+    let current: CaseDetailView = { ...detail, fields: [titleField, recordedAuthors] }
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }) }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    expect(await screen.findByText('The authoritative case confirms this exact field outcome.')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /Authors.*Decision recorded/u }))
+
+    expect(await screen.findByText('Review complete')).toBeVisible()
+    expect(screen.getByRole('button', { name: /Title.*Old title/u })).toBeVisible()
+  })
+
+  it('keeps visible route focus while an uncached selected detail loads', async () => {
+    const user = userEvent.setup()
+    let release: ((value: CaseDetailView) => void) | undefined
+    const pendingDetail = new Promise<CaseDetailView>((resolve) => { release = resolve })
+    renderRoute('/library?lens=all', { ...createHttp(), getCaseDetail: vi.fn(async () => pendingDetail) })
+
+    await user.click(await screen.findByRole('button', { name: 'A Book' }))
+    expect(await screen.findByText('Loading selected work…')).toBeVisible()
+    const loadingRegion = screen.getByText('Loading selected work…').closest('section')
+    expect(loadingRegion).toHaveClass('workspace-detail')
+    expect(loadingRegion).toHaveAttribute('data-route-focus', 'true')
+    await waitFor(() => expect(loadingRegion).toHaveFocus())
+    await act(async () => { release?.(detail) })
+    expect(await screen.findByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
   })
 
   it('suppresses workspace decisions for a superseded case', async () => {
@@ -405,7 +615,9 @@ describe('typed review routes', () => {
 
     await user.click(await screen.findByRole('button', { name: /Attention/ }))
     await user.click(await screen.findByRole('button', { name: 'Try again' }))
-    expect(within(screen.getByLabelText('Attention queue')).getByText('A Book')).toBeVisible()
+    const rail = screen.getByLabelText('Attention queue')
+    await waitFor(() => expect(rail).toHaveFocus())
+    expect(within(rail).getByText('A Book')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Load more attention' }))
     expect(await screen.findByText('Second queued work')).toBeVisible()
     expect(http.getAttention).toHaveBeenLastCalledWith({ cursor: 'next' }, expect.any(AbortSignal))
@@ -438,10 +650,76 @@ describe('typed review routes', () => {
     if (!currentValue) throw new Error('workspace fixture requires a current-value decision control')
     await user.click(currentValue)
 
+    expect(await screen.findByText('Review complete')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Review next work →' }))
     await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-2', field: 'authors' }))
     expect(await screen.findByRole('heading', { name: 'Off-page successor' })).toBeVisible()
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-2', expect.any(AbortSignal))
+  })
+
+  it('retains completion identity and a return path after the completed work leaves its lens', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    const firstWork = library.works[0]
+    if (!titleField || !firstWork) throw new Error('completion fixture requires a work and title field')
+    const settled: CaseDetailView = { ...detail, fields: [{ ...titleField, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'decision-complete', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }] }
+    const successor = { id: 'case-2', destination: 'authors', title: 'Next work', authors: [], library: 'Books', mediaKind: 'ebook', notices: [], provenance: [], workAttentionCount: 1 }
+    let current = detail
+    let libraryReads = 0
+    let attentionReads = 0
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ++libraryReads === 1 ? { ...library, lens: 'needs_attention' as const } : { ...library, lens: 'needs_attention' as const, counts: { attention: 1, all: 1, clear: 0 }, works: [] }),
+      getAttention: vi.fn(async () => ++attentionReads === 1 ? { total: 2, items: [{ ...successor, id: 'case-1', destination: 'title', title: firstWork.title }, successor] } : { total: 1, items: [successor] }),
+      getCaseDetail: vi.fn(async () => current),
+      recordDecision: vi.fn(async () => { current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-complete', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }),
+    }
+    renderRoute('/library?lens=needs_attention&preview=case-1&field=title', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    const complete = (await screen.findByText('Review complete')).closest('article')
+    if (!complete) throw new Error('completion boundary is required')
+    expect(within(complete).getByRole('heading', { name: 'A Book' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Review next work →' })).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: /Title.*Old title/u }))
+    expect(await screen.findByRole('button', { name: '← Back to completion' })).toBeVisible()
+    expect(screen.getByText(/The recorded value remains Old title/u)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '← Back to completion' }))
+    expect(await screen.findByText('Review complete')).toBeVisible()
+  })
+
+  it('uses non-animated rail movement when reduced motion is requested', async () => {
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+    scrollIntoView.mockClear()
+    const original = window.matchMedia
+    window.matchMedia = vi.fn((query: string) => ({ matches: query === '(prefers-reduced-motion: reduce)', media: query, onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn() }))
+    try {
+      renderRoute('/library?lens=all&preview=case-1&field=title')
+      await screen.findByRole('button', { name: 'Choose current value: Old title' })
+      expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }))
+    } finally {
+      window.matchMedia = original
+    }
+  })
+
+  it('loads later attention pages until completion finds a deliberate next-work choice', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('detail fixture requires a title field')
+    const settled: CaseDetailView = { ...detail, fields: [{ ...titleField, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'decision-page', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }] }
+    let current = detail
+    const getAttention = vi.fn<ReviewHttp['getAttention']>(async (search) => search.cursor
+      ? { total: 2, items: [{ id: 'case-2', destination: 'authors', title: 'Later page work', authors: [], library: 'Books', mediaKind: 'ebook', notices: [], provenance: [], workAttentionCount: 1 }] }
+      : { total: 2, nextCursor: 'later', items: [{ id: 'case-1', destination: 'title', title: 'A Book', authors: [], library: 'Books', mediaKind: 'ebook', notices: [], provenance: [], workAttentionCount: 1 }] })
+    const http: ReviewHttp = { ...createHttp(), getAttention, getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-page', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }) }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    expect(await screen.findByText('Review complete')).toBeVisible()
+    expect(await screen.findByRole('button', { name: 'Review next work →' })).toBeVisible()
+    expect(getAttention).toHaveBeenCalledWith({ cursor: 'later' }, expect.any(AbortSignal))
   })
 
   it('settles a deferred Detail decision without reviving recording status after Evidence and Library traversal', async () => {
