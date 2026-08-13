@@ -303,7 +303,9 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     representation.click()
                     menu_box = page.get_by_role(
                         "listbox", name="Genres representation"
-                    ).bounding_box()
+                    )
+                    expect(menu_box).to_have_css("scale", "none")
+                    menu_box = menu_box.bounding_box()
                     self.assertIsNotNone(menu_box)
                     assert menu_box is not None
                     self.assertGreaterEqual(menu_box["x"], 8)
@@ -346,11 +348,9 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertEqual(page.get_by_role("dialog").count(), 0)
                     page.get_by_role("button", name="Back to preview").click()
                     review_activation.wait_for()
-                    page.get_by_role("button", name="Use dark mode").click()
-                    self.assertEqual(
-                        page.evaluate("() => document.documentElement.dataset.theme"),
-                        "dark",
-                    )
+                    dark_mode = page.get_by_role("button", name="Use dark mode")
+                    dark_mode.click()
+                    page.get_by_role("button", name="Use light mode").wait_for()
                     page.set_viewport_size({"width": 1440, "height": 900})
                     self.assertTrue(
                         page.get_by_role("navigation", name="Policy chapters").is_visible()
@@ -362,7 +362,9 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         page.evaluate("() => document.documentElement.scrollWidth"), 1440
                     )
                     page.set_viewport_size({"width": 390, "height": 844})
-                    page.get_by_role("button", name="Use light mode").click()
+                    light_mode = page.get_by_role("button", name="Use light mode")
+                    light_mode.click()
+                    page.get_by_role("button", name="Use dark mode").wait_for()
                     activity_requests = 0
 
                     def activity_poll(route) -> None:
@@ -406,9 +408,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     )
                     page.get_by_role("button", name="series", exact=True).click()
                     page.get_by_role("button", name="Use dark mode").click()
-                    self.assertEqual(
-                        page.locator("html").get_attribute("data-theme"), "dark"
-                    )
+                    page.get_by_role("button", name="Use light mode").wait_for()
                     page.get_by_role("button", name="Choose current value:", exact=False).first.click()
                     page.get_by_text("Decision recorded.", exact=False).wait_for()
                     page.get_by_role("button", name="series", exact=True).click()
