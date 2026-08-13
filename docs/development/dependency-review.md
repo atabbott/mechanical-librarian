@@ -1,8 +1,17 @@
 # Runtime Dependency Review
 
-The F03 configuration boundary adds one direct runtime dependency. The exact
-graph is locked by hashes in `uv.lock` and was reviewed from installed package
-metadata and bundled licence files.
+Application manifests pin direct dependencies; `uv.lock` and
+`frontend/package-lock.json` retain the exact transitive versions installed by
+development, CI, builds, and production. Build backends, language and
+package-manager toolchains, container images, and GitHub Actions remain exact
+pins because the application lockfiles do not govern them. Automated changes
+follow [dependency updates](dependency-updates.md).
+
+The F03 configuration boundary added one direct runtime dependency. The table
+records the introduction-time review baseline, not the current installed
+version inventory. The lockfile is authoritative for current versions; its
+resolved graph is reviewed from installed package metadata and bundled licence
+files on each dependency update.
 
 | Package | Version | Relationship | SPDX licence | Product authority |
 | --- | --- | --- | --- | --- |
@@ -23,7 +32,9 @@ All listed licences are compatible with distribution of the project under
 distributions. Release SBOM and notice generation remains governed by the
 release workflow.
 
-F04 adds pinned HTTPX 0.28.1 target-service transport and its locked graph:
+F04 added pinned HTTPX target-service transport and its locked graph. Versions
+in the table are the introduction-time review baseline; current versions are
+authoritative only in `uv.lock`:
 
 | Package | Version | Relationship | SPDX licence | Product authority |
 | --- | --- | --- | --- | --- |
@@ -45,8 +56,9 @@ only to recognize HTTPX's exact wrapped remote-disconnect cause without parsing
 exception text. HTTPcore receives no additional authority through that direct
 classification dependency.
 
-F16a #447 adds the one-process authenticated HTTP and password-verification
-boundary. The lockfile pins the complete closure:
+F16a #447 added the one-process authenticated HTTP and password-verification
+boundary. The table is its introduction-time review baseline; `uv.lock` pins
+the current complete closure:
 
 | Package | Version | Relationship | SPDX licence | Product authority |
 | --- | --- | --- | --- | --- |
@@ -68,9 +80,11 @@ multipart parser, identity provider, cache, session service, or second process
 is introduced. The licences are compatible with AGPL-3.0-or-later; release
 notice and SBOM generation remain separate release gates.
 
-F16a #450 adds one pinned development-only browser qualification dependency and
-its locked Python closure. None is imported by the runtime package or included
-as application authority.
+F16a #450 added one pinned development-only browser qualification dependency
+and its locked Python closure. The table and browser payload hashes are the
+introduction-time qualification baseline. A Playwright update requires explicit
+approval and must update the browser qualification evidence. None is imported
+by the runtime package or included as application authority.
 
 | Package | Version | Relationship | SPDX licence | Product authority |
 | --- | --- | --- | --- | --- |
@@ -98,21 +112,22 @@ qualification input and future release-SBOM concern, not runtime content.
 
 ## React platform build dependencies
 
-Issue #495 adds an exact development/build graph. Node 24.19.0 (Krypton LTS)
+Issue #495 adds an exact resolved development/build graph. Node 24.19.0 (Krypton LTS)
 and its bundled npm 11.17.0 are required exactly; neither enters the runtime
 image. The lockfile binds every transitive integrity hash, `npm ci` disables
 package lifecycle scripts, generated DTOs consume only the committed OpenAPI
 document, and the build receives no credential, private data, network-runtime,
 database, media, target, provider, or effect authority.
 Node is MIT with its incorporated third-party notices; npm is Artistic-2.0.
-The 297-entry locked package inventory contains only the reviewed MIT, MIT-0,
+The introduction-time 297-entry locked package inventory contained only the
+reviewed MIT, MIT-0,
 ISC, Apache-2.0, BSD-2-Clause, BSD-3-Clause, BlueOak-1.0.0, MPL-2.0,
 Python-2.0, Unlicense, CC0-1.0, CC-BY-4.0, and `(MIT OR CC0-1.0)` declarations.
 The source gate fails if an entry lacks licence metadata or introduces another
 declaration; all reviewed declarations are compatible with this build/test and
 browser-distribution use under AGPL-3.0-or-later.
 
-| Package | Exact version | Licence | Build responsibility |
+| Package | Introduction baseline | Licence | Build responsibility |
 | --- | ---: | --- | --- |
 | React / React DOM | 19.2.8 | MIT | browser rendering only |
 | TypeScript | 5.9.3 | Apache-2.0 | strict source and generated-DTO checking |
@@ -165,9 +180,10 @@ filesystem extraction, source rewrite, or retained-tree authority. Parser,
 recovery, projection, selection, normalizer, vocabulary, limits, extractor,
 and report versions are all compatibility identity.
 
-F07a adds one pinned development-only property-testing dependency. It is
-locked in the development group and absent from runtime wheel/sdist contents
-and production imports.
+F07a added one pinned development-only property-testing dependency. Its table
+is the introduction-time review baseline; `uv.lock` is authoritative for the
+current version. It is locked in the development group and absent from runtime
+wheel/sdist contents and production imports.
 
 | Package | Version | Relationship | SPDX licence | Product authority |
 | --- | --- | --- | --- | --- |

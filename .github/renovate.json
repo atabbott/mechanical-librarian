@@ -1,0 +1,131 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "enabledManagers": [
+    "dockerfile",
+    "github-actions",
+    "npm",
+    "pep621"
+  ],
+  "dependencyDashboard": true,
+  "timezone": "Europe/London",
+  "schedule": [
+    "before 6am on Monday"
+  ],
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "prCreation": "not-pending",
+  "prConcurrentLimit": 3,
+  "branchConcurrentLimit": 3,
+  "prHourlyLimit": 2,
+  "rangeStrategy": "pin",
+  "rebaseWhen": "behind-base-branch",
+  "ignoreTests": false,
+  "platformAutomerge": false,
+  "automerge": false,
+  "automergeStrategy": "squash",
+  "labels": [
+    "dependencies"
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 6am on Monday"
+    ]
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "addLabels": [
+      "security"
+    ],
+    "vulnerabilityFixStrategy": "lowest"
+  },
+  "packageRules": [
+    {
+      "description": "Group compatible frontend updates",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "minor"
+      ],
+      "groupName": "compatible frontend dependencies"
+    },
+    {
+      "description": "Group Python patch updates",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "groupName": "Python patch dependencies"
+    },
+    {
+      "description": "Group stable Python minor updates",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchCurrentVersion": "!/^0\\./",
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "groupName": "Python stable minor dependencies"
+    },
+    {
+      "description": "Require approval for pre-1.0 minor updates",
+      "matchManagers": [
+        "npm",
+        "pep621"
+      ],
+      "matchCurrentVersion": "/^0\\./",
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "automerge": false,
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Require approval for major updates",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "automerge": false,
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Require approval for infrastructure and workflow updates",
+      "matchManagers": [
+        "dockerfile",
+        "github-actions"
+      ],
+      "automerge": false,
+      "dependencyDashboardApproval": true,
+      "groupName": "infrastructure dependencies"
+    },
+    {
+      "description": "Require approval for toolchain, browser, and build-backend updates",
+      "matchPackageNames": [
+        "node",
+        "npm",
+        "playwright",
+        "python",
+        "setuptools",
+        "uv"
+      ],
+      "automerge": false,
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Require approval for dependency replacements",
+      "matchUpdateTypes": [
+        "replacement"
+      ],
+      "automerge": false,
+      "dependencyDashboardApproval": true
+    }
+  ]
+}
