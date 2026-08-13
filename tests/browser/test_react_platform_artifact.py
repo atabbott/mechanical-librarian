@@ -164,6 +164,16 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                         long_activity_title.locator("xpath=ancestor::article").bounding_box()["height"],
                         190,
                     )
+                    page.set_viewport_size({"width": 1440, "height": 900})
+                    inspect = page.get_by_role("button", name="Inspect").first
+                    inspect_box = inspect.bounding_box()
+                    row_box = inspect.locator("xpath=ancestor::article").bounding_box()
+                    self.assertIsNotNone(inspect_box)
+                    self.assertIsNotNone(row_box)
+                    self.assertEqual(inspect.evaluate("node => getComputedStyle(node).whiteSpace"), "nowrap")
+                    self.assertLessEqual(row_box["height"], 72)
+                    self.assertLessEqual(inspect_box["height"], 40)
+                    page.set_viewport_size({"width": 390, "height": 844})
                     page.get_by_text("Authority and recovery", exact=True).click()
                     page.get_by_role(
                         "button", name="Review write permissions"

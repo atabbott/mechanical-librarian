@@ -153,6 +153,9 @@ class _PagedRepository:
             "page": 1, "page_count": 1, "page_size": 25, "total": 0,
         }
 
+    def field_effect_activity_summary(self):
+        return self.field_effect_activity_data(50)
+
     def grant_field_effect_consent_matrix(self, *arguments):
         raise AssertionError("consent must not be granted before capability proof")
 

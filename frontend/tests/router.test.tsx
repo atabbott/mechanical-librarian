@@ -1622,10 +1622,32 @@ describe('typed review routes', () => {
     renderRoute('/activity', http)
 
     await openActivityAuthority(user)
-    expect(screen.getByRole('button', { name: 'Review write permissions' })).toHaveAttribute('aria-expanded', 'false')
-    await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
+    const consentTrigger = screen.getByRole('button', { name: 'Review write permissions' })
+    expect(consentTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(consentTrigger).toHaveAttribute('aria-controls', 'activity-consent')
+    await user.click(consentTrigger)
     expect(screen.getByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
+  })
+
+  it.each([
+    ['a build mismatch', new BuildMismatchError()],
+    ['a gateway failure', new ApiError(504, 'gateway_timeout')],
+    ['an invalid authoritative response', new ApiError(502, 'invalid_activity_response')],
+  ])('reconciles %s after a committed pause without claiming it failed safely', async (_name, failure) => {
+    const user = userEvent.setup()
+    const initial: ActivityView = activity({ enabled_libraries: [{ connection: 'primary', library: 'fiction' }] })
+    let current = initial
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current), activityCommand: vi.fn(async () => { throw failure }) }
+    renderRoute('/activity', http)
+    await openActivityAuthority(user)
+    current = { ...initial, paused: true }
+    await user.click(screen.getByRole('button', { name: 'Pause new work' }))
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The requested activity change was applied, confirmed by the authoritative server.'))
+    expect(screen.getByRole('alert')).not.toHaveTextContent('failed safely')
+    expect(http.activityCommand).toHaveBeenCalledOnce()
+    expect(http.getActivity).toHaveBeenCalledTimes(2)
   })
 
   it.each([
@@ -1755,6 +1777,9 @@ describe('typed review routes', () => {
     ['stale', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_label: 'Stale work', state: 'stale' }] }, 'Stale'],
     ['stopped', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_label: 'Stopped work', state: 'abandoned' }] }, 'Stopped safely'],
     ['verified', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_label: 'Verified work', state: 'verified' }] }, 'Verified'],
+    ['accepted', { events: [{ work_label: 'Accepted work', state: 'accept', origin: 'human' }] }, 'Accepted'],
+    ['kept current', { events: [{ work_label: 'Kept work', state: 'keep_current', origin: 'human' }] }, 'Kept current'],
+    ['rejected', { events: [{ work_label: 'Rejected work', state: 'reject', origin: 'human' }] }, 'Rejected'],
   ])('keeps the protected ledger row truthful for %s work', async (_name, current, rowStatus) => {
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity(current)) }
     renderRoute('/activity', http)

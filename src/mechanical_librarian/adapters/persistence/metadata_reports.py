@@ -1856,9 +1856,19 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
-    def field_effect_activity_data(self, limit: int = 50) -> dict[str, object]:
+    def field_effect_activity_summary(self) -> dict[str, object]:
+        """Project Activity status without reading legacy event/report payloads."""
+        return self.field_effect_activity_data(1, include_events=False)
+
+    def field_effect_activity_data(
+        self, limit: int = 50, *, include_events: bool = True
+    ) -> dict[str, object]:
         """Project a bounded value-free status and chronological audit ledger."""
-        if type(limit) is not int or not 1 <= limit <= 100:
+        if (
+            type(limit) is not int
+            or not 1 <= limit <= 100
+            or type(include_events) is not bool
+        ):
             raise FieldEffectError("invalid_limit")
         try:
             consent_rows = self._connection.execute(
@@ -1928,7 +1938,7 @@ class SQLiteMetadataReportRepository:
                 "coalesce(sum(CASE WHEN attempt>=3 THEN 1 ELSE 0 END),0) "
                 "FROM field_effect_cleanups WHERE state='pending'"
             ).fetchone()
-            event_rows = self._connection.execute(
+            event_rows = [] if not include_events else self._connection.execute(
                 "SELECT effect.connection_name,effect.destination,json_extract(event.document,'$.failure'),"
                 "effect.library_name,event.occurred_at,"
                 "json_extract(event.document,'$.origin'),lineage.report_id,event.kind,effect.work_id "
@@ -2029,15 +2039,16 @@ class SQLiteMetadataReportRepository:
         events = """
             SELECT event.event_id, effect.connection_name, effect.destination,
                    effect.library_name, event.occurred_at,
-                   COALESCE(json_extract(event.document, '$.origin'), 'unknown'),
+                   COALESCE(CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END, 'unknown'),
                    lineage.report_id, event.kind, effect.work_id, event.document,
                    CASE WHEN event.kind IN ('retryable','stale','superseded','abandoned')
-                             OR json_extract(event.document, '$.failure') IS NOT NULL
+                             OR CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.failure') END IS NOT NULL
                         THEN 'safety'
-                        WHEN json_extract(event.document, '$.origin')='human' THEN 'review'
-                        WHEN json_extract(event.document, '$.origin')='automatic_policy' THEN 'metadata'
+                        WHEN CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END='human' THEN 'review'
+                        WHEN CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END='automatic_policy' THEN 'metadata'
                         ELSE 'unknown' END,
-                   json_extract(report.document, '$.target.fields[0].value'), NULL, 'field_effect'
+                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'field_effect', NULL, event.plan_id, event.sequence, effect.decision_id,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END
               FROM field_effect_events event
               JOIN field_effects effect ON effect.plan_id=event.plan_id
          LEFT JOIN current_metadata_report_lineages lineage
@@ -2045,33 +2056,36 @@ class SQLiteMetadataReportRepository:
                AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id
               LEFT JOIN metadata_reports report ON report.report_id=lineage.report_id
             UNION ALL
-            SELECT event.event_id, json_extract(report.document, '$.target.connection'), event.destination,
-                   json_extract(report.document, '$.target.library'), event.occurred_at, 'human', review.report_id,
-                   decision.outcome, json_extract(report.document, '$.target.item'), event.document, 'review', json_extract(report.document, '$.target.fields[0].value'), NULL, 'human_decision'
+            SELECT event.event_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, event.destination,
+                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END, event.occurred_at, 'human', review.report_id,
+                   decision.outcome, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END, event.document, 'review', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'human_decision', decision.document, event.review_case_id, NULL, event.decision_id,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END
               FROM human_decision_events event
               JOIN human_decisions decision ON decision.decision_id=event.decision_id
               JOIN review_cases review ON review.review_case_id=event.review_case_id
               JOIN metadata_reports report ON report.report_id=review.report_id
             UNION ALL
-            SELECT decision.decision_id, json_extract(report.document, '$.target.connection'), decision.destination,
-                   json_extract(report.document, '$.target.library'), decision.occurred_at, 'automatic_policy', review.report_id,
-                   'recorded', json_extract(report.document, '$.target.item'), decision.document, 'metadata', json_extract(report.document, '$.target.fields[0].value'), NULL, 'automatic_decision'
+            SELECT decision.decision_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, decision.destination,
+                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END, decision.occurred_at, 'automatic_policy', review.report_id,
+                   'recorded', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END, decision.document, 'metadata', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'automatic_decision', NULL, decision.review_case_id, NULL, decision.decision_id,
+                   CASE WHEN typeof(decision.document)='text' AND length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(decision.document) THEN 1 ELSE 0 END
               FROM automatic_decisions decision
               JOIN review_cases review ON review.review_case_id=decision.review_case_id
               JOIN metadata_reports report ON report.report_id=review.report_id
             UNION ALL
-            SELECT event.event_id, json_extract(report.document, '$.target.connection'), 'cover', json_extract(report.document, '$.target.library'),
-                   event.occurred_at, 'human', review.report_id, event.kind, json_extract(report.document, '$.target.item'),
+            SELECT event.event_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, 'cover', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END,
+                   event.occurred_at, 'human', review.report_id, event.kind, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END,
                    event.document,
                    CASE WHEN event.kind IN ('stale','superseded') THEN 'safety' ELSE 'review' END,
-                   json_extract(report.document, '$.target.fields[0].value'), NULL, 'cover_safeguard'
+                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'cover_safeguard', NULL, event.review_case_id, NULL, event.consideration_id,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END
               FROM cover_consideration_events event
               JOIN review_cases review ON review.review_case_id=event.review_case_id
               JOIN metadata_reports report ON report.report_id=review.report_id
             UNION ALL
             SELECT transition.transition_id, NULL, 'policy', 'Library policy', transition.updated_at,
                    'policy', NULL, transition.state, 'Library policy', '{}', 'policy',
-                   'Library policy', 'Policy generation ' || transition.generation, 'policy_transition'
+                   'Library policy', 'Policy generation ' || transition.generation, 'policy_transition', NULL, NULL, NULL, NULL, 1
               FROM metadata_policy_transitions transition
         """
         where = ["occurred_at>=?"]
@@ -2089,7 +2103,7 @@ class SQLiteMetadataReportRepository:
             )
             parameters.extend((like, like, like, like, like, like))
         predicate = " WHERE " + " AND ".join(where)
-        projection = "WITH activity_events(event_id,connection,destination,library,occurred_at,origin,report_id,state,work_id,document,event_type,title,detail,source_kind) AS (" + events + ") "
+        projection = "WITH activity_events(event_id,connection,destination,library,occurred_at,origin,report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,source_valid) AS (" + events + ") "
         def waiting_scalar(value: object, *, nullable: bool = False) -> str | None:
             if value is None and nullable:
                 return None
@@ -2104,36 +2118,43 @@ class SQLiteMetadataReportRepository:
             selected_page = min(page, page_count)
             rows = self._connection.execute(
                 projection + "SELECT event_id,connection,destination,library,occurred_at,origin,"
-                "report_id,state,work_id,document,event_type,title,detail,source_kind FROM activity_events" + predicate
+                "report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,source_valid FROM activity_events" + predicate
                 + " ORDER BY occurred_at DESC,event_id DESC LIMIT ? OFFSET ?",
                 (*parameters, page_size, (selected_page - 1) * page_size),
             ).fetchall()
             report_ids = sorted({row[6] for row in rows if row[6] is not None})
-            report_documents = {} if not report_ids else dict(self._connection.execute(
-                "SELECT report_id,document FROM metadata_reports WHERE report_id IN ("
+            report_rows = [] if not report_ids else self._connection.execute(
+                "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id IN ("
                 + ",".join("?" for _ in report_ids) + ")",
                 report_ids,
-            ).fetchall())
+            ).fetchall()
+            report_documents = {}
+            try:
+                for report_row in report_rows:
+                    if (
+                        type(report_row[8]) is not str
+                        or not 2 <= len(report_row[8].encode("utf-8")) <= document_limit
+                    ):
+                        raise MetadataReportError("persisted report is invalid")
+                    report_documents[report_row[0]] = _validate_report_row(report_row)
+            except MetadataReportError as error:
+                raise FieldEffectError("persistence") from error
             # Every report joined to the selected page participates in the
             # response contract.  Validate it here (not through a corpus-wide
             # preflight) so malformed durable data fails closed without making
             # a bounded poll proportional to unrelated history.
             if set(report_documents) != set(report_ids):
                 raise FieldEffectError("persistence")
-            for report_id, report_document in report_documents.items():
-                if (
-                    type(report_id) is not str
-                    or type(report_document) is not str
-                    or not 2 <= len(report_document.encode("utf-8")) <= document_limit
-                    or type(json.loads(report_document)) is not dict
-                ):
-                    raise FieldEffectError("persistence")
             events = []
             for (
                 event_id, connection, destination, library, occurred_at, origin,
-                report_id, state, work_id, document, projected_type, title, detail, source_kind,
+                report_id, state, work_id, document, projected_type, title, detail, source_kind, source_document, source_parent_id, source_sequence, source_identity, source_valid,
             ) in rows:
-                if type(document) is not str or not 2 <= len(document.encode("utf-8")) <= document_limit:
+                if (
+                    source_valid != 1
+                    or type(document) is not str
+                    or not 2 <= len(document.encode("utf-8")) <= document_limit
+                ):
                     raise FieldEffectError("persistence")
                 raw = json.loads(document)
                 if type(raw) is not dict:
@@ -2157,6 +2178,110 @@ class SQLiteMetadataReportRepository:
                 source_kind = scalar(source_kind)
                 if source_kind not in {"field_effect", "human_decision", "automatic_decision", "cover_safeguard", "policy_transition"}:
                     raise FieldEffectError("persistence")
+                if source_document is not None and (
+                    type(source_document) is not str
+                    or not 2 <= len(source_document.encode("utf-8")) <= document_limit
+                ):
+                    raise FieldEffectError("persistence")
+                try:
+                    if source_kind == "field_effect":
+                        event_keys = {
+                            "attempt", "decision_id", "desired_value", "destination",
+                            "event_id", "failure", "kind", "occurred_at", "origin",
+                            "plan_id", "pre_value", "schema_version", "sequence", "state",
+                        }
+                        if (
+                            set(raw) != event_keys
+                            or raw.get("schema_version") != "field-effect-event-v1"
+                            or raw.get("event_id") != event_id
+                            or raw.get("plan_id") != source_parent_id
+                            or raw.get("decision_id") != source_identity
+                            or raw.get("sequence") != source_sequence
+                            or type(raw.get("sequence")) is not int
+                            or raw["sequence"] < 1
+                            or type(raw.get("attempt")) is not int
+                            or not 0 <= raw["attempt"] <= 3
+                            or raw.get("failure") not in FIELD_EFFECT_FAILURES
+                            or raw.get("destination") != destination
+                            or raw.get("kind") != state
+                            or raw.get("state") != state
+                            or raw.get("occurred_at") != occurred_at
+                            or raw.get("origin") != origin
+                            or canonical_effect_json(raw) != document
+                            or event_id != "effect_event_" + hashlib.sha256(
+                                canonical_effect_json({
+                                    key: value for key, value in raw.items()
+                                    if key != "event_id"
+                                }).encode()
+                            ).hexdigest()
+                        ):
+                            raise FieldEffectError("persistence")
+                    elif source_kind == "human_decision":
+                        if source_document is None:
+                            raise FieldEffectError("persistence")
+                        decision = HumanDecision.from_json(source_document)
+                        event_keys = {
+                            "actor", "decision_id", "destination", "event_id", "kind",
+                            "occurred_at", "outcome", "review_case_id", "schema_version",
+                        }
+                        if (
+                            set(raw) != event_keys
+                            or raw.get("schema_version") != "human-decision-event-v1"
+                            or raw.get("kind") != "human_decision_recorded"
+                            or raw.get("event_id") != event_id
+                            or raw.get("decision_id") != decision.decision_id
+                            or raw.get("decision_id") != source_identity
+                            or raw.get("destination") != destination
+                            or raw.get("actor") != decision.actor
+                            or raw.get("outcome") != state
+                            or raw.get("outcome") != decision.outcome
+                            or raw.get("occurred_at") != occurred_at
+                            or raw.get("occurred_at") != decision.occurred_at
+                            or raw.get("review_case_id") != decision.review_case_id
+                            or raw.get("review_case_id") != source_parent_id
+                            or decision.destination != destination
+                            or decision.to_json() != source_document
+                            or _canonical_json(raw) != document
+                            or event_id != "human_decision_event_" + hashlib.sha256(
+                                ("human-decision-event-v1:" + decision.decision_id).encode("utf-8")
+                            ).hexdigest()
+                        ):
+                            raise FieldEffectError("persistence")
+                    elif source_kind == "automatic_decision":
+                        decision = AutomaticDecision.from_json(document)
+                        if (
+                            decision.decision_id != event_id
+                            or decision.decision_id != source_identity
+                            or decision.destination != destination
+                            or decision.occurred_at != occurred_at
+                            or origin != "automatic_policy"
+                            or decision.review_case_id != source_parent_id
+                            or decision.report_id != report_id
+                            or decision.to_json() != document
+                        ):
+                            raise FieldEffectError("persistence")
+                    elif source_kind == "cover_safeguard":
+                        event_keys = {
+                            "consideration_id", "decision_id", "kind", "occurred_at",
+                            "review_case_id", "schema_version",
+                        }
+                        if (
+                            set(raw) != event_keys
+                            or raw.get("schema_version") != "cover-consideration-event-v1"
+                            or raw.get("consideration_id") != source_identity
+                            or raw.get("kind") != state
+                            or raw.get("occurred_at") != occurred_at
+                            or raw.get("review_case_id") != source_parent_id
+                            or _canonical_json(raw) != document
+                            or event_id != "cover_consideration_event_" + hashlib.sha256(
+                                document.encode("utf-8")
+                            ).hexdigest()
+                        ):
+                            raise FieldEffectError("persistence")
+                    elif raw or document != "{}" or source_document is not None:
+                        raise FieldEffectError("persistence")
+                except (AutomaticDecisionError, HumanDecisionError, TypeError, ValueError) as error:
+                    raise FieldEffectError("persistence") from error
                 event_title = scalar(title, nullable=True)
                 failure = scalar(raw.get("failure"), nullable=True)
                 if report_id is not None:
@@ -2196,17 +2321,41 @@ class SQLiteMetadataReportRepository:
                 })
             waiting = self._connection.execute(
                 "SELECT effect.connection_name,effect.destination,effect.library_name,effect.work_id,effect.state,"
-                "json_extract(report.document,'$.target.fields[0].value') FROM field_effects effect "
+                "lineage.report_id FROM field_effects effect "
                 "LEFT JOIN current_metadata_report_lineages lineage ON lineage.connection_name=effect.connection_name "
                 "AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id "
-                "LEFT JOIN metadata_reports report ON report.report_id=lineage.report_id "
                 "WHERE effect.state IN ('planned','claimed','applying','reconciling','retryable') "
                 "ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
             ).fetchone()
+            waiting_title = "Recorded work"
             if waiting is not None:
                 for value in waiting[:5]:
                     waiting_scalar(value)
-                waiting_scalar(waiting[5], nullable=True)
+                waiting_report_id = waiting_scalar(waiting[5], nullable=True)
+                if waiting_report_id is not None:
+                    waiting_report_row = self._connection.execute(
+                        "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document "
+                        "FROM metadata_reports WHERE report_id=?",
+                        (waiting_report_id,),
+                    ).fetchone()
+                    if (
+                        waiting_report_row is None
+                        or type(waiting_report_row[8]) is not str
+                        or not 2 <= len(waiting_report_row[8].encode("utf-8")) <= document_limit
+                    ):
+                        raise FieldEffectError("persistence")
+                    try:
+                        waiting_report_document = _validate_report_row(waiting_report_row)
+                        waiting_report = MetadataReport.from_json(waiting_report_document)
+                    except (MetadataReportError, ReportValueError) as error:
+                        raise FieldEffectError("persistence") from error
+                    if (
+                        waiting_report.target.connection != waiting[0]
+                        or waiting_report.target.library != waiting[2]
+                        or waiting_report.target.item != waiting[3]
+                    ):
+                        raise FieldEffectError("persistence")
+                    waiting_title = waiting_report.target.current_title or "Untitled"
             result = {
                 "events": events,
                 "page": selected_page,
@@ -2216,14 +2365,14 @@ class SQLiteMetadataReportRepository:
                 "current_waiting": None if waiting is None else {
                     "destination": waiting[1], "library": waiting[2],
                     "work_id": waiting[3], "state": waiting[4],
-                    "work_label": waiting[5] if isinstance(waiting[5], str) and len(waiting[5]) <= 512 else "Recorded work",
+                    "work_label": waiting_title,
                 },
                 "total": total,
             }
             if owns_snapshot:
                 self._connection.commit()
             return result
-        except (json.JSONDecodeError, sqlite3.Error, TypeError, ValueError) as error:
+        except (json.JSONDecodeError, RecursionError, sqlite3.Error, TypeError, ValueError) as error:
             if owns_snapshot and self._connection.in_transaction:
                 self._connection.rollback()
             raise FieldEffectError("persistence") from error

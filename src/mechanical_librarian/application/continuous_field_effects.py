@@ -62,6 +62,7 @@ class ContinuousFieldEffectRepository(Protocol):
     def field_effect_capability_suspension(self, *values: object) -> str | None: ...
     def next_field_effect_plan_id(self, last_library: str | None) -> str | None: ...
     def field_effect_activity_data(self, limit: int) -> dict[str, object]: ...
+    def field_effect_activity_summary(self) -> dict[str, object]: ...
 
     def field_effect_activity_page(
         self, *, search: str | None, event_type: str, occurred_after: int,
@@ -444,7 +445,7 @@ class ContinuousGuardedApplication:
             or page_size not in {25, 50, 100}
         ):
             raise GuardedApplicationError("activity_query")
-        data = self._repository.field_effect_activity_data(50)
+        data = self._repository.field_effect_activity_summary()
         page_projection = self._repository.field_effect_activity_page(
             search=normalized_search,
             event_type=event_type,
