@@ -329,12 +329,12 @@ The suite covers:
   54/27/49 Google Books/Hardcover/Open Library metadata-attempt maxima, one
   shared pacer per paced adapter across foreground entries, and no persisted
   attempt diagnostics;
-- deterministic `metadata-report-v23` serialization and database reopen preserve
+- deterministic `metadata-report-v24` serialization and database reopen preserve
   claim raw order, rich-evidence canonical order, duplicate source occurrences,
   source ordinals, scopes, roles, field states and diagnostics byte-for-byte.
   Application tests merge parser, attempt and incomplete-outcome diagnostics
   once before persistence and prove reopen does not inflate them. Persistence
-  rejects `metadata-report-v22` before mutation and a direct regression proves
+  rejects `metadata-report-v23` before mutation and a direct regression proves
   the prior database bytes remain unchanged;
 - cover-gallery provider/aggregate bounds, safe provenance, timeout/rejection
   states, visible truncation, and digest deduplication with all provenance;
@@ -425,8 +425,8 @@ cover nested single-emission, multiple exact sibling labels, mixed complete and
 split labels in one ancestor, repeated equal complete/split siblings, multiple
 assembled labels, scanning/production/workflow label values, promotion cues
 inside labels, the exact 16-fact rear cap, front/rear NFC and whitespace
-normalization, `metadata-report-v23`
-canonical replay, clean database creation, and byte-unchanged rejection of v22
+normalization, `metadata-report-v24`
+canonical replay, clean database creation, and byte-unchanged rejection of v23
 state. Only aggregate expected, found, and false-positive counts are asserted
 or exported; fixture rows and source text remain private.
 

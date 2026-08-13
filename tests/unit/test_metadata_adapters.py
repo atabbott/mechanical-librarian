@@ -35,6 +35,8 @@ from mechanical_librarian.application.metadata_report import (
     TargetCover,
     TargetSnapshot,
     metadata_discovery_plan,
+    provider_observation,
+    ProviderLaneResult,
     qualify_provider_observation,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -58,6 +60,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
     PublicationDateRelation,
+    ReportValueError,
     TargetDestination,
     TargetFacts,
     TargetField,
@@ -159,7 +162,7 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v23'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v24'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -174,7 +177,7 @@ def _create_prior_schema(
 ) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v23'", f"= '{version}'"
+            "= 'metadata-report-v24'", f"= '{version}'"
         ),
         metadata_persistence._CURRENT_SQL,
         metadata_persistence._CURRENT_LINEAGE_SQL,
@@ -308,7 +311,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "current report schema with stale proposal policy",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v23",
+                    "metadata-report-v24",
                     "fixed-conservative-v6",
                 ),
             ),
@@ -362,10 +365,17 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ),
             ),
             (
-                "previous proposal policy v3",
+                "immediate previous v23",
                 lambda connection: _create_prior_schema(
                     connection,
                     "metadata-report-v23",
+                ),
+            ),
+            (
+                "previous proposal policy v3",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v24",
                     "fixed-conservative-v3",
                 ),
             ),
@@ -373,7 +383,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "previous proposal policy v4",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v23",
+                    "metadata-report-v24",
                     "fixed-conservative-v4",
                 ),
             ),
@@ -381,7 +391,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "previous proposal policy v5",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v23",
+                    "metadata-report-v24",
                     "fixed-conservative-v5",
                 ),
             ),
@@ -505,7 +515,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
-            self.assertEqual(schema_version, ("metadata-report-v23",))
+            self.assertEqual(schema_version, ("metadata-report-v24",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)
@@ -2491,6 +2501,109 @@ class ProviderAdapterTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
+    def test_edition_overflow_rejects_hostile_creator_identity_bindings(self) -> None:
+        rows = [{"id": index, "book_id": 10} for index in range(1, 7)]
+        base = {
+            "id": 10,
+            "title": "Anchored work",
+            "contributions": [
+                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
+            ],
+        }
+        variants = (
+            [
+                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
+                {"id": 1, "contribution": "Author", "author": {"id": 8, "name": "Bea Example"}},
+            ],
+            [
+                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
+                {"id": 2, "contribution": "Author", "author": {"id": 7, "name": "Ada Other"}},
+            ],
+            [
+                {"id": 1, "contribution": "Translator", "author": {"id": 7, "name": "Ada Example"}},
+            ],
+            [
+                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
+                {"id": 2, "contribution": "Author", "author": {"id": 8, "name": "ada example"}},
+            ],
+        )
+        for contributions in variants:
+            payload = self._envelope(rows, [{**base, "contributions": contributions}])
+            with self.subTest(contributions=contributions), self.assertRaises(ValueError):
+                hardcover_metadata._parse_edition_enrichment_overflow(
+                    json.dumps(payload).encode(), "catalogue"
+                )
+        for malformed_rows in (
+            [{"id": 1, "book_id": 10}] * 6,
+            [{"id": index, "book_id": 11} for index in range(1, 7)],
+        ):
+            with self.subTest(rows=malformed_rows), self.assertRaises(ValueError):
+                hardcover_metadata._parse_edition_enrichment_overflow(
+                    json.dumps(self._envelope(malformed_rows, [base])).encode(),
+                    "catalogue",
+                )
+
+    def test_edition_overflow_probe_has_exact_five_six_seven_boundary(self) -> None:
+        book = [{
+            "id": 10,
+            "title": "Anchored work",
+            "contributions": [{
+                "id": 1, "contribution": "Author",
+                "author": {"id": 7, "name": "Ada Example"},
+            }],
+        }]
+        for count in (5, 6, 7):
+            payload = json.dumps(self._envelope(
+                [{"id": index, "book_id": 10} for index in range(1, count + 1)],
+                book,
+            )).encode()
+            with self.subTest(count=count):
+                if count == 7:
+                    with self.assertRaises(hardcover_metadata._CandidateLimit):
+                        hardcover_metadata._parse_edition_enrichment_overflow(payload, "catalogue")
+                else:
+                    value = hardcover_metadata._parse_edition_enrichment_overflow(payload, "catalogue")
+                    self.assertEqual(count == 6, value is not None)
+
+    def test_mixed_discovery_retains_only_the_work_overflow_witness(self) -> None:
+        fields = tuple(
+            TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Ada Example",))
+            if field.destination is TargetDestination.AUTHORS else field
+            for field in default_target_fields("Current title")
+        )
+        title, isbn = self._title_claim(), self._claim()
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", "Current title", (), fields=fields),
+            (title, isbn),
+        )
+        witness = hardcover_metadata._parse_edition_enrichment_overflow(
+            json.dumps(self._envelope(
+                [{"id": index, "book_id": 10} for index in range(1, 7)],
+                [{"id": 10, "title": "Current title", "contributions": [{"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}}]}],
+            )).encode(),
+            "catalogue",
+        )
+        assert witness is not None
+        work = next(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK)
+        isbn_lane = next(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ISBN)
+        observation = provider_observation(
+            "catalogue",
+            (
+                ProviderLaneResult(work, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, edition_enrichment_overflow=witness),
+                ProviderLaneResult(isbn_lane, ProviderStatus.NO_MATCH),
+            ),
+        )
+        self.assertEqual(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, observation.status)
+        self.assertEqual(witness, observation.edition_enrichment_overflow)
+        self.assertEqual((), observation.candidates)
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", fields),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(title, isbn),
+            local_reasons=("opening_matter_isbn",),
+            providers=(observation,),
+        )
+        self.assertEqual(report, MetadataReport.from_json(report.to_json()))
 
     def test_hardcover_taxonomy_and_work_publication_fail_closed(self) -> None:
         def observe(book: dict[str, object]) -> ProviderObservation:
@@ -2682,6 +2795,115 @@ class ProviderAdapterTests(unittest.TestCase):
         for size, expected in ((262_144, ProviderStatus.MALFORMED), (262_145, ProviderStatus.OVERSIZED)):
             provider = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request, length=size: httpx.Response(200, headers={"content-type": "application/json"}, content=b"x" * length))), 262_144)
             self.assertEqual(provider.observe(_isbn_lookup((self._claim(),))).status, expected)
+
+    def test_edition_overflow_retains_only_work_scoped_witness(self) -> None:
+        rows = [
+            {
+                "id": index,
+                "book_id": 10,
+                "isbn_10": "0306406152",
+                "isbn_13": "9780306406157",
+                "title": f"Discarded edition {index}",
+                "release_date": "2001-02-03",
+                "image": f"https://example.test/edition-{index}.jpg",
+                "publisher": {"name": "Discarded publisher"},
+                "language": "en",
+            }
+            for index in range(1, 7)
+        ]
+        provider = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=self._envelope(
+                            rows,
+                            [
+                                {
+                                    "id": 10,
+                                    "title": "Anchored work",
+                                    "contributions": [
+                                        {
+                                            "id": 1,
+                                            "contribution": "Author",
+                                            "author": {
+                                                "id": 7,
+                                                "name": "Ada Example",
+                                            },
+                                        }
+                                    ],
+                                }
+                            ],
+                        ),
+                    )
+                )
+            ),
+            65_536,
+        )
+
+        observation = provider.observe(_work_lookup())
+
+        self.assertEqual(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, observation.status)
+        self.assertEqual((), provider.cover_descriptors)
+        self.assertEqual((), observation.diagnostics)
+        self.assertEqual((), observation.candidates)
+        witness = observation.edition_enrichment_overflow
+        self.assertIsNotNone(witness)
+        assert witness is not None
+        self.assertEqual("hardcover-work-0000000010", witness.work_identity)
+        self.assertEqual("Anchored work", witness.title)
+        self.assertEqual(1, len(witness.authors))
+        self.assertEqual(
+            "Ada Example", witness.authors[0].value,
+        )
+        self.assertFalse(
+            {
+                "Discarded edition 1",
+                "Discarded publisher",
+                "2001-02-03",
+                "en",
+                "9780306406157",
+            }
+            & {witness.title, *(claim.value for claim in witness.authors)}
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary", "ebooks", "item-1", tuple(
+                    TargetField(
+                        TargetDestination.AUTHORS,
+                        TargetFieldState.VALUE,
+                        ("Ada Example",),
+                    )
+                    if field.destination is TargetDestination.AUTHORS
+                    else field
+                    for field in default_target_fields("Anchored work")
+                )
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(observation,),
+        )
+        self.assertEqual(report, MetadataReport.from_json(report.to_json()))
+        for mutate in (
+            lambda document: next(
+                field.update({"value": "Other work"})
+                for field in document["target"]["fields"]
+                if field["destination"] == "title"
+            ),
+            lambda document: next(
+                field.update({"value": ["Other author"]})
+                for field in document["target"]["fields"]
+                if field["destination"] == "authors"
+            ),
+            lambda document: document["providers"][0]["edition_enrichment_overflow"].update({"title": "Anchored work (Expanded)"}),
+        ):
+            document = report.to_data()
+            mutate(document)
+            with self.assertRaises(ReportValueError):
+                MetadataReport.from_json(hardcover_metadata.canonical_json(document))
 
     def test_exact_rich_caps_and_pinned_schema_are_admitted(self) -> None:
         self.assertEqual(hardcover_metadata.HARDCOVER_SCHEMA_COMMIT, "1c5bdbd3244e02b03ccc658a792793e39cba17a8")

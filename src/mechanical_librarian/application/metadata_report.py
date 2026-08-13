@@ -23,7 +23,7 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
     MAX_CANDIDATES,
-    ProviderCandidate,
+    EditionEnrichmentOverflow, ProviderCandidate,
     ProviderEvidenceKind,
     ProviderLaneCandidate,
     ProviderLaneObservation,
@@ -260,6 +260,7 @@ class ProviderLaneResult:
     status: ProviderStatus
     candidates: tuple[ProviderCandidate, ...] = ()
     accessed_at: str | None = None
+    edition_enrichment_overflow: EditionEnrichmentOverflow | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -268,6 +269,10 @@ class ProviderLaneResult:
             or type(self.candidates) is not tuple
             or any(type(value) is not ProviderCandidate for value in self.candidates)
             or (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates)
+            or (
+                self.edition_enrichment_overflow is not None
+                and (type(self.edition_enrichment_overflow) is not EditionEnrichmentOverflow or self.status is not ProviderStatus.CANDIDATE_LIMIT_EXCEEDED or self.candidates)
+            )
         ):
             raise MetadataReportError("provider lane result is invalid")
         if self.accessed_at is not None:
@@ -380,6 +385,10 @@ def provider_observation(
     candidates_by_identity: dict[str, ProviderCandidate] = {}
     conflict = False
     aggregate_failure: ProviderStatus | None = None
+    overflow_results = tuple(
+        result for result in results
+        if result.edition_enrichment_overflow is not None
+    )
     for result in results:
         for candidate in result.candidates:
             previous = candidates_by_identity.get(candidate.identity)
@@ -486,6 +495,16 @@ def provider_observation(
         )
     else:
         aggregate_status = ProviderStatus.INSUFFICIENT_INPUT
+    overflow = (
+        overflow_results[0].edition_enrichment_overflow
+        if len(overflow_results) == 1
+        and overflow_results[0].lane.kind is ProviderQueryKind.WORK
+        and overflow_results[0].status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+        and aggregate_status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+        and not candidates
+        and not any(result.candidates for result in results)
+        else None
+    )
     references = tuple(
         sorted(
             {
@@ -515,6 +534,7 @@ def provider_observation(
         accessed_at=accessed_at,
         diagnostics=diagnostics,
         request_accounting=request_accounting,
+        edition_enrichment_overflow=overflow,
     )
 
 
@@ -736,6 +756,30 @@ def qualify_provider_observation(
             observation.authority,
             accessed_at=observation.accessed_at,
             diagnostics=observation.diagnostics,
+            request_accounting=observation.request_accounting,
+            # ISBN lanes cannot establish the exact work title and author set.
+            edition_enrichment_overflow=None,
+        )
+    if observation.edition_enrichment_overflow is not None:
+        witness = observation.edition_enrichment_overflow
+        expected_authors = tuple(normalize_title(value).casefold() for value in lookup.authors)
+        actual_authors = tuple(
+            normalize_title(author.value or "").casefold()
+            for author in witness.authors
+        )
+        qualified_witness = (
+            normalize_title(witness.title).casefold() == normalize_title(lookup.title or "").casefold()
+            and actual_authors == expected_authors
+            and not _variant_marker(witness.title)
+        )
+        return ProviderObservation(
+            observation.provider,
+            ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            (), (), ProviderQueryKind.WORK, observation.authority,
+            accessed_at=observation.accessed_at,
+            diagnostics=observation.diagnostics,
+            request_accounting=observation.request_accounting,
+            edition_enrichment_overflow=witness if qualified_witness else None,
         )
     if observation.status is not ProviderStatus.CANDIDATES:
         return ProviderObservation(
@@ -1111,6 +1155,7 @@ class GenerateMetadataReport:
                     ),
                 ),
                 observation.request_accounting,
+                observation.edition_enrichment_overflow,
             )
             observations.append(observation)
             candidate_descriptors = getattr(provider, "cover_descriptors", ())
