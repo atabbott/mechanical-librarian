@@ -76,10 +76,12 @@ performs no network or provider/model dispatch and persists nothing.
 
 The runtime does not support generic model advice, model-selected writes,
 reviewer queues, bulk or reversal effects, destructive operations, media writes,
-arbitrary target requests, or a generic plugin/provider interface. Audiobookshelf ebook detail responses may
-express `ebookFile.metadata.relPath` relative to the top-level item `relPath`
-when the absolute service path proves the same final library-relative file;
-disagreement, noncanonical paths, and traversal fail closed.
+arbitrary target requests, or a generic plugin/provider interface.
+Audiobookshelf ebook detail responses may express `ebookFile.metadata.relPath`
+relative to a directory item's top-level `relPath`. Flat `isFile` items instead
+repeat their one service-relative file location. Optional item and file absolute
+paths must agree with those coordinates whenever supplied; disagreement,
+noncanonical paths, and traversal fail closed.
 
 Audiobookshelf `publishedDate` target reads remain exact ISO calendar days.
 Shared `YYYY-MM` proposal candidates are qualification-only and report-only;

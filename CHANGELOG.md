@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fix Audiobookshelf nested ebook identity handling so catalogue discovery and
+  current-item validation derive the same canonical service-relative location
+  and opaque file identity. Conflicting, traversal, missing, and ambiguous file
+  records remain fail-closed before currentness can admit a write. (#596)
+
 - Compare checksum-valid ISBN-10 and ISBN-13 forms from one canonical family as
   one proposal, retaining each original evidence reference while preferring an
   already observed ISBN-13 representative when one is available. Invalid
