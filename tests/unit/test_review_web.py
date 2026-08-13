@@ -3364,10 +3364,36 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             authority = repository.authority
             self.assertIsNotNone(authority)
             assert authority is not None
+            control_started = threading.Event()
+            release_writer = threading.Event()
+            commit_attempted = threading.Event()
+            commit_completed = threading.Event()
+            trace_errors: list[BaseException] = []
+
+            def open_status_repository():
+                reader = open_repository(database, authority=authority)
+
+                def trace(statement: str) -> None:
+                    if statement.startswith(
+                        "SELECT paused FROM review_preparation_control"
+                    ):
+                        control_started.set()
+                        release_writer.set()
+                        try:
+                            if not commit_attempted.wait(5):
+                                trace_errors.append(
+                                    AssertionError(
+                                        "writer did not attempt commit during status read"
+                                    )
+                                )
+                        finally:
+                            reader._connection.set_trace_callback(None)
+
+                reader._connection.set_trace_callback(trace)
+                return reader
+
             preparation = ReviewPreparationPipeline(
-                repository_factory=lambda: open_repository(
-                    database, authority=authority
-                ),
+                repository_factory=open_status_repository,
                 libraries=(("primary", "fiction", "lib-1", "f" * 64),),
                 discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
                 extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
@@ -3387,11 +3413,6 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 ),
                 base_url="https://review.test",
             )
-            started = threading.Event()
-            advance = threading.Event()
-            committed = threading.Event()
-            commit_count = [0]
-            commit_lock = threading.Lock()
             writer_errors: list[BaseException] = []
 
             def churn_journal_descriptors() -> None:
@@ -3401,16 +3422,26 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                         database, authority=authority
                     )
                     for updated_at in range(3, 28):
-                        writer_repository.set_review_pipeline_paused(
-                            updated_at % 2 == 1, updated_at
+                        if not release_writer.wait(5):
+                            self.fail("authenticated status read did not release writer churn")
+                        release_writer.clear()
+                        paused = updated_at % 2 == 1
+                        state = "queued" if paused else "discovering"
+                        writer_repository._connection.execute("BEGIN IMMEDIATE")
+                        writer_repository._connection.execute(
+                            "UPDATE review_preparation_control "
+                            "SET paused=?,updated_at=? WHERE singleton=1",
+                            (paused, updated_at),
                         )
-                        with commit_lock:
-                            commit_count[0] += 1
-                        committed.set()
-                        started.set()
-                        if not advance.wait(5):
-                            self.fail("authenticated status polling did not advance writer churn")
-                        advance.clear()
+                        writer_repository._connection.execute(
+                            "UPDATE review_preparation_scans "
+                            "SET state=?,updated_at=? WHERE connection_name='primary' "
+                            "AND library_name='fiction'",
+                            (state, updated_at),
+                        )
+                        commit_attempted.set()
+                        writer_repository._connection.execute("COMMIT")
+                        commit_completed.set()
                 except BaseException as error:
                     writer_errors.append(error)
                 finally:
@@ -3427,34 +3458,30 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 self.assertEqual(login.status_code, 200, login.text)
                 client.headers["x-ml-build-identity"] = TEST_REACT_BUILD_IDENTITY
                 writer.start()
-                self.assertTrue(started.wait(5))
-                for poll in range(25):
-                    self.assertTrue(committed.wait(5))
-                    with commit_lock:
-                        before = commit_count[0]
+                for _ in range(25):
+                    control_started.clear()
+                    commit_attempted.clear()
+                    commit_completed.clear()
                     status = client.get("/api/v1/review-preparation")
                     self.assertEqual(status.status_code, 200, status.text)
+                    self.assertTrue(control_started.is_set())
+                    self.assertTrue(commit_attempted.is_set())
                     payload = status.json()
                     self.assertIn(
                         (payload["paused"], payload["libraries"][0]["state"]),
-                        ((True, "queued"), (False, "queued")),
+                        ((True, "queued"), (False, "discovering")),
                     )
                     self.assertEqual(payload["libraries"][0]["connection"], "primary")
                     self.assertEqual(payload["libraries"][0]["library"], "fiction")
-                    committed.clear()
-                    advance.set()
-                    if poll < 24:
-                        self.assertTrue(committed.wait(5))
-                        with commit_lock:
-                            self.assertGreater(commit_count[0], before)
+                    self.assertTrue(commit_completed.wait(5))
             finally:
-                advance.set()
+                release_writer.set()
                 writer.join(5)
                 client.close()
                 repository.close()
             self.assertFalse(writer.is_alive())
             self.assertEqual(writer_errors, [])
-            self.assertEqual(commit_count, [25])
+            self.assertEqual(trace_errors, [])
 
     def test_sqlite_library_and_attention_queries_are_current_and_bounded(
         self,
