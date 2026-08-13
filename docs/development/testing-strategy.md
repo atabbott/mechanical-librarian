@@ -370,8 +370,8 @@ Workbench integration tests use a disposable loopback target, synthetic media,
 private test secrets, and an absent database. Unit proposal-policy coverage includes whitespace, case, and
 width variants of the controlled package creator placeholder. The installed
 proposal path uses a whitespace/case variant and requires a nonmutating authors
-result under `fixed-conservative-v6`. Persistence tests reject prior proposal
-documents and proposal-store table shapes, including `fixed-conservative-v5`,
+result under `fixed-conservative-v7`. Persistence tests reject prior proposal
+documents and proposal-store table shapes, including `fixed-conservative-v6`,
 without mutation, then prove exact deterministic replay under the current
 policy. Every synthetic EPUB member has a fixed timestamp so the probe identity
 does not depend on the qualification wall clock. No live library or provider is
