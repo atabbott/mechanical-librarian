@@ -44,6 +44,16 @@
   },
   "packageRules": [
     {
+      "description": "Preserve the project Python compatibility range",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchDepTypes": [
+        "requires-python"
+      ],
+      "enabled": false
+    },
+    {
       "description": "Group compatible frontend updates",
       "matchManagers": [
         "npm"
