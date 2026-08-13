@@ -1405,6 +1405,7 @@ describe('typed review routes', () => {
 
   it.each([
     ['invalid success payload', new ApiError(502, 'invalid_policy_response')],
+    ['gateway timeout', new ApiError(504, 'gateway_timeout')],
     ['post-response build mismatch', new BuildMismatchError()],
   ])('treats a potentially committed activation with %s as uncertain', async (_name, activationError) => {
     const user = userEvent.setup()

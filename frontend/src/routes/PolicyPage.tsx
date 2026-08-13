@@ -143,7 +143,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       setStage('activated')
       setStatus({ tone: 'success', message: 'Policy activated. Current unapplied work is being reconciled.' })
     } catch (error) {
-      if (error instanceof AmbiguousMutationError || error instanceof BuildMismatchError || (error instanceof ApiError && error.status === 502)) {
+      if (error instanceof AmbiguousMutationError || error instanceof BuildMismatchError || (error instanceof ApiError && error.status >= 500)) {
         setStage('preview')
         setStatus({ tone: 'warning', message: 'The activation result is uncertain. Authoritative policy state is refreshing; verify it before trying again.' })
       } else if (error instanceof ApiError && error.status === 409) {
