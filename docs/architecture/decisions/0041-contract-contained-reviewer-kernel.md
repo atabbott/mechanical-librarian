@@ -1,6 +1,6 @@
 # ADR-0041: Contract the contained-reviewer kernel
 
-Status: Accepted
+Status: Accepted; cover-only runtime exclusion superseded by ADR-0050
 
 ## Context
 

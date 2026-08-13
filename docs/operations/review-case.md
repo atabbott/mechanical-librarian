@@ -240,6 +240,7 @@ consideration and bounded historical evidence used by the API and React view;
 its explicit keep, select, and no-action commands record through the same
 application service. `review-activity` projects the same bounded guarded plan,
 verification, stale, failure, and recovery ledger as authenticated Activity and
-is read-only. It requires the configured application database, catalogue, and
-artifact-store paths so current capability and authority meanings cannot be
-invented by CLI arguments.
+is read-only. It requires only the configured application database and the
+configuration whose review limits shape that projection. It does not compose a
+catalogue, artifact store, target writer, worker, or recovery writer, and it
+does not accept paths that could imply those authorities.

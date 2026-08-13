@@ -19,7 +19,7 @@ PolicyPreviewRunner = Callable[[Path, Path, dict[str, object]], dict[str, object
 CoverReviewRunner = Callable[
     [Path, Path, Path, str, str, str | None, str | None], dict[str, object]
 ]
-ReviewActivityRunner = Callable[[Path, Path, Path, Path], dict[str, object]]
+ReviewActivityRunner = Callable[[Path, Path], dict[str, object]]
 _MAX_PROFILE_BYTES = 16_384
 
 
@@ -84,8 +84,6 @@ def _parser() -> _Parser:
     )
     activity.add_argument("--config", required=True, metavar="PATH", type=Path)
     activity.add_argument("--database", required=True, metavar="PATH", type=Path)
-    activity.add_argument("--catalogue", required=True, metavar="PATH", type=Path)
-    activity.add_argument("--artifacts", required=True, metavar="PATH", type=Path)
     return parser
 
 
@@ -94,7 +92,7 @@ def main(argv: Sequence[str] | None = None, *, review_serve_runner: ReviewServeR
          cover_review_runner: CoverReviewRunner | None = None,
          review_activity_runner: ReviewActivityRunner | None = None,
          stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
-    """Run the one supported installed operation without exposing workbench tools."""
+    """Run the closed installed operations without exposing workbench tools."""
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     try:
@@ -106,12 +104,7 @@ def main(argv: Sequence[str] | None = None, *, review_serve_runner: ReviewServeR
         if arguments.command == "review-activity":
             if review_activity_runner is None:
                 raise RuntimeError("runtime composition unavailable")
-            value = review_activity_runner(
-                arguments.config,
-                arguments.database,
-                arguments.catalogue,
-                arguments.artifacts,
-            )
+            value = review_activity_runner(arguments.config, arguments.database)
             output.write(
                 json.dumps(
                     value,

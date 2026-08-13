@@ -41,8 +41,6 @@ class CoverReviewCliTests(unittest.TestCase):
             actual = run_review_activity(
                 Path("/config.json"),
                 Path("/database.sqlite3"),
-                Path("/catalogue.sqlite3"),
-                Path("/artifacts"),
             )
 
         self.assertEqual(expected, actual)
@@ -76,8 +74,6 @@ class CoverReviewCliTests(unittest.TestCase):
                 activity = run_review_activity(
                     root / "config.json",
                     database,
-                    root / "catalogue.sqlite3",
-                    root / "cover-artifacts",
                 )
 
             self.assertEqual("continuous-field-activity-v1", activity["schema_version"])
@@ -105,8 +101,6 @@ class CoverReviewCliTests(unittest.TestCase):
                     "review-activity",
                     "--config", "/config.json",
                     "--database", "/database.sqlite3",
-                    "--catalogue", "/catalogue.sqlite3",
-                    "--artifacts", "/artifacts",
                 ],
                 review_activity_runner=runner,
                 stdout=output,
@@ -117,13 +111,32 @@ class CoverReviewCliTests(unittest.TestCase):
         runner.assert_called_once_with(
             Path("/config.json"),
             Path("/database.sqlite3"),
-            Path("/catalogue.sqlite3"),
-            Path("/artifacts"),
         )
         self.assertEqual(
             tuple(item["state"] for item in json.loads(output.getvalue())["events"]),
             states,
         )
+
+    def test_activity_rejects_obsolete_unbound_paths(self) -> None:
+        runner = Mock()
+        errors = io.StringIO()
+
+        self.assertEqual(
+            main(
+                [
+                    "review-activity",
+                    "--config", "/config.json",
+                    "--database", "/database.sqlite3",
+                    "--catalogue", "/catalogue.sqlite3",
+                ],
+                review_activity_runner=runner,
+                stderr=errors,
+            ),
+            2,
+        )
+
+        runner.assert_not_called()
+        self.assertEqual(errors.getvalue(), "Review server failed: invalid invocation.\n")
 
     def test_show_and_select_delegate_closed_values(self) -> None:
         runner = Mock(return_value={"schema_version": "cover-consideration-v1"})

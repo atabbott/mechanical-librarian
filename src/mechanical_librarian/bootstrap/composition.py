@@ -1709,11 +1709,8 @@ def run_cover_review(
 def run_review_activity(
     config_path: Path,
     database_path: Path,
-    catalogue_path: Path,
-    artifact_store_path: Path,
 ) -> dict[str, object]:
     """Read installed guarded application and recovery history through CLI."""
-    del catalogue_path, artifact_store_path
     configuration = load_configuration_file(config_path)
     if configuration.review is None:
         raise ConfigurationError("review configuration is unavailable")
