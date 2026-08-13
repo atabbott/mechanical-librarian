@@ -445,7 +445,14 @@ class ReviewPreparationPipeline:
                 # technical sibling must not erase bounded evidence already
                 # recorded by another configured lane; proposal admission makes
                 # the coherent-package decision from that complete report.
-                self._providers(repository, action.report_id)
+                statuses = self._providers(repository, action.report_id)
+                disposition = provider_failure_disposition(statuses)
+                if disposition is not None and disposition[1]:
+                    # A transient provider result is not terminal evidence: it
+                    # retains the existing bounded recovery and circuit
+                    # protection before a complete package can be evaluated.
+                    self._fail(repository, action, *disposition)
+                    return None
             elif action.stage == "proposal":
                 if action.report_id is None:
                     raise ReviewPipelineError("state")

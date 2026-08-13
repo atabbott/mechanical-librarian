@@ -1138,7 +1138,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         extracted: list[str] = []
         clock = [30]
         provider_statuses = [
-            (ProviderStatus.CANDIDATES, ProviderStatus.UNAVAILABLE),
+            (ProviderStatus.CANDIDATES, ProviderStatus.INCOMPLETE),
             (ProviderStatus.CANDIDATES,),
         ]
         report = _report()
