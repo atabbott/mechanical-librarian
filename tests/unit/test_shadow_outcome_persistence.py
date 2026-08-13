@@ -14,10 +14,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import MetadataR
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
+from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.field_effect_fakes import (
     FakeBackupReadiness,
     FakeCapabilityObserver,
-    FakeConsentCurrentness,
     FakeDependencyCurrentness,
     FakeForwardReevaluation,
     FakeTargetService,
@@ -478,20 +478,19 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 self.assertEqual(expected, authority["decision_value"])
                 self.assertEqual(destination, authority["destination"])
                 self.assertEqual(case_id, authority["review_case_id"])
-                consent = FakeConsentCurrentness()
-                consent.allow(
-                    connection=authority["connection"],
-                    library=authority["library"],
-                    destination=destination,
+                repository.grant_field_effect_consents(
+                    authority["connection"], (authority["library"],),
+                    (destination,), 5,
                 )
+                target = FakeTargetService()
                 service = GuardedFieldApplication(
                     repository,
-                    FakeTargetService(),
+                    target,
                     FakeBackupReadiness(),
                     FakeCapabilityObserver("c" * 64),
                     PersistedFieldEffectAuthority(repository),
                     FakeDependencyCurrentness(),
-                    consent,
+                    PersistedEffectConsent(repository),
                     SimpleNamespace(),
                     FakeForwardReevaluation(),
                     lambda: 5,
@@ -512,6 +511,9 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 self.assertIsNotNone(plan)
                 assert plan is not None
                 self.assertEqual(expected["value"], plan.plan.desired_value)
+                target.seed(plan.plan)
+                self.assertEqual("verified", service.apply(plan.plan.plan_id).state)
+                self.assertEqual(expected["value"], target.read(plan.plan).value)
                 repository.close()
 
     def test_outcome_accepts_packet_valid_configured_provider_citations(self) -> None:
