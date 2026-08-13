@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import json
 import hashlib
+import os
 import sqlite3
 import subprocess
 import sys
@@ -944,6 +945,35 @@ class MetadataPersistenceTests(unittest.TestCase):
             self.assertEqual(reopened.get(report.report_id), report.to_json())
             reopened.close()
             self.assertEqual(tuple(value.name for value in root.iterdir()), ("reports.sqlite",))
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
+    def test_linux_descriptor_reuse_during_journal_churn_keeps_bound_open_available(
+        self,
+    ) -> None:
+        """A journal-close may reuse a descriptor number held before SQLite opens."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            repository = open_repository(path)
+            repository.close()
+            descriptor = os.open(path, os.O_RDONLY)
+            churned_descriptor = os.open(path, os.O_RDONLY)
+            connection = None
+            try:
+                # A journal descriptor may close between the connection proof's
+                # setup and SQLite opening its exact database descriptor.
+                connection = metadata_persistence._connect_bound(
+                    path,
+                    descriptor,
+                    lambda: os.close(churned_descriptor),
+                )
+                self.assertEqual(
+                    connection.execute("PRAGMA database_list").fetchone()[1:],
+                    ("main", str(path.absolute())),
+                )
+            finally:
+                if connection is not None:
+                    connection.close()
+                os.close(descriptor)
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
     def test_linux_raced_configured_hot_journal_cannot_control_alias_open(self) -> None:

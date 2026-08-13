@@ -7298,9 +7298,8 @@ def open_shadow_preview_repository(path: Path) -> SQLiteShadowPreviewRepository:
         _reject_database_sidecars(path)
         absolute = str(path.absolute())
         uri = f"file:{quote(absolute, safe='/')}?mode=ro&immutable=1"
-        before = _regular_descriptors(descriptor)
         connection = sqlite3.connect(uri, uri=True, isolation_level=None)
-        _validate_connection_binding(connection, path, descriptor, before)
+        _validate_connection_binding(connection, path, descriptor)
         connection.execute("PRAGMA query_only=ON")
         if connection.execute("PRAGMA query_only").fetchone() != (1,):
             raise MetadataReportError("database query-only mode is unavailable")
@@ -7534,9 +7533,8 @@ def _validate_existing_read_only(path: Path, descriptor: int) -> None:
     uri = f"file:{quote(absolute, safe='/')}?mode=ro"
     connection: sqlite3.Connection | None = None
     try:
-        before = _regular_descriptors(descriptor)
         connection = sqlite3.connect(uri, uri=True, isolation_level=None)
-        _validate_connection_binding(connection, path, descriptor, before)
+        _validate_connection_binding(connection, path, descriptor)
         connection.execute("PRAGMA schema_version").fetchone()
         _validate_schema(connection)
     finally:
@@ -7553,7 +7551,6 @@ def _connect_bound(
 ) -> sqlite3.Connection:
     absolute = str(path.absolute())
     uri = f"file:{quote(absolute, safe='/')}?mode=rw"
-    before = _regular_descriptors(descriptor)
     _reject_database_sidecars(path)
     if preconnect is not None:
         preconnect()
@@ -7564,7 +7561,7 @@ def _connect_bound(
         check_same_thread=not cross_thread,
     )
     try:
-        _validate_connection_binding(connection, path, descriptor, before)
+        _validate_connection_binding(connection, path, descriptor)
         return connection
     except Exception:
         connection.close()
@@ -7674,15 +7671,9 @@ def _validate_connection_binding(
     connection: sqlite3.Connection,
     path: Path,
     descriptor: int,
-    before: dict[int, tuple[int, int]],
 ) -> None:
     expected = os.fstat(descriptor)
     expected_identity = (expected.st_dev, expected.st_ino)
-    if sys.platform.startswith("linux"):
-        after = _regular_descriptors(descriptor)
-        newly_opened = set(after) - set(before)
-        if not any(after[value] == expected_identity for value in newly_opened):
-            raise MetadataReportError("database connection inode is unavailable")
     rows = connection.execute("PRAGMA database_list").fetchall()
     if (
         len(rows) != 1
@@ -7722,31 +7713,6 @@ def _validate_connection_binding(
         requested.st_ino,
     ) != expected_identity:
         raise MetadataReportError("database pathname changed while opening")
-
-
-def _regular_descriptors(excluded: int) -> dict[int, tuple[int, int]]:
-    if not sys.platform.startswith("linux"):
-        return {}
-    try:
-        names = os.listdir("/proc/self/fd")
-    except OSError as error:
-        raise MetadataReportError("database descriptor binding is unavailable") from error
-    result: dict[int, tuple[int, int]] = {}
-    for name in names:
-        if not name.isascii() or not name.isdigit():
-            continue
-        descriptor = int(name)
-        if descriptor == excluded:
-            continue
-        try:
-            information = os.fstat(descriptor)
-        except OSError:
-            continue
-        if stat.S_ISREG(information.st_mode):
-            result[descriptor] = (information.st_dev, information.st_ino)
-    return result
-
-
 def _unlink_created(path: Path, expected: tuple[int, int]) -> None:
     try:
         information = path.lstat()

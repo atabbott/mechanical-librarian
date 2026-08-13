@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import tempfile
 import threading
 import unittest
@@ -27,7 +28,10 @@ from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.field_effects import GuardedApplicationError
-from mechanical_librarian.application.review_pipeline import ReviewPipelineError
+from mechanical_librarian.application.review_pipeline import (
+    ReviewPipelineError,
+    ReviewPreparationPipeline,
+)
 from mechanical_librarian.application.review_web import (
     CurrentReviewCaseSnapshot,
     InspectCurrentReviewCase,
@@ -3343,6 +3347,141 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             finally:
                 client.close()
                 repository.close()
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
+    def test_authenticated_preparation_status_survives_writer_journal_churn(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "application.sqlite3"
+            hash_path = root / "owner.hash"
+            hash_path.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+            os.chmod(hash_path, 0o600)
+            repository = open_repository(database, cross_thread=True)
+            repository.request_review_scan(
+                "primary", "fiction", "lib-1", "f" * 64, 1
+            )
+            repository.set_review_pipeline_paused(True, 2)
+            authority = repository.authority
+            self.assertIsNotNone(authority)
+            assert authority is not None
+            control_started = threading.Event()
+            release_writer = threading.Event()
+            commit_attempted = threading.Event()
+            commit_completed = threading.Event()
+            trace_errors: list[BaseException] = []
+
+            def open_status_repository():
+                reader = open_repository(database, authority=authority)
+
+                def trace(statement: str) -> None:
+                    if statement.startswith(
+                        "SELECT paused FROM review_preparation_control"
+                    ):
+                        control_started.set()
+                        release_writer.set()
+                        try:
+                            if not commit_attempted.wait(5):
+                                trace_errors.append(
+                                    AssertionError(
+                                        "writer did not attempt commit during status read"
+                                    )
+                                )
+                        finally:
+                            reader._connection.set_trace_callback(None)
+
+                reader._connection.set_trace_callback(trace)
+                return reader
+
+            preparation = ReviewPreparationPipeline(
+                repository_factory=open_status_repository,
+                libraries=(("primary", "fiction", "lib-1", "f" * 64),),
+                discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+                extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+                providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+                propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+                admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+                project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            )
+            client = TestClient(
+                create_transport_test_app(
+                    repository,
+                    ReviewWebConfiguration(
+                        canonical_origin="https://review.test",
+                        owner_password_hash_file=str(hash_path),
+                    ),
+                    review_preparation=preparation,
+                ),
+                base_url="https://review.test",
+            )
+            writer_errors: list[BaseException] = []
+
+            def churn_journal_descriptors() -> None:
+                writer_repository = None
+                try:
+                    writer_repository = open_repository(
+                        database, authority=authority
+                    )
+                    for updated_at in range(3, 28):
+                        if not release_writer.wait(5):
+                            self.fail("authenticated status read did not release writer churn")
+                        release_writer.clear()
+                        paused = updated_at % 2 == 1
+                        state = "queued" if paused else "discovering"
+                        writer_repository._connection.execute("BEGIN IMMEDIATE")
+                        writer_repository._connection.execute(
+                            "UPDATE review_preparation_control "
+                            "SET paused=?,updated_at=? WHERE singleton=1",
+                            (paused, updated_at),
+                        )
+                        writer_repository._connection.execute(
+                            "UPDATE review_preparation_scans "
+                            "SET state=?,updated_at=? WHERE connection_name='primary' "
+                            "AND library_name='fiction'",
+                            (state, updated_at),
+                        )
+                        commit_attempted.set()
+                        writer_repository._connection.execute("COMMIT")
+                        commit_completed.set()
+                except BaseException as error:
+                    writer_errors.append(error)
+                finally:
+                    if writer_repository is not None:
+                        writer_repository.close()
+
+            writer = threading.Thread(target=churn_journal_descriptors)
+            try:
+                login = client.post(
+                    "/api/v1/session/login",
+                    headers={"Origin": "https://review.test"},
+                    json={"password": "correct horse"},
+                )
+                self.assertEqual(login.status_code, 200, login.text)
+                client.headers["x-ml-build-identity"] = TEST_REACT_BUILD_IDENTITY
+                writer.start()
+                for _ in range(25):
+                    control_started.clear()
+                    commit_attempted.clear()
+                    commit_completed.clear()
+                    status = client.get("/api/v1/review-preparation")
+                    self.assertEqual(status.status_code, 200, status.text)
+                    self.assertTrue(control_started.is_set())
+                    self.assertTrue(commit_attempted.is_set())
+                    payload = status.json()
+                    self.assertIn(
+                        (payload["paused"], payload["libraries"][0]["state"]),
+                        ((True, "queued"), (False, "discovering")),
+                    )
+                    self.assertEqual(payload["libraries"][0]["connection"], "primary")
+                    self.assertEqual(payload["libraries"][0]["library"], "fiction")
+                    self.assertTrue(commit_completed.wait(5))
+            finally:
+                release_writer.set()
+                writer.join(5)
+                client.close()
+                repository.close()
+            self.assertFalse(writer.is_alive())
+            self.assertEqual(writer_errors, [])
+            self.assertEqual(trace_errors, [])
 
     def test_sqlite_library_and_attention_queries_are_current_and_bounded(
         self,
