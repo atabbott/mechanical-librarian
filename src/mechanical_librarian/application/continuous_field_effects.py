@@ -6,7 +6,7 @@ import json
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Protocol
 
 from mechanical_librarian.application.field_effects import (
     AuthorityCurrentness,
@@ -40,12 +40,43 @@ class _PendingManualReturn:
     requested_at: int
 
 
+class ContinuousFieldEffectRepository(Protocol):
+    """Complete application-owned persistence contract for guarded work."""
+
+    def pending_field_effect_plan_ids(self, limit: int) -> tuple[str, ...]: ...
+    def pending_field_effect_action_plan_ids(self, limit: int) -> tuple[str, ...]: ...
+    def field_effect_backup_ready(self) -> bool: ...
+    def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]: ...
+    def grant_field_effect_consent_matrix(self, *values: object) -> object: ...
+    def revoke_library_field_effect_consents(self, *values: object) -> object: ...
+    def field_effect_manual_override(self, *values: object) -> object: ...
+    def field_effect_manual_hold_context(self, *values: object) -> tuple[str, str] | None: ...
+    def field_effect_manual_hold_token(self, *values: object) -> str | None: ...
+    def request_field_effect_manual_return(self, *values: object) -> bool: ...
+    def get_field_effect(self, plan_id: str) -> FieldEffectOperation: ...
+    def pending_field_effect_decision_documents(self, limit: int, after: object = None) -> tuple[str, ...]: ...
+    def retire_stale_cover_decision(self, *values: object) -> bool: ...
+    def current_field_effect_consent(self, *values: object) -> object: ...
+    def suspend_field_effect_capability(self, **values: object) -> None: ...
+    def clear_field_effect_capability_suspension(self, **values: object) -> None: ...
+    def field_effect_capability_suspension(self, *values: object) -> str | None: ...
+    def next_field_effect_plan_id(self, last_library: str | None) -> str | None: ...
+    def field_effect_activity_data(self, limit: int) -> dict[str, object]: ...
+
+    def field_effect_activity_page(
+        self, *, search: str | None, event_type: str, occurred_after: int,
+        page: int, page_size: int,
+    ) -> dict[str, object]: ...
+    def pending_field_effect_manual_returns(self, limit: int, after: object = None) -> tuple[object, ...]: ...
+    def clear_field_effect_manual_hold(self, *values: object, **kwargs: object) -> tuple[str, str] | None: ...
+
+
 class ContinuousGuardedApplication:
     """Compose persisted decisions into one instance-scoped mutation slot."""
 
     def __init__(
         self,
-        repository,
+        repository: ContinuousFieldEffectRepository,
         applications: dict[tuple[str, str], GuardedFieldApplication],
         capabilities: dict[tuple[str, str], CapabilityObserver],
         authority: AuthorityCurrentness,
@@ -394,19 +425,59 @@ class ContinuousGuardedApplication:
         self._last_library = library
         return True
 
-    def activity(self) -> dict[str, object]:
+    def activity(
+        self,
+        *,
+        search: str | None = None,
+        event_type: str = "all",
+        range_days: int = 30,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> dict[str, object]:
+        normalized_search = search.strip().casefold() if search is not None else None
+        if (
+            (normalized_search is not None and (not normalized_search or len(normalized_search) > 128))
+            or event_type not in {"all", "review", "policy", "metadata", "safety", "unknown"}
+            or range_days not in {7, 30, 90}
+            or type(page) is not int
+            or not 1 <= page <= 1_000_000
+            or page_size not in {25, 50, 100}
+        ):
+            raise GuardedApplicationError("activity_query")
         data = self._repository.field_effect_activity_data(50)
+        page_projection = self._repository.field_effect_activity_page(
+            search=normalized_search,
+            event_type=event_type,
+            occurred_after=max(0, self._clock() - range_days * 86_400),
+            page=page,
+            page_size=page_size,
+        )
+        data["events"] = page_projection["events"]
+        data["report_documents"] = page_projection["report_documents"]
+        data["current_waiting"] = page_projection["current_waiting"]
         events = data.get("events", [])
         report_documents = data.pop("report_documents", {})
         if (
             type(events) is not list
             or type(report_documents) is not dict
-            or len(report_documents) > 50
+            # A 100-row Activity page may legitimately reference 100 distinct
+            # reports.  Keep the application boundary aligned with that closed
+            # page-size limit rather than rejecting a valid paged projection.
+            or len(report_documents) > 100
             or any(type(key) is not str or type(value) is not str
                    for key, value in report_documents.items())
         ):
             raise GuardedApplicationError("activity")
         reports: dict[str, MetadataReport] = {}
+        current_waiting = data.get("current_waiting")
+        if current_waiting is not None and (
+            type(current_waiting) is not dict
+            or set(current_waiting) != {"destination", "library", "state", "work_id", "work_label"}
+            or any(type(value) is not str or len(value) > 512
+                   for value in current_waiting.values())
+            or current_waiting["state"] not in {"planned", "claimed", "applying", "reconciling", "retryable"}
+        ):
+            raise GuardedApplicationError("activity")
         for event in events:
             if type(event) is not dict:
                 raise GuardedApplicationError("activity")
@@ -417,7 +488,7 @@ class ContinuousGuardedApplication:
             # lineage assertion.
             connection = event.pop("connection", None)
             report_id = event.pop("report_id", None)
-            event["work_label"] = "Recorded work"
+            event["work_label"] = event.get("work_label", "Recorded work")
             event["author_label"] = "Author details are not recorded"
             if connection is None and report_id is None:
                 continue
@@ -527,7 +598,16 @@ class ContinuousGuardedApplication:
             "example": example,
             "last_failure": self._last_failure,
             "prepared": prepared,
-            "schema_version": "continuous-field-activity-v1",
+            "ledger": {
+                "event_type": event_type,
+                "page": int(page_projection["page"]),
+                "page_count": int(page_projection["page_count"]),
+                "page_size": int(page_projection["page_size"]),
+                "query": normalized_search,
+                "range_days": range_days,
+                "total": int(page_projection["total"]),
+            },
+            "schema_version": "continuous-field-activity-v2",
         }
 
     def _capability_readiness(

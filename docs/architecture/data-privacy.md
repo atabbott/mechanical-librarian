@@ -172,3 +172,19 @@ status contains closed causes and narrow opaque scope identifiers, never field
 values. Support preview/export is capped, allow-listed and re-redacted at export;
 raw databases, environment, auth state, secrets, paths, metadata, excerpts,
 media, covers and recovery bytes are categorically excluded.
+
+## Authenticated Activity history
+
+The private no-store Activity history retains and returns only one bounded page
+of existing ledger facts: opaque event/work identities, configured logical
+library and destination names, state, bounded timestamp, and a bounded readable
+report title where it is already retained. It is not an export or a write
+surface, and grants no recovery or target authority. Search, range, page, and
+page size are bounded; the parameterized query and closed response prevent
+caller-supplied SQL or arbitrary stored JSON from becoming output. Corrupt or
+hostile stored documents fail closed with a redacted diagnostic, never raw JSON,
+paths, values, or a fabricated guard/verification assertion. The durable ledger
+is append-only; count/page consistency applies only to its one read snapshot,
+and retention remains the existing record-retention policy. Tests cover bounds,
+stored-row corruption, source-specific evidence, current-state recovery, and
+authenticated private-cache behavior.

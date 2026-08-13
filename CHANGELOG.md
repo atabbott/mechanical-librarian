@@ -13,6 +13,14 @@
   status polling now remains available and snapshot-consistent while legitimate
   concurrent writers churn rollback-journal descriptors. (#594)
 
+- Add the protected owner-only Activity ledger. The calm current-state summary
+  now leads to a server-paged, date-bounded record of durable review decisions,
+  policy transitions, safeguards, guarded writes, and verification. Search,
+  type filters, direct page navigation, bounded evidence inspection, and the
+  existing consent, pause, revoke, stale, and ambiguous-recovery controls use
+  the same authenticated private Activity projection; no queue, retry system,
+  export, write authority, or persistence schema was added. (#591)
+
 - Implement the protected Library policy notebook: one active policy and one
   mutable draft now present as four focused chapters, with field meaning,
   review mode, qualification, and representation kept together. A single

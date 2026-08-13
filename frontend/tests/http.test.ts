@@ -129,11 +129,12 @@ describe('ReviewApiClient', () => {
 
   it('maps bounded activity labels and grouped state into the display seam', () => {
     const activity = mapActivity({
-      schema_version: 'continuous-field-activity-v1', backup_ready: true, paused: false,
-      configured_libraries: [{ connection: 'primary', library: 'Fiction', prepared: { automatic: 1, human: 2, total: 3 } }],
+      schema_version: 'continuous-field-activity-v2', backup_ready: true, paused: false,
+      configured_libraries: [{ connection: 'primary', library: 'Fiction', prepared: { automatic: 1, human: 2, total: 3 } }], current_waiting: null,
       consented_libraries: [], enabled_libraries: [], counts: { verified: 1 },
       capabilities: [{ connection: 'primary', library: 'Fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: true }] }],
-      events: [{ destination: 'title', library: 'Fiction', occurred_at: 1, origin: 'human', state: 'verified', work_id: 'work-1' }],
+      events: [{ destination: 'title', event_id: 'event-1', event_type: 'review', evidence: [{ label: 'Decision', value: 'Owner choice recorded' }], library: 'Fiction', occurred_at: 1, origin: 'human', state: 'verified', work_id: 'work-1' }],
+      ledger: { event_type: 'all', page: 1, page_count: 1, page_size: 25, query: null, range_days: 30, total: 1 },
       example: { after: 'After', before: 'Before', destination: 'title', library: 'Fiction', work_id: 'work-1' }, last_failure: null, prepared: { automatic: 1, human: 2, total: 3 }, suspensions: [{ connection: 'primary', destination: null, reason: 'recovery', scope: 'library', updated_at: 1 }],
     })
 

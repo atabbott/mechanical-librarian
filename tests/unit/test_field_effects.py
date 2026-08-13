@@ -203,6 +203,12 @@ class FieldEffectTests(unittest.TestCase):
 
         self.assertEqual(activity["consented_libraries"], [])
         self.assertEqual(activity["consented_destinations"], [])
+        policy = self.repository.field_effect_activity_page(
+            search=None, event_type="policy", occurred_after=0, page=1, page_size=25,
+        )
+        self.assertEqual(policy["events"][0]["evidence"][0], {
+            "label": "Recorded policy transition", "value": "completed",
+        })
 
     def test_activity_fetches_one_current_report_document_for_repeated_events(self) -> None:
         report = metadata_report("Readable work", "a", "b", item_id="book-1")
@@ -221,6 +227,97 @@ class FieldEffectTests(unittest.TestCase):
             {report.report_id},
         )
         self.assertTrue(all("report_document" not in event for event in activity["events"]))
+        page = self.repository.field_effect_activity_page(
+            search="readable work", event_type="all", occurred_after=0, page=1, page_size=25,
+        )
+        self.assertEqual(page["total"], 2)
+        self.assertTrue(all(event["work_label"] == "Readable work" for event in page["events"]))
+        self.assertTrue(all(
+            event["evidence"][0]["label"] == "Recorded field effect"
+            for event in page["events"]
+        ))
+
+    def test_activity_page_bounds_filters_and_clamps_the_append_only_ledger(self) -> None:
+        for index in range(101):
+            identity = f"{index:064x}"
+            self.repository._connection.execute(
+                "INSERT INTO field_effects(plan_id,decision_id,connection_name,library_name,work_id,"
+                "destination,state,attempt,updated_at,document) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                ("effect_plan_" + identity, "human_decision_" + "a" * 64, "primary", "books",
+                 f"book-{index}", "title", "planned", 0, 1_000_000 + index, "{}"),
+            )
+            self.repository._connection.execute(
+                "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,document) "
+                "VALUES(?,?,?,?,?,?)",
+                ("effect_event_" + identity, "effect_plan_" + identity, 1, "planned",
+                 1_000_000 + index, '{"origin":"human"}'),
+            )
+        self.repository._connection.commit()
+
+        first = self.repository.field_effect_activity_page(
+            search="book-", event_type="review", occurred_after=0, page=1, page_size=25,
+        )
+        self.assertEqual(first["total"], 101)
+        self.assertEqual(len(first["events"]), 25)
+        self.assertEqual(first["page"], 1)
+        self.assertEqual(first["page_size"], 25)
+        self.assertEqual(first["current_waiting"]["state"], "planned")
+        self.assertEqual(
+            [event["event_id"] for event in first["events"]],
+            sorted((event["event_id"] for event in first["events"]), reverse=True),
+        )
+        for page_size, expected in ((50, 50), (100, 100)):
+            page = self.repository.field_effect_activity_page(
+                search="book-", event_type="review", occurred_after=0, page=1, page_size=page_size,
+            )
+            self.assertEqual(len(page["events"]), expected)
+        twenty_six = self.repository.field_effect_activity_page(
+            search="book-", event_type="review", occurred_after=0, page=2, page_size=25,
+        )
+        self.assertEqual(len(twenty_six["events"]), 25)
+        last = self.repository.field_effect_activity_page(
+            search="book-1", event_type="review", occurred_after=0, page=1_000_000, page_size=25,
+        )
+        self.assertEqual(last["page"], last["page_count"])
+        self.assertLessEqual(len(last["events"]), 25)
+        self.assertTrue(all(event["event_type"] == "review" for event in last["events"]))
+        self.assertTrue(all("book-1" in event["work_id"] for event in last["events"]))
+        empty = self.repository.field_effect_activity_page(
+            search=None, event_type="all", occurred_after=2_000_000, page=1, page_size=25,
+        )
+        self.assertEqual((empty["total"], empty["page"], empty["page_count"], empty["events"]), (0, 1, 1, []))
+        self.assertEqual(empty["current_waiting"]["state"], "planned")
+        with self.assertRaisesRegex(FieldEffectError, "invalid_activity_query"):
+            self.repository.field_effect_activity_page(
+                search="%", event_type="hostile", occurred_after=-1, page=0, page_size=26,
+            )
+
+    def test_activity_page_fails_closed_for_corrupt_or_oversized_durable_rows(self) -> None:
+        plan = self.plan(suffix="c")
+        self.repository._connection.execute(
+            "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,document) VALUES(?,?,?,?,?,?)",
+            ("effect_event_" + "c" * 64, plan.plan.plan_id, 2, "verified", 2, "{not-json"),
+        )
+        self.repository._connection.commit()
+        with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
+            self.repository.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=0, page=1, page_size=25,
+            )
+
+    def test_activity_page_fails_closed_for_oversized_durable_row(self) -> None:
+        plan = self.plan(suffix="d")
+        self.repository._connection.execute("PRAGMA ignore_check_constraints=ON")
+        self.repository._connection.execute(
+            "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,document) VALUES(?,?,?,?,?,?)",
+            ("effect_event_" + "d" * 64, plan.plan.plan_id, 2, "verified", 2,
+             "{" + '"x":"' + "x" * 2_097_153 + '"}'),
+        )
+        self.repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
+        self.repository._connection.commit()
+        with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
+            self.repository.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=0, page=1, page_size=25,
+            )
 
     def test_unused_continuous_consent_survives_exact_schema_validation(self) -> None:
         consent = self.repository.grant_field_effect_consents(
