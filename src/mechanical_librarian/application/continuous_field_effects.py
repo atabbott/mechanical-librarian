@@ -58,9 +58,11 @@ class ContinuousGuardedApplication:
         scan_progress: Callable[[str, str], object] | None = None,
         activity_only: bool = False,
     ) -> None:
-        if ((not activity_only and not applications)
-                or (applications and set(applications) != set(configured_libraries))
-                or set(capabilities) != set(configured_libraries)
+        if ((activity_only and (applications or capabilities))
+                or (not activity_only and (
+                    set(applications) != set(configured_libraries)
+                    or set(capabilities) != set(configured_libraries)
+                ))
                 or not 0.1 <= polling_seconds <= 60.0
                 or type(graceful_shutdown_seconds) is not int
                 or not 1 <= graceful_shutdown_seconds <= 300
@@ -532,6 +534,35 @@ class ContinuousGuardedApplication:
         self, libraries: tuple[str, ...], *, force: bool,
     ) -> list[dict[str, object]]:
         """Project least-authority readiness before consent can be granted."""
+        if self._activity_only:
+            results = []
+            for connection, library in self._libraries:
+                if library not in libraries:
+                    continue
+                destinations = tuple(
+                    (
+                        destination,
+                        self._repository.field_effect_capability_suspension(
+                            connection, destination
+                        ) or "not_ready",
+                    )
+                    for destination in sorted(SUPPORTED_DESTINATIONS)
+                )
+                results.append({
+                    "connection": connection,
+                    "library": library,
+                    "state": (
+                        "connection_unavailable"
+                        if any(state == "connection_unavailable"
+                               for _, state in destinations)
+                        else "not_ready"
+                    ),
+                    "destinations": [
+                        {"destination": destination, "state": state}
+                        for destination, state in destinations
+                    ],
+                })
+            return results
         now = self._clock()
         representatives: dict[str, str] = {}
         cursor: tuple[int, str] | None = None

@@ -691,19 +691,40 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         self.assertFalse(destinations["authors"]["consented"])
         self.assertEqual(destinations["subtitle"]["state"], "field_unavailable")
 
-    def test_activity_only_projection_does_not_persist_capability_observations(self) -> None:
+    def test_activity_only_projection_uses_only_persisted_capability_state(self) -> None:
         repository = _PagedRepository([self._decisions(1)[0]])
+        repository.suspensions[(
+            "destination", "primary", "subtitle"
+        )] = ("field_unavailable", 1)
         service = ContinuousGuardedApplication(
             repository, {},
-            {("primary", "alpha"): _MixedCapability()}, _Authority(),
+            {}, _Authority(),
             (("primary", "alpha"),), lambda: 1, lambda *_: None,
             activity_only=True,
         )
 
         readiness = service._capability_readiness(("alpha",), force=True)
 
-        self.assertEqual("partially_allowed", readiness[0]["state"])
-        self.assertEqual({}, repository.suspensions)
+        destinations = {
+            value["destination"]: value["state"]
+            for value in readiness[0]["destinations"]
+        }
+        self.assertEqual("not_ready", readiness[0]["state"])
+        self.assertEqual("field_unavailable", destinations["subtitle"])
+        self.assertEqual("not_ready", destinations["title"])
+        self.assertEqual({
+            ("destination", "primary", "subtitle"):
+                ("field_unavailable", 1)
+        }, repository.suspensions)
+
+    def test_activity_only_projection_rejects_capability_observers(self) -> None:
+        with self.assertRaises(GuardedApplicationError):
+            ContinuousGuardedApplication(
+                _PagedRepository([]), {},
+                {("primary", "alpha"): _MixedCapability()}, _Authority(),
+                (("primary", "alpha"),), lambda: 1, lambda *_: None,
+                activity_only=True,
+            )
 
     def test_activity_strips_valid_cleanup_and_rejects_malformed_cleanup(self) -> None:
         decision = self._decisions(1)[0]

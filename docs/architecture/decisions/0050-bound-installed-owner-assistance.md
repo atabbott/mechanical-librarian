@@ -45,6 +45,8 @@ wheel and container.
 the shared query-only Activity projection. Its CLI accepts only configuration
 and database paths. It does not compose or accept catalogue, artifact-store,
 target-writer, worker, or recovery-writer authority.
+Capability display reads only persisted suspension evidence and otherwise
+reports `not_ready`; it performs no credential read or service request.
 
 ## Consequences
 

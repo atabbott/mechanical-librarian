@@ -12,7 +12,8 @@
   identities. Historical API, CLI, and React views reopen the bounded candidate,
   observation, policy, recommendation, and exact owner-choice context without
   restoring old image or write authority; the installed read-only Activity CLI
-  exposes the same guarded plan, verification, stale, and recovery ledger. A
+  exposes the same guarded plan, verification, stale, and recovery ledger
+  without reading service credentials or probing Audiobookshelf. A
   selected original uses the existing verified Audiobookshelf
   cover effect path; observer failure preserves the model-free manual path.
   The retained versioned engineering benchmark remains a judgement-labelled,

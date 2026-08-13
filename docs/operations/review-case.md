@@ -243,4 +243,6 @@ verification, stale, failure, and recovery ledger as authenticated Activity and
 is read-only. It requires only the configured application database and the
 configuration whose review limits shape that projection. It does not compose a
 catalogue, artifact store, target writer, worker, or recovery writer, and it
-does not accept paths that could imply those authorities.
+does not accept paths that could imply those authorities. Capability display
+uses only persisted suspension evidence and otherwise reports `not_ready`; the
+command neither reads service credentials nor probes Audiobookshelf.

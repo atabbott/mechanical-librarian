@@ -57,6 +57,7 @@ class CoverReviewCliTests(unittest.TestCase):
             configuration = SimpleNamespace(
                 libraries=(SimpleNamespace(connection="abs", name="books"),),
                 review=SimpleNamespace(graceful_shutdown_seconds=5),
+                select=Mock(side_effect=AssertionError("target configuration used")),
             )
             before_bytes = database.read_bytes()
             before_entries = {path.name for path in root.iterdir()}
@@ -68,8 +69,12 @@ class CoverReviewCliTests(unittest.TestCase):
                 ),
                 patch(
                     "mechanical_librarian.bootstrap.composition.compose_audiobookshelf_field_effect_capabilities",
-                    return_value=Mock(),
-                ),
+                    side_effect=AssertionError("capability adapter composed"),
+                ) as capabilities,
+                patch(
+                    "mechanical_librarian.bootstrap.composition.target_client",
+                    side_effect=AssertionError("target client composed"),
+                ) as target_client,
             ):
                 activity = run_review_activity(
                     root / "config.json",
@@ -81,6 +86,9 @@ class CoverReviewCliTests(unittest.TestCase):
             self.assertEqual(before_entries, {path.name for path in root.iterdir()})
             self.assertFalse((root / "private").exists())
             self.assertFalse((root / "cover-artifacts").exists())
+            configuration.select.assert_not_called()
+            capabilities.assert_not_called()
+            target_client.assert_not_called()
 
     def test_activity_exposes_guarded_and_recovery_states_from_shared_projection(self) -> None:
         states = ("planned", "verified", "stale", "recovery_required")

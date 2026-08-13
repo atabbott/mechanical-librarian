@@ -317,16 +317,10 @@ def compose_field_effect_activity_projection(
     )
     if not configured:
         raise ConfigurationError("guarded application has no configured library")
-    capabilities = {
-        key: compose_audiobookshelf_field_effect_capabilities(
-            configuration, *key
-        )
-        for key in configured
-    }
     return ContinuousGuardedApplication(
         repository,
         {},
-        capabilities,
+        {},
         PersistedFieldEffectAuthority(repository),
         configured,
         lambda: int(time.time()),
