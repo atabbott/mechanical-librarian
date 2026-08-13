@@ -670,9 +670,13 @@ replaced only by fresh disjoint cohorts after diagnosis. No model, prompt,
 schema, packaging, taxonomy, threshold, resource, provider, network, corpus,
 production, or write authority was widened.
 
-Authentication actions remain adapter-owned and create no product lifecycle. The
-kernel is reachable only through the source workbench, excluded from installed
-artifacts, and receives only synthetic or irreversibly sanitized inputs.
+Authentication actions remain adapter-owned and create no generic reviewer
+lifecycle. Generic kernel use remains reachable only through the source
+workbench and receives only synthetic or irreversibly sanitized inputs.
+ADRs 0049 and 0050 define the sole installed exception: the cover-specific
+observer is packaged and composed for bounded private report-cover previews,
+with no target credentials, identity admission, owner-decision, or write
+authority.
 
 The final report database, `catalogue-v2` database, `config-v5`, artifact
 records, and `batch-manifest-v5` each accept only absent or their exact current
