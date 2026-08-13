@@ -37,6 +37,16 @@ class RenovatePolicyTests(unittest.TestCase):
         for rule in self.config["packageRules"]:
             self.assertFalse(rule.get("automerge", False))
 
+    def test_project_python_compatibility_range_is_not_managed(self) -> None:
+        ignored = [
+            rule
+            for rule in self.config["packageRules"]
+            if rule.get("matchManagers") == ["pep621"]
+            and rule.get("matchDepTypes") == ["requires-python"]
+        ]
+        self.assertEqual(len(ignored), 1)
+        self.assertFalse(ignored[0]["enabled"])
+
     def test_high_risk_updates_require_dashboard_approval(self) -> None:
         manual = [
             rule
@@ -69,6 +79,7 @@ class RenovatePolicyTests(unittest.TestCase):
     def test_application_manifests_and_toolchains_remain_exact(self) -> None:
         with (ROOT / "pyproject.toml").open("rb") as stream:
             python = tomllib.load(stream)
+        self.assertEqual(python["project"]["requires-python"], ">=3.13,<3.15")
         for requirement in python["project"]["dependencies"]:
             self.assertIn("==", requirement)
         dev = python["dependency-groups"]["dev"]
