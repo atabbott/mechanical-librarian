@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import posixpath
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote
@@ -19,6 +18,9 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.domain.metadata_report import (
     canonical_json,
     validate_observed_title,
+)
+from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
+    normalize_ebook_location,
 )
 
 
@@ -119,26 +121,23 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
     elif type(ebook) is dict and plural is None:
         has_ebook = True
         metadata_file = ebook.get("metadata")
-        fmt = ebook.get("ebookFormat")
-        ino = ebook.get("ino", metadata_file.get("ino") if type(metadata_file) is dict else None)
-        relative = metadata_file.get("relPath") if type(metadata_file) is dict else None
-        if relative is None and mount is not None and type(metadata_file) is dict and type(metadata_file.get("path")) is str:
-            path = metadata_file["path"]
-            prefix = mount.service_path.rstrip("/") + "/"
-            if path.startswith(prefix):
-                relative = path[len(prefix):]
-        if type(fmt) is not str:
-            extension = metadata_file.get("ext") if type(metadata_file) is dict else None
-            fmt = extension[1:] if type(extension) is str and extension.startswith(".") else None
-        if type(fmt) is not str or fmt.lower() != "epub" or type(ino) is not str or not 1 <= len(ino) <= 256 or type(relative) is not str or not 1 <= len(relative) <= 1024 or posixpath.normpath(relative) != relative or relative.startswith("/") or "" in relative.split("/") or "." in relative.split("/") or ".." in relative.split("/"):
+        try:
+            location = normalize_ebook_location(
+                ebook,
+                service_path=None if mount is None else mount.service_path,
+                item=detail,
+            )
+        except ValueError:
             classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None
         else:
-            size = metadata_file.get("size")
-            if type(size) is not int or size < 0:
-                raise CatalogueError("catalogue response is invalid")
-            classification = "singular-supported"
-            file_identity = hashlib.sha256(canonical_json({"format": "epub", "inode": ino, "relative": relative, "size": size}).encode()).hexdigest()
-            service_path = relative; format_value = "epub"; mount_name = None if mount is None else mount.name
+            if location.format != "epub":
+                classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None
+            else:
+                classification = "singular-supported"
+                file_identity = location.identity
+                service_path = location.relative_path
+                format_value = location.format
+                mount_name = None if mount is None else mount.name
     else:
         classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None; has_ebook = True
     reviewed_fields = {

@@ -5443,6 +5443,7 @@ class AudiobookshelfItemTests(unittest.TestCase):
             "isMissing": False,
             "mediaType": "book",
             "relPath": "Author/Book",
+            "isFile": False,
             "media": {
                 "metadata": {"title": "Current title"},
                 "ebookFile": {
@@ -5485,6 +5486,7 @@ class AudiobookshelfItemTests(unittest.TestCase):
             "isMissing": False,
             "mediaType": "book",
             "relPath": "Author/Book",
+            "isFile": False,
             "media": {
                 "metadata": {"title": "Current title"},
                 "ebookFile": {

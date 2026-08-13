@@ -28,6 +28,13 @@ revision is absent, or a cover has no independent revision, the item timestamp
 is retained as a conservative freshness fallback so changed bytes cannot reuse
 stale evidence.
 
+Catalogue discovery and current-item validation share one adapter-owned
+normalizer for the service-relative EPUB location and opaque file identity.
+Nested item directories, flat records, and path-only records therefore bind the
+same canonical inputs; disagreement or traversal remains ineligible or fails
+before any write gate. This adapter parsing remains API-only and does not grant
+media access or target-write authority.
+
 The database retains only the exact-current `catalogue-v2` schema. A different or
 tampered schema fails closed and requires an operator-created clean database.
 Configuration changes produce `catalogue requires refresh`; they never silently
