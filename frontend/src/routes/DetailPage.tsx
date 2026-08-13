@@ -3,7 +3,7 @@ import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 
 import { displayValue } from '../api/http'
-import type { CaseDetailView, DecisionCommand, DecisionOutcome, EvidenceView } from '../api/http'
+import type { CaseDetailView, DecisionCommand, DecisionOutcome, EvidenceView, HistoryView } from '../api/http'
 import { useRouteReadyFocus } from '../focus'
 import { detailRoute, useReviewContext } from '../router'
 import { actionable, useReviewDecisionController } from '../reviewDecisionController'
@@ -14,6 +14,20 @@ const opaqueSource = /^(?:local|evidence|provider)_[0-9a-f]+$/iu
 const reviewedSource = (value: string, index: number) => opaqueSource.test(value) ? `Evidence record ${String(index + 1)}` : readable(value)
 const requestKey = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `decision-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 const recordedValue = (value: unknown, current: string) => value === null ? current : typeof value === 'object' && 'value' in value ? displayValue(value.value) : displayValue(value)
+
+function HistoryItem({ item, index }: { item: HistoryView['items'][number]; index: number }) {
+  if (!("consideration" in item)) return <p key={index}>{friendly(item.kind)} · {'destination' in item ? item.destination : ''}</p>
+  const policy = item.consideration.policy
+  const recommendation = policy?.recommended_candidate_reference ?? null
+  return <article className="history-cover" key={index}>
+    <h3>Cover {friendly(item.kind)}</h3>
+    <p>Consideration {item.consideration_id}. Observer status: {friendly(item.consideration.reviewer_status)}. {item.consideration.current ? 'Current.' : 'Historical; it grants no current authority.'}</p>
+    <p>Owner outcome: {item.decision ? friendly(item.decision.outcome) : 'No owner outcome on this event'}{item.decision?.selected_value ? ` · ${displayValue(item.decision.selected_value.value)}` : ''}.</p>
+    <p>Policy {item.consideration.policy_reference}: {policy ? friendly(policy.status) : 'observation unavailable'}; recommendation: {recommendation ?? 'none'}.</p>
+    {policy?.reasons.length ? <p>Policy reasons: {policy.reasons.map(readable).join(' · ')}</p> : null}
+    <ul aria-label="Historical cover candidates">{item.consideration.candidates.map((candidate) => <li key={candidate.reference}><strong>{candidate.reference}</strong> · {candidate.incumbent ? 'incumbent' : 'alternative'} · identity {friendly(candidate.identity.outcome)} · {candidate.observation ? `composition ${friendly(candidate.observation.composition)}, medium ${friendly(candidate.observation.medium)}, promotional text ${friendly(candidate.observation.promotional_text)}, tie-in branding ${friendly(candidate.observation.tie_in_branding)}` : 'visual observation unavailable'}</li>)}</ul>
+  </article>
+}
 
 function CoverChoices({ reviewCaseId, field, disabled, submit }: { reviewCaseId: string; field: CaseDetailView['fields'][number]; disabled: boolean; submit: (outcome: DecisionOutcome, selectedValue?: DecisionCommand['selectedValue']) => void }) {
   const { http } = useReviewContext()
@@ -86,7 +100,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
       })}</section>
     </div> : null}
     {search.subview === 'evidence' ? <section className="progressive-panel" data-route-focus tabIndex={-1}><h2>Evidence and source ledger</h2>{evidence.isPending ? <p role="status">Loading evidence…</p> : evidence.isError ? <><p role="alert">Evidence could not be loaded.</p><button onClick={() => void evidence.refetch()}>Try again</button></> : <>{pages.map((item) => <article className="evidence-item" key={item.reference}><h3>{friendly(item.kind)}</h3><pre>{item.fact}</pre></article>)}{evidence.hasNextPage ? <button disabled={evidence.isFetchingNextPage} onClick={() => void evidence.fetchNextPage()}>Load more evidence</button> : <p>All referenced evidence is shown.</p>}</>}</section> : null}
-    {search.subview === 'history' ? <section className="progressive-panel" data-route-focus tabIndex={-1}><h2>Current-case history</h2>{history.isPending ? <p role="status">Loading history…</p> : history.isError ? <><p role="alert">History could not be loaded.</p><button onClick={() => void history.refetch()}>Try again</button></> : history.data.items.map((item, index) => <p key={index}>{friendly(item.kind)} · {'destination' in item ? item.destination : ''}</p>)}</section> : null}
+    {search.subview === 'history' ? <section className="progressive-panel" data-route-focus tabIndex={-1}><h2>Current-case history</h2>{history.isPending ? <p role="status">Loading history…</p> : history.isError ? <><p role="alert">History could not be loaded.</p><button onClick={() => void history.refetch()}>Try again</button></> : history.data.items.map((item, index) => <HistoryItem item={item} index={index} key={index} />)}</section> : null}
     <p role={controller.decision.isError || returnAutomatic.isError || controller.reloadRequired ? 'alert' : 'status'}>{controller.status || controller.message}</p>
   </>
 }

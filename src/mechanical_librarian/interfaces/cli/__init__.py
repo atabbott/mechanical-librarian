@@ -19,6 +19,7 @@ PolicyPreviewRunner = Callable[[Path, Path, dict[str, object]], dict[str, object
 CoverReviewRunner = Callable[
     [Path, Path, Path, str, str, str | None, str | None], dict[str, object]
 ]
+ReviewActivityRunner = Callable[[Path, Path, Path, Path], dict[str, object]]
 _MAX_PROFILE_BYTES = 16_384
 
 
@@ -78,12 +79,20 @@ def _parser() -> _Parser:
     cover.add_argument("--case", required=True, metavar="ID")
     cover.add_argument("--artifact", metavar="COVER_ID")
     cover.add_argument("--idempotency-key", metavar="KEY")
+    activity = commands.add_parser(
+        "review-activity", help="inspect guarded application and recovery history"
+    )
+    activity.add_argument("--config", required=True, metavar="PATH", type=Path)
+    activity.add_argument("--database", required=True, metavar="PATH", type=Path)
+    activity.add_argument("--catalogue", required=True, metavar="PATH", type=Path)
+    activity.add_argument("--artifacts", required=True, metavar="PATH", type=Path)
     return parser
 
 
 def main(argv: Sequence[str] | None = None, *, review_serve_runner: ReviewServeRunner | None = None,
          policy_preview_runner: PolicyPreviewRunner | None = None,
          cover_review_runner: CoverReviewRunner | None = None,
+         review_activity_runner: ReviewActivityRunner | None = None,
          stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     """Run the one supported installed operation without exposing workbench tools."""
     output = sys.stdout if stdout is None else stdout
@@ -94,6 +103,25 @@ def main(argv: Sequence[str] | None = None, *, review_serve_runner: ReviewServeR
         errors.write("Review server failed: invalid invocation.\n")
         return 2
     try:
+        if arguments.command == "review-activity":
+            if review_activity_runner is None:
+                raise RuntimeError("runtime composition unavailable")
+            value = review_activity_runner(
+                arguments.config,
+                arguments.database,
+                arguments.catalogue,
+                arguments.artifacts,
+            )
+            output.write(
+                json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+            return 0
         if arguments.command == "cover-review":
             if cover_review_runner is None:
                 raise RuntimeError("runtime composition unavailable")

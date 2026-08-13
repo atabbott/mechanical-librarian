@@ -515,12 +515,12 @@ the complete contained-reviewer execution/request/image/result bindings, and
 emits only opaque identities plus exact preview digest/variant facts. Raw model
 output is not an observation report until that validation passes.
 
-The source-only cover-policy adjudicator introduces no model or provider call.
+The installed cover-policy adjudicator introduces no model or provider call.
 It re-admits the exact packet/images, recomputes identity outcomes from the
 exact retained source report instead of trusting a caller-authored identity
 document, and requires the current classifier, taxonomy, observer instruction
 and output-schema identities before using any candidate facts. The policy
-scenario also binds the exact reviewer profile bytes through workbench
+path also binds the exact reviewer profile bytes through contained-reviewer
 authority and recomputes the observer reference; a substituted profile or
 well-shaped invented observer reference fails closed. Its policy is three
 canonical booleans, never prompt text.

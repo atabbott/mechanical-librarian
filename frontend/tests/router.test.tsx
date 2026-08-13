@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError } from '../src/api/http'
-import type { ActivityDisplayView, ActivityView, AttentionSearch, AttentionView, CaseDetailView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
+import type { ActivityDisplayView, ActivityView, AttentionSearch, AttentionView, CaseDetailView, HistoryView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
 import { createApplicationRouter, detailQuery, normalizeLibrarySearch, normalizePolicySearch } from '../src/router'
 import { activityEventKeys, activityOutcome } from '../src/activityState'
 
@@ -233,16 +233,46 @@ describe('typed review routes', () => {
     const coverField = { ...base, destination: 'cover', currentValue: `cover_${'a'.repeat(64)}`, currentRaw: `cover_${'a'.repeat(64)}`, proposalId: 'proposal-cover', targetFingerprint: 'fingerprint-cover', proposedValues: [{ kind: 'cover', value: `cover_${'b'.repeat(64)}` }], coverConsideration: consideration }
     const retryCoverConsideration = vi.fn(async () => consideration)
     const recordDecision = vi.fn(async () => ({ schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-cover', destination: 'cover', occurred_at: 1, outcome: 'accept' as const, proposal_id: 'proposal-cover', review_case_id: 'case-1', selected_value: { kind: 'cover', value: `cover_${'b'.repeat(64)}` }, target_fingerprint: 'fingerprint-cover' }))
-    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })), retryCoverConsideration, recordDecision }
+    const getHistory = vi.fn(async () => ({ schema_version: 'review-case-history-v1' as const, review_case_id: 'case-1', items: [], next_cursor: null }))
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })), getHistory, retryCoverConsideration, recordDecision }
     renderRoute('/review/case-1?field=cover&subview=review', http)
 
     expect(await screen.findByRole('heading', { name: 'Incumbent' })).toBeVisible()
+    await waitFor(() => expect(getHistory).toHaveBeenCalledOnce())
     expect(screen.getByRole('heading', { name: 'Acceptable' })).toBeVisible()
     expect(screen.getByText(/Observation or recommendation is unavailable/u)).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Retry advisory review' }))
     await waitFor(() => expect(retryCoverConsideration).toHaveBeenCalledWith('case-1'))
+    await waitFor(() => expect(getHistory).toHaveBeenCalledTimes(2))
     await user.click(screen.getByRole('button', { name: 'Choose this cover' }))
     await waitFor(() => expect(recordDecision).toHaveBeenCalledWith('case-1', expect.objectContaining({ considerationId: consideration.id, outcome: 'accept', selectedValue: { kind: 'cover', value: `cover_${'b'.repeat(64)}` } })))
+    await waitFor(() => expect(getHistory).toHaveBeenCalledTimes(3))
+  })
+
+  it('shows immutable historical cover evidence and the exact owner choice', async () => {
+    const reference = `cover_transport_ref_${'1'.repeat(64)}`
+    const history: HistoryView = {
+      schema_version: 'review-case-history-v1', review_case_id: 'case-1', next_cursor: null,
+      items: [{
+        schema_version: 'cover-consideration-event-v1', kind: 'selected', occurred_at: 2,
+        consideration_id: `cover_consideration_${'c'.repeat(64)}`, review_case_id: 'case-1', decision_id: 'decision-cover',
+        decision: { actor: 'owner', decision_id: 'decision-cover', destination: 'cover', occurred_at: 2, outcome: 'accept', proposal_id: 'proposal-cover', review_case_id: 'case-1', selected_value: { kind: 'cover', value: `cover_${'a'.repeat(64)}` }, target_fingerprint: 'fingerprint-cover' },
+        consideration: {
+          schema_version: 'cover-consideration-v1', consideration_id: `cover_consideration_${'c'.repeat(64)}`, current: false,
+          candidates: [{ artifact_id: `cover_${'a'.repeat(64)}`, height: 1200, identity: { candidate_reference: reference, evidence_references: [], outcome: 'verified_work_match', preview_reference: `cover_preview_${'2'.repeat(64)}`, reasons: [] }, incumbent: false, observation: { candidate_reference: reference, composition: 'minimal', medium: 'illustration', preview_sha256: '3'.repeat(64), preview_variant: 'normalized', promotional_text: 'absent', tie_in_branding: 'absent' }, original_sha256: '4'.repeat(64), ordinal: 0, preview_sha256: '3'.repeat(64), reference, selectable: true, source_kinds: ['epub'], state: 'acceptable', transport_sha256: '5'.repeat(64), width: 800 }],
+          incumbent: { reference: null, state: 'absent' }, omissions: [], policy_preferences: { avoid_promotional_text: true, avoid_tie_in_branding: false, prefer_minimal_composition: true, schema_version: 'cover-policy-v1' }, policy_reference: `cover_policy_${'6'.repeat(64)}`, reviewer_status: 'completed', supersedes_id: null, target_fingerprint: 'fingerprint-cover',
+          policy: { acceptable_candidate_references: [reference], cover_packet_reference: `cover_packet_${'7'.repeat(64)}`, identity_classifier_reference: `cover_identity_${'8'.repeat(64)}`, identity_report_sha256: '9'.repeat(64), observation_report_sha256: 'a'.repeat(64), observation_taxonomy_reference: `cover_taxonomy_${'b'.repeat(64)}`, policy_reference: `cover_policy_${'6'.repeat(64)}`, reasons: ['minimal_composition_preferred'], recommended_candidate_reference: reference, schema_version: 'cover-policy-report-v1', status: 'recommended' },
+        },
+      }],
+    }
+    const http: ReviewHttp = { ...createHttp(), getHistory: vi.fn(async () => history) }
+    renderRoute('/review/case-1?field=title&subview=history', http)
+
+    expect(await screen.findByRole('heading', { name: 'Cover selected' })).toBeVisible()
+    expect(screen.getByText(/Historical; it grants no current authority/u)).toBeVisible()
+    expect(screen.getByText(/Owner outcome: accept/u)).toHaveTextContent(`cover_${'a'.repeat(64)}`)
+    expect(screen.getByText(/recommendation:/u)).toHaveTextContent(reference)
+    expect(screen.getByRole('list', { name: 'Historical cover candidates' })).toHaveTextContent('composition minimal')
   })
 
   it('keeps retained case provenance visible when supplemental evidence fails', async () => {

@@ -397,8 +397,32 @@ class InspectCurrentReviewCase:
 
     def history(self, review_case_id: str, limit: int = 50) -> dict[str, object]:
         _, _, snapshot = self._read(review_case_id, limit)
+        decisions: dict[str, dict[str, object]] = {}
+        for document in snapshot.decision_documents:
+            try:
+                decision = HumanDecision.from_json(document)
+            except HumanDecisionError:
+                continue
+            decisions[decision.decision_id] = _decision_projection(decision)
+        cover_history = []
+        for raw in snapshot.cover_history:
+            item = dict(raw)
+            consideration_document = item.pop("consideration_document", None)
+            if (
+                type(consideration_document) is not str
+                or self._cover_considerations is None
+            ):
+                raise ReviewWebError("history")
+            item["consideration"] = self._cover_considerations.project_historical(
+                consideration_document
+            )
+            decision_id = item.get("decision_id")
+            item["decision"] = (
+                decisions.get(decision_id) if type(decision_id) is str else None
+            )
+            cover_history.append(item)
         items = sorted(
-            (*snapshot.history, *snapshot.cover_history),
+            (*snapshot.history, *cover_history),
             key=lambda item: int(item.get("occurred_at", 0)),
             reverse=True,
         )[:limit]

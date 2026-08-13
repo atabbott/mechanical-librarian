@@ -9,7 +9,11 @@
   keep, select, or take no action. Immutable consideration, supersession,
   decision, and guarded application history bind exact source/original/preview,
   packet, identity, observer, schema, taxonomy, policy, target, and incumbent
-  identities. A selected original uses the existing verified Audiobookshelf
+  identities. Historical API, CLI, and React views reopen the bounded candidate,
+  observation, policy, recommendation, and exact owner-choice context without
+  restoring old image or write authority; the installed read-only Activity CLI
+  exposes the same guarded plan, verification, stale, and recovery ledger. A
+  selected original uses the existing verified Audiobookshelf
   cover effect path; observer failure preserves the model-free manual path.
   The retained versioned engineering benchmark remains a judgement-labelled,
   aggregate-safe proof rather than an unseen-generalisation claim. (#501)

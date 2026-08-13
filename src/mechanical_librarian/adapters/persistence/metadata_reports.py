@@ -6286,10 +6286,18 @@ class SQLiteMetadataReportRepository:
         self, review_case_id: str, limit: int = 50
     ) -> tuple[dict[str, object], ...]:
         rows = self._connection.execute(
-            "SELECT document FROM cover_consideration_events WHERE review_case_id=? ORDER BY occurred_at DESC,event_id DESC LIMIT ?",
+            "SELECT event.document,consideration.document FROM "
+            "cover_consideration_events event JOIN cover_considerations consideration "
+            "ON consideration.consideration_id=event.consideration_id "
+            "WHERE event.review_case_id=? ORDER BY event.occurred_at DESC,event.event_id DESC LIMIT ?",
             (review_case_id, min(max(limit, 1), 50)),
         ).fetchall()
-        return tuple(json.loads(row[0]) for row in rows)
+        items = []
+        for event_document, consideration_document in rows:
+            event = json.loads(event_document)
+            event["consideration_document"] = consideration_document
+            items.append(event)
+        return tuple(items)
 
     def find_human_decision(self, idempotency_digest: str) -> str | None:
         try:

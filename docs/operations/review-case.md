@@ -225,8 +225,21 @@ Case, evidence, and history reads project one persisted snapshot and never run
 the observer, policy, or a persistence command as a side effect.
 
 Every consideration, supersession, owner outcome, decision, apply attempt, and
-verification remains immutable history. A selection enters the existing
+verification remains immutable history. History reopens each bounded historical
+candidate set, admitted observation or unavailable state, deterministic policy
+and recommendation, preferences, supersession/currentness, and associated owner
+decision without making old image transport or write authority current again.
+A selection enters the existing
 Activity consent and guarded application path. It is not applied unless the
 current case, consideration and cover policy, target and incumbent cover,
 selected original digest, capability, backup, consent, and readback gates all
 still pass. There is no bulk or model-selected cover application.
+
+The installed `cover-review` CLI exposes the same server-authoritative current
+consideration and bounded historical evidence used by the API and React view;
+its explicit keep, select, and no-action commands record through the same
+application service. `review-activity` projects the same bounded guarded plan,
+verification, stale, failure, and recovery ledger as authenticated Activity and
+is read-only. It requires the configured application database, catalogue, and
+artifact-store paths so current capability and authority meanings cannot be
+invented by CLI arguments.

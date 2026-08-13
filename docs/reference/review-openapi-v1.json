@@ -1753,9 +1753,22 @@
       "_HistoryCoverItem": {
         "additionalProperties": false,
         "properties": {
+          "consideration": {
+            "$ref": "#/components/schemas/_CoverConsiderationResponse"
+          },
           "consideration_id": {
             "title": "Consideration Id",
             "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_DecisionProjection"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "decision_id": {
             "anyOf": [
@@ -1796,6 +1809,8 @@
         },
         "required": [
           "consideration_id",
+          "consideration",
+          "decision",
           "decision_id",
           "kind",
           "occurred_at",

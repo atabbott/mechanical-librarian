@@ -25,7 +25,7 @@ export const useReviewDecisionController = ({ reviewCaseId, fields, active, onAd
   const detailState = queryClient.getQueryState(detailKey)
   const mounted = useRef(true)
   const order = useRef<readonly string[]>([])
-  const settle = async () => { await Promise.all([queryClient.invalidateQueries({ queryKey: ['library'] }), queryClient.invalidateQueries({ queryKey: ['attention'] })]); try { return await queryClient.fetchQuery({ ...detailQuery(http, reviewCaseId), staleTime: 0 }) } catch { return undefined } }
+  const settle = async () => { await Promise.all([queryClient.invalidateQueries({ queryKey: ['library'] }), queryClient.invalidateQueries({ queryKey: ['attention'] }), queryClient.invalidateQueries({ queryKey: ['review-case', reviewCaseId, 'history'], exact: true })]); try { return await queryClient.fetchQuery({ ...detailQuery(http, reviewCaseId), staleTime: 0 }) } catch { return undefined } }
   const lock = (message: string) => queryClient.setQueryData(reconciliationKey(reviewCaseId), { message, detailUpdatedAt: queryClient.getQueryState(detailKey)?.dataUpdatedAt ?? 0 })
   const announce = (caseId: string, text: string) => {
     queryClient.setQueryData(decisionStatusKey(caseId), text)

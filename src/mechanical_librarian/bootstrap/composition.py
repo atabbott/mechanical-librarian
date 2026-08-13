@@ -1677,6 +1677,51 @@ def run_cover_review(
         repository.close()
 
 
+def run_review_activity(
+    config_path: Path,
+    database_path: Path,
+    catalogue_path: Path,
+    artifact_store_path: Path,
+) -> dict[str, object]:
+    """Project the installed guarded application and recovery history through CLI."""
+    configuration = load_configuration_file(config_path)
+    if configuration.review is None:
+        raise ConfigurationError("review configuration is unavailable")
+    repository = open_repository(database_path, create=False)
+    try:
+        preparation = create_review_pipeline(
+            configuration,
+            database_path,
+            catalogue_path,
+            artifact_store_path,
+            repository.authority,
+        )
+        field_application = compose_continuous_guarded_application(
+            configuration,
+            repository,
+            database_path,
+            artifact_store_path,
+            preparation,
+        )
+        application = compose_review_application(
+            state_owner=repository,
+            session_store=repository,
+            case_store=repository,
+            decision_store=repository,
+            library_store=repository,
+            policy_store=repository,
+            verify_password=lambda _: False,
+            clock=lambda: int(time.time()),
+            session_lifetime_seconds=1,
+            graceful_shutdown_seconds=1,
+            close_state_owner=False,
+            field_application=field_application,
+        )
+        return application.activity()
+    finally:
+        repository.close()
+
+
 def run_policy_preview(
     config_path: Path, database_path: Path, document: dict[str, object]
 ) -> dict[str, object]:
@@ -1734,6 +1779,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         argv, review_serve_runner=run_review_server,
         policy_preview_runner=run_policy_preview,
         cover_review_runner=run_cover_review,
+        review_activity_runner=run_review_activity,
     )
 
 

@@ -31,6 +31,7 @@ from mechanical_librarian.application.cover_consideration import (
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -227,6 +228,39 @@ class CoverActivationTests(unittest.TestCase):
             self.assertEqual(
                 ["selected", "considered"],
                 [event["kind"] for event in consideration_service.history(review_case_id)],
+            )
+            history = InspectCurrentReviewCase(
+                repository, consideration_service
+            ).history(review_case_id)
+            selected_history = next(
+                item for item in history["items"] if item["kind"] == "selected"
+            )
+            self.assertFalse(selected_history["consideration"]["current"])
+            self.assertEqual(
+                selected_value,
+                selected_history["decision"]["selected_value"],
+            )
+            self.assertEqual(
+                {
+                    "actor",
+                    "decision_id",
+                    "destination",
+                    "occurred_at",
+                    "outcome",
+                    "proposal_id",
+                    "review_case_id",
+                    "selected_value",
+                    "target_fingerprint",
+                },
+                set(selected_history["decision"]),
+            )
+            self.assertEqual(
+                consideration["candidates"],
+                selected_history["consideration"]["candidates"],
+            )
+            self.assertEqual(
+                consideration["policy"],
+                selected_history["consideration"]["policy"],
             )
             self.assertTrue(
                 repository.field_effect_dependencies_current(

@@ -473,6 +473,10 @@ class CoverConsiderationService:
         """Project a consideration captured inside its caller's read snapshot."""
         return None if document is None else self._project(document, current=True)
 
+    def project_historical(self, document: str) -> dict[str, object]:
+        """Project immutable consideration evidence without granting current authority."""
+        return self._project(document, current=False)
+
     def validate_decision(
         self,
         review_case_id: str,
@@ -513,7 +517,15 @@ class CoverConsiderationService:
         )
 
     def history(self, review_case_id: str) -> tuple[dict[str, object], ...]:
-        return self._store.cover_consideration_history(review_case_id)
+        items = []
+        for raw in self._store.cover_consideration_history(review_case_id):
+            item = dict(raw)
+            document = item.pop("consideration_document", None)
+            if type(document) is not str:
+                raise CoverConsiderationError("history")
+            item["consideration"] = self.project_historical(document)
+            items.append(item)
+        return tuple(items)
 
 
 __all__ = [

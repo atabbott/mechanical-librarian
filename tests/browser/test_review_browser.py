@@ -484,13 +484,21 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     )
                     with page.expect_response(
                         lambda response: response.url.endswith("/decisions")
-                    ) as decision_response:
+                    ) as decision_response, page.expect_response(
+                        lambda response: response.url.endswith("/history")
+                    ) as history_response:
                         page.get_by_role("button", name="Choose this cover").click()
                     response = decision_response.value
                     self.assertEqual(
                         200,
                         response.status,
                         f"decision response: {response.text()}",
+                    )
+                    history_result = history_response.value
+                    self.assertEqual(
+                        200,
+                        history_result.status,
+                        f"history response: {history_result.text()}",
                     )
                     page.get_by_text(
                         "Decision recorded from the authoritative case.", exact=True
@@ -499,6 +507,21 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     self.assertEqual(
                         page.get_by_role("button", name="Choose this cover").count(), 0
                     )
+                    page.get_by_role("button", name="History", exact=True).click()
+                    selected_history = page.get_by_role(
+                        "heading", name="Cover selected"
+                    ).locator("..")
+                    selected_history.get_by_text(
+                        "Historical; it grants no current authority.", exact=False
+                    ).wait_for()
+                    selected_history.get_by_text(
+                        "Owner outcome: accept", exact=False
+                    ).wait_for()
+                    expect(
+                        selected_history.get_by_role(
+                            "list", name="Historical cover candidates"
+                        )
+                    ).to_be_visible()
                     self.assertLessEqual(
                         page.evaluate("() => document.documentElement.scrollWidth"), 390
                     )

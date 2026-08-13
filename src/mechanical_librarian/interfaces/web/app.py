@@ -310,6 +310,8 @@ class _HistoryAutomaticItem(_ClosedModel):
 
 class _HistoryCoverItem(_ClosedModel):
     consideration_id: str
+    consideration: _CoverConsiderationResponse
+    decision: _DecisionProjection | None
     decision_id: str | None
     kind: Literal[
         "considered", "superseded", "selected", "kept_incumbent", "no_action", "stale"
