@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fix Audiobookshelf nested ebook identity handling so catalogue discovery and
+  current-item validation derive the same canonical service-relative location
+  and opaque file identity. Conflicting, traversal, missing, and ambiguous file
+  records remain fail-closed before currentness can admit a write. (#596)
+
 - Fix Linux SQLite connection validation to prove the exact opened `main`
   database path against the configured device/inode without relying on
   process-wide descriptor-number allocation. Authenticated review-preparation

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import posixpath
 import re
 import time
 from collections.abc import Callable
@@ -42,6 +41,10 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
+)
+from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
+    is_safe_relative_path,
+    normalize_ebook_location,
 )
 
 
@@ -187,7 +190,7 @@ def _snapshot(source: object, item: str, library_id: str, service_path: str) -> 
     if len(files_source) > 128:
         raise MetadataReportError("target response is invalid")
     item_relative = root.get("relPath")
-    if item_relative is not None and not _is_safe_relative_path(item_relative):
+    if item_relative is not None and not is_safe_relative_path(item_relative):
         raise MetadataReportError("target response is invalid")
     files = tuple(
         _file(value, service_path, item_relative) for value in files_source
@@ -447,69 +450,13 @@ def _file(
     service_path: str,
     item_relative: str | None,
 ) -> TargetFile:
-    item = _mapping(source)
-    metadata = _mapping(item.get("metadata"))
-    format_value = item.get("ebookFormat")
-    if type(format_value) is not str:
-        extension = metadata.get("ext")
-        format_value = extension[1:] if type(extension) is str and extension.startswith(".") else ""
-    format_value = format_value.lower()
-    if not 1 <= len(format_value) <= 16 or not format_value.isascii() or not format_value.isalnum():
-        raise MetadataReportError("target file mapping is invalid")
-    relative = metadata.get("relPath")
-    path = metadata.get("path")
-    has_relative = type(relative) is str and bool(relative)
-    if relative is not None and not has_relative:
-        raise MetadataReportError("target file mapping is invalid")
-    from_path = None
-    if path is not None:
-        if type(path) is not str:
-            raise MetadataReportError("target file mapping is invalid")
-        from_path = _relative_service_path(path, service_path)
-    if not has_relative:
-        if from_path is None:
-            raise MetadataReportError("target file mapping is invalid")
-        relative = from_path
-    elif not _is_safe_relative_path(relative):
-        raise MetadataReportError("target file mapping is invalid")
-    elif from_path is not None:
-        item_resolved = (
-            None
-            if item_relative is None
-            else posixpath.join(item_relative, relative)
+    try:
+        location = normalize_ebook_location(
+            source, service_path=service_path, item_relative=item_relative
         )
-        if from_path != relative and from_path != item_resolved:
-            raise MetadataReportError("target file mapping is invalid")
-        relative = from_path
-    if not _is_safe_relative_path(relative):
-        raise MetadataReportError("target file mapping is invalid")
-    size = metadata.get("size")
-    inode = item.get("ino", metadata.get("ino"))
-    if type(size) is not int or size < 0 or type(inode) is not str or not 1 <= len(inode) <= 256:
-        raise MetadataReportError("target file identity is invalid")
-    identity = hashlib.sha256(canonical_json({"format": format_value, "inode": inode, "relative": relative, "size": size}).encode("utf-8")).hexdigest()
-    return TargetFile(identity, relative, format_value)
-
-
-def _is_safe_relative_path(value: object) -> bool:
-    return (
-        type(value) is str
-        and 1 <= len(value) <= 1024
-        and posixpath.normpath(value) == value
-        and not value.startswith("/")
-        and not any(part in {"", ".", ".."} for part in value.split("/"))
-    )
-
-
-def _relative_service_path(path: str, service_path: str) -> str:
-    if service_path == "/":
-        if not path.startswith("/") or path == "/":
-            raise MetadataReportError("target file mapping is invalid")
-        return path[1:]
-    prefix = service_path + "/"
-    if not path.startswith(prefix):
-        raise MetadataReportError("target file mapping is invalid")
-    return path[len(prefix) :]
+    except ValueError as error:
+        raise MetadataReportError(str(error)) from None
+    return TargetFile(location.identity, location.relative_path, location.format)
 
 
 def _bounded_body(response: httpx.Response, maximum: int, *, deadline: float | None = None) -> bytes:
