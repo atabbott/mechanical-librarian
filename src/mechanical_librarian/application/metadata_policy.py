@@ -161,6 +161,10 @@ class PolicyImpactRepository(Protocol):
 
     def metadata_policy_resolution_for_preview(self, library: str) -> ResolvedMetadataPolicy | None: ...
 
+    def metadata_policy_preview_baseline(
+        self, libraries: tuple[str, ...]
+    ) -> tuple[str, tuple[tuple[str, ResolvedMetadataPolicy | None], ...]]: ...
+
     def shadow_posture(self) -> str: ...
 
     def enter_shadow_preview(self, updated_at: int) -> str: ...
@@ -175,18 +179,38 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
     impacts: list[LibraryPolicyImpact] = []
     remaining_cases = MAX_RICH_PREVIEW_CASES
     try:
-        active_document = (
-            repository.active_metadata_policy()
-            if hasattr(repository, "active_metadata_policy")
-            else MetadataPolicyProfile.builtin().canonical_json
-        )
+        if hasattr(repository, "metadata_policy_preview_baseline"):
+            active_document, persisted_baseline = (
+                repository.metadata_policy_preview_baseline(libraries)
+            )
+        else:
+            active_document = (
+                repository.active_metadata_policy()
+                if hasattr(repository, "active_metadata_policy")
+                else MetadataPolicyProfile.builtin().canonical_json
+            )
+            persisted_baseline = tuple(
+                (
+                    library,
+                    repository.metadata_policy_resolution_for_preview(library)
+                    if hasattr(repository, "metadata_policy_resolution_for_preview")
+                    else None,
+                )
+                for library in libraries
+            )
         active_profile = MetadataPolicyProfile.from_data(json.loads(active_document))
+        active_resolutions = dict(persisted_baseline)
+        if tuple(sorted(active_resolutions)) != libraries:
+            raise MetadataPolicyApplicationError("policy preview is unavailable")
         for library in libraries:
             resolved = resolve_policy(profile, library, overrides.get(library))
-            # Every comparison is bound to this one active-profile read. A
-            # concurrent activation can only stale the later activation guard;
-            # it cannot rebind part of this preview or create an ABA gap.
-            active = resolve_policy(active_profile, library, overrides.get(library))
+            # Existing libraries compare with the generation-bound resolution
+            # actually in force. A newly configured library has no persisted
+            # resolution yet and is resolved from the same active-profile
+            # snapshot using its current override.
+            active = active_resolutions[library] or resolve_policy(
+                active_profile, library, overrides.get(library)
+            )
             # Compatibility callers expose this aggregate separately; the
             # concrete repository below proves it equals the read snapshot.
             count = repository.current_unapplied_count(library)

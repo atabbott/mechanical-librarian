@@ -5480,6 +5480,62 @@ class SQLiteMetadataReportRepository:
     ) -> ResolvedMetadataPolicy | None:
         return self._metadata_policy_resolution(library, allow_missing=True)
 
+    def metadata_policy_preview_baseline(
+        self, libraries: tuple[str, ...]
+    ) -> tuple[str, tuple[tuple[str, ResolvedMetadataPolicy | None], ...]]:
+        if (
+            type(libraries) is not tuple
+            or libraries != tuple(sorted(set(libraries)))
+            or any(type(library) is not str or not library for library in libraries)
+        ):
+            raise MetadataReportError("active metadata policy is unavailable")
+        try:
+            join_filter = "0"
+            parameters: tuple[str, ...] = ()
+            if libraries:
+                join_filter = "r.library_name IN (" + ",".join("?" for _ in libraries) + ")"
+                parameters = libraries
+            rows = self._connection.execute(
+                "SELECT s.active_policy_id,d.document,r.library_name,r.resolved_policy_id,r.document "
+                "FROM metadata_policy_state s JOIN metadata_policy_drafts d "
+                "ON d.policy_id=s.active_policy_id LEFT JOIN metadata_policy_resolutions r "
+                f"ON r.generation=s.generation AND {join_filter} "
+                "WHERE s.singleton=1 ORDER BY r.library_name",
+                parameters,
+            ).fetchall()
+            if not rows or type(rows[0][0]) is not str or type(rows[0][1]) is not str:
+                raise MetadataReportError("active metadata policy is unavailable")
+            profile = MetadataPolicyProfile.from_data(json.loads(rows[0][1]))
+            if (
+                profile.policy_id != rows[0][0]
+                or profile.canonical_json != rows[0][1]
+                or any(row[:2] != rows[0][:2] for row in rows)
+            ):
+                raise MetadataReportError("active metadata policy is unavailable")
+            resolutions: dict[str, ResolvedMetadataPolicy | None] = {
+                library: None for library in libraries
+            }
+            for _, _, library, resolved_id, document in rows:
+                if library is None:
+                    continue
+                resolved = ResolvedMetadataPolicy.from_data(json.loads(document))
+                if (
+                    library not in resolutions
+                    or resolved.profile_id != profile.policy_id
+                    or resolved.library != library
+                    or resolved.resolved_id != resolved_id
+                    or resolved.canonical_json != document
+                ):
+                    raise MetadataReportError(
+                        "active metadata policy resolution is unavailable"
+                    )
+                resolutions[library] = resolved
+            return rows[0][1], tuple(sorted(resolutions.items()))
+        except MetadataReportError:
+            raise
+        except (MetadataPolicyError, ValueError, TypeError, sqlite3.Error) as error:
+            raise MetadataReportError("active metadata policy is unavailable") from error
+
     def _metadata_policy_resolution(
         self, library: str, *, allow_missing: bool
     ) -> ResolvedMetadataPolicy | None:
@@ -7162,6 +7218,14 @@ class SQLiteShadowPreviewRepository:
     ) -> ResolvedMetadataPolicy | None:
         self._require_current()
         value = self._reader.metadata_policy_resolution_for_preview(library)
+        self._require_current()
+        return value
+
+    def metadata_policy_preview_baseline(
+        self, libraries: tuple[str, ...]
+    ) -> tuple[str, tuple[tuple[str, ResolvedMetadataPolicy | None], ...]]:
+        self._require_current()
+        value = self._reader.metadata_policy_preview_baseline(libraries)
         self._require_current()
         return value
 

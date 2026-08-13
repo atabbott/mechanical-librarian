@@ -48,6 +48,18 @@ const chapters: readonly { key: PolicySection; label: string; description: strin
 const readableCategory = (key: string) => fields.find((field) => field.key === key)?.label ?? key.replaceAll('_', ' ')
 const previewValue = (value: unknown) => value === null || value === undefined ? 'No value' : typeof value === 'string' ? value : JSON.stringify(value)
 const isPolicyPreview = (value: unknown): value is PolicyPreviewView => typeof value === 'object' && value !== null && 'schema_version' in value && value.schema_version === 'metadata-policy-preview-v1' && 'active_policy_id' in value && typeof value.active_policy_id === 'string' && 'libraries' in value && Array.isArray(value.libraries)
+const isPolicyTransition = (value: unknown): value is PolicyTransitionView => typeof value === 'object' && value !== null
+  && 'schema_version' in value && value.schema_version === 'metadata-policy-transition-v1'
+  && 'transition_id' in value && typeof value.transition_id === 'string'
+  && 'from_policy_id' in value && typeof value.from_policy_id === 'string'
+  && 'to_policy_id' in value && typeof value.to_policy_id === 'string'
+  && 'state' in value && typeof value.state === 'string'
+  && 'generation' in value && typeof value.generation === 'number'
+  && 'completed' in value && typeof value.completed === 'number'
+  && 'failed' in value && typeof value.failed === 'number'
+  && 'total' in value && typeof value.total === 'number'
+  && 'acknowledged' in value && typeof value.acknowledged === 'boolean'
+const isPolicyActivation = (value: unknown, policyId: string): value is PolicyActivationView => typeof value === 'object' && value !== null && 'policy_id' in value && value.policy_id === policyId && 'schema_version' in value && value.schema_version === 'metadata-policy-activation-v1' && 'transition' in value && (value.transition === null || isPolicyTransition(value.transition))
 const automaticQualified = (field: FieldDefinition, option: string, qualification: readonly { readonly automatic_available: boolean; readonly field: string; readonly option: string }[]) => {
   const rich = qualification.find((entry) => entry.field === field.key && entry.option === option)
   return rich ? rich.automatic_available : field.automatic && !(field.key === 'publisher_preference' && option === 'imprint')
@@ -139,19 +151,23 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     if (!snapshotId || !preview || !previewActivePolicyId) return
     setStatus({ tone: 'neutral', message: 'Activating the reviewed policy…' })
     try {
-      await command.mutateAsync({ action: 'activate', body: { policy_id: snapshotId, expected_active_policy_id: previewActivePolicyId } })
+      const result = await command.mutateAsync({ action: 'activate', body: { policy_id: snapshotId, expected_active_policy_id: previewActivePolicyId } })
+      if (!isPolicyActivation(result, snapshotId)) throw new ApiError(502, 'invalid_policy_activation_response')
       setStage('activated')
       setStatus({ tone: 'success', message: 'Policy activated. Current unapplied work is being reconciled.' })
     } catch (error) {
       if (error instanceof AmbiguousMutationError || error instanceof BuildMismatchError || (error instanceof ApiError && error.status >= 500)) {
         setStage('preview')
         setStatus({ tone: 'warning', message: 'The activation result is uncertain. Authoritative policy state is refreshing; verify it before trying again.' })
-      } else if (error instanceof ApiError && error.status === 409) {
+      } else if (error instanceof ApiError && error.status === 409 && error.code === 'policy_activation_is_stale') {
         setSnapshotId(undefined)
         setPreviewActivePolicyId(undefined)
         setPreview(undefined)
         setStage('editing')
         setStatus({ tone: 'warning', message: 'The active policy changed before activation. Review the refreshed policy and create a new draft.' })
+      } else if (error instanceof ApiError && error.status === 409 && error.code === 'policy_transition_is_processing') {
+        setStage('preview')
+        setStatus({ tone: 'warning', message: 'The previous policy update is still processing. This reviewed snapshot remains available; retry after the transition is resolved.' })
       } else {
         setStatus({ tone: 'error', message: 'Activation failed safely. The reviewed snapshot remains available to retry.' })
       }
@@ -175,10 +191,13 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const visibleFields = fields.filter((field) => field.chapter === activeChapter)
   const changedChapterLabels = chapters.filter((chapter) => changedFields.some((field) => field.chapter === chapter.key)).map((chapter) => chapter.label)
   const impactTotals = useMemo(() => preview ? { libraries: preview.libraries.length, items: preview.libraries.reduce((total, item) => total + item.current_unapplied_count, 0) } : undefined, [preview])
-  const previewRows = useMemo(() => preview?.libraries.flatMap((library) => library.cases.flatMap((rawCase, caseIndex) => {
+  const previewRows = useMemo(() => {
+    const cases = preview?.libraries.flatMap((library) => library.cases.map((rawCase, caseIndex) => {
     const item = rawCase as unknown as { readonly fields: readonly { readonly current_value: unknown; readonly desired_value: unknown; readonly field: string; readonly outcome: string; readonly reason: string | null; readonly target_state: string }[]; readonly report_id: string; readonly work_label: string }
     return item.fields.map((field) => ({ id: `${item.report_id || String(caseIndex)}:${field.field}`, library: library.library, work: item.work_label, field: readableCategory(field.field), outcome: `${previewValue(field.current_value === null ? field.target_state : field.current_value)} → ${field.desired_value === null ? (field.reason ?? field.outcome) : previewValue(field.desired_value)}` }))
-  })) ?? [], [preview])
+    })) ?? []
+    return [...cases.flatMap((rows) => rows.slice(0, 1)), ...cases.flatMap((rows) => rows.slice(1))]
+  }, [preview])
   const transitionCopy = transition.data && !transition.data.acknowledged
     ? transition.data.state === 'processing'
       ? `Applying updated policy · ${String(transition.data.completed)} of ${String(transition.data.total)}`

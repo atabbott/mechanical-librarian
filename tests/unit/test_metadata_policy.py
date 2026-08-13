@@ -138,6 +138,29 @@ class MetadataPolicyTests(unittest.TestCase):
             preview.libraries[1].affected_categories,
         )
 
+    def test_preview_compares_with_generation_bound_resolution_after_override_change(self) -> None:
+        active = MetadataPolicyProfile.builtin()
+        persisted = resolve_policy(
+            active, "library",
+            {"options": {"date_precision": "year"}, "destinations": {}},
+        )
+        draft = MetadataPolicyProfile.create(
+            "Draft", {**dict(DEFAULT_OPTIONS), "date_precision": "full_date"},
+            dict(active.destinations),
+        )
+
+        class Repository:
+            def metadata_policy_preview_baseline(self, libraries):
+                return active.canonical_json, (("library", persisted),)
+            def current_unapplied_count(self, library: str) -> int: return 0
+
+        preview = preview_policy(
+            draft, ("library",),
+            {"library": {"options": {"date_precision": "full_date"}, "destinations": {}}}, Repository(),
+        )
+
+        self.assertIn("date_precision", preview.libraries[0].affected_categories)
+
     def test_preview_uses_bounded_exact_current_pairs_without_effects(self) -> None:
         from mechanical_librarian.domain.proposal_set import evaluate_report
         from tests.unit.test_proposal_set import _report
