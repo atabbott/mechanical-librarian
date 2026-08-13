@@ -128,7 +128,7 @@ def _file_relative_from_absolute(
     prefix = item_relative + "/"
     if not absolute_relative.startswith(prefix):
         raise ValueError("ebook file mapping is invalid")
-    return absolute_relative[len(prefix) :]
+    return absolute_relative
 
 
 def is_safe_relative_path(value: object) -> bool:

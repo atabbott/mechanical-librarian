@@ -60,18 +60,35 @@ class AudiobookshelfEbookLocationTests(unittest.TestCase):
     def _current(self, payload: dict[str, object]):
         return _snapshot(payload, "item-1", "library-1", "/media").files[0]
 
-    def test_nested_flat_and_path_only_records_share_one_identity_at_both_boundaries(self) -> None:
-        cases = (
+    def test_nested_coordinate_variants_share_one_canonical_path_and_identity(self) -> None:
+        identities = set()
+        for payload in (
+            _payload(path=None),
+            _payload(relative=None),
             _payload(),
-            _payload(relative="flat.epub", path="/media/flat.epub", item_relative="flat.epub", item_path="/media/flat.epub", is_file=True),
-            _payload(relative=None, path="/media/Author/Book/book.epub"),
-        )
-        for payload in cases:
+        ):
             with self.subTest(payload=payload["relPath"]):
                 catalogue = self._catalogue(payload)
                 current = self._current(payload)
+                self.assertEqual("Author/Book/book.epub", catalogue.service_path)
+                self.assertEqual("Author/Book/book.epub", current.relative_path)
                 self.assertEqual(catalogue.service_path, current.relative_path)
                 self.assertEqual(catalogue.file_identity, current.identity)
+                identities.add(catalogue.file_identity)
+        self.assertEqual(1, len(identities))
+
+    def test_flat_item_path_is_shared_at_both_boundaries(self) -> None:
+        payload = _payload(
+            relative="flat.epub",
+            path="/media/flat.epub",
+            item_relative="flat.epub",
+            item_path="/media/flat.epub",
+            is_file=True,
+        )
+        catalogue = self._catalogue(payload)
+        current = self._current(payload)
+        self.assertEqual("flat.epub", catalogue.service_path)
+        self.assertEqual(catalogue.file_identity, current.identity)
 
     def test_all_available_path_sources_must_agree(self) -> None:
         payload = _payload(path="/media/Other/book.epub")
