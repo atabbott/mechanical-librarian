@@ -59,6 +59,7 @@ class RenovatePolicyTests(unittest.TestCase):
             {"dockerfile", "github-actions", "npm", "pep621"},
         )
         self.assertEqual(self.config["minimumReleaseAge"], "7 days")
+        self.assertEqual(self.config["prCreation"], "immediate")
         self.assertEqual(self.config["prConcurrentLimit"], 5)
         self.assertEqual(self.config["branchConcurrentLimit"], 5)
         self.assertEqual(self.config["rangeStrategy"], "pin")

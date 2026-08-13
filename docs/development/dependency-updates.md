@@ -31,6 +31,11 @@ two pull requests per hour, and groups compatible updates by ecosystem. GitHub
 vulnerability alerts skip the ordinary schedule and use the lowest fixed
 version, but retain the same merge policy.
 
+Renovate creates a pull request as soon as it creates an eligible branch. This
+is required because the exact-head qualification workflow runs on pull requests,
+not unreviewed branch pushes. The pull request is therefore what starts the
+checks; creation itself never authorizes a merge.
+
 Renovate automatically prepares pull requests and requests GitHub-native squash
 auto-merge for:
 
