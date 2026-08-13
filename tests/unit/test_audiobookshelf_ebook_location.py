@@ -20,7 +20,7 @@ def _library() -> LibraryConfiguration:
     return LibraryConfiguration("books", "primary", "library-1", "book", "books", ())
 
 
-def _payload(*, relative: str | None = "book.epub", path: str | None = "/media/Author/Book/book.epub", item_relative: object = "Author/Book", size: int = 7) -> dict[str, object]:
+def _payload(*, relative: str | None = "book.epub", path: str | None = "/media/Author/Book/book.epub", item_relative: object = "Author/Book", item_path: str | None = "/media/Author/Book", is_file: bool = False, size: int = 7) -> dict[str, object]:
     metadata: dict[str, object] = {"size": size}
     if relative is not None:
         metadata["relPath"] = relative
@@ -34,6 +34,8 @@ def _payload(*, relative: str | None = "book.epub", path: str | None = "/media/A
         "isMissing": False,
         "mediaType": "book",
         "relPath": item_relative,
+        "path": item_path,
+        "isFile": is_file,
         "media": {
             "metadata": {"title": "Title", "authors": [{"name": "Ada"}]},
             "ebookFile": {
@@ -61,7 +63,7 @@ class AudiobookshelfEbookLocationTests(unittest.TestCase):
     def test_nested_flat_and_path_only_records_share_one_identity_at_both_boundaries(self) -> None:
         cases = (
             _payload(),
-            _payload(relative="flat.epub", path="/media/flat.epub", item_relative=None),
+            _payload(relative="flat.epub", path="/media/flat.epub", item_relative="flat.epub", item_path="/media/flat.epub", is_file=True),
             _payload(relative=None, path="/media/Author/Book/book.epub"),
         )
         for payload in cases:
@@ -73,6 +75,17 @@ class AudiobookshelfEbookLocationTests(unittest.TestCase):
 
     def test_all_available_path_sources_must_agree(self) -> None:
         payload = _payload(path="/media/Other/book.epub")
+        entry = self._catalogue(payload)
+        self.assertEqual("needs-attention", entry.classification)
+        with self.assertRaises(MetadataReportError):
+            self._current(payload)
+
+    def test_path_only_record_must_still_agree_with_item_coordinates(self) -> None:
+        payload = _payload(relative=None, path="/media/Other/book.epub")
+        self.assertEqual("needs-attention", self._catalogue(payload).classification)
+        with self.assertRaises(MetadataReportError):
+            self._current(payload)
+        payload = _payload(item_path="/media/Other")
         entry = self._catalogue(payload)
         self.assertEqual("needs-attention", entry.classification)
         with self.assertRaises(MetadataReportError):
@@ -105,8 +118,25 @@ class AudiobookshelfEbookLocationTests(unittest.TestCase):
             normalize_ebook_location(
                 _payload()["media"]["ebookFile"],
                 service_path=None,
-                item_relative="Author/Book",
+                item=_payload(),
             )
+
+    def test_flat_item_coordinates_cannot_be_interpreted_as_a_directory(self) -> None:
+        payload = _payload(
+            relative="book.epub",
+            path=None,
+            item_relative="book.epub",
+            item_path="/media/book.epub",
+            is_file=True,
+        )
+        catalogue = self._catalogue(payload)
+        current = self._current(payload)
+        self.assertEqual("book.epub", catalogue.service_path)
+        self.assertEqual(catalogue.file_identity, current.identity)
+        payload["media"]["ebookFile"]["metadata"]["relPath"] = "nested/book.epub"
+        self.assertEqual("needs-attention", self._catalogue(payload).classification)
+        with self.assertRaises(MetadataReportError):
+            self._current(payload)
 
 
 if __name__ == "__main__":

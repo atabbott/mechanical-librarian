@@ -125,7 +125,7 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
             location = normalize_ebook_location(
                 ebook,
                 service_path=None if mount is None else mount.service_path,
-                item_relative=detail.get("relPath"),
+                item=detail,
             )
         except ValueError:
             classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None

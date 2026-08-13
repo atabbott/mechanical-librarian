@@ -42,10 +42,7 @@ from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
 )
-from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
-    is_safe_relative_path,
-    normalize_ebook_location,
-)
+from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import normalize_ebook_location
 
 
 _ASIN = re.compile(r"^[A-Za-z0-9]{10}$")
@@ -189,11 +186,8 @@ def _snapshot(source: object, item: str, library_id: str, service_path: str) -> 
         raise MetadataReportError("target response is invalid")
     if len(files_source) > 128:
         raise MetadataReportError("target response is invalid")
-    item_relative = root.get("relPath")
-    if item_relative is not None and not is_safe_relative_path(item_relative):
-        raise MetadataReportError("target response is invalid")
     files = tuple(
-        _file(value, service_path, item_relative) for value in files_source
+        _file(value, service_path, root) for value in files_source
     )
     identities = tuple(value.identity for value in files)
     if len(set(identities)) != len(identities):
@@ -448,11 +442,11 @@ def _cover_field(
 def _file(
     source: object,
     service_path: str,
-    item_relative: str | None,
+    item: object,
 ) -> TargetFile:
     try:
         location = normalize_ebook_location(
-            source, service_path=service_path, item_relative=item_relative
+            source, service_path=service_path, item=item
         )
     except ValueError as error:
         raise MetadataReportError(str(error)) from None
