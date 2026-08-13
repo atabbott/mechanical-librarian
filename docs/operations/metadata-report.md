@@ -145,7 +145,7 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v23`. Every earlier report discriminator,
+discriminator is `metadata-report-v24`. Every earlier report discriminator,
 including `metadata-report-v22`, remains offline and requires a clean current
 database under ADR-0013.
 
@@ -289,6 +289,13 @@ bound, and provider status retains its existing neutral meaning.
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
 bounded set is `candidates`; all candidates survive in provider-identity order
 with their distinct edition identity and opaque provider-local work identity.
+When Hardcover's exact six-row edition probe has one safely qualified work, it
+records a terminal edition-enrichment overflow witness: only the provider work
+identity, validated work title, ordered author claims, and exact author
+identity bindings. It is not a candidate; it cannot enter proposal, review, or
+cover selection. Every edition identity, field, row, diagnostic, and cover is
+discarded. Any incomplete, ambiguous, duplicate, or contradictory linkage
+fails closed without a witness.
 The work lane retains only work title, complete authors, series and sequence,
 description, typed taxonomy, same-work first publication, and same-work cover
 evidence. It strips ISBN/ASIN, publisher/imprint, edition language,
