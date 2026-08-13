@@ -1,6 +1,6 @@
 {
   "automatic_authority": "decision_only",
-  "candidate_execution_count": 5,
+  "candidate_execution_count": 6,
   "evidence_method": {
     "evaluated_reports": 49,
     "exposure_unit": "case_field_option",
@@ -42,15 +42,15 @@
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
-      "sha256": "e42010517da3fa60f3cad714a692fdc593238388414e8961d1dd01bd5d6909c2"
+      "sha256": "9990b19072aa4b19145ae87a7035e8e7eb6a7c680266b9e006b49c3f223f6508"
     },
     "evaluator": {
-      "identity": "f20-field-local-evaluator-v5",
-      "sha256": "c7c0ee9b6f57c4e8829f4df02d8752ae83fd7760df681c1e61fa33869a852f99"
+      "identity": "f20-field-local-evaluator-v6",
+      "sha256": "a1bff4c49d0ccf7849ac1932404b874339d1bfe04e943dd8298c03321b8bc66b"
     },
     "evidence_execution": {
-      "identity": "offline-current-adapter-replay-v5",
-      "sha256": "ef6577284f4e2e8480d331adfa9899cd453a9140664b6732e568870acff807a6"
+      "identity": "offline-current-adapter-and-guarded-effect-replay-v6",
+      "sha256": "c8111a8c17f7ce29be1e0ad677d2e43f008971e49ac7e6a43c478e93e690aed6"
     },
     "policy": {
       "identity": "src/mechanical_librarian/domain/metadata_policy.py",
@@ -245,8 +245,8 @@
       "identity": "isbn_form:preserve_exact",
       "metrics": {
         "automatic_precision": 1.0,
-        "automatic_predictions": 4,
-        "automatic_recall": 0.0975609756097561,
+        "automatic_predictions": 22,
+        "automatic_recall": 0.5365853658536586,
         "structural_or_sensitive_violations": 0,
         "unsupported_output": 0
       }

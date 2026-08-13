@@ -11,7 +11,7 @@ from typing import Final, Mapping
 
 
 F20_QUALIFICATION_CANDIDATE_SHA256: Final = (
-    "660ef340007668bfa95493acb0e5799a09dd25631b688281e4b7924377ea3424"
+    "c1e55d55281938a6917d9fd9ad34484b8cb825140ec25b6fa29fbf7fad3ee9ec"
 )
 F20_RICH_FIELDS: Final = (
     "subtitle", "series", "genres", "tags", "description_fill",

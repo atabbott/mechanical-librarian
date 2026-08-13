@@ -52,7 +52,7 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
         self.assertEqual(passing, set(manifest["passing_automatic_options"]))
         self.assertEqual(["explicit:unsupported"], manifest["human_only_options"])
         self.assertEqual(["narrators", "cover"], manifest["excluded_destinations"])
-        self.assertEqual(5, manifest["candidate_execution_count"])
+        self.assertEqual(6, manifest["candidate_execution_count"])
         self.assertEqual(
             {
                 "evaluated_reports": 49,
@@ -144,7 +144,7 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
             if entry["identity"] in passing
         }
         self.assertEqual(1.0, isbn["isbn_form:preserve_exact"]["metrics"]["automatic_precision"])
-        self.assertEqual(4, isbn["isbn_form:preserve_exact"]["metrics"]["automatic_predictions"])
+        self.assertEqual(22, isbn["isbn_form:preserve_exact"]["metrics"]["automatic_predictions"])
         self.assertEqual(1.0, isbn["isbn_form:prefer_isbn13"]["metrics"]["automatic_precision"])
         self.assertEqual(22, isbn["isbn_form:prefer_isbn13"]["metrics"]["automatic_predictions"])
         series = {
