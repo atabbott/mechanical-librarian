@@ -20,8 +20,6 @@ from pathlib import Path
 
 _STALL_DIAGNOSTIC_SECONDS = 30
 _SAFE_TEST_ID = re.compile(r"[A-Za-z0-9_.]{1,512}")
-_SAFE_TEST_LOCATION = re.compile(r"tests/[A-Za-z0-9_./-]{1,512}:[0-9]{1,8}")
-_TRACEBACK_FRAME = re.compile(r'^  File "([^"]+)", line ([0-9]+), in ', re.MULTILINE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,49 +126,6 @@ def cohort_manifest(root: Path, name: str) -> dict[str, object]:
     }
 
 
-def _safe_failure_details(
-    root: Path, result: unittest.TestResult
-) -> tuple[dict[str, object], ...]:
-    tests_root = (root / "tests").resolve()
-    details: list[dict[str, object]] = []
-    recorded = (
-        *((test, traceback, "failure") for test, traceback in result.failures),
-        *((test, traceback, "error") for test, traceback in result.errors),
-        *((test, "", "unexpected_success") for test in result.unexpectedSuccesses),
-    )
-    for test, traceback, kind in recorded:
-        identifier = test.id()
-        detail: dict[str, object] = {
-            "kind": kind,
-            "test_id": identifier
-            if _SAFE_TEST_ID.fullmatch(identifier) is not None
-            else "unavailable",
-        }
-        frames: list[tuple[Path, int]] = []
-        for raw_path, raw_line in _TRACEBACK_FRAME.findall(traceback):
-            try:
-                path = Path(raw_path).resolve()
-                relative = path.relative_to(tests_root)
-                line = int(raw_line)
-            except (OSError, RuntimeError, ValueError):
-                continue
-            if (
-                0 < line <= 10_000_000
-                and not relative.is_absolute()
-                and ".." not in relative.parts
-            ):
-                frames.append((relative, line))
-        if frames:
-            relative, line = frames[-1]
-            location = f"tests/{relative.as_posix()}:{line}"
-            if _SAFE_TEST_LOCATION.fullmatch(location) is not None:
-                detail["location"] = location
-        details.append(detail)
-    return tuple(
-        sorted(details, key=lambda item: (str(item["test_id"]), str(item["kind"])))
-    )[:32]
-
-
 def run_cohort(root: Path, name: str) -> bool:
     result = _DiagnosticTestResult()
     stopped = threading.Event()
@@ -206,12 +161,10 @@ def run_cohort(root: Path, name: str) -> bool:
         [test.id() for test, _detail in (*result.failures, *result.errors)]
         + [test.id() for test in result.unexpectedSuccesses]
     )[:32]
-    failure_details = _safe_failure_details(root, result)
     print(
         json.dumps(
             {
                 "errors": len(result.errors),
-                "failure_details": failure_details,
                 "failed_test_ids": failed_ids,
                 "failures": len(result.failures),
                 "reason": "test_tier_failed",

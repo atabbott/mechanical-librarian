@@ -87,11 +87,13 @@ class LibraryPolicyImpact:
     cases: tuple[RichMetadataPreview, ...] = ()
     cases_total: int = 0
     cases_truncated: bool = False
+    work_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class PolicyPreview:
     profile_id: str
+    active_policy_id: str
     validation: tuple[str, ...]
     libraries: tuple[LibraryPolicyImpact, ...]
 
@@ -159,6 +161,10 @@ class PolicyImpactRepository(Protocol):
 
     def metadata_policy_resolution_for_preview(self, library: str) -> ResolvedMetadataPolicy | None: ...
 
+    def metadata_policy_preview_baseline(
+        self, libraries: tuple[str, ...]
+    ) -> tuple[str, tuple[tuple[str, ResolvedMetadataPolicy | None], ...]]: ...
+
     def shadow_posture(self) -> str: ...
 
     def enter_shadow_preview(self, updated_at: int) -> str: ...
@@ -173,24 +179,37 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
     impacts: list[LibraryPolicyImpact] = []
     remaining_cases = MAX_RICH_PREVIEW_CASES
     try:
-        for library in libraries:
-            resolved = resolve_policy(profile, library, overrides.get(library))
+        if hasattr(repository, "metadata_policy_preview_baseline"):
+            active_document, persisted_baseline = (
+                repository.metadata_policy_preview_baseline(libraries)
+            )
+        else:
             active_document = (
                 repository.active_metadata_policy()
                 if hasattr(repository, "active_metadata_policy")
                 else MetadataPolicyProfile.builtin().canonical_json
             )
-            persisted_active = (
-                repository.metadata_policy_resolution_for_preview(library)
-                if hasattr(repository, "metadata_policy_resolution_for_preview")
-                else repository.current_resolved_metadata_policy(library)
-                if hasattr(repository, "current_resolved_metadata_policy")
-                else None
+            persisted_baseline = tuple(
+                (
+                    library,
+                    repository.metadata_policy_resolution_for_preview(library)
+                    if hasattr(repository, "metadata_policy_resolution_for_preview")
+                    else None,
+                )
+                for library in libraries
             )
-            active = persisted_active or resolve_policy(
-                MetadataPolicyProfile.from_data(json.loads(active_document)),
-                library,
-                overrides.get(library),
+        active_profile = MetadataPolicyProfile.from_data(json.loads(active_document))
+        active_resolutions = dict(persisted_baseline)
+        if tuple(sorted(active_resolutions)) != libraries:
+            raise MetadataPolicyApplicationError("policy preview is unavailable")
+        for library in libraries:
+            resolved = resolve_policy(profile, library, overrides.get(library))
+            # Existing libraries compare with the generation-bound resolution
+            # actually in force. A newly configured library has no persisted
+            # resolution yet and is resolved from the same active-profile
+            # snapshot using its current override.
+            active = active_resolutions[library] or resolve_policy(
+                active_profile, library, overrides.get(library)
             )
             # Compatibility callers expose this aggregate separately; the
             # concrete repository below proves it equals the read snapshot.
@@ -245,12 +264,24 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
                 for report, _ in pairs
             )
             remaining_cases -= len(cases)
-            impacts.append(LibraryPolicyImpact(library, categories, count, resolved.resolved_id, cases, pairs_total, pairs_total > len(pairs)))
+            work_labels = tuple(
+                report.target.current_title or "Untitled" for report, _ in pairs
+            )
+            impacts.append(LibraryPolicyImpact(
+                library=library,
+                affected_categories=categories,
+                current_unapplied_count=count,
+                resolved_policy_id=resolved.resolved_id,
+                cases=cases,
+                cases_total=pairs_total,
+                cases_truncated=pairs_total > len(pairs),
+                work_labels=work_labels,
+            ))
     except MetadataPolicyApplicationError:
         raise
     except (MetadataPolicyError, Exception) as error:
         raise MetadataPolicyApplicationError("policy preview is unavailable") from error
-    return PolicyPreview(profile.policy_id, (), tuple(impacts))
+    return PolicyPreview(profile.policy_id, active_profile.policy_id, (), tuple(impacts))
 
 
 def bind_proposal_policy(proposal_set_id: object, policy: ResolvedMetadataPolicy) -> ProposalPolicyBinding:

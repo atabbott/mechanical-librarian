@@ -2421,6 +2421,10 @@
       "_PolicyPreviewResponse": {
         "additionalProperties": false,
         "properties": {
+          "active_policy_id": {
+            "title": "Active Policy Id",
+            "type": "string"
+          },
           "libraries": {
             "items": {
               "$ref": "#/components/schemas/_PolicyImpactResponse"
@@ -2478,6 +2482,7 @@
           }
         },
         "required": [
+          "active_policy_id",
           "libraries",
           "policy_id",
           "rich_qualification"
@@ -2952,13 +2957,19 @@
           "resolved_policy_id": {
             "title": "Resolved Policy Id",
             "type": "string"
+          },
+          "work_label": {
+            "maxLength": 512,
+            "title": "Work Label",
+            "type": "string"
           }
         },
         "required": [
           "fields",
           "proposal_set_id",
           "report_id",
-          "resolved_policy_id"
+          "resolved_policy_id",
+          "work_label"
         ],
         "title": "_RichCasePreviewResponse",
         "type": "object"

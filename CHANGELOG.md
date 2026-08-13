@@ -7,6 +7,12 @@
   review mode, qualification, and representation kept together. A single
   whole-draft action validates, saves an immutable snapshot, and produces a
   current no-write impact preview before reversible, guarded activation.
+  Preview rows sample across affected works and identify each exact field
+  outcome against the generation-bound active resolution, while activation
+  remains bound to the server-issued active-policy identity used for that
+  preview, validates the complete success response, treats post-dispatch
+  response-integrity failures as uncertain, retains reviewed authority while a
+  prior transition is processing, and discards it after a currentness conflict.
   Keyboard-complete portal dropdowns, compact document flow, reduced motion,
   light/dark treatment, stale-preview invalidation, and explicit failure
   recovery preserve owner authority throughout. (#590)

@@ -652,6 +652,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             ("explicit", "missing", None, None, "abstain", "explicit_unsupported"),
         ]
         return {
+            "active_policy_id": "policy-active-1",
             "schema_version": "metadata-policy-preview-v1",
             "policy_id": "policy_" + "d" * 64,
             "rich_qualification": list(_RICH_QUALIFICATION),
@@ -682,6 +683,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     "proposal_set_id": "proposal_set_" + "b" * 64,
                     "report_id": "report_" + "a" * 64,
                     "resolved_policy_id": "resolved_policy_" + "c" * 64,
+                    "work_label": "The Clockmaker's Map",
                 }],
                 "cases_total": 1,
                 "cases_truncated": False,
