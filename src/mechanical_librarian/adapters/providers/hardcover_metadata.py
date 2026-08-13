@@ -44,7 +44,7 @@ from mechanical_librarian.domain.cover_evidence import (
     cover_source_id,
 )
 from mechanical_librarian.domain.metadata_report import (
-    ClaimKind, ClaimScope, FieldState, LocalClaim, MAX_CANDIDATES,
+    ClaimKind, ClaimScope, EditionEnrichmentOverflow, FieldState, LocalClaim, MAX_CANDIDATES,
     MAX_CONTRIBUTIONS, MAX_DESCRIPTION_CHARACTERS, MAX_SCALAR_CHARACTERS,
     MAX_SERIES, MAX_TAGS, ProviderCandidate, ProviderClaim,
     ProviderEvidence, ProviderEvidenceKind, ProviderIdentityBinding,
@@ -255,6 +255,7 @@ class HardcoverMetadataProvider:
                         observation.status,
                         observation.candidates,
                         observation.accessed_at,
+                        observation.edition_enrichment_overflow,
                     )
                 )
                 merged = merge_provider_cover_descriptors(
@@ -354,6 +355,7 @@ class HardcoverMetadataProvider:
         def result(
             status: ProviderStatus,
             candidates: tuple[ProviderCandidate, ...] = (),
+            edition_enrichment_overflow: EditionEnrichmentOverflow | None = None,
         ) -> ProviderObservation:
             return ProviderObservation(
                 self._name,
@@ -363,6 +365,7 @@ class HardcoverMetadataProvider:
                 lookup.kind,
                 accessed_at=self._accessed_at,
                 diagnostics=self._schema_diagnostics(),
+                edition_enrichment_overflow=edition_enrichment_overflow,
             )
         try:
             payload = self._request(body, deadline=deadline)
@@ -372,12 +375,14 @@ class HardcoverMetadataProvider:
             if _has_graphql_errors(payload):
                 self._mark_response_attempt("provider_declared_error")
                 return result(ProviderStatus.UNAVAILABLE)
-            candidates = _parse_candidates(
-                payload,
-                self._name,
-                local_claims,
-                self._optional_rejections,
-            )
+            overflow = _parse_edition_enrichment_overflow(payload, self._name)
+            if overflow is not None:
+                self._mark_response_attempt("response_oversized")
+                return result(
+                    ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+                    edition_enrichment_overflow=overflow,
+                )
+            candidates = _parse_candidates(payload, self._name, local_claims, self._optional_rejections)
             self._reject_schema_members(_optional_projection_rejections(payload))
             if (
                 lookup.kind is ProviderQueryKind.ISBN
@@ -841,13 +846,10 @@ def _parse_candidates(
     root = _closed(source, {"data"})
     data = _closed(root["data"], {"editions", "books", "tags"})
     rows, books, tags = data["editions"], data["books"], data["tags"]
-    if (
-        type(rows) is not list
-        or type(books) is not list
-        or len(rows) > MAX_CANDIDATES
-        or len(books) > MAX_CANDIDATES
-    ):
-        raise _CandidateLimit if type(rows) is list and len(rows) > MAX_CANDIDATES else ValueError("provider rows invalid")
+    if type(rows) is not list or type(books) is not list:
+        raise ValueError("provider rows invalid")
+    if len(rows) > MAX_CANDIDATES or len(books) > MAX_CANDIDATES:
+        raise _CandidateLimit
     work_keys = {
         "id",
         "title",
@@ -1016,6 +1018,44 @@ def _parse_candidates(
     if used != set(indexed) or len({candidate.identity for candidate in candidates}) != len(candidates):
         raise ValueError("provider join invalid")
     return tuple(sorted(candidates, key=lambda candidate: candidate.identity))
+
+
+def _parse_edition_enrichment_overflow(
+    payload: bytes, provider: str,
+) -> EditionEnrichmentOverflow | None:
+    """Retain one work-only witness, never an edition candidate, at the probe cap."""
+    source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
+    data = _closed(_closed(source, {"data"})["data"], {"editions", "books", "tags"})
+    rows, books = data["editions"], data["books"]
+    if type(rows) is not list or type(books) is not list:
+        raise ValueError("provider rows invalid")
+    if len(rows) <= MAX_CANDIDATES:
+        return None
+    if len(rows) != MAX_CANDIDATES + 1 or len(books) != 1:
+        raise _CandidateLimit
+    book = _anchored_projection(books[0], {"id", "title", "contributions"}, {"id", "title", "contributions"})
+    book_id = _identifier(book["id"])
+    edition_ids: set[int] = set()
+    for value in rows:
+        row = _anchored_projection(value, {"id", "book_id"}, {"id", "book_id"})
+        edition_id, linked_book_id = _identifier(row["id"]), _identifier(row["book_id"])
+        if linked_book_id != book_id or edition_id in edition_ids:
+            raise ValueError("provider overflow linkage invalid")
+        edition_ids.add(edition_id)
+    work_identity = f"hardcover-work-{book_id:010d}"
+    title = _claim(provider, work_identity, ClaimKind.TITLE, book["title"], ClaimScope.WORK, "not_applicable", None, (), 0)
+    bindings: list[ProviderIdentityBinding] = []
+    authors = _contributions(provider, work_identity, book["contributions"], ClaimScope.WORK, (), 0, None, bindings)
+    if (
+        title.state is not FieldState.VALID
+        or title.value is None
+        or not authors
+        or type(book["contributions"]) is not list
+        or len(authors) != len(book["contributions"])
+        or any(claim.kind is not ClaimKind.CREATOR or claim.state is not FieldState.VALID or claim.role != "author" for claim in authors)
+    ):
+        raise ValueError("provider overflow work is incomplete")
+    return EditionEnrichmentOverflow(work_identity, title.value, tuple(authors), tuple(bindings))
 
 
 def _parse_cover_descriptors(

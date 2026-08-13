@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Preserve safely anchored Hardcover work identity, title, and complete creator
+  evidence when the requested edition enrichment exceeds its bound. The
+  oversized enrichment is diagnosed without retaining any edition claims or
+  cover evidence. (#418)
+
 - Fix Audiobookshelf nested ebook identity handling so catalogue discovery and
   current-item validation derive the same canonical service-relative location
   and opaque file identity. Conflicting, traversal, missing, and ambiguous file

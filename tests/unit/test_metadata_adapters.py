@@ -159,7 +159,7 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v23'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v24'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -174,7 +174,7 @@ def _create_prior_schema(
 ) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v23'", f"= '{version}'"
+            "= 'metadata-report-v24'", f"= '{version}'"
         ),
         metadata_persistence._CURRENT_SQL,
         metadata_persistence._CURRENT_LINEAGE_SQL,
@@ -308,7 +308,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "current report schema with stale proposal policy",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v23",
+                    "metadata-report-v24",
                     "fixed-conservative-v6",
                 ),
             ),
@@ -365,7 +365,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "previous proposal policy v3",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v23",
+                    "metadata-report-v24",
                     "fixed-conservative-v3",
                 ),
             ),
@@ -373,7 +373,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "previous proposal policy v4",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v23",
+                    "metadata-report-v24",
                     "fixed-conservative-v4",
                 ),
             ),
@@ -381,7 +381,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "previous proposal policy v5",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v23",
+                    "metadata-report-v24",
                     "fixed-conservative-v5",
                 ),
             ),
@@ -505,7 +505,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
-            self.assertEqual(schema_version, ("metadata-report-v23",))
+            self.assertEqual(schema_version, ("metadata-report-v24",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)
@@ -2682,6 +2682,89 @@ class ProviderAdapterTests(unittest.TestCase):
         for size, expected in ((262_144, ProviderStatus.MALFORMED), (262_145, ProviderStatus.OVERSIZED)):
             provider = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request, length=size: httpx.Response(200, headers={"content-type": "application/json"}, content=b"x" * length))), 262_144)
             self.assertEqual(provider.observe(_isbn_lookup((self._claim(),))).status, expected)
+
+    def test_edition_overflow_retains_only_work_scoped_witness(self) -> None:
+        rows = [
+            {
+                "id": index,
+                "book_id": 10,
+                "isbn_10": "0306406152",
+                "isbn_13": "9780306406157",
+                "title": f"Discarded edition {index}",
+                "release_date": "2001-02-03",
+                "image": f"https://example.test/edition-{index}.jpg",
+                "publisher": {"name": "Discarded publisher"},
+                "language": "en",
+            }
+            for index in range(1, 7)
+        ]
+        provider = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=self._envelope(
+                            rows,
+                            [
+                                {
+                                    "id": 10,
+                                    "title": "Anchored work",
+                                    "contributions": [
+                                        {
+                                            "id": 1,
+                                            "contribution": "Author",
+                                            "author": {
+                                                "id": 7,
+                                                "name": "Ada Example",
+                                            },
+                                        }
+                                    ],
+                                }
+                            ],
+                        ),
+                    )
+                )
+            ),
+            65_536,
+        )
+
+        observation = provider.observe(_work_lookup())
+
+        self.assertEqual(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, observation.status)
+        self.assertEqual((), provider.cover_descriptors)
+        self.assertEqual((), observation.diagnostics)
+        self.assertEqual((), observation.candidates)
+        witness = observation.edition_enrichment_overflow
+        self.assertIsNotNone(witness)
+        assert witness is not None
+        self.assertEqual("hardcover-work-0000000010", witness.work_identity)
+        self.assertEqual("Anchored work", witness.title)
+        self.assertEqual(1, len(witness.authors))
+        self.assertEqual(
+            "Ada Example", witness.authors[0].value,
+        )
+        self.assertFalse(
+            {
+                "Discarded edition 1",
+                "Discarded publisher",
+                "2001-02-03",
+                "en",
+                "9780306406157",
+            }
+            & {witness.title, *(claim.value for claim in witness.authors)}
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary", "ebooks", "item-1", default_target_fields("Anchored work")
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(observation,),
+        )
+        self.assertEqual(report, MetadataReport.from_json(report.to_json()))
 
     def test_exact_rich_caps_and_pinned_schema_are_admitted(self) -> None:
         self.assertEqual(hardcover_metadata.HARDCOVER_SCHEMA_COMMIT, "1c5bdbd3244e02b03ccc658a792793e39cba17a8")
