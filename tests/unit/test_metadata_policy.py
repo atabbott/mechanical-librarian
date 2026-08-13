@@ -151,6 +151,9 @@ class MetadataPolicyTests(unittest.TestCase):
             dict(MetadataPolicyProfile.builtin().destinations),
         )
         class Repository:
+            def active_metadata_policy(self) -> str:
+                self.active_reads = getattr(self, "active_reads", 0) + 1
+                return MetadataPolicyProfile.builtin().canonical_json
             def current_unapplied_count(self, library: str) -> int: return 1
             def current_policy_impact_pairs(self, library: str, limit: int):
                 self.limit = limit
@@ -160,6 +163,11 @@ class MetadataPolicyTests(unittest.TestCase):
             draft, (report.target.library,), {}, repository
         )
         self.assertEqual(20, repository.limit)
+        self.assertEqual(1, repository.active_reads)
+        self.assertEqual(
+            MetadataPolicyProfile.builtin().policy_id,
+            preview.active_policy_id,
+        )
         self.assertEqual(1, preview.libraries[0].cases_total)
         self.assertEqual(
             (report.target.current_title or "Untitled",),
@@ -196,6 +204,10 @@ class MetadataPolicyTests(unittest.TestCase):
         second = pair_for("second")
 
         class Repository:
+            def active_metadata_policy(self) -> str:
+                self.active_reads = getattr(self, "active_reads", 0) + 1
+                return MetadataPolicyProfile.builtin().canonical_json
+
             def current_unapplied_count(self, library: str) -> int:
                 return 999
 
@@ -209,7 +221,9 @@ class MetadataPolicyTests(unittest.TestCase):
             "Global bounded preview", options,
             dict(MetadataPolicyProfile.builtin().destinations),
         )
-        preview = preview_policy(draft, ("first", "second"), {}, Repository())
+        repository = Repository()
+        preview = preview_policy(draft, ("first", "second"), {}, repository)
+        self.assertEqual(1, repository.active_reads)
         first_impact, second_impact = preview.libraries
         self.assertEqual(20, sum(len(impact.cases) for impact in preview.libraries))
         self.assertEqual((15, False, 15), (

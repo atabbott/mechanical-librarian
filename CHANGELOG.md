@@ -8,8 +8,9 @@
   whole-draft action validates, saves an immutable snapshot, and produces a
   current no-write impact preview before reversible, guarded activation.
   Preview rows identify each affected work and exact field outcome, while
-  activation remains bound to the active-policy identity captured for that
-  preview and discards stale preview authority after a currentness conflict.
+  activation remains bound to the server-issued active-policy identity used
+  for that preview, treats post-dispatch response-integrity failures as
+  uncertain, and discards stale preview authority after a currentness conflict.
   Keyboard-complete portal dropdowns, compact document flow, reduced motion,
   light/dark treatment, stale-preview invalidation, and explicit failure
   recovery preserve owner authority throughout. (#590)

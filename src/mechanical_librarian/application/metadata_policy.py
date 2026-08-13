@@ -93,6 +93,7 @@ class LibraryPolicyImpact:
 @dataclass(frozen=True, slots=True)
 class PolicyPreview:
     profile_id: str
+    active_policy_id: str
     validation: tuple[str, ...]
     libraries: tuple[LibraryPolicyImpact, ...]
 
@@ -174,25 +175,18 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
     impacts: list[LibraryPolicyImpact] = []
     remaining_cases = MAX_RICH_PREVIEW_CASES
     try:
+        active_document = (
+            repository.active_metadata_policy()
+            if hasattr(repository, "active_metadata_policy")
+            else MetadataPolicyProfile.builtin().canonical_json
+        )
+        active_profile = MetadataPolicyProfile.from_data(json.loads(active_document))
         for library in libraries:
             resolved = resolve_policy(profile, library, overrides.get(library))
-            active_document = (
-                repository.active_metadata_policy()
-                if hasattr(repository, "active_metadata_policy")
-                else MetadataPolicyProfile.builtin().canonical_json
-            )
-            persisted_active = (
-                repository.metadata_policy_resolution_for_preview(library)
-                if hasattr(repository, "metadata_policy_resolution_for_preview")
-                else repository.current_resolved_metadata_policy(library)
-                if hasattr(repository, "current_resolved_metadata_policy")
-                else None
-            )
-            active = persisted_active or resolve_policy(
-                MetadataPolicyProfile.from_data(json.loads(active_document)),
-                library,
-                overrides.get(library),
-            )
+            # Every comparison is bound to this one active-profile read. A
+            # concurrent activation can only stale the later activation guard;
+            # it cannot rebind part of this preview or create an ABA gap.
+            active = resolve_policy(active_profile, library, overrides.get(library))
             # Compatibility callers expose this aggregate separately; the
             # concrete repository below proves it equals the read snapshot.
             count = repository.current_unapplied_count(library)
@@ -263,7 +257,7 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
         raise
     except (MetadataPolicyError, Exception) as error:
         raise MetadataPolicyApplicationError("policy preview is unavailable") from error
-    return PolicyPreview(profile.policy_id, (), tuple(impacts))
+    return PolicyPreview(profile.policy_id, active_profile.policy_id, (), tuple(impacts))
 
 
 def bind_proposal_policy(proposal_set_id: object, policy: ResolvedMetadataPolicy) -> ProposalPolicyBinding:

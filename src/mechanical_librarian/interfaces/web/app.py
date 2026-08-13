@@ -639,6 +639,7 @@ class _PolicyImpactResponse(_ClosedModel):
 
 
 class _PolicyPreviewResponse(_ClosedModel):
+    active_policy_id: str
     libraries: list[_PolicyImpactResponse]
     policy_id: str
     rich_qualification: list[_RichQualification]
@@ -1369,7 +1370,7 @@ def _register_policy_routes(
             raise HTTPException(422, detail={"code": _policy_problem(error)}) from None
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None
-        return _PolicyPreviewResponse(policy_id=profile.policy_id, rich_qualification=[_RICH_QUALIFICATION_ADAPTER.validate_python(item) for item in notebook.rich_qualification(profile)], libraries=[_PolicyImpactResponse(affected_categories=list(item.affected_categories), cases=[_RichCasePreviewResponse.model_validate({**case.to_data(), "work_label": item.work_labels[index]}) for index, case in enumerate(item.cases)], cases_total=item.cases_total, cases_truncated=item.cases_truncated, current_unapplied_count=item.current_unapplied_count, library=item.library, resolved_policy_id=item.resolved_policy_id) for item in preview.libraries])
+        return _PolicyPreviewResponse(active_policy_id=preview.active_policy_id, policy_id=profile.policy_id, rich_qualification=[_RICH_QUALIFICATION_ADAPTER.validate_python(item) for item in notebook.rich_qualification(profile)], libraries=[_PolicyImpactResponse(affected_categories=list(item.affected_categories), cases=[_RichCasePreviewResponse.model_validate({**case.to_data(), "work_label": item.work_labels[index]}) for index, case in enumerate(item.cases)], cases_total=item.cases_total, cases_truncated=item.cases_truncated, current_unapplied_count=item.current_unapplied_count, library=item.library, resolved_policy_id=item.resolved_policy_id) for item in preview.libraries])
 
     @app.post("/api/v1/metadata-policy/activate", response_model=_PolicyActivationResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 413, 422, 503)})
     def activate_metadata_policy(payload: _PolicyActivationRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyActivationResponse:

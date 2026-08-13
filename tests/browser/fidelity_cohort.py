@@ -652,6 +652,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             ("explicit", "missing", None, None, "abstain", "explicit_unsupported"),
         ]
         return {
+            "active_policy_id": "policy-active-1",
             "schema_version": "metadata-policy-preview-v1",
             "policy_id": "policy_" + "d" * 64,
             "rich_qualification": list(_RICH_QUALIFICATION),

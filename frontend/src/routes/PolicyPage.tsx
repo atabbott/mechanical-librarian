@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 
-import { AmbiguousMutationError, ApiError, derivePolicyDraftDisplay } from '../api/http'
+import { AmbiguousMutationError, ApiError, BuildMismatchError, derivePolicyDraftDisplay } from '../api/http'
 import type { PolicyActivationView, PolicyDraft, PolicyPreviewView, PolicySection, PolicyTransitionView, ShadowPostureView } from '../api/http'
 import { Dropdown } from '../components/Dropdown'
 import { policyRoute, useReviewContext } from '../router'
@@ -47,7 +47,7 @@ const chapters: readonly { key: PolicySection; label: string; description: strin
 
 const readableCategory = (key: string) => fields.find((field) => field.key === key)?.label ?? key.replaceAll('_', ' ')
 const previewValue = (value: unknown) => value === null || value === undefined ? 'No value' : typeof value === 'string' ? value : JSON.stringify(value)
-const isPolicyPreview = (value: unknown): value is PolicyPreviewView => typeof value === 'object' && value !== null && 'schema_version' in value && value.schema_version === 'metadata-policy-preview-v1' && 'libraries' in value && Array.isArray(value.libraries)
+const isPolicyPreview = (value: unknown): value is PolicyPreviewView => typeof value === 'object' && value !== null && 'schema_version' in value && value.schema_version === 'metadata-policy-preview-v1' && 'active_policy_id' in value && typeof value.active_policy_id === 'string' && 'libraries' in value && Array.isArray(value.libraries)
 const automaticQualified = (field: FieldDefinition, option: string, qualification: readonly { readonly automatic_available: boolean; readonly field: string; readonly option: string }[]) => {
   const rich = qualification.find((entry) => entry.field === field.key && entry.option === option)
   return rich ? rich.automatic_available : field.automatic && !(field.key === 'publisher_preference' && option === 'imprint')
@@ -106,7 +106,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     }
   }
   const validateAndPreview = async () => {
-    const expectedActivePolicyId = data.state.policy_id
     setStage('validating')
     setSnapshotId(undefined)
     setPreviewActivePolicyId(undefined)
@@ -124,7 +123,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       const result = await command.mutateAsync({ action: 'preview', body: draft })
       if (!isPolicyPreview(result) || result.policy_id !== saved.policy_id) throw new ApiError(502, 'policy_snapshot_mismatch')
       setPreview(result)
-      setPreviewActivePolicyId(expectedActivePolicyId)
+      setPreviewActivePolicyId(result.active_policy_id)
       setStage('preview')
       setStatus({ tone: 'success', message: 'Impact preview is current. The active policy is unchanged.' })
     } catch (error) {
@@ -144,15 +143,15 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       setStage('activated')
       setStatus({ tone: 'success', message: 'Policy activated. Current unapplied work is being reconciled.' })
     } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
+      if (error instanceof AmbiguousMutationError || error instanceof BuildMismatchError || (error instanceof ApiError && error.status === 502)) {
+        setStage('preview')
+        setStatus({ tone: 'warning', message: 'The activation result is uncertain. Authoritative policy state is refreshing; verify it before trying again.' })
+      } else if (error instanceof ApiError && error.status === 409) {
         setSnapshotId(undefined)
         setPreviewActivePolicyId(undefined)
         setPreview(undefined)
         setStage('editing')
         setStatus({ tone: 'warning', message: 'The active policy changed before activation. Review the refreshed policy and create a new draft.' })
-      } else if (error instanceof AmbiguousMutationError) {
-        setStage('preview')
-        setStatus({ tone: 'warning', message: 'The activation result is uncertain. Authoritative policy state is refreshing; verify it before trying again.' })
       } else {
         setStatus({ tone: 'error', message: 'Activation failed safely. The reviewed snapshot remains available to retry.' })
       }
