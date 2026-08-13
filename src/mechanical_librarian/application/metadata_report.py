@@ -385,9 +385,8 @@ def provider_observation(
     candidates_by_identity: dict[str, ProviderCandidate] = {}
     conflict = False
     aggregate_failure: ProviderStatus | None = None
-    overflow_witnesses = tuple(
-        result.edition_enrichment_overflow
-        for result in results
+    overflow_results = tuple(
+        result for result in results
         if result.edition_enrichment_overflow is not None
     )
     for result in results:
@@ -497,10 +496,13 @@ def provider_observation(
     else:
         aggregate_status = ProviderStatus.INSUFFICIENT_INPUT
     overflow = (
-        overflow_witnesses[0]
-        if len(set(overflow_witnesses)) == 1
+        overflow_results[0].edition_enrichment_overflow
+        if len(overflow_results) == 1
+        and overflow_results[0].lane.kind is ProviderQueryKind.WORK
+        and overflow_results[0].status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
         and aggregate_status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
         and not candidates
+        and not any(result.candidates for result in results)
         else None
     )
     references = tuple(
@@ -1153,6 +1155,7 @@ class GenerateMetadataReport:
                     ),
                 ),
                 observation.request_accounting,
+                observation.edition_enrichment_overflow,
             )
             observations.append(observation)
             candidate_descriptors = getattr(provider, "cover_descriptors", ())

@@ -35,6 +35,8 @@ from mechanical_librarian.application.metadata_report import (
     TargetCover,
     TargetSnapshot,
     metadata_discovery_plan,
+    provider_observation,
+    ProviderLaneResult,
     qualify_provider_observation,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -58,6 +60,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
     PublicationDateRelation,
+    ReportValueError,
     TargetDestination,
     TargetFacts,
     TargetField,
@@ -2491,6 +2494,83 @@ class ProviderAdapterTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
+    def test_edition_overflow_rejects_hostile_creator_identity_bindings(self) -> None:
+        rows = [{"id": index, "book_id": 10} for index in range(1, 7)]
+        base = {
+            "id": 10,
+            "title": "Anchored work",
+            "contributions": [
+                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
+            ],
+        }
+        variants = (
+            [
+                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
+                {"id": 1, "contribution": "Author", "author": {"id": 8, "name": "Bea Example"}},
+            ],
+            [
+                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
+                {"id": 2, "contribution": "Author", "author": {"id": 7, "name": "Ada Other"}},
+            ],
+            [
+                {"id": 1, "contribution": "Translator", "author": {"id": 7, "name": "Ada Example"}},
+            ],
+        )
+        for contributions in variants:
+            payload = self._envelope(rows, [{**base, "contributions": contributions}])
+            with self.subTest(contributions=contributions), self.assertRaises(ValueError):
+                hardcover_metadata._parse_edition_enrichment_overflow(
+                    json.dumps(payload).encode(), "catalogue"
+                )
+        for malformed_rows in (
+            [{"id": 1, "book_id": 10}] * 6,
+            [{"id": index, "book_id": 11} for index in range(1, 7)],
+        ):
+            with self.subTest(rows=malformed_rows), self.assertRaises(ValueError):
+                hardcover_metadata._parse_edition_enrichment_overflow(
+                    json.dumps(self._envelope(malformed_rows, [base])).encode(),
+                    "catalogue",
+                )
+
+    def test_mixed_discovery_retains_only_the_work_overflow_witness(self) -> None:
+        fields = tuple(
+            TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Ada Example",))
+            if field.destination is TargetDestination.AUTHORS else field
+            for field in default_target_fields("Current title")
+        )
+        title, isbn = self._title_claim(), self._claim()
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", "Current title", (), fields=fields),
+            (title, isbn),
+        )
+        witness = hardcover_metadata._parse_edition_enrichment_overflow(
+            json.dumps(self._envelope(
+                [{"id": index, "book_id": 10} for index in range(1, 7)],
+                [{"id": 10, "title": "Current title", "contributions": [{"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}}]}],
+            )).encode(),
+            "catalogue",
+        )
+        assert witness is not None
+        work = next(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK)
+        isbn_lane = next(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ISBN)
+        observation = provider_observation(
+            "catalogue",
+            (
+                ProviderLaneResult(work, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, edition_enrichment_overflow=witness),
+                ProviderLaneResult(isbn_lane, ProviderStatus.NO_MATCH),
+            ),
+        )
+        self.assertEqual(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, observation.status)
+        self.assertEqual(witness, observation.edition_enrichment_overflow)
+        self.assertEqual((), observation.candidates)
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", fields),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(title, isbn),
+            local_reasons=("opening_matter_isbn",),
+            providers=(observation,),
+        )
+        self.assertEqual(report, MetadataReport.from_json(report.to_json()))
 
     def test_hardcover_taxonomy_and_work_publication_fail_closed(self) -> None:
         def observe(book: dict[str, object]) -> ProviderObservation:
@@ -2757,7 +2837,16 @@ class ProviderAdapterTests(unittest.TestCase):
         )
         report = MetadataReport.create(
             target=TargetFacts(
-                "primary", "ebooks", "item-1", default_target_fields("Anchored work")
+                "primary", "ebooks", "item-1", tuple(
+                    TargetField(
+                        TargetDestination.AUTHORS,
+                        TargetFieldState.VALUE,
+                        ("Ada Example",),
+                    )
+                    if field.destination is TargetDestination.AUTHORS
+                    else field
+                    for field in default_target_fields("Anchored work")
+                )
             ),
             file=FileFacts(0, "a" * 64, "b" * 64),
             local_claims=(),
@@ -2765,6 +2854,23 @@ class ProviderAdapterTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
+        for mutate in (
+            lambda document: next(
+                field.update({"value": "Other work"})
+                for field in document["target"]["fields"]
+                if field["destination"] == "title"
+            ),
+            lambda document: next(
+                field.update({"value": ["Other author"]})
+                for field in document["target"]["fields"]
+                if field["destination"] == "authors"
+            ),
+            lambda document: document["providers"][0]["edition_enrichment_overflow"].update({"title": "Anchored work (Expanded)"}),
+        ):
+            document = report.to_data()
+            mutate(document)
+            with self.assertRaises(ReportValueError):
+                MetadataReport.from_json(hardcover_metadata.canonical_json(document))
 
     def test_exact_rich_caps_and_pinned_schema_are_admitted(self) -> None:
         self.assertEqual(hardcover_metadata.HARDCOVER_SCHEMA_COMMIT, "1c5bdbd3244e02b03ccc658a792793e39cba17a8")

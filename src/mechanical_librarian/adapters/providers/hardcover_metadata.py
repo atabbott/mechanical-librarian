@@ -1044,16 +1044,33 @@ def _parse_edition_enrichment_overflow(
         edition_ids.add(edition_id)
     work_identity = f"hardcover-work-{book_id:010d}"
     title = _claim(provider, work_identity, ClaimKind.TITLE, book["title"], ClaimScope.WORK, "not_applicable", None, (), 0)
+    contributions = book["contributions"]
+    if type(contributions) is not list or not contributions or len(contributions) > MAX_CONTRIBUTIONS:
+        raise ValueError("provider overflow work is incomplete")
+    contribution_ids: set[int] = set()
+    author_ids: dict[int, str] = {}
+    authors: list[ProviderClaim] = []
     bindings: list[ProviderIdentityBinding] = []
-    authors = _contributions(provider, work_identity, book["contributions"], ClaimScope.WORK, (), 0, None, bindings)
-    if (
-        title.state is not FieldState.VALID
-        or title.value is None
-        or not authors
-        or type(book["contributions"]) is not list
-        or len(authors) != len(book["contributions"])
-        or any(claim.kind is not ClaimKind.CREATOR or claim.state is not FieldState.VALID or claim.role != "author" for claim in authors)
-    ):
+    for ordinal, raw in enumerate(contributions):
+        contribution = _closed(raw, {"id", "contribution", "author"})
+        contribution_id = _identifier(contribution["id"])
+        author = _closed(contribution["author"], {"id", "name"})
+        author_id = _identifier(author["id"])
+        _text(author["name"], MAX_SCALAR_CHARACTERS)
+        if (
+            contribution_id in contribution_ids
+            or author_id in author_ids
+            or validate_role_projection(contribution["contribution"]).casefold() != "author"
+        ):
+            raise ValueError("provider overflow authors are contradictory")
+        contribution_ids.add(contribution_id)
+        author_ids[author_id] = author["name"]
+        claim = _claim(provider, work_identity, ClaimKind.CREATOR, author["name"], ClaimScope.WORK, "not_applicable", "author", (), ordinal)
+        if claim.state is not FieldState.VALID:
+            raise ValueError("provider overflow work is incomplete")
+        authors.append(claim)
+        bindings.append(ProviderIdentityBinding(claim.reference, f"hardcover-author-{author_id:010d}", ClaimScope.WORK, "author", ordinal))
+    if title.state is not FieldState.VALID or title.value is None:
         raise ValueError("provider overflow work is incomplete")
     return EditionEnrichmentOverflow(work_identity, title.value, tuple(authors), tuple(bindings))
 

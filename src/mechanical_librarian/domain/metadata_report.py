@@ -1465,6 +1465,15 @@ class EditionEnrichmentOverflow:
         )
         if self.identity_bindings != expected:
             raise ReportValueError("edition overflow identity bindings are invalid")
+        references = tuple(author.reference for author in self.authors)
+        identities = tuple(binding.identity for binding in self.identity_bindings)
+        names = tuple(author.value for author in self.authors)
+        if (
+            len(set(references)) != len(references)
+            or len(set(identities)) != len(identities)
+            or len(set(names)) != len(names)
+        ):
+            raise ReportValueError("edition overflow authors are contradictory")
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -1836,11 +1845,15 @@ class ProviderObservation:
             or self.status is not ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
             or self.candidates
             or self.convergence
-            or any(
-                lane.status is not ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
-                or lane.candidates
-                for lane in self.lanes
-            )
+            or (self.lanes and len(
+                tuple(
+                    lane for lane in self.lanes
+                    if lane.kind is ProviderQueryKind.WORK
+                    and lane.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+                    and not lane.candidates
+                )
+            ) != 1)
+            or any(lane.candidates for lane in self.lanes)
         ):
             raise ReportValueError("edition overflow witness is invalid")
         if self.edition_enrichment_overflow is not None and any(
@@ -2074,6 +2087,32 @@ class MetadataReport:
         names = tuple(value.provider for value in self.providers)
         if names != tuple(sorted(set(names))):
             raise ReportValueError("provider observations are not in canonical order")
+        for provider in self.providers:
+            witness = provider.edition_enrichment_overflow
+            if witness is None:
+                continue
+            target_title = self.target.current_title
+            authors = next(
+                (
+                    field.value
+                    for field in self.target.fields
+                    if field.destination is TargetDestination.AUTHORS
+                    and field.state is TargetFieldState.VALUE
+                ),
+                None,
+            )
+            if (
+                target_title is None
+                or type(authors) is not tuple
+                or normalize_title(witness.title).casefold()
+                != normalize_title(target_title).casefold()
+                or tuple(
+                    normalize_title(author.value or "").casefold()
+                    for author in witness.authors
+                ) != tuple(normalize_title(author).casefold() for author in authors)
+                or _has_title_variant_marker(witness.title, None)
+            ):
+                raise ReportValueError("edition overflow witness does not match target")
         if (
             type(self.field_results) is not tuple
             or any(type(value) is not FieldResult for value in self.field_results)
