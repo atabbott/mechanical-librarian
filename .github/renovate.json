@@ -123,10 +123,23 @@
     {
       "description": "Prevent automatic merging of runtime, toolchain, and build-backend updates",
       "matchPackageNames": [
+        "@eslint/js",
+        "@types/node",
+        "@vitejs/plugin-react",
+        "eslint",
+        "eslint-plugin-react-hooks",
+        "eslint-plugin-react-refresh",
+        "globals",
+        "jsdom",
         "node",
         "npm",
+        "openapi-typescript",
         "python",
         "setuptools",
+        "typescript",
+        "typescript-eslint",
+        "vite",
+        "vitest",
         "uv"
       ],
       "automerge": false,

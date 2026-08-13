@@ -50,7 +50,9 @@ for:
 - pre-1.0 minor updates;
 - Docker images and GitHub Actions;
 - Python, Node, npm, and uv runtimes or toolchains;
-- build backends; and
+- the current frontend compiler, bundler, linter, generator, test runner, test
+  environment, and build plugins;
+- Python build backends; and
 - Playwright minor updates.
 
 Major updates and dependency replacements require Dependency Dashboard approval

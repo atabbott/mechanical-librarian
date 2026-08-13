@@ -32,8 +32,9 @@ The current controls are:
   make the complete proposed artifact reviewable;
 - Renovate may request platform auto-merge only for ordinary patches, stable
   library minors, Playwright patches, and lockfile maintenance;
-- pre-1.0 minors, infrastructure, workflows, runtimes, toolchains, build
-  backends, and Playwright minors open without auto-merge;
+- pre-1.0 minors, infrastructure, workflows, runtimes, the current frontend
+  compiler/bundler/linter/generator/test toolchain, Python build backends, and
+  Playwright minors open without auto-merge;
 - majors and replacements require Dependency Dashboard approval and do not
   auto-merge;
 - the active default-branch ruleset requires pull requests and strict current
