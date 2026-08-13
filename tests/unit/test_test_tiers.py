@@ -13,6 +13,7 @@ from scripts.run_test_tier import (
     _DiagnosticTestResult,
     _STALL_DIAGNOSTIC_SECONDS,
     _leaf_tests,
+    _safe_failure_details,
     cohort_manifest,
     load_cohort,
     run_cohort,
@@ -88,7 +89,30 @@ class TestTierTests(unittest.TestCase):
         ):
             self.assertFalse(run_cohort(Path.cwd(), "fast"))
         self.assertIn('"reason":"test_tier_failed"', diagnostics.getvalue())
+        self.assertIn('"kind":"failure"', diagnostics.getvalue())
+        self.assertRegex(
+            diagnostics.getvalue(),
+            r'"location":"tests/unit/test_test_tiers.py:[0-9]+"',
+        )
         self.assertNotIn("synthetic", diagnostics.getvalue())
+        self.assertNotIn("private synthetic output", diagnostics.getvalue())
+
+    def test_failure_details_exclude_exception_text_and_outside_paths(self) -> None:
+        class SyntheticError(unittest.TestCase):
+            def test_error(self) -> None:
+                raise RuntimeError("private-value-/outside/repository")
+
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(SyntheticError)
+        result = unittest.TestResult()
+        suite.run(result)
+        details = _safe_failure_details(Path.cwd(), result)
+        self.assertEqual(len(details), 1)
+        self.assertEqual(details[0]["kind"], "error")
+        self.assertRegex(
+            str(details[0]["location"]), r"^tests/unit/test_test_tiers.py:[0-9]+$"
+        )
+        self.assertNotIn("private-value", str(details))
+        self.assertNotIn(str(Path.cwd()), str(details))
 
     def test_empty_cohort_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

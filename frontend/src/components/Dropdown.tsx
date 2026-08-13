@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { type CSSProperties, type KeyboardEvent, useCallback, useEffect, useId, useRef, useState } from 'react'
+import { type CSSProperties, type KeyboardEvent, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 
 interface DropdownOption {
   value: string
@@ -18,6 +18,7 @@ export function Dropdown(props: { ariaLabel: string; value: string; options: rea
   const listboxId = useId()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const returnFocusOnCloseRef = useRef(false)
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const [position, setPosition] = useState<DropdownPosition | null>(null)
@@ -58,7 +59,6 @@ export function Dropdown(props: { ariaLabel: string; value: string; options: rea
 
   useEffect(() => {
     if (!open) return
-    const focusTimer = window.setTimeout(() => optionRefs.current[selectedIndex]?.focus(), 0)
     const closeOnOutsidePress = (event: PointerEvent) => {
       const target = event.target
       if (!(target instanceof Node)) return
@@ -69,12 +69,22 @@ export function Dropdown(props: { ariaLabel: string; value: string; options: rea
     window.addEventListener('resize', updateMenuPosition)
     window.addEventListener('scroll', updateMenuPosition, true)
     return () => {
-      window.clearTimeout(focusTimer)
       document.removeEventListener('pointerdown', closeOnOutsidePress)
       window.removeEventListener('resize', updateMenuPosition)
       window.removeEventListener('scroll', updateMenuPosition, true)
     }
   }, [listboxId, open, selectedIndex, updatePosition])
+
+  useLayoutEffect(() => {
+    if (open) {
+      optionRefs.current[selectedIndex]?.focus()
+      return
+    }
+    if (returnFocusOnCloseRef.current) {
+      returnFocusOnCloseRef.current = false
+      triggerRef.current?.focus()
+    }
+  }, [open, selectedIndex])
 
   const focusOption = (index: number) => {
     const next = (index + props.options.length) % props.options.length
@@ -94,13 +104,16 @@ export function Dropdown(props: { ariaLabel: string; value: string; options: rea
     if (event.key === 'End') { event.preventDefault(); focusOption(props.options.length - 1) }
     if (event.key === 'Escape' || event.key === 'Tab') {
       setOpen(false)
-      if (event.key === 'Escape') { event.preventDefault(); triggerRef.current?.focus() }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        returnFocusOnCloseRef.current = true
+      }
     }
   }
   const choose = (value: string) => {
     props.onChange(value)
+    returnFocusOnCloseRef.current = true
     setOpen(false)
-    window.setTimeout(() => triggerRef.current?.focus(), 0)
   }
   const menuStyle: CSSProperties | undefined = position ? { left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight } : undefined
 
