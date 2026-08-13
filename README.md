@@ -31,8 +31,11 @@ Only absent or exact-current pre-release state is supported. Earlier
 development databases, manifests, configuration schemas, and retired commands
 are intentionally rejected rather than migrated or interpreted.
 
-The installed command surface contains only the authenticated `review-serve`
-launcher. The source-only workbench is excluded from the wheel and container.
+The installed command surface contains the authenticated `review-serve`
+workspace, single-policy `policy-preview`, owner-directed `cover-review`, and
+read-only guarded-history `review-activity` commands. The generic contributor
+workbench remains excluded from the wheel and container; the installed cover
+flow uses only its bounded observer contract and deterministic policy.
 The authenticated Library, Attention, review-detail, Policy, and Activity URLs
 share one persistent packaged React workspace; FastAPI retains every session,
 currentness, policy, effect, persistence, and mutation decision, and `/login`

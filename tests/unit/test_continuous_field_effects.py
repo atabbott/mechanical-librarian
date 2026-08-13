@@ -691,6 +691,20 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         self.assertFalse(destinations["authors"]["consented"])
         self.assertEqual(destinations["subtitle"]["state"], "field_unavailable")
 
+    def test_activity_only_projection_does_not_persist_capability_observations(self) -> None:
+        repository = _PagedRepository([self._decisions(1)[0]])
+        service = ContinuousGuardedApplication(
+            repository, {},
+            {("primary", "alpha"): _MixedCapability()}, _Authority(),
+            (("primary", "alpha"),), lambda: 1, lambda *_: None,
+            activity_only=True,
+        )
+
+        readiness = service._capability_readiness(("alpha",), force=True)
+
+        self.assertEqual("partially_allowed", readiness[0]["state"])
+        self.assertEqual({}, repository.suspensions)
+
     def test_activity_strips_valid_cleanup_and_rejects_malformed_cleanup(self) -> None:
         decision = self._decisions(1)[0]
 

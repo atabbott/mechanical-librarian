@@ -2,25 +2,26 @@ from __future__ import annotations
 
 import io
 import json
+import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.bootstrap.composition import run_review_activity
 from mechanical_librarian.interfaces.cli import main
 
 
 class CoverReviewCliTests(unittest.TestCase):
-    def test_activity_composition_calls_the_shared_application_projection(self) -> None:
+    def test_activity_composition_calls_the_shared_query_only_projection(self) -> None:
         repository = Mock()
-        preparation = Mock()
-        field_application = Mock()
-        application = Mock()
+        projection = Mock()
         expected = {
             "events": [{"state": "verified"}],
             "schema_version": "continuous-field-activity-v1",
         }
-        application.activity.return_value = expected
+        projection.activity.return_value = expected
         configuration = Mock(review=object())
 
         with (
@@ -33,16 +34,8 @@ class CoverReviewCliTests(unittest.TestCase):
                 return_value=repository,
             ),
             patch(
-                "mechanical_librarian.bootstrap.composition.create_review_pipeline",
-                return_value=preparation,
-            ),
-            patch(
-                "mechanical_librarian.bootstrap.composition.compose_continuous_guarded_application",
-                return_value=field_application,
-            ),
-            patch(
-                "mechanical_librarian.bootstrap.composition.compose_review_application",
-                return_value=application,
+                "mechanical_librarian.bootstrap.composition.compose_field_effect_activity_projection",
+                return_value=projection,
             ) as compose,
         ):
             actual = run_review_activity(
@@ -53,9 +46,45 @@ class CoverReviewCliTests(unittest.TestCase):
             )
 
         self.assertEqual(expected, actual)
-        self.assertIs(compose.call_args.kwargs["field_application"], field_application)
-        application.activity.assert_called_once_with()
+        compose.assert_called_once_with(configuration, repository)
+        projection.activity.assert_called_once_with()
         repository.close.assert_called_once_with()
+
+    def test_activity_composition_does_not_change_installed_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "application.sqlite3"
+            repository = open_repository(database)
+            repository.close()
+            configuration = SimpleNamespace(
+                libraries=(SimpleNamespace(connection="abs", name="books"),),
+                review=SimpleNamespace(graceful_shutdown_seconds=5),
+            )
+            before_bytes = database.read_bytes()
+            before_entries = {path.name for path in root.iterdir()}
+
+            with (
+                patch(
+                    "mechanical_librarian.bootstrap.composition.load_configuration_file",
+                    return_value=configuration,
+                ),
+                patch(
+                    "mechanical_librarian.bootstrap.composition.compose_audiobookshelf_field_effect_capabilities",
+                    return_value=Mock(),
+                ),
+            ):
+                activity = run_review_activity(
+                    root / "config.json",
+                    database,
+                    root / "catalogue.sqlite3",
+                    root / "cover-artifacts",
+                )
+
+            self.assertEqual("continuous-field-activity-v1", activity["schema_version"])
+            self.assertEqual(before_bytes, database.read_bytes())
+            self.assertEqual(before_entries, {path.name for path in root.iterdir()})
+            self.assertFalse((root / "private").exists())
+            self.assertFalse((root / "cover-artifacts").exists())
 
     def test_activity_exposes_guarded_and_recovery_states_from_shared_projection(self) -> None:
         states = ("planned", "verified", "stale", "recovery_required")

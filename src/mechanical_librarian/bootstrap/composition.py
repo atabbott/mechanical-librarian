@@ -307,6 +307,35 @@ def compose_continuous_guarded_application(
     )
 
 
+def compose_field_effect_activity_projection(
+    configuration, repository,
+) -> ContinuousGuardedApplication:
+    """Compose the shared Activity projection without write-capable adapters."""
+    configured = tuple(
+        (library.connection, library.name)
+        for library in configuration.libraries
+    )
+    if not configured:
+        raise ConfigurationError("guarded application has no configured library")
+    capabilities = {
+        key: compose_audiobookshelf_field_effect_capabilities(
+            configuration, *key
+        )
+        for key in configured
+    }
+    return ContinuousGuardedApplication(
+        repository,
+        {},
+        capabilities,
+        PersistedFieldEffectAuthority(repository),
+        configured,
+        lambda: int(time.time()),
+        lambda _connection, _library: None,
+        graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
+        activity_only=True,
+    )
+
+
 class _IsolatedEpubInspector:
     def __init__(self, artifacts: CoverArtifactStore) -> None:
         self._artifacts = artifacts
@@ -1683,41 +1712,17 @@ def run_review_activity(
     catalogue_path: Path,
     artifact_store_path: Path,
 ) -> dict[str, object]:
-    """Project the installed guarded application and recovery history through CLI."""
+    """Read installed guarded application and recovery history through CLI."""
+    del catalogue_path, artifact_store_path
     configuration = load_configuration_file(config_path)
     if configuration.review is None:
         raise ConfigurationError("review configuration is unavailable")
     repository = open_repository(database_path, create=False)
     try:
-        preparation = create_review_pipeline(
-            configuration,
-            database_path,
-            catalogue_path,
-            artifact_store_path,
-            repository.authority,
+        projection = compose_field_effect_activity_projection(
+            configuration, repository
         )
-        field_application = compose_continuous_guarded_application(
-            configuration,
-            repository,
-            database_path,
-            artifact_store_path,
-            preparation,
-        )
-        application = compose_review_application(
-            state_owner=repository,
-            session_store=repository,
-            case_store=repository,
-            decision_store=repository,
-            library_store=repository,
-            policy_store=repository,
-            verify_password=lambda _: False,
-            clock=lambda: int(time.time()),
-            session_lifetime_seconds=1,
-            graceful_shutdown_seconds=1,
-            close_state_owner=False,
-            field_application=field_application,
-        )
-        return application.activity()
+        return projection.activity()
     finally:
         repository.close()
 

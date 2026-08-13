@@ -56,12 +56,15 @@ class ContinuousGuardedApplication:
         polling_seconds: float = 2.0,
         graceful_shutdown_seconds: int = 30,
         scan_progress: Callable[[str, str], object] | None = None,
+        activity_only: bool = False,
     ) -> None:
-        if (not applications or set(applications) != set(configured_libraries)
+        if ((not activity_only and not applications)
+                or (applications and set(applications) != set(configured_libraries))
                 or set(capabilities) != set(configured_libraries)
                 or not 0.1 <= polling_seconds <= 60.0
                 or type(graceful_shutdown_seconds) is not int
-                or not 1 <= graceful_shutdown_seconds <= 300):
+                or not 1 <= graceful_shutdown_seconds <= 300
+                or type(activity_only) is not bool):
             raise GuardedApplicationError("configuration")
         connections = {connection for connection, _ in configured_libraries}
         if len(connections) != 1:
@@ -76,6 +79,7 @@ class ContinuousGuardedApplication:
         self._polling_seconds = polling_seconds
         self._graceful_shutdown_seconds = graceful_shutdown_seconds
         self._scan_progress = scan_progress
+        self._activity_only = activity_only
         self._slot = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -571,42 +575,45 @@ class ContinuousGuardedApplication:
                         "destination": destination, "state": observed.category,
                     })
                     if observed.category == "allowed":
-                        for reason in ("insufficient_permission", "field_unavailable"):
+                        if not self._activity_only:
+                            for reason in ("insufficient_permission", "field_unavailable"):
+                                self._repository.clear_field_effect_capability_suspension(
+                                    scope="destination", connection=connection,
+                                    destination=destination, reason=reason,
+                                    observed_at=observed_at,
+                                )
                             self._repository.clear_field_effect_capability_suspension(
-                                scope="destination", connection=connection,
-                                destination=destination, reason=reason,
-                                observed_at=observed_at,
+                                scope="connection", connection=connection, destination="",
+                                reason="connection_unavailable", observed_at=observed_at,
                             )
-                        self._repository.clear_field_effect_capability_suspension(
-                            scope="connection", connection=connection, destination="",
-                            reason="connection_unavailable", observed_at=observed_at,
-                        )
                         remaining = self._repository.field_effect_capability_suspension(
                             connection, destination
                         )
                         if remaining is not None:
                             destinations[-1]["state"] = remaining
                     elif observed.category == "connection_unavailable":
-                        self._repository.suspend_field_effect_capability(
-                            scope="connection", connection=connection,
-                            destination=destination, reason=observed.category,
-                            changed_at=observed_at,
-                        )
+                        if not self._activity_only:
+                            self._repository.suspend_field_effect_capability(
+                                scope="connection", connection=connection,
+                                destination=destination, reason=observed.category,
+                                changed_at=observed_at,
+                            )
                         destinations = [
                             {"destination": name, "state": "connection_unavailable"}
                             for name in sorted(SUPPORTED_DESTINATIONS)
                         ]
                         break
                     else:
-                        self._repository.clear_field_effect_capability_suspension(
-                            scope="connection", connection=connection, destination="",
-                            reason="connection_unavailable", observed_at=observed_at,
-                        )
-                        self._repository.suspend_field_effect_capability(
-                            scope="destination", connection=connection,
-                            destination=destination, reason=observed.category,
-                            changed_at=observed_at,
-                        )
+                        if not self._activity_only:
+                            self._repository.clear_field_effect_capability_suspension(
+                                scope="connection", connection=connection, destination="",
+                                reason="connection_unavailable", observed_at=observed_at,
+                            )
+                            self._repository.suspend_field_effect_capability(
+                                scope="destination", connection=connection,
+                                destination=destination, reason=observed.category,
+                                changed_at=observed_at,
+                            )
                         remaining = self._repository.field_effect_capability_suspension(
                             connection, destination
                         )
