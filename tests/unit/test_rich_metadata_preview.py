@@ -648,6 +648,90 @@ class RichMetadataPreviewTests(unittest.TestCase):
         )
         self.assertEqual("9780306406157", preferred.desired_value)
 
+
+    def test_isbn_family_preview_selects_exact_local_or_isbn13_representation(self) -> None:
+        local = self._local_isbn("0306406152", "valid_isbn_10")
+        provider = _provider(
+            "catalogue",
+            "edition-1",
+            (
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.ISBN,
+                    "9780306406157",
+                    scope=ClaimScope.EDITION,
+                    applicability="ebook",
+                ),
+            ),
+        )
+        report = _report(
+            fields=_fields(isbn=TargetField(
+                TargetDestination.ISBN, TargetFieldState.MISSING
+            )),
+            local_claims=(local,),
+            providers=(provider,),
+        )
+
+        exact = self._preview_field(report, "isbn_form", "preserve_exact")
+        preferred = self._preview_field(report, "isbn_form", "prefer_isbn13")
+
+        self.assertEqual(("projected", "0306406152"), (exact.outcome, exact.desired_value))
+        self.assertEqual(("projected", "9780306406157"), (preferred.outcome, preferred.desired_value))
+        self.assertEqual(2, len(exact.source_evidence_references))
+        self.assertEqual(
+            exact.source_evidence_references,
+            preferred.source_evidence_references,
+        )
+        self.assertEqual(exact, self._preview_field(report, "isbn_form", "preserve_exact"))
+
+        local13 = self._local_isbn("9780306406157", "valid_isbn_13")
+        family_provider = _provider(
+            "catalogue",
+            "edition-1",
+            (
+                _claim(
+                    "catalogue", "edition-1", ClaimKind.ISBN, "0306406152",
+                    scope=ClaimScope.EDITION, applicability="ebook",
+                ),
+                _claim(
+                    "catalogue", "edition-1", ClaimKind.ISBN, "9780306406157",
+                    scope=ClaimScope.EDITION, applicability="ebook", order=1,
+                ),
+            ),
+        )
+        family_report = _report(
+            fields=_fields(isbn=TargetField(
+                TargetDestination.ISBN, TargetFieldState.MISSING
+            )),
+            local_claims=(local13,),
+            providers=(family_provider,),
+        )
+        for option in ("preserve_exact", "prefer_isbn13"):
+            field = self._preview_field(family_report, "isbn_form", option)
+            self.assertEqual(("projected", "9780306406157"), (
+                field.outcome, field.desired_value,
+            ))
+            self.assertEqual(3, len(field.source_evidence_references))
+
+    def test_isbn_family_preview_rejects_distinct_or_invalid_identifiers(self) -> None:
+        local = self._local_isbn("0306406152", "valid_isbn_10")
+        other_family = self._local_isbn("9780140328721", "valid_isbn_13")
+        distinct = _report(
+            fields=_fields(isbn=TargetField(
+                TargetDestination.ISBN, TargetFieldState.MISSING
+            )),
+            local_claims=(local, other_family),
+        )
+        for option in ("preserve_exact", "prefer_isbn13"):
+            field = self._preview_field(distinct, "isbn_form", option)
+            self.assertEqual(("abstain", "ambiguous_evidence", None), (
+                field.outcome, field.reason, field.desired_value,
+            ))
+
+        with self.assertRaises(ValueError):
+            self._local_isbn("0306406153", "invalid_checksum")
+
     def test_isbn13_preference_abstains_on_two_exact_admitted_forms(self) -> None:
         report = _report(
             fields=_fields(isbn=TargetField(

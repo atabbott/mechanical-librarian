@@ -113,8 +113,11 @@ The v2 rich-field choices are exact:
 List Add retains current target order and appends absent values from one exact
 qualified source list; Replace uses one exact list and never combines
 providers. Description normalization requires the retained Google Books
-visible-text transformation evidence. Identifier preferences select only an
-already admitted exact manifestation value and never convert or infer one.
+visible-text transformation evidence. Valid ISBN-10 and ISBN-13 forms of one
+canonical ISBN family are compared as one proposal while retaining every exact
+source representation and evidence reference; that comparison never treats the
+forms as manifestation identity or converts an identifier. Identifier
+preferences select only an already admitted exact manifestation value.
 Series retains every qualified membership in the product result while the
 Audiobookshelf projection selects at most its first membership. The qualified
 automatic options are all three series modes, genre `fill_empty`, `add`, and

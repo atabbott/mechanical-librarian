@@ -90,6 +90,7 @@ from mechanical_librarian.domain.review_case import (
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
     project_f20_automatic_decision_value,
+    select_isbn_representation,
 )
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
@@ -965,6 +966,8 @@ class SQLiteMetadataReportRepository:
             value = decision.selected_value
         else:
             if (decision.review_case_id != case.review_case_id
+                    or decision.report_id != case.report_id
+                    or decision.proposal_set_id != case.proposal_set_id
                     or decision.target_fingerprint != case.target_fingerprint):
                 raise FieldEffectError("authority_binding")
             proposal = next((item for item in case.proposals
@@ -976,6 +979,39 @@ class SQLiteMetadataReportRepository:
             if selected is None:
                 raise FieldEffectError("authority_binding")
             value = selected["value"]
+            if decision.policy_category == "isbn_form":
+                report_row = self._connection.execute(
+                    "SELECT document FROM metadata_reports WHERE report_id=?",
+                    (decision.report_id,),
+                ).fetchone()
+                proposal_row = self._connection.execute(
+                    "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+                    (decision.proposal_set_id,),
+                ).fetchone()
+                if report_row is None or proposal_row is None:
+                    raise FieldEffectError("authority_binding")
+                try:
+                    report = MetadataReport.from_json(report_row[0])
+                    proposal_set = ProposalSet.from_json(proposal_row[0])
+                    result = next(
+                        item for item in proposal_set.results
+                        if item.destination.value == decision.destination
+                    )
+                    candidate = next(
+                        item for item in result.alternatives
+                        if item.alternative_id == decision.candidate_id
+                    )
+                    exact_value = select_isbn_representation(
+                        report, candidate, decision.policy_option
+                    )
+                except (
+                    ReportValueError, ProposalValueError, StopIteration,
+                    RichMetadataPreviewError,
+                ) as error:
+                    raise FieldEffectError("authority_binding") from error
+                if exact_value is None:
+                    raise FieldEffectError("authority_binding")
+                value = {"kind": "text", "value": exact_value}
         lineage = self._connection.execute(
             "SELECT connection_name,library_name,item_id FROM current_review_case_lineages "
             "WHERE review_case_id=?", (decision.review_case_id,),

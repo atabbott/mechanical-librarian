@@ -18,7 +18,7 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 from mechanical_librarian.domain.metadata_report import (
     MAX_TAGS, ClaimKind, ClaimScope, IdentifierRelation, MetadataReport,
     ProviderClaim, ProviderEvidenceKind, TargetDestination, TargetField,
-    TargetFieldState,
+    TargetFieldState, isbn_family,
 )
 from mechanical_librarian.domain.proposal_set import (
     BibliographicSelectionKind, ProposalAlternative, ProposalAssessment,
@@ -177,7 +177,7 @@ def _project(
     if field == "description_fill":
         return _description(field, option, target, result, retained_claims)
     if field == "isbn_form":
-        return _isbn(field, option, target, result, report, retained_claims)
+        return _isbn(field, option, target, result, report)
     if field == "asin":
         return _asin(field, option, target, result, retained_claims)
     candidate = (
@@ -394,44 +394,66 @@ def _isbn(
     target: TargetField,
     result: ProposalResult,
     report: MetadataReport,
-    retained_claims: dict[str, _RetainedClaim],
 ) -> RichFieldPreview:
     alternatives = _typed_alternatives(result, ProposalValueKind.TEXT)
-    if option == "prefer_isbn13":
-        eligible = tuple(
-            alternative
-            for alternative in alternatives
-            if type(alternative.value.value) is str
-            and _ISBN13.fullmatch(alternative.value.value) is not None
-        )
-        if not eligible:
-            reason = "option_evidence_unavailable" if alternatives else "no_candidate"
-            return _abstain(field, option, target, _data_value(target.value), reason)
-        if len(eligible) != 1:
-            return _abstain(field, option, target, _data_value(target.value), "ambiguous_evidence")
-        candidate = eligible[0]
-    elif option == "preserve_exact":
-        candidate, reason = _one_typed_candidate(result, ProposalValueKind.TEXT)
-        if candidate is None:
-            return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
-    else:
+    candidate, reason = _one_typed_candidate(result, ProposalValueKind.TEXT)
+    if candidate is None:
+        return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
+    if option not in {"preserve_exact", "prefer_isbn13"}:
         return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
+    value = select_isbn_representation(report, candidate, option)
+    if value is None:
+        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
+    return RichFieldPreview(
+        field, option, target.state.value, _data_value(target.value),
+        "projected", value, None, False, None,
+        candidate.alternative_id, candidate.evidence_references,
+    )
+
+
+
+def select_isbn_representation(
+    report: MetadataReport,
+    candidate: ProposalAlternative,
+    option: str,
+) -> str | None:
+    """Select one policy-admitted exact ISBN lexical from retained evidence."""
     accepted = {
         evidence.reference
         for evidence in report.identifier_evidence
         if evidence.relation is IdentifierRelation.ACCEPTED
     }
-    if not candidate.evidence_references or any(
-        reference not in accepted
-        or not _identifier_reference(reference, ClaimKind.ISBN, candidate, retained_claims, {"ebook", "unknown"})
-        for reference in candidate.evidence_references
-    ):
-        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
-    return RichFieldPreview(
-        field, option, target.state.value, _data_value(target.value),
-        "projected", candidate.value.value, None, False, None,
-        candidate.alternative_id, candidate.evidence_references,
+    retained_claims = _retained_claims(report)
+    family = isbn_family(
+        candidate.value.value if type(candidate.value.value) is str else None
     )
+    if family is None or not candidate.evidence_references:
+        return None
+    values: list[tuple[str, bool]] = []
+    for reference in candidate.evidence_references:
+        retained = retained_claims.get(reference)
+        claim = None if retained is None else retained.claim
+        value = getattr(claim, "value", getattr(claim, "canonical", None))
+        if (
+            reference not in accepted
+            or claim is None
+            or claim.kind is not ClaimKind.ISBN
+            or type(value) is not str
+            or getattr(claim, "applicability", None) not in {"ebook", "unknown"}
+            or isbn_family(value) != family
+        ):
+            return None
+        values.append((value, retained.provider is None))
+    if option == "preserve_exact":
+        values = [value for value in values if value[1]]
+    else:
+        values = [
+            value
+            for value in values
+            if _ISBN13.fullmatch(value[0]) is not None
+            and isbn_family(value[0]) == value[0]
+        ]
+    return min((value[0] for value in values), default=None)
 
 
 def _asin(
@@ -609,4 +631,5 @@ def _data_value(value: object) -> object:
 __all__ = [
     "RichFieldPreview", "RichMetadataPreview", "RichMetadataPreviewError",
     "compile_rich_metadata_preview", "project_f20_automatic_decision_value",
+    "select_isbn_representation",
 ]
