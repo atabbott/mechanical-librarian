@@ -7,6 +7,11 @@
   and opaque file identity. Conflicting, traversal, missing, and ambiguous file
   records remain fail-closed before currentness can admit a write. (#596)
 
+- Compare checksum-valid ISBN-10 and ISBN-13 forms from one canonical family as
+  one proposal, retaining each original evidence reference while preferring an
+  already observed ISBN-13 representative when one is available. Invalid
+  identifiers and distinct ISBN families remain separate. (#595)
+
 - Fix Linux SQLite connection validation to prove the exact opened `main`
   database path against the configured device/inode without relying on
   process-wide descriptor-number allocation. Authenticated review-preparation

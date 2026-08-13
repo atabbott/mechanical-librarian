@@ -14,10 +14,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import MetadataR
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
+from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.field_effect_fakes import (
     FakeBackupReadiness,
     FakeCapabilityObserver,
-    FakeConsentCurrentness,
     FakeDependencyCurrentness,
     FakeForwardReevaluation,
     FakeTargetService,
@@ -286,11 +286,20 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             excerpt="0306406152", applicability="ebook", checksum="valid_isbn_10",
             applicability_basis="ebook", scope=ClaimScope.EDITION,
         )
-        isbn13 = LocalClaim.create(
-            kind=ClaimKind.ISBN, observed="9780306406157",
-            canonical="9780306406157", excerpt="9780306406157",
-            applicability="ebook", checksum="valid_isbn_13",
-            applicability_basis="ebook", scope=ClaimScope.EDITION,
+        isbn_family_provider = _provider(
+            "catalogue", "edition-1", (
+                _claim(
+                    "catalogue", "edition-1", ClaimKind.ISBN,
+                    "9780306406157", scope=ClaimScope.EDITION,
+                    applicability="ebook",
+                ),
+            ),
+        )
+        isbn_family_report = _proposal_report(
+            fields=_fields(isbn=TargetField(
+                TargetDestination.ISBN, TargetFieldState.MISSING
+            )),
+            local_claims=(isbn10,), providers=(isbn_family_provider,),
         )
         series_claims = (
             _claim("catalogue", "edition-1", ClaimKind.TITLE, "Book",
@@ -399,18 +408,10 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             ("description_fill", "safe_plain_text", description_report,
              "description", {"kind": "text", "value":
                               "An exact source-bound description."}),
-            ("isbn_form", "preserve_exact", _proposal_report(
-                fields=_fields(isbn=TargetField(
-                    TargetDestination.ISBN, TargetFieldState.MISSING
-                )),
-                local_claims=(isbn10,),
-            ), "isbn", {"kind": "text", "value": "0306406152"}),
-            ("isbn_form", "prefer_isbn13", _proposal_report(
-                fields=_fields(isbn=TargetField(
-                    TargetDestination.ISBN, TargetFieldState.MISSING
-                )),
-                local_claims=(isbn13,),
-            ), "isbn", {"kind": "text", "value": "9780306406157"}),
+            ("isbn_form", "preserve_exact", isbn_family_report, "isbn",
+             {"kind": "text", "value": "0306406152"}),
+            ("isbn_form", "prefer_isbn13", isbn_family_report, "isbn",
+             {"kind": "text", "value": "9780306406157"}),
         )
         for category, option, report, destination, expected in cases:
             with self.subTest(option=f"{category}:{option}"), tempfile.TemporaryDirectory() as temporary:
@@ -477,20 +478,19 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 self.assertEqual(expected, authority["decision_value"])
                 self.assertEqual(destination, authority["destination"])
                 self.assertEqual(case_id, authority["review_case_id"])
-                consent = FakeConsentCurrentness()
-                consent.allow(
-                    connection=authority["connection"],
-                    library=authority["library"],
-                    destination=destination,
+                repository.grant_field_effect_consents(
+                    authority["connection"], (authority["library"],),
+                    (destination,), 5,
                 )
+                target = FakeTargetService()
                 service = GuardedFieldApplication(
                     repository,
-                    FakeTargetService(),
+                    target,
                     FakeBackupReadiness(),
                     FakeCapabilityObserver("c" * 64),
                     PersistedFieldEffectAuthority(repository),
                     FakeDependencyCurrentness(),
-                    consent,
+                    PersistedEffectConsent(repository),
                     SimpleNamespace(),
                     FakeForwardReevaluation(),
                     lambda: 5,
@@ -511,6 +511,9 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 self.assertIsNotNone(plan)
                 assert plan is not None
                 self.assertEqual(expected["value"], plan.plan.desired_value)
+                target.seed(plan.plan)
+                self.assertEqual("verified", service.apply(plan.plan.plan_id).state)
+                self.assertEqual(expected["value"], target.read(plan.plan).value)
                 repository.close()
 
     def test_outcome_accepts_packet_valid_configured_provider_citations(self) -> None:
