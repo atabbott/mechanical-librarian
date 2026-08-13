@@ -441,11 +441,11 @@ class ReviewPreparationPipeline:
             elif action.stage == "provider":
                 if action.report_id is None:
                     raise ReviewPipelineError("state")
-                statuses = self._providers(repository, action.report_id)
-                disposition = provider_failure_disposition(statuses)
-                if disposition is not None:
-                    self._fail(repository, action, *disposition)
-                    return None
+                # Provider observations are terminal, report-local evidence.  A
+                # technical sibling must not erase bounded evidence already
+                # recorded by another configured lane; proposal admission makes
+                # the coherent-package decision from that complete report.
+                self._providers(repository, action.report_id)
             elif action.stage == "proposal":
                 if action.report_id is None:
                     raise ReviewPipelineError("state")

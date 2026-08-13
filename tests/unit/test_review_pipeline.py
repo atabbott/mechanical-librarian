@@ -1133,7 +1133,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertEqual(restarted.producer_fingerprint, changed_producer)
         self.assertIsNone(restarted.report_id)
 
-    def test_provider_technical_failure_stops_before_proposal(self) -> None:
+    def test_terminal_provider_failure_continues_to_proposal(self) -> None:
         proposed: list[str] = []
         extracted: list[str] = []
         clock = [30]
@@ -1184,27 +1184,6 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertTrue(pipeline.run_next(1))
         self.assertTrue(pipeline.run_next(1))
         self.assertTrue(pipeline.run_next(1))
-        self.assertFalse(pipeline.run_next(1))
-        self.assertEqual(proposed, [])
-        progress = pipeline.progress("primary", "ebooks")
-        assert progress is not None
-        self.assertEqual(
-            (progress.state, progress.checked, progress.blocked),
-            ("processing", 0, 0),
-        )
-        repository = open_repository(self.path)
-        deadline = repository._connection.execute(
-            "SELECT circuit_open_until FROM review_preparation_control"
-        ).fetchone()[0]
-        repository.close()
-        self.assertGreater(deadline, clock[0])
-        clock[0] = deadline - 1
-        self.assertFalse(pipeline.run_next(1))
-        clock[0] = deadline
-        self.assertTrue(pipeline.run_next(1))
-        self.assertTrue(pipeline.run_next(1))
-        self.assertEqual(len(extracted), 2)
-        self.assertEqual(proposed, [])
         self.assertTrue(pipeline.run_next(1))
         self.assertEqual(proposed, [report.report_id])
         repository = open_repository(self.path)
