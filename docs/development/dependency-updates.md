@@ -14,6 +14,8 @@ Dependabot.
 and integrity data installed by development, CI, container builds, and production.
 CI continues to use `uv lock --check`, locked or frozen uv operations, and
 `npm ci`; Renovate never makes an uncommitted production resolution current.
+The PEP 621 `project.requires-python` field is a supported interpreter
+compatibility range rather than a dependency pin, so Renovate does not manage it.
 
 Build backends, Python, Node, npm, uv, container image digests, and GitHub
 Action SHAs remain exact pins because the application lockfiles do not govern
