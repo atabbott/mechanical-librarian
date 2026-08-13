@@ -85,18 +85,37 @@ Candidate code is evidence to inspect, never merge authority. In particular:
 - the merge credential is available only to the maintainer-owned control
   environment.
 
-## Free-plan activation and residual risk
+## Renovate platform auto-merge exception
 
-Autonomous merging uses the receipt-bound `CLIENT_ENFORCED_FREE_PLAN` mode.
-GitHub protection and ruleset responses are recorded as canonical, body-free
-observations, but they neither authorize nor block delivery when unavailable,
-malformed, failing, or changed. Every successful controller and train receipt
-records the fixed residual risk `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED`.
+Genuine `renovate[bot]` pull requests in the low-risk classes explicitly
+enabled by `.github/renovate.json` may use GitHub-native pull-request auto-merge
+instead of the local controller and connector review. The externally configured
+default-branch ruleset remains the authority: it requires a pull request, a head
+current with `main`, and successful `fast-source`, `exact-installed`, and
+`protected-browser` checks from GitHub Actions on that head. Renovate has no
+bypass actor and cannot merge a branch directly.
 
-The accepted limitation is precise: another credentialed actor can directly
-change or race `main`, and GitHub's conditional merge locks the pull-request
-head but not the base SHA. The controller mitigates rather than eliminates that
-risk. It requires a controller-only pull request, canonical repository and PR,
+This exception does not transfer through a title, label, branch name, commit
+author, or human account. Every non-eligible Renovate update and every other
+material pull request continues to use the maintainer-owned exact-head merge
+controller. Repository configuration changes to the exception itself are
+ordinary tracked, reviewed changes and cannot authorize their own merge.
+
+## Controller activation and residual risk
+
+The controller retains the receipt-bound `CLIENT_ENFORCED_FREE_PLAN` validation
+mode identifier for evidence compatibility. On GitHub Pro, the active ruleset
+independently enforces pull requests and strict required checks. The controller
+still records GitHub protection and ruleset responses as canonical, body-free
+observations rather than treating them as client-side merge authority. Every
+successful controller and train receipt records the fixed residual risk
+`EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED`.
+
+The accepted limitation is precise: another qualified pull request or an
+administrator changing enforcement can move or race `main`, and GitHub's
+conditional merge locks the pull-request head but not the base SHA. The
+controller mitigates rather than eliminates that risk. It requires a
+controller-only pull request, canonical repository and PR,
 the exact bounded head repository and delivery branch, exact reviewed head and
 tree, passing current-head checks, resolved review
 threads, terminal connector evidence, live base/head/mergeability, and an

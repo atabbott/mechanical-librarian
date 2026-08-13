@@ -17,20 +17,22 @@
   "minimumReleaseAge": "7 days",
   "internalChecksFilter": "strict",
   "prCreation": "not-pending",
-  "prConcurrentLimit": 3,
-  "branchConcurrentLimit": 3,
+  "prConcurrentLimit": 5,
+  "branchConcurrentLimit": 5,
   "prHourlyLimit": 2,
   "rangeStrategy": "pin",
   "rebaseWhen": "behind-base-branch",
   "ignoreTests": false,
-  "platformAutomerge": false,
+  "platformAutomerge": true,
   "automerge": false,
+  "automergeType": "pr",
   "automergeStrategy": "squash",
   "labels": [
     "dependencies"
   ],
   "lockFileMaintenance": {
     "enabled": true,
+    "automerge": true,
     "schedule": [
       "before 6am on Monday"
     ]
@@ -62,7 +64,8 @@
         "patch",
         "minor"
       ],
-      "groupName": "compatible frontend dependencies"
+      "groupName": "compatible frontend dependencies",
+      "automerge": true
     },
     {
       "description": "Group Python patch updates",
@@ -72,7 +75,8 @@
       "matchUpdateTypes": [
         "patch"
       ],
-      "groupName": "Python patch dependencies"
+      "groupName": "Python patch dependencies",
+      "automerge": true
     },
     {
       "description": "Group stable Python minor updates",
@@ -83,10 +87,11 @@
       "matchUpdateTypes": [
         "minor"
       ],
-      "groupName": "Python stable minor dependencies"
+      "groupName": "Python stable minor dependencies",
+      "automerge": true
     },
     {
-      "description": "Require approval for pre-1.0 minor updates",
+      "description": "Prevent automatic merging of pre-1.0 minor updates",
       "matchManagers": [
         "npm",
         "pep621"
@@ -96,7 +101,7 @@
         "minor"
       ],
       "automerge": false,
-      "dependencyDashboardApproval": true
+      "groupName": "pre-1.0 minor dependencies"
     },
     {
       "description": "Require approval for major updates",
@@ -107,27 +112,36 @@
       "dependencyDashboardApproval": true
     },
     {
-      "description": "Require approval for infrastructure and workflow updates",
+      "description": "Prevent automatic merging of infrastructure and workflow updates",
       "matchManagers": [
         "dockerfile",
         "github-actions"
       ],
       "automerge": false,
-      "dependencyDashboardApproval": true,
       "groupName": "infrastructure dependencies"
     },
     {
-      "description": "Require approval for toolchain, browser, and build-backend updates",
+      "description": "Prevent automatic merging of runtime, toolchain, and build-backend updates",
       "matchPackageNames": [
         "node",
         "npm",
-        "playwright",
         "python",
         "setuptools",
         "uv"
       ],
       "automerge": false,
-      "dependencyDashboardApproval": true
+      "groupName": "runtime, toolchain, and build-backend dependencies"
+    },
+    {
+      "description": "Prevent automatic merging of Playwright minor updates",
+      "matchPackageNames": [
+        "playwright"
+      ],
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "groupName": "Playwright browser dependency",
+      "automerge": false
     },
     {
       "description": "Require approval for dependency replacements",

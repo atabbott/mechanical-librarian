@@ -3,9 +3,10 @@
 Mechanical Librarian uses the Mend-hosted Renovate GitHub App to discover,
 group, and prepare dependency updates. The repository configuration in
 `.github/renovate.json` bounds that preparation authority. Renovate has no
-merge authority; every update uses the maintainer-owned exact-head merge
-controller. Do not duplicate version or security update pull requests with
-Dependabot.
+direct-write or ruleset-bypass authority. GitHub-native pull-request auto-merge
+may merge only the low-risk update classes named below after the protected
+branch accepts the exact head. Other updates remain maintainer-merged. Do not
+duplicate version or security update pull requests with Dependabot.
 
 ## Reproducibility boundary
 
@@ -17,42 +18,51 @@ CI continues to use `uv lock --check`, locked or frozen uv operations, and
 The PEP 621 `project.requires-python` field is a supported interpreter
 compatibility range rather than a dependency pin, so Renovate does not manage it.
 
-Build backends, Python, Node, npm, uv, container image digests, and GitHub
-Action SHAs remain exact pins because the application lockfiles do not govern
-them. Playwright also remains approval-only because an update changes the
-separately verified browser payload.
+Build backends, Python, Node, npm, uv, container image digests, GitHub Action
+SHAs, and Playwright remain exact pins because the application lockfiles do not
+fully govern them. Exact direct pins also prevent lockfile maintenance from
+quietly moving a direct dependency through a differently classified update.
 
 ## Update policy
 
 Renovate checks in one weekly window, waits seven days after an ordinary
-release, limits concurrent branches and pull requests to three, and groups
-compatible updates by ecosystem. GitHub vulnerability alerts skip the ordinary
-schedule and use the lowest fixed version, but retain the same merge policy.
+release, limits concurrent branches and pull requests to five, creates at most
+two pull requests per hour, and groups compatible updates by ecosystem. GitHub
+vulnerability alerts skip the ordinary schedule and use the lowest fixed
+version, but retain the same merge policy.
 
-Renovate automatically prepares and groups pull requests for:
+Renovate automatically prepares pull requests and requests GitHub-native squash
+auto-merge for:
 
-- Python and npm patch updates;
-- stable Python and npm minor updates; and
-- the scheduled lockfile-only maintenance refresh.
+- ordinary Python and npm patch updates, including Playwright patches;
+- stable Python and npm library minor updates; and
+- scheduled lockfile-only maintenance refreshes.
 
-All Renovate and platform-native auto-merge paths are disabled. Passing public
-checks is evidence, not merge authorization. Each pull request remains open
-until the maintainer-owned controller binds its exact head to current checks,
-connector review, repository policy, and final race-sensitive preflight.
+The default branch requires a pull request and the current exact head to pass
+`fast-source`, `exact-installed`, and `protected-browser`. It also requires the
+head to be current with `main`. Renovate receives no bypass. GitHub holds an
+eligible pull request until those rules pass, then performs the configured
+squash merge without depending on a maintainer workstation.
 
-Dashboard approval and maintainer review are required for:
+Renovate prepares a pull request automatically, but does not request auto-merge,
+for:
 
-- major updates and pre-1.0 minor updates;
+- pre-1.0 minor updates;
 - Docker images and GitHub Actions;
-- Python, Node, npm, and uv toolchains, build backends, and Playwright;
-- replacement packages, newly introduced dependencies, licensing changes, or
-  any update that changes network, credential, persistence, parser, or
-  production authority.
+- Python, Node, npm, and uv runtimes or toolchains;
+- build backends; and
+- Playwright minor updates.
 
-A failing, pending, stale, conflicted, or manually edited pull request does not
-qualify for controller merge. Close an unsuitable update or disable it in the
-repository configuration with a package-specific rationale; never weaken a
-test or safety gate to admit it.
+Major updates and dependency replacements require Dependency Dashboard approval
+before Renovate prepares their pull requests, and never auto-merge. Newly
+introduced dependencies, licensing changes, and changes to network, credential,
+persistence, parser, or production authority remain tracked maintainer work.
+
+A failing, pending, stale, conflicted, or manually edited pull request cannot
+auto-merge. Close an unsuitable update or disable it in the repository
+configuration with a package-specific rationale; never weaken a test or safety
+gate to admit it. Non-auto-merge Renovate pull requests use connector review and
+the maintainer-owned exact-head controller.
 
 ## Tracking and recovery
 

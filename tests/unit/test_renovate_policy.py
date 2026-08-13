@@ -21,21 +21,34 @@ class RenovatePolicyTests(unittest.TestCase):
             {"dockerfile", "github-actions", "npm", "pep621"},
         )
         self.assertEqual(self.config["minimumReleaseAge"], "7 days")
-        self.assertEqual(self.config["prConcurrentLimit"], 3)
-        self.assertEqual(self.config["branchConcurrentLimit"], 3)
+        self.assertEqual(self.config["prConcurrentLimit"], 5)
+        self.assertEqual(self.config["branchConcurrentLimit"], 5)
         self.assertEqual(self.config["rangeStrategy"], "pin")
         self.assertFalse(self.config["ignoreTests"])
-        self.assertFalse(self.config["platformAutomerge"])
+        self.assertTrue(self.config["platformAutomerge"])
         self.assertFalse(self.config["automerge"])
+        self.assertEqual(self.config["automergeType"], "pr")
+        self.assertEqual(self.config["automergeStrategy"], "squash")
 
-    def test_no_update_class_can_bypass_the_trusted_merge_controller(self) -> None:
+    def test_only_named_low_risk_classes_enable_platform_automerge(self) -> None:
         self.assertFalse(self.config["automerge"])
-        self.assertFalse(self.config["platformAutomerge"])
+        self.assertTrue(self.config["platformAutomerge"])
         self.assertFalse(self.config["ignoreTests"])
         self.assertTrue(self.config["lockFileMaintenance"]["enabled"])
-        self.assertNotIn("automerge", self.config["lockFileMaintenance"])
-        for rule in self.config["packageRules"]:
-            self.assertFalse(rule.get("automerge", False))
+        self.assertTrue(self.config["lockFileMaintenance"]["automerge"])
+        automerge_rules = {
+            rule["description"]
+            for rule in self.config["packageRules"]
+            if rule.get("automerge")
+        }
+        self.assertEqual(
+            automerge_rules,
+            {
+                "Group compatible frontend updates",
+                "Group Python patch updates",
+                "Group stable Python minor updates",
+            },
+        )
 
     def test_project_python_compatibility_range_is_not_managed(self) -> None:
         ignored = [
@@ -47,33 +60,60 @@ class RenovatePolicyTests(unittest.TestCase):
         self.assertEqual(len(ignored), 1)
         self.assertFalse(ignored[0]["enabled"])
 
-    def test_high_risk_updates_require_dashboard_approval(self) -> None:
+    def test_only_major_and_replacement_updates_require_dashboard_approval(
+        self,
+    ) -> None:
         manual = [
             rule
             for rule in self.config["packageRules"]
             if rule.get("dependencyDashboardApproval")
         ]
-        self.assertTrue(
-            any(rule.get("matchUpdateTypes") == ["major"] for rule in manual)
+        self.assertEqual(
+            {rule["description"] for rule in manual},
+            {
+                "Require approval for major updates",
+                "Require approval for dependency replacements",
+            },
         )
+
+    def test_protected_classes_override_earlier_automerge_rules(self) -> None:
+        positions = {
+            rule["description"]: index
+            for index, rule in enumerate(self.config["packageRules"])
+        }
+        protected = {
+            "Prevent automatic merging of pre-1.0 minor updates",
+            "Require approval for major updates",
+            "Prevent automatic merging of infrastructure and workflow updates",
+            "Prevent automatic merging of runtime, toolchain, and build-backend updates",
+            "Prevent automatic merging of Playwright minor updates",
+            "Require approval for dependency replacements",
+        }
+        for description in protected:
+            rule = self.config["packageRules"][positions[description]]
+            self.assertFalse(rule["automerge"])
+
+        enabling_positions = [
+            positions["Group compatible frontend updates"],
+            positions["Group Python patch updates"],
+            positions["Group stable Python minor updates"],
+        ]
         self.assertTrue(
-            any(rule.get("matchUpdateTypes") == ["replacement"] for rule in manual)
-        )
-        self.assertTrue(
-            any(
-                set(rule.get("matchManagers", ()))
-                == {"dockerfile", "github-actions"}
-                for rule in manual
+            all(
+                positions[description] > max(enabling_positions)
+                for description in protected
             )
         )
-        protected_packages = {
-            package
-            for rule in manual
-            for package in rule.get("matchPackageNames", ())
-        }
+
+        runtime_packages = next(
+            set(rule["matchPackageNames"])
+            for rule in self.config["packageRules"]
+            if rule["description"]
+            == "Prevent automatic merging of runtime, toolchain, and build-backend updates"
+        )
         self.assertEqual(
-            protected_packages,
-            {"node", "npm", "playwright", "python", "setuptools", "uv"},
+            runtime_packages,
+            {"node", "npm", "python", "setuptools", "uv"},
         )
 
     def test_application_manifests_and_toolchains_remain_exact(self) -> None:
