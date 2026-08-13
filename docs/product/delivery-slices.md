@@ -578,6 +578,24 @@ unavailability keeps identity-admitted manual selection fully supported.
 Automatic model-selected writes, bulk reevaluation, silent learning, new
 providers, release, tag, and deployment work are excluded.
 
+## Delivery checkpoint 0.15.4: completed publication and recoverable advisory covers
+
+This checkpoint composes the next bounded cross-layer capabilities without
+granting a release, tag, deployment, or production operation.
+
+| Slice | Tracker | Demonstrable outcome | Planning state |
+| --- | --- | --- | --- |
+| F22 Complete per-work publication | #597 | After every provider lane reaches a terminal outcome, one work publishes its complete bounded result. | Assigned one-issue activation slice; follows independent focused prerequisite #418. |
+| F23 Qualified advisory cover review | #600 | Standard preparation automatically performs one bounded, qualified advisory cover review for the work. | Assigned one-issue activation slice; follows F22 and the final installed #591 Activity baseline. |
+| F24 Provider/configuration-scoped canary recovery | #408 | One durable provider- and configuration-scoped canary recovers safely within its bounded scope. | Assigned one-issue activation slice; follows F22, with the final installed #591 Activity baseline applying to its Activity surface. |
+
+#418 is an independent focused prerequisite to F22, not an F22 constituent.
+#594, #595, #596, and #418 are focused defects with `Delivery slice: Not
+applicable`. #598 and #599 are focused defects blocked on the final installed
+#591 Activity baseline. Milestone 23 remains externally owned and is neither
+copied nor modified by this checkpoint. This checkpoint creates no horizontal
+plan or additional constituents.
+
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit
