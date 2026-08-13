@@ -509,7 +509,7 @@ class ProposalSetTests(unittest.TestCase):
             proposal_set.proposal_set_id,
             ProposalSet.from_json(proposal_set.to_json()).proposal_set_id,
         )
-        self.assertEqual("fixed-conservative-v6", POLICY_VERSION)
+        self.assertEqual("fixed-conservative-v7", POLICY_VERSION)
         self.assertEqual(POLICY_VERSION, proposal_set.policy_version)
         self.assertRegex(proposal_set.resolved_policy_id, r"^resolved_policy_[0-9a-f]{64}$")
 
@@ -528,6 +528,10 @@ class ProposalSetTests(unittest.TestCase):
             ProposalSet.from_json(canonical_json(prior))
         prior = json.loads(current.to_json())
         prior["policy_version"] = "fixed-conservative-v4"
+        with self.assertRaises(ProposalValueError):
+            ProposalSet.from_json(canonical_json(prior))
+        prior = json.loads(current.to_json())
+        prior["policy_version"] = "fixed-conservative-v6"
         with self.assertRaises(ProposalValueError):
             ProposalSet.from_json(canonical_json(prior))
         prior = json.loads(current.to_json())
@@ -4303,6 +4307,52 @@ class ProposalSetTests(unittest.TestCase):
         )
         self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
         self.assertEqual("0306406152", result.alternatives[0].value.value)
+
+    def test_isbn_family_observations_form_one_empty_target_alternative(self) -> None:
+        local = _explicit_local_ebook_isbn()
+        provider = _provider(
+            "catalogue",
+            "edition-1",
+            (
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.ISBN,
+                    "0306406152",
+                    scope=ClaimScope.EDITION,
+                    applicability="ebook",
+                ),
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.ISBN,
+                    "9780306406157",
+                    scope=ClaimScope.EDITION,
+                    applicability="ebook",
+                    order=1,
+                ),
+            ),
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(
+                        isbn=TargetField(
+                            TargetDestination.ISBN,
+                            TargetFieldState.MISSING,
+                        ),
+                    ),
+                    local_claims=(local,),
+                    providers=(provider,),
+                )
+            ),
+            TargetDestination.ISBN,
+        )
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
+        self.assertEqual(1, len(result.alternatives))
+        self.assertEqual("9780306406157", result.alternatives[0].value.value)
+        self.assertEqual(ProposalAssessment.FILLS_EMPTY, result.alternatives[0].assessment)
+        self.assertEqual(3, len(result.alternatives[0].evidence_references))
 
     def test_non_review_result_cannot_carry_any_selection(self) -> None:
         result = _result(evaluate_report(_report()), TargetDestination.TITLE)

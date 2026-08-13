@@ -28,16 +28,28 @@ F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
 QUALIFIED_POLICY_OPTIONS = (
     F19A_QUALIFIED_POLICY_OPTIONS | F20_PASSING_AUTOMATIC_OPTIONS
 )
-_PRIOR_F20_QUALIFICATION_MANIFEST_SHA256 = (
-    "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a"
+_PRIOR_F20_QUALIFICATION_MANIFESTS = (
+    (
+        "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a",
+        frozenset({
+            "series:primary_narrative", "series:source_order", "series:all_qualified",
+            "genres:add", "genres:replace",
+            "tags:fill_empty", "tags:add", "tags:replace",
+            "description_fill:safe_plain_text",
+            "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
+        }),
+    ),
+    (
+        "ba42a24185273170f024d861c5dc6865baf298a785068800ab0a0f3f4a6da31a",
+        frozenset({
+            "series:primary_narrative", "series:source_order", "series:all_qualified",
+            "genres:fill_empty", "genres:add", "genres:replace",
+            "tags:fill_empty", "tags:add", "tags:replace",
+            "description_fill:safe_plain_text",
+            "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
+        }),
+    ),
 )
-_PRIOR_F20_QUALIFIED_POLICY_OPTIONS = frozenset({
-    "series:primary_narrative", "series:source_order", "series:all_qualified",
-    "genres:add", "genres:replace",
-    "tags:fill_empty", "tags:add", "tags:replace",
-    "description_fill:safe_plain_text",
-    "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
-})
 
 
 def _current_qualification_manifest_sha256(
@@ -62,9 +74,9 @@ def _qualification_manifest_is_valid(
     identity = f"{policy_category}:{policy_option}"
     return manifest_sha256 == _current_qualification_manifest_sha256(
         policy_category, policy_option
-    ) or (
-        identity in _PRIOR_F20_QUALIFIED_POLICY_OPTIONS
-        and manifest_sha256 == _PRIOR_F20_QUALIFICATION_MANIFEST_SHA256
+    ) or any(
+        manifest_sha256 == prior_digest and identity in qualified_options
+        for prior_digest, qualified_options in _PRIOR_F20_QUALIFICATION_MANIFESTS
     )
 
 

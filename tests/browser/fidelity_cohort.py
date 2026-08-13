@@ -19,7 +19,7 @@ LONG_TITLE = (
     f"{UNBROKEN_TITLE_SEGMENT} — an intentionally long synthetic title for "
     "narrow-layout qualification"
 )
-_F20_CANDIDATE_SHA256 = "ba42a24185273170f024d861c5dc6865baf298a785068800ab0a0f3f4a6da31a"
+_F20_CANDIDATE_SHA256 = "660ef340007668bfa95493acb0e5799a09dd25631b688281e4b7924377ea3424"
 _RICH_QUALIFICATION: tuple[dict[str, object], ...] = tuple(
     {
         "automatic_available": disposition == "passing_automatic",

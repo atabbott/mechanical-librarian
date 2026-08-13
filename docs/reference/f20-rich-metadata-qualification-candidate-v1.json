@@ -38,11 +38,11 @@
     },
     "automatic_decision": {
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
-      "sha256": "fd5ae8198bcb662b21da2d3a298dbfa2e11cad9bc82bae50e88206bee5cde44d"
+      "sha256": "d904386bbb2afda771c0399b8a972ae1974e5dd9e555f7fdea27c3bea0d83988"
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
-      "sha256": "31f59fe2f00de0d77956c98030ad5b1b1a704261396081045224da54e92b0710"
+      "sha256": "e42010517da3fa60f3cad714a692fdc593238388414e8961d1dd01bd5d6909c2"
     },
     "evaluator": {
       "identity": "f20-field-local-evaluator-v5",

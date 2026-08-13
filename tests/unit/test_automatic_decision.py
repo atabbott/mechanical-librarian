@@ -126,36 +126,39 @@ class AutomaticDecisionTests(unittest.TestCase):
             occurred_at=1,
             bundle_id=None,
         )
-        prior_digest = (
-            "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a"
+        prior_digests = (
+            "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a",
+            "ba42a24185273170f024d861c5dc6865baf298a785068800ab0a0f3f4a6da31a",
         )
-        prior_core = {
-            **current._core(),
-            "qualification_manifest_sha256": prior_digest,
-        }
-        prior = AutomaticDecision(
-            decision_id="automatic_decision_" + self._digest(
-                {**prior_core, "occurred_at": 1}
-            ),
-            **prior_core,
-            idempotency_digest=self._digest(prior_core),
-            occurred_at=1,
-        )
-        self.assertEqual(prior, AutomaticDecision.from_json(prior.to_json()))
-        with self.assertRaises(AutomaticDecisionError):
-            AutomaticDecision.create(
-                **{
-                    key: value
-                    for key, value in current._core().items()
-                    if key != "qualification_manifest_sha256"
-                },
-                qualification_manifest_sha256=prior_digest,
-                occurred_at=2,
+        for prior_digest in prior_digests:
+            prior_core = {
+                **current._core(),
+                "qualification_manifest_sha256": prior_digest,
+            }
+            prior = AutomaticDecision(
+                decision_id="automatic_decision_" + self._digest(
+                    {**prior_core, "occurred_at": 1}
+                ),
+                **prior_core,
+                idempotency_digest=self._digest(prior_core),
+                occurred_at=1,
             )
+            self.assertEqual(prior, AutomaticDecision.from_json(prior.to_json()))
+            with self.assertRaises(AutomaticDecisionError):
+                AutomaticDecision.create(
+                    **{
+                        key: value
+                        for key, value in current._core().items()
+                        if key != "qualification_manifest_sha256"
+                    },
+                    qualification_manifest_sha256=prior_digest,
+                    occurred_at=2,
+                )
 
         fill_core = {
-            **prior_core,
+            **current._core(),
             "policy_option": "fill_empty",
+            "qualification_manifest_sha256": prior_digests[0],
         }
         with self.assertRaises(AutomaticDecisionError):
             AutomaticDecision(
