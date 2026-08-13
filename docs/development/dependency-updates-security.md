@@ -5,8 +5,9 @@
 The Mend-hosted Renovate GitHub App is an external repository-maintenance
 actor. It reads dependency manifests, lockfiles, Dockerfiles, GitHub workflows,
 release metadata, and GitHub vulnerability alerts. It may create branches,
-commits, issues, and pull requests and may merge only the update classes
-authorized by `.github/renovate.json`.
+commits, issues, and pull requests. Repository configuration disables all
+Renovate and platform-native auto-merge paths; only the maintainer-owned
+exact-head controller may merge an update.
 
 The App receives no Mechanical Librarian application credential, owner
 password, target-service credential, reviewer credential, production path,
@@ -26,14 +27,13 @@ The current controls are:
 - repository configuration admits only PEP 621/uv, npm, Dockerfile, and GitHub
   Actions managers;
 - ordinary releases age for seven days before a pull request;
-- manifests bound compatibility while exact lockfiles and image/Action pins
-  make the proposed artifact reviewable;
-- auto-merge is limited to ranged patch updates, stable ranged minor updates,
-  and lockfile maintenance;
+- manifests pin direct dependencies while exact lockfiles and image/Action pins
+  make the complete proposed artifact reviewable;
+- Renovate groups routine library updates but cannot merge them;
 - infrastructure, workflows, major and pre-1.0 minor updates, Playwright, and
   setuptools require dashboard approval;
-- platform-native auto-merge is disabled and the bot must observe successful
-  exact-head checks;
+- platform-native and Renovate auto-merge are disabled; successful exact-head
+  checks are evidence for the maintainer-owned merge controller, not authority;
 - CI installs without npm lifecycle scripts, verifies lock currency, audits
   npm dependencies and licences, builds deterministically, and exercises the
   exact installed Python and protected browser artifacts;

@@ -1,15 +1,17 @@
 # Dependency updates
 
-Mechanical Librarian uses the Mend-hosted Renovate GitHub App to prepare and,
-for a deliberately narrow class, merge dependency updates. The repository
-configuration in `.github/renovate.json` is the authority boundary. Do not
-duplicate version or security update pull requests with Dependabot.
+Mechanical Librarian uses the Mend-hosted Renovate GitHub App to discover,
+group, and prepare dependency updates. The repository configuration in
+`.github/renovate.json` bounds that preparation authority. Renovate has no
+merge authority; every update uses the maintainer-owned exact-head merge
+controller. Do not duplicate version or security update pull requests with
+Dependabot.
 
 ## Reproducibility boundary
 
-`pyproject.toml` and `frontend/package.json` declare reviewed compatibility
-ranges. `uv.lock` and `frontend/package-lock.json` record the exact versions and
-integrity data installed by development, CI, container builds, and production.
+`pyproject.toml` and `frontend/package.json` pin direct dependencies.
+`uv.lock` and `frontend/package-lock.json` record the exact transitive versions
+and integrity data installed by development, CI, container builds, and production.
 CI continues to use `uv lock --check`, locked or frozen uv operations, and
 `npm ci`; Renovate never makes an uncommitted production resolution current.
 
@@ -25,29 +27,28 @@ release, limits concurrent branches and pull requests to three, and groups
 compatible updates by ecosystem. GitHub vulnerability alerts skip the ordinary
 schedule and use the lowest fixed version, but retain the same merge policy.
 
-Renovate may auto-merge only after every reported check succeeds when the
-change is:
+Renovate automatically prepares and groups pull requests for:
 
-- a ranged Python or npm patch update;
-- a ranged minor update whose current version is at least 1.0; or
+- Python and npm patch updates;
+- stable Python and npm minor updates; and
 - the scheduled lockfile-only maintenance refresh.
 
-Renovate itself performs the final squash merge with platform-native
-auto-merge disabled, so it observes the completed check state instead of
-asking GitHub to merge as soon as branch rules permit.
+All Renovate and platform-native auto-merge paths are disabled. Passing public
+checks is evidence, not merge authorization. Each pull request remains open
+until the maintainer-owned controller binds its exact head to current checks,
+connector review, repository policy, and final race-sensitive preflight.
 
 Dashboard approval and maintainer review are required for:
 
 - major updates and pre-1.0 minor updates;
-- changes outside an existing manifest compatibility range;
 - Docker images and GitHub Actions;
-- Python, Node, npm, uv, build backends, and Playwright;
+- Python, Node, npm, and uv toolchains, build backends, and Playwright;
 - replacement packages, newly introduced dependencies, licensing changes, or
   any update that changes network, credential, persistence, parser, or
   production authority.
 
 A failing, pending, stale, conflicted, or manually edited pull request does not
-qualify for auto-merge. Close an unsuitable update or disable it in the
+qualify for controller merge. Close an unsuitable update or disable it in the
 repository configuration with a package-specific rationale; never weaken a
 test or safety gate to admit it.
 

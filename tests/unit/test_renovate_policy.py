@@ -23,29 +23,19 @@ class RenovatePolicyTests(unittest.TestCase):
         self.assertEqual(self.config["minimumReleaseAge"], "7 days")
         self.assertEqual(self.config["prConcurrentLimit"], 3)
         self.assertEqual(self.config["branchConcurrentLimit"], 3)
+        self.assertEqual(self.config["rangeStrategy"], "pin")
         self.assertFalse(self.config["ignoreTests"])
         self.assertFalse(self.config["platformAutomerge"])
         self.assertFalse(self.config["automerge"])
 
-    def test_automerge_rules_cannot_admit_high_risk_managers_or_updates(self) -> None:
-        automatic = [
-            rule for rule in self.config["packageRules"] if rule.get("automerge")
-        ]
-        self.assertEqual(len(automatic), 2)
-        for rule in automatic:
-            self.assertLessEqual(set(rule["matchManagers"]), {"npm", "pep621"})
-            self.assertLessEqual(set(rule["matchUpdateTypes"]), {"patch", "minor"})
-            self.assertEqual(rule["matchCurrentValue"], "/^(?:\\^|>=)/")
-        minor = next(
-            rule for rule in automatic if rule["matchUpdateTypes"] == ["minor"]
-        )
-        self.assertEqual(minor["matchCurrentVersion"], "!/^0\\./")
-
-    def test_lock_maintenance_is_the_only_other_automatic_class(self) -> None:
-        maintenance = self.config["lockFileMaintenance"]
-        self.assertTrue(maintenance["enabled"])
-        self.assertTrue(maintenance["automerge"])
-        self.assertEqual(maintenance["automergeType"], "pr")
+    def test_no_update_class_can_bypass_the_trusted_merge_controller(self) -> None:
+        self.assertFalse(self.config["automerge"])
+        self.assertFalse(self.config["platformAutomerge"])
+        self.assertFalse(self.config["ignoreTests"])
+        self.assertTrue(self.config["lockFileMaintenance"]["enabled"])
+        self.assertNotIn("automerge", self.config["lockFileMaintenance"])
+        for rule in self.config["packageRules"]:
+            self.assertFalse(rule.get("automerge", False))
 
     def test_high_risk_updates_require_dashboard_approval(self) -> None:
         manual = [
@@ -76,26 +66,24 @@ class RenovatePolicyTests(unittest.TestCase):
             {"node", "npm", "playwright", "python", "setuptools", "uv"},
         )
 
-    def test_application_manifests_are_ranged_but_toolchains_remain_exact(self) -> None:
+    def test_application_manifests_and_toolchains_remain_exact(self) -> None:
         with (ROOT / "pyproject.toml").open("rb") as stream:
             python = tomllib.load(stream)
         for requirement in python["project"]["dependencies"]:
-            self.assertIn(">=", requirement)
-            self.assertIn(",<", requirement)
-            self.assertNotIn("==", requirement)
+            self.assertIn("==", requirement)
         dev = python["dependency-groups"]["dev"]
         self.assertIn("setuptools==83.0.0", dev)
         for requirement in dev:
-            if not requirement.startswith("setuptools"):
-                self.assertIn(">=", requirement)
-                self.assertIn(",<", requirement)
+            self.assertIn("==", requirement)
 
         frontend = json.loads(
             (ROOT / "frontend" / "package.json").read_text(encoding="utf-8")
         )
         for section in ("dependencies", "devDependencies"):
             for requirement in frontend[section].values():
-                self.assertTrue(requirement.startswith("^"))
+                self.assertRegex(requirement, r"^\d+\.\d+\.\d+$")
+        for requirement in frontend["overrides"].values():
+            self.assertRegex(requirement, r"^\d+\.\d+\.\d+$")
         self.assertEqual(frontend["engines"]["node"], "24.19.0")
         self.assertEqual(frontend["engines"]["npm"], "11.17.0")
         self.assertEqual(frontend["packageManager"], "npm@11.17.0")

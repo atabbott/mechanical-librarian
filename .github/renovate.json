@@ -20,7 +20,7 @@
   "prConcurrentLimit": 3,
   "branchConcurrentLimit": 3,
   "prHourlyLimit": 2,
-  "rangeStrategy": "update-lockfile",
+  "rangeStrategy": "pin",
   "rebaseWhen": "behind-base-branch",
   "ignoreTests": false,
   "platformAutomerge": false,
@@ -33,9 +33,7 @@
     "enabled": true,
     "schedule": [
       "before 6am on Monday"
-    ],
-    "automerge": true,
-    "automergeType": "pr"
+    ]
   },
   "vulnerabilityAlerts": {
     "enabled": true,
@@ -45,33 +43,6 @@
     "vulnerabilityFixStrategy": "lowest"
   },
   "packageRules": [
-    {
-      "description": "Auto-merge ranged Python and npm patch updates after qualification",
-      "matchManagers": [
-        "npm",
-        "pep621"
-      ],
-      "matchCurrentValue": "/^(?:\\^|>=)/",
-      "matchUpdateTypes": [
-        "patch"
-      ],
-      "automerge": true,
-      "automergeType": "pr"
-    },
-    {
-      "description": "Auto-merge ranged stable Python and npm minor updates after qualification",
-      "matchManagers": [
-        "npm",
-        "pep621"
-      ],
-      "matchCurrentValue": "/^(?:\\^|>=)/",
-      "matchCurrentVersion": "!/^0\\./",
-      "matchUpdateTypes": [
-        "minor"
-      ],
-      "automerge": true,
-      "automergeType": "pr"
-    },
     {
       "description": "Group compatible frontend updates",
       "matchManagers": [
