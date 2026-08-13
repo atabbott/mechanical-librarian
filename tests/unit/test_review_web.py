@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import tempfile
 import threading
 import unittest
@@ -27,7 +28,10 @@ from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.field_effects import GuardedApplicationError
-from mechanical_librarian.application.review_pipeline import ReviewPipelineError
+from mechanical_librarian.application.review_pipeline import (
+    ReviewPipelineError,
+    ReviewPreparationPipeline,
+)
 from mechanical_librarian.application.review_web import (
     CurrentReviewCaseSnapshot,
     InspectCurrentReviewCase,
@@ -3343,6 +3347,104 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             finally:
                 client.close()
                 repository.close()
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
+    def test_authenticated_preparation_status_survives_writer_journal_churn(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "application.sqlite3"
+            hash_path = root / "owner.hash"
+            hash_path.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+            os.chmod(hash_path, 0o600)
+            repository = open_repository(database, cross_thread=True)
+            repository.request_review_scan(
+                "primary", "fiction", "lib-1", "f" * 64, 1
+            )
+            repository.set_review_pipeline_paused(True, 2)
+            binding = repository._binding
+            self.assertIsNotNone(binding)
+            assert binding is not None
+            preparation = ReviewPreparationPipeline(
+                repository_factory=lambda: open_repository(
+                    database, authority=binding
+                ),
+                libraries=(("primary", "fiction", "lib-1", "f" * 64),),
+                discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+                extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+                providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+                propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+                admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+                project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            )
+            client = TestClient(
+                create_transport_test_app(
+                    repository,
+                    ReviewWebConfiguration(
+                        canonical_origin="https://review.test",
+                        owner_password_hash_file=str(hash_path),
+                    ),
+                    review_preparation=preparation,
+                ),
+                base_url="https://review.test",
+            )
+            started = threading.Event()
+            writer_errors: list[BaseException] = []
+
+            def churn_journal_descriptors() -> None:
+                connection = None
+                try:
+                    connection = sqlite3.connect(binding.alias_path, isolation_level=None)
+                    connection.execute("PRAGMA busy_timeout=5000")
+                    for updated_at in range(3, 103):
+                        paused = updated_at % 2 == 1
+                        state = "queued" if paused else "processing"
+                        connection.execute("BEGIN IMMEDIATE")
+                        connection.execute(
+                            "UPDATE review_preparation_control "
+                            "SET paused=?,updated_at=? WHERE singleton=1",
+                            (paused, updated_at),
+                        )
+                        connection.execute(
+                            "UPDATE review_preparation_scans "
+                            "SET state=?,updated_at=? WHERE connection_name='primary' "
+                            "AND library_name='fiction'",
+                            (state, updated_at),
+                        )
+                        connection.execute("COMMIT")
+                        started.set()
+                except BaseException as error:
+                    writer_errors.append(error)
+                finally:
+                    if connection is not None:
+                        connection.close()
+
+            writer = threading.Thread(target=churn_journal_descriptors)
+            try:
+                login = client.post(
+                    "/api/v1/session/login",
+                    headers={"Origin": "https://review.test"},
+                    json={"password": "correct horse"},
+                )
+                self.assertEqual(login.status_code, 200, login.text)
+                client.headers["x-ml-build-identity"] = TEST_REACT_BUILD_IDENTITY
+                writer.start()
+                self.assertTrue(started.wait(5))
+                for _ in range(25):
+                    status = client.get("/api/v1/review-preparation")
+                    self.assertEqual(status.status_code, 200, status.text)
+                    payload = status.json()
+                    self.assertIn(
+                        (payload["paused"], payload["libraries"][0]["state"]),
+                        ((True, "queued"), (False, "processing")),
+                    )
+                    self.assertEqual(payload["libraries"][0]["connection"], "primary")
+                    self.assertEqual(payload["libraries"][0]["library"], "fiction")
+            finally:
+                writer.join(5)
+                client.close()
+                repository.close()
+            self.assertFalse(writer.is_alive())
+            self.assertEqual(writer_errors, [])
 
     def test_sqlite_library_and_attention_queries_are_current_and_bounded(
         self,

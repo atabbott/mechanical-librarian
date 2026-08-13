@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fix Linux SQLite connection validation to prove the exact opened `main`
+  database path against the configured device/inode without relying on
+  process-wide descriptor-number allocation. Authenticated review-preparation
+  status polling now remains available and snapshot-consistent while legitimate
+  concurrent writers churn rollback-journal descriptors. (#594)
+
 - Implement the protected Library policy notebook: one active policy and one
   mutable draft now present as four focused chapters, with field meaning,
   review mode, qualification, and representation kept together. A single

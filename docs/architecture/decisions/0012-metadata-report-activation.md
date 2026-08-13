@@ -34,8 +34,11 @@ owner-only database parent. Every entry is protected by root/process ownership
 and non-writable permissions, or by sticky-directory ownership. Hold an
 exclusive owner-directory binding for the repository lifetime and open SQLite
 only through a verified private hard-link alias to the already-opened database
-inode. Before transaction writes and again at the final pre-commit boundary,
-rewalk the absolute chain from the current root and require every directory,
+inode. The opened connection's `main` path is independently reopened with
+no-follow access and must have that exact device/inode identity; this proof
+does not depend on process-wide descriptor-number allocation. Before
+transaction writes and again at the final pre-commit boundary, rewalk the
+absolute chain from the current root and require every directory,
 the configured database name, and configured-name sidecar absence to match.
 The private alias confines SQLite-created journal artifacts to the owned
 binding.
