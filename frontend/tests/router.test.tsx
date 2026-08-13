@@ -1223,6 +1223,7 @@ describe('typed review routes', () => {
     }
     let validationCalls = 0
     let draftSaves = 0
+    let activePolicyId = 'opaque-policy-identity'
     const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
       void body
       if (path === 'validate' && ++validationCalls === 1) throw new ApiError(422, 'invalid_policy')
@@ -1234,7 +1235,7 @@ describe('typed review routes', () => {
     })
     const http: ReviewHttp = {
       ...createHttp(),
-      getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({ schema_version: 'metadata-policy-notebook-v1', policy_id: 'opaque-policy-identity', profile: { schema_version: 'metadata-policy-profile-v2', name: 'Qualified default', options, destinations }, rich_qualification: [
+      getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({ schema_version: 'metadata-policy-notebook-v1', policy_id: activePolicyId, profile: { schema_version: 'metadata-policy-profile-v2', name: 'Qualified default', options, destinations }, rich_qualification: [
         { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'not_qualified', field: 'subtitle', option: 'fill_empty' },
         { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'not_qualified', field: 'subtitle', option: 'corroborated_split' },
         { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'series', option: 'primary_narrative' },
@@ -1247,7 +1248,7 @@ describe('typed review routes', () => {
       ] })),
       policyCommand: <T,>(path: string, body?: unknown) => policyCommand(path, body) as Promise<T>,
     }
-    renderRoute('/policy?section=publication', http)
+    const { queryClient } = renderRoute('/policy?section=publication', http)
 
     expect(await screen.findByRole('heading', { name: 'Library policy' })).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Publication' })).toBeVisible()
@@ -1279,6 +1280,10 @@ describe('typed review routes', () => {
     expect(await screen.findByText('Impact preview is current. The active policy is unchanged.')).toBeVisible()
     expect(await screen.findByText('Hostile <script> library')).toBeVisible()
     expect(screen.getByText(/Title and subtitle, Tags/)).toBeVisible()
+    const stateCallsBeforeChange = vi.mocked(http.getPolicyState).mock.calls.length
+    activePolicyId = 'policy-changed-after-preview'
+    await queryClient.invalidateQueries({ queryKey: ['policy', 'state'] })
+    await waitFor(() => expect(http.getPolicyState).toHaveBeenCalledTimes(stateCallsBeforeChange + 1))
     const reviewActivation = screen.getByRole('button', { name: 'Review activation' })
     await user.click(reviewActivation)
     expect(screen.queryByRole('dialog')).toBeNull()
@@ -1288,10 +1293,51 @@ describe('typed review routes', () => {
     await user.click(screen.getByRole('button', { name: 'Review activation' }))
     await user.click(screen.getByRole('button', { name: 'Activate policy' }))
     expect(await screen.findByText('The active policy changed before activation. Review the refreshed policy and create a new draft.')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Back to editing' }))
+    expect(policyCommand).toHaveBeenCalledWith('activate', {
+      policy_id: 'policy-draft',
+      expected_active_policy_id: 'opaque-policy-identity',
+    })
+    expect(screen.queryByRole('button', { name: 'Review activation' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Activate policy' })).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(await screen.findByText('The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.')).toBeVisible()
     expect(policyCommand.mock.calls.map(([path]) => path)).toEqual(['validate', 'validate', 'drafts', 'preview', 'activate', 'validate', 'drafts'])
+  })
+
+  it('identifies each affected work beside its exact policy outcome', async () => {
+    const user = userEvent.setup()
+    const field = (current_value: string, desired_value: string) => ({
+      current_value, desired_value, field: 'title_layout', narrowed_for_target: false,
+      option: 'title_only', outcome: 'change', qualified_value: desired_value,
+      reason: null, target_state: 'available',
+    })
+    const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
+      if (path === 'drafts') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v2' }
+      if (path === 'preview') return {
+        policy_id: 'policy-draft', schema_version: 'metadata-policy-preview-v1', rich_qualification: [],
+        libraries: [{
+          library: 'Fiction', affected_categories: ['title_layout'], cases_total: 2,
+          cases_truncated: false, current_unapplied_count: 2, resolved_policy_id: 'resolved-policy',
+          cases: [
+            { fields: [field('Old one', 'New one')], proposal_set_id: 'proposal-1', report_id: 'report-1', resolved_policy_id: 'resolved-policy', work_label: 'First book' },
+            { fields: [field('Old two', 'New two')], proposal_set_id: 'proposal-2', report_id: 'report-2', resolved_policy_id: 'resolved-policy', work_label: 'Second book' },
+          ],
+        }],
+      }
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v2' }
+    })
+    const http: ReviewHttp = { ...createHttp(), policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T> }
+    renderRoute('/policy?section=identity', http)
+
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    await user.click(within(title).getByRole('button', { name: 'Ignore' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+
+    expect(await screen.findByText('First book')).toBeVisible()
+    expect(screen.getByText('Second book')).toBeVisible()
+    expect(screen.getAllByText('Fiction · Title and subtitle')).toHaveLength(2)
+    expect(screen.getByText('Old one → New one')).toBeVisible()
+    expect(screen.getByText('Old two → New two')).toBeVisible()
   })
 
   it('tracks the protected whole-draft cadence and invalidates preview after an edit', async () => {

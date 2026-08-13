@@ -87,6 +87,7 @@ class LibraryPolicyImpact:
     cases: tuple[RichMetadataPreview, ...] = ()
     cases_total: int = 0
     cases_truncated: bool = False
+    work_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,7 +246,19 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
                 for report, _ in pairs
             )
             remaining_cases -= len(cases)
-            impacts.append(LibraryPolicyImpact(library, categories, count, resolved.resolved_id, cases, pairs_total, pairs_total > len(pairs)))
+            work_labels = tuple(
+                report.target.current_title or "Untitled" for report, _ in pairs
+            )
+            impacts.append(LibraryPolicyImpact(
+                library=library,
+                affected_categories=categories,
+                current_unapplied_count=count,
+                resolved_policy_id=resolved.resolved_id,
+                cases=cases,
+                cases_total=pairs_total,
+                cases_truncated=pairs_total > len(pairs),
+                work_labels=work_labels,
+            ))
     except MetadataPolicyApplicationError:
         raise
     except (MetadataPolicyError, Exception) as error:

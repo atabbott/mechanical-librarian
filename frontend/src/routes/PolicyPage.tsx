@@ -70,6 +70,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const activeChapter = search.section
   const [draft, setDraft] = useState<PolicyDraft>(() => ({ name: data.state.profile.name, options: { ...data.state.profile.options }, destinations: { ...data.state.profile.destinations } }))
   const [snapshotId, setSnapshotId] = useState<string>()
+  const [previewActivePolicyId, setPreviewActivePolicyId] = useState<string>()
   const [preview, setPreview] = useState<PolicyPreviewView>()
   const [stage, setStage] = useState<PolicyStage>('editing')
   const [status, setStatus] = useState<{ tone: 'neutral' | 'success' | 'error' | 'warning'; message: string }>({ tone: 'neutral', message: 'Draft is separate from the active policy.' })
@@ -88,6 +89,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const editDraft = (next: PolicyDraft) => {
     setDraft(next)
     setSnapshotId(undefined)
+    setPreviewActivePolicyId(undefined)
     setPreview(undefined)
     setStage('editing')
     setStatus({ tone: 'neutral', message: 'Draft has unreviewed changes.' })
@@ -104,8 +106,10 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     }
   }
   const validateAndPreview = async () => {
+    const expectedActivePolicyId = data.state.policy_id
     setStage('validating')
     setSnapshotId(undefined)
+    setPreviewActivePolicyId(undefined)
     setPreview(undefined)
     setStatus({ tone: 'neutral', message: 'Validating the complete draft…' })
     let phase: 'validate' | 'drafts' | 'preview' = 'validate'
@@ -120,6 +124,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       const result = await command.mutateAsync({ action: 'preview', body: draft })
       if (!isPolicyPreview(result) || result.policy_id !== saved.policy_id) throw new ApiError(502, 'policy_snapshot_mismatch')
       setPreview(result)
+      setPreviewActivePolicyId(expectedActivePolicyId)
       setStage('preview')
       setStatus({ tone: 'success', message: 'Impact preview is current. The active policy is unchanged.' })
     } catch (error) {
@@ -132,15 +137,18 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     }
   }
   const activate = async () => {
-    if (!snapshotId || !preview) return
+    if (!snapshotId || !preview || !previewActivePolicyId) return
     setStatus({ tone: 'neutral', message: 'Activating the reviewed policy…' })
     try {
-      await command.mutateAsync({ action: 'activate', body: { policy_id: snapshotId, expected_active_policy_id: data.state.policy_id } })
+      await command.mutateAsync({ action: 'activate', body: { policy_id: snapshotId, expected_active_policy_id: previewActivePolicyId } })
       setStage('activated')
       setStatus({ tone: 'success', message: 'Policy activated. Current unapplied work is being reconciled.' })
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
-        setStage('preview')
+        setSnapshotId(undefined)
+        setPreviewActivePolicyId(undefined)
+        setPreview(undefined)
+        setStage('editing')
         setStatus({ tone: 'warning', message: 'The active policy changed before activation. Review the refreshed policy and create a new draft.' })
       } else if (error instanceof AmbiguousMutationError) {
         setStage('preview')
@@ -169,8 +177,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const changedChapterLabels = chapters.filter((chapter) => changedFields.some((field) => field.chapter === chapter.key)).map((chapter) => chapter.label)
   const impactTotals = useMemo(() => preview ? { libraries: preview.libraries.length, items: preview.libraries.reduce((total, item) => total + item.current_unapplied_count, 0) } : undefined, [preview])
   const previewRows = useMemo(() => preview?.libraries.flatMap((library) => library.cases.flatMap((rawCase, caseIndex) => {
-    const item = rawCase as unknown as { readonly fields: readonly { readonly current_value: unknown; readonly desired_value: unknown; readonly field: string; readonly outcome: string; readonly reason: string | null; readonly target_state: string }[]; readonly report_id: string }
-    return item.fields.map((field) => ({ id: `${item.report_id || String(caseIndex)}:${field.field}`, library: library.library, field: readableCategory(field.field), outcome: `${previewValue(field.current_value === null ? field.target_state : field.current_value)} → ${field.desired_value === null ? (field.reason ?? field.outcome) : previewValue(field.desired_value)}` }))
+    const item = rawCase as unknown as { readonly fields: readonly { readonly current_value: unknown; readonly desired_value: unknown; readonly field: string; readonly outcome: string; readonly reason: string | null; readonly target_state: string }[]; readonly report_id: string; readonly work_label: string }
+    return item.fields.map((field) => ({ id: `${item.report_id || String(caseIndex)}:${field.field}`, library: library.library, work: item.work_label, field: readableCategory(field.field), outcome: `${previewValue(field.current_value === null ? field.target_state : field.current_value)} → ${field.desired_value === null ? (field.reason ?? field.outcome) : previewValue(field.desired_value)}` }))
   })) ?? [], [preview])
   const transitionCopy = transition.data && !transition.data.acknowledged
     ? transition.data.state === 'processing'
@@ -229,12 +237,12 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           {stage === 'activation' ? <button disabled={command.isPending} onClick={() => setStage('preview')}>Back to preview</button> : null}
           {stage === 'editing' ? <button className="primary-action" disabled={command.isPending || !draftDisplay.changed} onClick={() => void validateAndPreview()}>Validate and preview</button> : null}
           {stage === 'validating' ? <button className="primary-action" disabled>Validating…</button> : null}
-          {stage === 'preview' ? <button className="primary-action" disabled={command.isPending || !snapshotId || !preview} onClick={() => setStage('activation')}>Review activation</button> : null}
+          {stage === 'preview' ? <button className="primary-action" disabled={command.isPending || !snapshotId || !preview || !previewActivePolicyId} onClick={() => setStage('activation')}>Review activation</button> : null}
           {stage === 'activation' ? <button className="primary-action" disabled={command.isPending} onClick={() => void activate()}>{command.isPending ? 'Activating…' : 'Activate policy'}</button> : null}
           {stage === 'activated' ? <button className="primary-action" onClick={() => setStage('editing')}>Continue editing</button> : null}
         </div>
         {stage === 'validating' ? <section className="cm-policy-validation" aria-label="Validation in progress"><header><span className="cm-policy-validation-spinner"/><div><strong>Checking this draft</strong><small>The snapshot is saved only if every check passes.</small></div></header><ul><li><span/><div><strong>Document structure</strong><small>14 supported field definitions</small></div></li><li><span/><div><strong>Automatic qualification</strong><small>Every Automatic representation is admitted</small></div></li><li><span/><div><strong>Library scope</strong><small>Exact current scope</small></div></li></ul></section> : null}
-        {(stage === 'preview' || stage === 'activation') && preview ? <section className="cm-policy-result"><aside><header><span><Check/></span><div><strong>Validated and saved</strong><small>Immutable snapshot for this preview</small></div></header><dl><div><dt>Structure</dt><dd>Passed</dd></div><div><dt>Qualification</dt><dd>Passed</dd></div><div><dt>Scope</dt><dd>{impactTotals?.libraries ? `${String(impactTotals.libraries)} ${impactTotals.libraries === 1 ? 'library' : 'libraries'}` : 'Current'}</dd></div></dl></aside><div className="cm-policy-preview"><header><div><strong>Impact preview</strong><small>Current unapplied work only · no metadata writes</small></div><b>{String(impactTotals?.items ?? 0)}</b></header><div className="cm-policy-preview-list">{previewRows.length ? previewRows.slice(0, 6).map((row) => <div key={row.id}><span className="cm-policy-work-mark" aria-hidden="true">{row.library.slice(0, 2).toUpperCase()}</span><span><strong>{row.library}</strong><small>{row.field}</small></span><b>{row.outcome}</b></div>) : preview.libraries.map((library) => <div key={library.library}><span className="cm-policy-work-mark" aria-hidden="true">{library.library.slice(0, 2).toUpperCase()}</span><span><strong>{library.library}</strong><small>{library.affected_categories.map(readableCategory).join(', ') || 'No changed fields'}</small></span><b>{String(library.current_unapplied_count)} current unapplied</b></div>)}</div>{previewRows.length > 6 ? <footer>Plus {String(previewRows.length - 6)} more exact field outcomes in this preview</footer> : preview.libraries.some((library) => library.cases_truncated) ? <footer>Additional current cases are included in the authoritative preview total.</footer> : null}</div>{stage === 'activation' ? <footer className="cm-policy-activation"><strong>Activate this reviewed draft?</strong><span>The active policy changes only after this guarded command succeeds. Applied history remains untouched.</span></footer> : null}</section> : null}
+        {(stage === 'preview' || stage === 'activation') && preview ? <section className="cm-policy-result"><aside><header><span><Check/></span><div><strong>Validated and saved</strong><small>Immutable snapshot for this preview</small></div></header><dl><div><dt>Structure</dt><dd>Passed</dd></div><div><dt>Qualification</dt><dd>Passed</dd></div><div><dt>Scope</dt><dd>{impactTotals?.libraries ? `${String(impactTotals.libraries)} ${impactTotals.libraries === 1 ? 'library' : 'libraries'}` : 'Current'}</dd></div></dl></aside><div className="cm-policy-preview"><header><div><strong>Impact preview</strong><small>Current unapplied work only · no metadata writes</small></div><b>{String(impactTotals?.items ?? 0)}</b></header><div className="cm-policy-preview-list">{previewRows.length ? previewRows.slice(0, 6).map((row) => <div key={row.id}><span className="cm-policy-work-mark" aria-hidden="true">{row.work.slice(0, 2).toUpperCase()}</span><span><strong>{row.work}</strong><small>{row.library} · {row.field}</small></span><b>{row.outcome}</b></div>) : preview.libraries.map((library) => <div key={library.library}><span className="cm-policy-work-mark" aria-hidden="true">{library.library.slice(0, 2).toUpperCase()}</span><span><strong>{library.library}</strong><small>{library.affected_categories.map(readableCategory).join(', ') || 'No changed fields'}</small></span><b>{String(library.current_unapplied_count)} current unapplied</b></div>)}</div>{previewRows.length > 6 ? <footer>Plus {String(previewRows.length - 6)} more exact field outcomes in this preview</footer> : preview.libraries.some((library) => library.cases_truncated) ? <footer>Additional current cases are included in the authoritative preview total.</footer> : null}</div>{stage === 'activation' ? <footer className="cm-policy-activation"><strong>Activate this reviewed draft?</strong><span>The active policy changes only after this guarded command succeeds. Applied history remains untouched.</span></footer> : null}</section> : null}
         {stage === 'activated' ? <section className="cm-policy-activated"><span><Check/></span><div><strong>The reviewed policy is now active</strong><small>{String(impactTotals?.items ?? 0)} current unapplied items can enter separately guarded reconciliation.</small></div></section> : null}
       </section>
     </div>

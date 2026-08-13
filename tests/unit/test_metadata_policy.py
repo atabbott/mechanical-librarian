@@ -161,6 +161,10 @@ class MetadataPolicyTests(unittest.TestCase):
         )
         self.assertEqual(20, repository.limit)
         self.assertEqual(1, preview.libraries[0].cases_total)
+        self.assertEqual(
+            (report.target.current_title or "Untitled",),
+            preview.libraries[0].work_labels,
+        )
         self.assertEqual(8, len(preview.libraries[0].cases[0].fields))
         self.assertNotEqual(
             proposal.resolved_policy_id,

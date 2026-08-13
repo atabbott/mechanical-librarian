@@ -682,6 +682,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     "proposal_set_id": "proposal_set_" + "b" * 64,
                     "report_id": "report_" + "a" * 64,
                     "resolved_policy_id": "resolved_policy_" + "c" * 64,
+                    "work_label": "The Clockmaker's Map",
                 }],
                 "cases_total": 1,
                 "cases_truncated": False,
