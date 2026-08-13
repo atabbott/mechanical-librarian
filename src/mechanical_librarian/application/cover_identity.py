@@ -31,13 +31,13 @@ from mechanical_librarian.domain.metadata_report import (
     creator_comparison_key,
     manifestation_publication_compatible,
 )
-from mechanical_librarian_workbench.cover_packet_semantics import (
+from mechanical_librarian.application.cover_packet_semantics import (
     bind_cover_packet,
     canonical_packet_json,
     normalize_cover_preview,
     normalize_provenance,
 )
-from mechanical_librarian_workbench.cover_packets import cover_source_reference
+from mechanical_librarian.application.cover_packets import cover_source_reference
 
 SCHEMA_VERSION = "cover-identity-report-v1"
 _OUTCOMES = frozenset({
@@ -58,11 +58,13 @@ _CLASSIFIER_RULES = (
     "provider-isbn-lane-title-insufficient-or-unopposed-creator-disagreement:unknown",
     "legacy-discovery-without-lane-candidate-mappings:aggregate-fallback",
 )
-_CLASSIFIER_REFERENCE = "cover_identity_classifier_" + hashlib.sha256(
+CLASSIFIER_REFERENCE = "cover_identity_classifier_" + hashlib.sha256(
     canonical_packet_json(
         {"schema_version": SCHEMA_VERSION, "rules": _CLASSIFIER_RULES}
     ).encode("utf-8")
 ).hexdigest()
+# Retained for the frozen 0.15.0 contract tests and persisted policy reader.
+_CLASSIFIER_REFERENCE = CLASSIFIER_REFERENCE
 
 _CREATOR_OR_CONTRIBUTOR_CLAIMS = frozenset({
     ClaimKind.CREATOR,
@@ -154,7 +156,7 @@ def classify_cover_identity(
         })
     body = {
         "candidates": rows,
-        "classifier_reference": _CLASSIFIER_REFERENCE,
+        "classifier_reference": CLASSIFIER_REFERENCE,
         "cover_packet_reference": packet["packet_reference"],
         "report_reference": report.report_id,
         "schema_version": SCHEMA_VERSION,
@@ -472,4 +474,9 @@ def _plausible_match_evidence(
     )
 
 
-__all__ = ["CoverIdentityReport", "SCHEMA_VERSION", "classify_cover_identity"]
+__all__ = [
+    "CLASSIFIER_REFERENCE",
+    "CoverIdentityReport",
+    "SCHEMA_VERSION",
+    "classify_cover_identity",
+]

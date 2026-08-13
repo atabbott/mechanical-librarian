@@ -52,15 +52,17 @@ context and consequences rather than reproducing code.
 | [0037](0037-origin-neutral-guarded-field-effects.md) | accepted | Use one origin-neutral guarded field-effect boundary |
 | [0038](0038-bounded-single-container-operations.md) | accepted | Bound operational evidence inside the single container |
 | [0039](0039-continuous-guarded-application.md) | accepted | Run continuous guarded application without target CAS |
-| [0040](0040-source-only-contributor-workbench.md) | accepted | Separate the runtime launcher from the contributor workbench |
-| [0041](0041-contract-contained-reviewer-kernel.md) | accepted; no-cover-transport provision superseded by 0045 | Contract the contained-reviewer kernel and retire F11 product workflow |
+| [0040](0040-source-only-contributor-workbench.md) | accepted; installed-command restriction superseded by 0050 | Separate the runtime launcher from the contributor workbench |
+| [0041](0041-contract-contained-reviewer-kernel.md) | accepted; no-cover-transport provision superseded by 0045; cover-only runtime exclusion superseded by 0050 | Contract the contained-reviewer kernel and retire F11 product workflow |
 | [0042](0042-compose-authenticated-browser-operations.md) | accepted | Compose authenticated browser operations before transport |
 | [0043](0043-reproducible-react-browser-platform.md) | accepted | Build a reproducible, currently unactivated React browser platform |
 | [0044](0044-activate-persistent-react-workspace.md) | accepted | Activate one persistent authenticated React workspace |
 | [0045](0045-bind-report-cover-packets.md) | accepted | Bind report cover packets to isolated reviewer images |
 | [0046](0046-observe-report-bound-covers.md) | accepted | Observe report-bound covers with a small closed vocabulary |
-| [0047](0047-adjudicate-closed-cover-policy.md) | accepted | Adjudicate closed cover policy deterministically |
+| [0047](0047-adjudicate-closed-cover-policy.md) | accepted; source-only activation provision superseded by 0049 | Adjudicate closed cover policy deterministically |
 | [0048](0048-compile-rich-metadata-policy-preview.md) | accepted | Compile closed rich-metadata policy previews |
+| [0049](0049-owner-confirmed-cover-considerations.md) | accepted | Activate owner-confirmed cover considerations |
+| [0050](0050-bound-installed-owner-assistance.md) | accepted | Bound installed owner-assistance commands and cover observation |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

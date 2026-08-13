@@ -196,6 +196,10 @@ class ReviewInput(_Closed):
         StrictInt, Field(ge=1, le=300)
     ] = 30
     diagnostic_timings_enabled: StrictBool = False
+    cover_reviewer_profile_file: BoundedAbsolutePath | None = None
+    cover_avoid_promotional_text: StrictBool = False
+    cover_avoid_tie_in_branding: StrictBool = False
+    cover_prefer_minimal_composition: StrictBool = False
 
 
 class ConfigurationInput(_Closed):
@@ -236,6 +240,10 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
                 library_polling_interval_seconds=value.review.library_polling_interval_seconds,
                 graceful_shutdown_seconds=value.review.graceful_shutdown_seconds,
                 diagnostic_timings_enabled=value.review.diagnostic_timings_enabled,
+                cover_reviewer_profile_file=value.review.cover_reviewer_profile_file,
+                cover_avoid_promotional_text=value.review.cover_avoid_promotional_text,
+                cover_avoid_tie_in_branding=value.review.cover_avoid_tie_in_branding,
+                cover_prefer_minimal_composition=value.review.cover_prefer_minimal_composition,
             ),
         )
     except ConfigurationError:

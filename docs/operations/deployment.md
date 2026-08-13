@@ -42,9 +42,13 @@ failure before the shared repository closes, and resumes from its durable
 checkpoint on restart. No fake target, direct database write or writable media
 path is composed.
 
-The installed command surface contains only `review-serve`. Catalogue, report,
-ProposalSet, ReviewCase, batch, and qualification-only reviewer experiments are
-not installed commands or container entrypoints; contributor-only access is
+The installed command surface contains `review-serve`, read-only
+`policy-preview`, owner-explicit `cover-review`, and read-only
+`review-activity`. The latter two reuse the same cover decision/history and
+guarded Activity application services as HTTP/React; neither bypasses consent or
+write gates. Catalogue, report, ProposalSet, ReviewCase, batch, and
+qualification-only reviewer experiments are not installed commands or container
+entrypoints; contributor-only access is
 source-bound as documented in the
 [workbench guide](../development/contributor-workbench.md).
 
@@ -61,10 +65,15 @@ configuration and supported egress rules are defined in the
 [configuration reference](../reference/configuration.md) and [security
 model](../architecture/security.md).
 
-The installed runtime has no reviewer authentication, model invocation, model
-advice, or reviewer persistence. The repository-only contained-reviewer
-workbench may use explicitly provisioned private test artifacts, but those are
-not deployment prerequisites and never enter the wheel or container.
+The installed runtime has no generic reviewer service, model-selected write, or
+raw model-output persistence. Cover consideration may invoke the bounded
+contained visual observer when an exact qualified private profile and credential
+are configured. Only locally admitted closed observation or typed failure
+evidence is persisted, and deterministic policy plus an explicit owner choice
+remain authoritative. If the observer is absent, unavailable, or unqualified,
+the supported manual cover path remains available. Repository-only qualification
+artifacts are not deployment prerequisites and never enter the wheel or
+container.
 
 The process exposes one configured HTTPS port and runs its persisted preparation
 and guarded-effect workers in the same Python process. It needs no external

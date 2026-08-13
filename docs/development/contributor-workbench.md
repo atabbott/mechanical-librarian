@@ -1,10 +1,11 @@
 # Contributor workbench
 
-The installed `mechanical-librarian` command is a production runtime surface and
-supports only `review-serve`. The repository-only `workbench/` package retains
-the evidence, scenario, inspection, and contained-reviewer workflows needed for
-development. It is outside `src/`, has no installed entry point, and is excluded
-from the wheel and container.
+The installed `mechanical-librarian` command is a production runtime surface
+with the closed review, policy-preview, owner cover-review, and read-only
+activity commands documented in the deployment guide. The repository-only
+`workbench/` package retains broader evidence, scenario, inspection, and
+contained-reviewer workflows needed for development. It is outside `src/`, has
+no installed entry point, and is excluded from the wheel and container.
 
 Run its catalogue from a checkout with:
 

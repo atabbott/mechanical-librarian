@@ -1,6 +1,6 @@
 # ADR-0040: Separate the runtime launcher from the contributor workbench
 
-Status: Accepted
+Status: Accepted; installed-command restriction superseded by ADR-0050
 
 ## Context
 

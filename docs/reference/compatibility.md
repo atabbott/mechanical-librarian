@@ -48,8 +48,10 @@ earlier manifest shapes, retired inventory selectors, pre-0.9 proposal/review st
 preview fixtures, retry/work state, and all retired CLI commands are
 unsupported. They are rejected rather than migrated, imported, or interpreted.
 
-The installed runtime exposes only `review-serve`. Its authenticated browser and
-API inspect exact-current Library, Attention, case, evidence, history, policy,
+The installed runtime exposes `review-serve`, read-only `policy-preview`,
+owner-explicit `cover-review`, and read-only `review-activity`. The cover and
+Activity CLI views reuse the same application projections as HTTP/React and add
+no write bypass. Its authenticated browser and API inspect exact-current Library, Attention, case, evidence, history, policy,
 preparation, operation, and Activity projections; record individual immutable
 ordinary-field human decisions and overrides; run persisted continuous review
 preparation; admit qualified deterministic decision-only automatic outcomes;
@@ -63,17 +65,18 @@ accepted human decision. The HTTP surface consumes one pre-composed application
 boundary with bounded top-level view models.
 
 Catalogue, foreground batch, report, cover-preview, ProposalSet, ReviewCase,
-deterministic preview, and contained-reviewer operations are source-only typed
+deterministic preview, and generic contained-reviewer operations are source-only typed
 workbench scenarios against disposable or explicitly approved private test
-state. They are not installed commands, container entrypoints, or database
-compatibility promises. The contained reviewer accepts only sanitized bounded
-JSON/text experiments and has no product persistence or production-target
-bridge. Deterministic preview performs no network or provider/model dispatch
-and persists nothing.
+state. They are not installed commands or container entrypoints. The installed
+cover-consideration service is the sole narrow exception: it may send exact
+report-bound PNG previews through the same isolated adapter and persist one
+locally admitted closed observation or typed failure as advisory evidence. It
+has no production-target bridge or write authority. Deterministic preview
+performs no network or provider/model dispatch and persists nothing.
 
-The runtime does not support model advice, reviewer activation, bulk or reversal
-effects, destructive operations, media writes, arbitrary target requests, or a
-generic plugin/provider interface. Audiobookshelf ebook detail responses may
+The runtime does not support generic model advice, model-selected writes,
+reviewer queues, bulk or reversal effects, destructive operations, media writes,
+arbitrary target requests, or a generic plugin/provider interface. Audiobookshelf ebook detail responses may
 express `ebookFile.metadata.relPath` relative to the top-level item `relPath`
 when the absolute service path proves the same final library-relative file;
 disagreement, noncanonical paths, and traversal fail closed.

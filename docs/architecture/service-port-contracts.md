@@ -5,8 +5,10 @@
 The installed runtime owns bounded evidence observation and publication,
 catalogue refresh and inspection, deterministic ProposalSet creation,
 exact-current ReviewCase admission, deterministic decision/outcome persistence,
-and authenticated review operations. It has no model-review application service
-or reviewer persistence.
+and authenticated review operations. Its cover-consideration service may retain
+one locally admitted, closed visual observation or typed observer failure as
+advisory evidence. It has no generic model-review application service, reviewer
+queue, raw model-output persistence, or model-selected write authority.
 
 Each contract exchanges typed, bounded application or domain values. Vendor
 payloads, transport clients, SQLite rows, credential bytes, and direct
@@ -36,24 +38,27 @@ sole owner of transactions and cross-capability atomicity.
   provider dispatch and preserves the existing automatic decision/outcome
   contracts.
 
-The repository-only workbench owns a separate `contained-reviewer` caller. Its
-narrow source contract accepts one sanitized canonical JSON input, bounded
+The repository workbench and installed cover-consideration service share the
+same `contained-reviewer` adapter. Its narrow contract accepts one sanitized canonical JSON input, bounded
 instruction, and closed output schema, then returns one locally schema-validated
-canonical JSON object or a typed abstention/failure. It is not composed into the
-installed runtime, does not use application persistence, and receives no target
-or provider credentials.
+canonical JSON object or a typed abstention/failure. The installed caller adds
+only report-bound PNG preview descriptors and persists only locally admitted
+closed observation/failure evidence. The adapter receives no target or provider
+credentials and has no decision or write authority.
 
 ## Authority limits
 
-The contained reviewer is source-only and experimental. Its isolated adapter
+The contained reviewer remains experimental and advisory. Its isolated adapter
 binds private artifacts and credentials, disables tools and write authority,
 durably gates process release behind the caller callback, bounds every input and
 output, validates the returned object locally, and proves process-group death on
 timeout or cancellation. Authentication actions remain adapter-owned and create
 no product lifecycle.
 
-These contracts grant no extra target/media write, approval, apply, generic
-provider framework, reviewer workflow, retry scheduler, cache, release, or
-production-service authority. Current operations and compatibility are defined
+The installed cover caller may request an explicit retry only while advice is
+failed or unavailable and before an owner outcome; it creates a superseding
+immutable consideration rather than a generic reviewer workflow. These contracts
+grant no extra target/media write, approval, apply, generic provider framework,
+reviewer queue, cache, release, or production-service authority. Current operations and compatibility are defined
 by the [operations guides](../operations/metadata-report.md), [compatibility
 contract](../reference/compatibility.md), and [security model](security.md).

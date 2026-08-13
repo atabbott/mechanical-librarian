@@ -209,3 +209,40 @@ The login request body is capped at 2 KiB at the ASGI boundary before JSON
 parsing. Five reserved attempts within five minutes close the login gate; the
 reservation is recorded before Argon2 work so concurrent requests cannot
 outpace the bound. A successful owner login clears the failure window.
+
+## Cover considerations
+
+For a current cover field, Detail presents the incumbent first and up to 12
+safe report-bound alternatives. Advisory observation and deterministic policy
+never select on the owner's behalf. The owner must explicitly keep the current
+cover, choose one available original, or take no action. If observation is
+unconfigured or fails, the same identity-admitted manual choices remain usable;
+an explicit advisory retry creates a successor record and leaves the cover
+unchanged.
+
+Preparing or retrying a cover comparison is an explicit authenticated action.
+Case, evidence, and history reads project one persisted snapshot and never run
+the observer, policy, or a persistence command as a side effect.
+
+Every consideration, supersession, owner outcome, decision, apply attempt, and
+verification remains immutable history. History reopens each bounded historical
+candidate set, admitted observation or unavailable state, deterministic policy
+and recommendation, preferences, supersession/currentness, and associated owner
+decision without making old image transport or write authority current again.
+A selection enters the existing
+Activity consent and guarded application path. It is not applied unless the
+current case, consideration and cover policy, target and incumbent cover,
+selected original digest, capability, backup, consent, and readback gates all
+still pass. There is no bulk or model-selected cover application.
+
+The installed `cover-review` CLI exposes the same server-authoritative current
+consideration and bounded historical evidence used by the API and React view;
+its explicit keep, select, and no-action commands record through the same
+application service. `review-activity` projects the same bounded guarded plan,
+verification, stale, failure, and recovery ledger as authenticated Activity and
+is read-only. It requires only the configured application database and the
+configuration whose review limits shape that projection. It does not compose a
+catalogue, artifact store, target writer, worker, or recovery writer, and it
+does not accept paths that could imply those authorities. Capability display
+uses only persisted suspension evidence and otherwise reports `not_ready`; the
+command neither reads service credentials nor probes Audiobookshelf.

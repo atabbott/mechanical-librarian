@@ -74,6 +74,10 @@ uv run --frozen python scripts/generate_configuration_schema.py
     "library_polling_interval_seconds": 900,
     "graceful_shutdown_seconds": 30,
     "diagnostic_timings_enabled": false,
+    "cover_reviewer_profile_file": null,
+    "cover_avoid_promotional_text": false,
+    "cover_avoid_tie_in_branding": false,
+    "cover_prefer_minimal_composition": false,
     "trusted_proxy_ips": []
   }
 }
@@ -215,6 +219,14 @@ checkpoint is recovered on restart.
 container retains at most 256 local stage-duration and wait-class records in
 its private data area. They contain no work values and are advisory diagnostics,
 not durable audit truth.
+
+`cover_reviewer_profile_file` is optional. When absent, installed cover review
+uses the fully supported model-free manual path. When present, it must be an
+absolute owner-only regular no-follow file containing the already-qualified
+contained-reviewer profile; its exact bytes bind every observation. The three
+`cover_*` booleans form the closed deterministic advisory policy. They never
+grant decision or write authority, and changing them invalidates pending cover
+effects until the owner considers and selects under the current policy.
 
 There are no provider defaults, inheritance, overrides, weights, priorities,
 configurable fallback rules, environment substitutions, or undocumented

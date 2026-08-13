@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Activate owner-confirmed semantic cover decisions in the installed review
+  product. One exact-current cover field now shows the incumbent and up to 12
+  safe report-bound alternatives, runs the contained observer and deterministic
+  policy as advisory evidence when configured, and lets the owner explicitly
+  keep, select, or take no action. Immutable consideration, supersession,
+  decision, and guarded application history bind exact source/original/preview,
+  packet, identity, observer, schema, taxonomy, policy, target, and incumbent
+  identities. Historical API, CLI, and React views reopen the bounded candidate,
+  observation, policy, recommendation, and exact owner-choice context without
+  restoring old image or write authority; the installed read-only Activity CLI
+  exposes the same guarded plan, verification, stale, and recovery ledger
+  without reading service credentials or probing Audiobookshelf. A
+  selected original uses the existing verified Audiobookshelf
+  cover effect path; observer failure preserves the model-free manual path.
+  The retained versioned engineering benchmark remains a judgement-labelled,
+  aggregate-safe proof rather than an unseen-generalisation claim. Observer
+  execution releases the global application gate and revalidates the captured
+  case before persistence; changed replay contracts and stale effects require a
+  successor owner decision. Generic reviewer invocation and authentication
+  remain source-workbench-only, and missing preview artifacts degrade through
+  the typed unavailable response. (#501)
+
 - Reconcile the 0.15.0 source-only semantic-cover workbench into one
   aggregate-safe maintainer review package. The retained real-provider corpus,
   deterministic image transport, conservative identity classifier, contained

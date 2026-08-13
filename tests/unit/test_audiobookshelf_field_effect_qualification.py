@@ -81,6 +81,7 @@ class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
         )
         preparation = Mock()
         continuous = Mock()
+        cover_considerations = Mock()
         application = object()
         client = object()
 
@@ -93,6 +94,10 @@ class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
                 "scripts.qualify_audiobookshelf_field_effect.compose_review_application",
                 return_value=application,
             ) as compose,
+            patch(
+                "scripts.qualify_audiobookshelf_field_effect.composition._compose_cover_considerations",
+                return_value=cover_considerations,
+            ) as compose_covers,
             patch(
                 "scripts.qualify_audiobookshelf_field_effect.create_review_app",
                 return_value=object(),
@@ -108,10 +113,17 @@ class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
                 preparation,
                 continuous,
                 (("books", None),),
+                Path("/synthetic/artifacts"),
             )
 
         self.assertIs(result, client)
         compose.assert_called_once()
+        self.assertIs(
+            compose.call_args.kwargs["cover_considerations"], cover_considerations
+        )
+        compose_covers.assert_called_once_with(
+            repository, Path("/synthetic/artifacts"), review
+        )
         create.assert_called_once_with(application, review)
 
     def test_return_to_automatic_retains_manual_hold_until_fresh_lineage(self) -> None:

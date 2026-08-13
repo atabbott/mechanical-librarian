@@ -522,16 +522,19 @@ p50 and 14.951 seconds p95. Across acquisition, transport, observation, and
 policy evaluation there was no production-library access or write, credential
 exposure, provider access from the reviewer, invented reference, ineligible
 selection, explicit-policy violation, hostile-evidence instruction following,
-private-data leakage, or repair of invalid model output. The workbench remains
-source-only and excluded from installed artifacts; no semantic-cover runtime
-CLI or HTTP operation was activated.
+private-data leakage, or repair of invalid model output. At the 0.15.0 review
+boundary the workbench remained source-only and excluded from installed
+artifacts; no semantic-cover runtime CLI or HTTP operation was then activated.
 
 The milestone therefore proves the intended general principle: a contained
 multimodal model can turn exact report-bound covers into useful closed
 observations, and deterministic code can turn those observations into useful
 policy-compatible recommendations. It does not prove unseen generalisation,
 production readiness, or reliable fine-grained composition classification.
-Issue #501 and 0.15.1 remain unpromoted. The maintainer reviewed and accepted
-this package on 2026-08-12, completing #544 and authorizing reconciliation of
-tracker #500 and milestone #20. That acceptance does not activate a runtime
-surface, publish a release, or change the limitations above.
+The maintainer reviewed and accepted this package on 2026-08-12, completing
+#544 and authorizing closure of tracker #500 and milestone #20. Issue #501 was
+then explicitly promoted as F21 / 0.15.1 to activate owner-confirmed decisions
+by reusing this retained benchmark and its limits. Promotion does not turn the
+judgement labels into objective ground truth, prove unseen generalisation, or
+authorize a release, automatic model-selected write, new provider acquisition,
+or corpus rebuild.

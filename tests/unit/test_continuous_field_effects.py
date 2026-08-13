@@ -256,6 +256,65 @@ class _ConnectionUnavailableCapability:
 
 
 class ContinuousGuardedApplicationTests(unittest.TestCase):
+    def test_preplan_cover_authority_drift_retires_the_selected_consideration(self) -> None:
+        selected = {"kind": "cover", "value": "cover_" + "f" * 64}
+        idempotency_digest = hashlib.sha256(b"preplan-cover-drift").hexdigest()
+        request = {
+            "actor": "owner",
+            "destination": "cover",
+            "idempotency_digest": idempotency_digest,
+            "outcome": "accept",
+            "proposal_id": "review_proposal_" + "a" * 64,
+            "review_case_id": "review_case_" + "b" * 64,
+            "selected_value": selected,
+            "target_fingerprint": "c" * 64,
+        }
+        request_digest = hashlib.sha256(json.dumps(
+            request, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+        ).encode()).hexdigest()
+        decision_id = "human_decision_" + hashlib.sha256(json.dumps(
+            {"occurred_at": 101, "request_digest": request_digest},
+            ensure_ascii=True, separators=(",", ":"), sort_keys=True,
+        ).encode()).hexdigest()
+        decision = HumanDecision(
+            decision_id,
+            request["review_case_id"],
+            request["proposal_id"],
+            request["target_fingerprint"],
+            "cover",
+            "owner",
+            "accept",
+            selected,
+            idempotency_digest,
+            request_digest,
+            101,
+        )
+
+        class Repository(_PagedRepository):
+            retired: list[tuple[str, int]] = []
+
+            def retire_stale_cover_decision(self, decision_id, changed_at):
+                self.retired.append((decision_id, changed_at))
+                return True
+
+        class DriftedAuthority:
+            def resolve(self, _decision):
+                raise FieldEffectError("authority_binding")
+
+        repository = Repository([decision])
+        service = ContinuousGuardedApplication(
+            repository,
+            {("primary", "beta"): _Planner()},
+            {("primary", "beta"): _AllowedCapability()},
+            DriftedAuthority(),
+            (("primary", "beta"),),
+            lambda: 102,
+            lambda *_: None,
+        )
+
+        self.assertEqual(0, service.schedule())
+        self.assertEqual(repository.retired, [(decision.decision_id, 102)])
+
     @staticmethod
     def _prior_f20_decision() -> AutomaticDecision:
         def digest(value: object) -> str:
@@ -631,6 +690,41 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         self.assertTrue(destinations["title"]["consented"])
         self.assertFalse(destinations["authors"]["consented"])
         self.assertEqual(destinations["subtitle"]["state"], "field_unavailable")
+
+    def test_activity_only_projection_uses_only_persisted_capability_state(self) -> None:
+        repository = _PagedRepository([self._decisions(1)[0]])
+        repository.suspensions[(
+            "destination", "primary", "subtitle"
+        )] = ("field_unavailable", 1)
+        service = ContinuousGuardedApplication(
+            repository, {},
+            {}, _Authority(),
+            (("primary", "alpha"),), lambda: 1, lambda *_: None,
+            activity_only=True,
+        )
+
+        readiness = service._capability_readiness(("alpha",), force=True)
+
+        destinations = {
+            value["destination"]: value["state"]
+            for value in readiness[0]["destinations"]
+        }
+        self.assertEqual("not_ready", readiness[0]["state"])
+        self.assertEqual("field_unavailable", destinations["subtitle"])
+        self.assertEqual("not_ready", destinations["title"])
+        self.assertEqual({
+            ("destination", "primary", "subtitle"):
+                ("field_unavailable", 1)
+        }, repository.suspensions)
+
+    def test_activity_only_projection_rejects_capability_observers(self) -> None:
+        with self.assertRaises(GuardedApplicationError):
+            ContinuousGuardedApplication(
+                _PagedRepository([]), {},
+                {("primary", "alpha"): _MixedCapability()}, _Authority(),
+                (("primary", "alpha"),), lambda: 1, lambda *_: None,
+                activity_only=True,
+            )
 
     def test_activity_strips_valid_cleanup_and_rejects_malformed_cleanup(self) -> None:
         decision = self._decisions(1)[0]

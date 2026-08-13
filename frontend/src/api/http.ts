@@ -34,6 +34,35 @@ export interface ReviewFieldView {
   automaticDecision: Schema<'_AutomaticDecisionProjection'> | null
   notices: readonly string[]
   provenance: readonly string[]
+  coverConsideration?: CoverConsiderationView | null
+}
+export interface CoverCandidateView {
+  artifactId: string
+  height: number
+  identity: Readonly<Record<string, unknown>>
+  incumbent: boolean
+  observation: Readonly<Record<string, unknown>> | null
+  originalSha256: string
+  ordinal: number
+  previewSha256: string
+  reference: string
+  selectable: boolean
+  sourceKinds: readonly string[]
+  state: string
+  width: number
+}
+export interface CoverConsiderationView {
+  id: string
+  current: boolean
+  candidates: readonly CoverCandidateView[]
+  incumbent: { readonly reference: string | null; readonly state: 'absent' | 'available' | 'unavailable' }
+  omissions: readonly Readonly<Record<string, unknown>>[]
+  policy: Readonly<Record<string, unknown>> | null
+  policyPreferences: { readonly avoidPromotionalText: boolean; readonly avoidTieInBranding: boolean; readonly preferMinimalComposition: boolean }
+  policyReference: string
+  reviewerStatus: string
+  supersedesId?: string
+  targetFingerprint: string
 }
 export interface CaseDetailView { id: string; current: boolean; title: string; authors: readonly string[]; subtitle: string; fields: readonly ReviewFieldView[] }
 export type EvidenceView = Schema<'_EvidenceResponse'>
@@ -97,6 +126,7 @@ export interface DecisionCommand {
   selectedValue?: Schema<'_ProposedValue'> | null
   targetFingerprint: string
   idempotencyKey: string
+  considerationId?: string
 }
 
 export interface ReviewHttp {
@@ -105,6 +135,7 @@ export interface ReviewHttp {
   getCaseDetail(reviewCaseId: string, signal?: AbortSignal): Promise<CaseDetailView>
   getEvidence(reviewCaseId: string, cursor?: string, signal?: AbortSignal): Promise<EvidenceView>
   getHistory(reviewCaseId: string, signal?: AbortSignal): Promise<HistoryView>
+  retryCoverConsideration(reviewCaseId: string, signal?: AbortSignal): Promise<CoverConsiderationView>
   getPreparation(signal?: AbortSignal): Promise<PreparationView>
   preparationAction(path: string, signal?: AbortSignal): Promise<PreparationView | PreparationProgress>
   recordDecision(reviewCaseId: string, command: DecisionCommand, signal?: AbortSignal): Promise<Schema<'_DecisionAcknowledgement'>>
@@ -169,6 +200,11 @@ export class ReviewApiClient implements ReviewHttp {
   async getCaseDetail(id: string, signal?: AbortSignal) { return mapCaseDetail(await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}`, signal)) }
   async getEvidence(id: string, cursor?: string, signal?: AbortSignal) { const p = new URLSearchParams({ limit: '50' }); if (cursor) p.set('cursor', cursor); return validateObject(await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}/evidence?${p}`, signal), 'evidence') as unknown as EvidenceView }
   async getHistory(id: string, signal?: AbortSignal) { return validateObject(await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}/history`, signal), 'history') as unknown as HistoryView }
+  async retryCoverConsideration(id: string, signal?: AbortSignal) {
+    const value = mapCoverConsideration(await this.mutate(`/api/v1/review-cases/${encodeURIComponent(id)}/cover-considerations/retry`, undefined, signal))
+    if (value === null) throw new ApiError(502, 'invalid_cover_consideration_response')
+    return value
+  }
   async getPreparation(signal?: AbortSignal) { return validateObject(await this.read('/api/v1/review-preparation', signal), 'preparation') as unknown as PreparationView }
   async preparationAction(path: string, signal?: AbortSignal) {
     const value = await this.mutate(`/api/v1/review-preparation/${path}`, undefined, signal)
@@ -176,8 +212,8 @@ export class ReviewApiClient implements ReviewHttp {
     return validateObject(value, 'preparation') as unknown as PreparationView
   }
   async recordDecision(id: string, command: DecisionCommand, signal?: AbortSignal) {
-    const { idempotencyKey, proposalId, targetFingerprint, selectedValue, destination, outcome } = command
-    return validateObject(await this.mutate(`/api/v1/review-cases/${encodeURIComponent(id)}/decisions`, { destination, outcome, proposal_id: proposalId, selected_value: selectedValue ?? null, target_fingerprint: targetFingerprint }, signal, { 'idempotency-key': idempotencyKey }), 'decision') as unknown as Schema<'_DecisionAcknowledgement'>
+    const { idempotencyKey, proposalId, targetFingerprint, selectedValue, destination, outcome, considerationId } = command
+    return validateObject(await this.mutate(`/api/v1/review-cases/${encodeURIComponent(id)}/decisions`, { destination, outcome, proposal_id: proposalId, selected_value: selectedValue ?? null, target_fingerprint: targetFingerprint, consideration_id: considerationId ?? null }, signal, { 'idempotency-key': idempotencyKey }), 'decision') as unknown as Schema<'_DecisionAcknowledgement'>
   }
   async returnToAutomatic(id: string, destination: string, signal?: AbortSignal) { await this.mutate(`/api/v1/review-cases/${encodeURIComponent(id)}/fields/${encodeURIComponent(destination)}/return-to-automatic`, undefined, signal) }
   async getPolicyState(signal?: AbortSignal) { return validateObject(await this.read('/api/v1/metadata-policy/state', signal), 'policy_state') as unknown as PolicyStateView }
@@ -283,7 +319,32 @@ export const mapAttention = (value: unknown): AttentionView => {
 export const mapCaseDetail = (value: unknown): CaseDetailView => {
   if (!record(value) || !record(value.target) || !Array.isArray(value.fields)) throw new ApiError(502, 'invalid_case_detail_response')
   const dto = value as unknown as CaseDetailDto; stringValue(dto.schema_version, 'schema_version'); if (typeof dto.current !== 'boolean') throw new ApiError(502, 'invalid_case_currentness')
-  return { id: stringValue(dto.review_case_id, 'review_case_id'), current: dto.current, title: stringValue(dto.target.item, 'target_item'), authors: stringArray(dto.target.authors, 'target_authors'), subtitle: `${stringValue(dto.target.library, 'target_library')} · ${stringValue(dto.target.media_kind, 'target_media_kind')} · ${stringValue(dto.target.connection, 'target_connection')}`, fields: dto.fields.map((field) => ({ destination: stringValue(field.destination, 'destination'), disposition: stringValue(field.deterministic_disposition, 'disposition'), effectCapability: stringValue(field.effect_capability, 'effect_capability'), needsAttention: field.needs_attention, manualHold: field.manual_hold, currentValue: displayValue(field.current.value), currentRaw: field.current.value, proposedValues: field.proposed_values, proposalId: stringValue(field.proposal_id, 'proposal_id'), targetFingerprint: stringValue(field.target_fingerprint, 'target_fingerprint'), humanDecision: field.human_decision, automaticDecision: field.automatic_decision, notices: stringArray(field.notices, 'notices'), provenance: stringArray(field.provenance, 'provenance') })) }
+  return { id: stringValue(dto.review_case_id, 'review_case_id'), current: dto.current, title: stringValue(dto.target.item, 'target_item'), authors: stringArray(dto.target.authors, 'target_authors'), subtitle: `${stringValue(dto.target.library, 'target_library')} · ${stringValue(dto.target.media_kind, 'target_media_kind')} · ${stringValue(dto.target.connection, 'target_connection')}`, fields: dto.fields.map((field) => ({ destination: stringValue(field.destination, 'destination'), disposition: stringValue(field.deterministic_disposition, 'disposition'), effectCapability: stringValue(field.effect_capability, 'effect_capability'), needsAttention: field.needs_attention, manualHold: field.manual_hold, currentValue: displayValue(field.current.value), currentRaw: field.current.value, proposedValues: field.proposed_values, proposalId: stringValue(field.proposal_id, 'proposal_id'), targetFingerprint: stringValue(field.target_fingerprint, 'target_fingerprint'), humanDecision: field.human_decision, automaticDecision: field.automatic_decision, notices: stringArray(field.notices, 'notices'), provenance: stringArray(field.provenance, 'provenance'), coverConsideration: mapCoverConsideration((field as unknown as Record<string, unknown>).cover_consideration) })) }
+}
+
+const mapCoverConsideration = (value: unknown): CoverConsiderationView | null => {
+  if (value === null || value === undefined) return null
+  if (!record(value) || value.schema_version !== 'cover-consideration-v1' || !Array.isArray(value.candidates) || !Array.isArray(value.omissions) || !record(value.incumbent) || !record(value.policy_preferences)) throw new ApiError(502, 'invalid_cover_consideration')
+  const incumbentState = stringValue(value.incumbent.state, 'cover_incumbent_state')
+  if (!['absent', 'available', 'unavailable'].includes(incumbentState)) throw new ApiError(502, 'invalid_cover_incumbent_state')
+  const preferences = value.policy_preferences
+  if (typeof preferences.avoid_promotional_text !== 'boolean' || typeof preferences.avoid_tie_in_branding !== 'boolean' || typeof preferences.prefer_minimal_composition !== 'boolean') throw new ApiError(502, 'invalid_cover_policy_preferences')
+  return {
+    id: stringValue(value.consideration_id, 'cover_consideration_id'),
+    current: value.current === true,
+    candidates: value.candidates.map((candidate, index) => {
+      if (!record(candidate) || !record(candidate.identity) || (candidate.observation !== null && !record(candidate.observation))) throw new ApiError(502, `invalid_cover_candidate_${String(index)}`)
+      return { artifactId: stringValue(candidate.artifact_id, 'cover_artifact_id'), height: integerValue(candidate.height, 'cover_height'), identity: candidate.identity, incumbent: candidate.incumbent === true, observation: candidate.observation, originalSha256: stringValue(candidate.original_sha256, 'cover_original_digest'), ordinal: integerValue(candidate.ordinal, 'cover_ordinal'), previewSha256: stringValue(candidate.preview_sha256, 'cover_preview_digest'), reference: stringValue(candidate.reference, 'cover_reference'), selectable: candidate.selectable === true, sourceKinds: stringArray(candidate.source_kinds, 'cover_source_kinds'), state: stringValue(candidate.state, 'cover_state'), width: integerValue(candidate.width, 'cover_width') }
+    }),
+    incumbent: { reference: value.incumbent.reference === null ? null : stringValue(value.incumbent.reference, 'cover_incumbent_reference'), state: incumbentState as 'absent' | 'available' | 'unavailable' },
+    omissions: value.omissions.map((item, index) => { if (!record(item)) throw new ApiError(502, `invalid_cover_omission_${String(index)}`); return item }),
+    policy: value.policy === null ? null : record(value.policy) ? value.policy : (() => { throw new ApiError(502, 'invalid_cover_policy') })(),
+    policyPreferences: { avoidPromotionalText: preferences.avoid_promotional_text, avoidTieInBranding: preferences.avoid_tie_in_branding, preferMinimalComposition: preferences.prefer_minimal_composition },
+    policyReference: stringValue(value.policy_reference, 'cover_policy_reference'),
+    reviewerStatus: stringValue(value.reviewer_status, 'cover_reviewer_status'),
+    ...(value.supersedes_id === null ? {} : { supersedesId: stringValue(value.supersedes_id, 'cover_supersedes_id') }),
+    targetFingerprint: stringValue(value.target_fingerprint, 'cover_target_fingerprint'),
+  }
 }
 
 const structuredError = async (response: Response) => { let value: unknown; try { value = await response.json() } catch { return new ApiError(response.status, 'invalid_error_response') }; if (!record(value) || !record(value.error) || typeof value.error.code !== 'string') return new ApiError(response.status, 'invalid_error_response'); return new ApiError(response.status, value.error.code) }

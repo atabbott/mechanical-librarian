@@ -95,6 +95,15 @@ dispatch process fact, raw stream, reasoning, or model advice. The source-only
 contained reviewer persists no product data; its disposable workbench artifacts
 remain private and outside installed runtime state.
 
+Installed cover consideration is a narrow exception to that generic lifecycle.
+It retains the exact bounded request and profile identities plus one locally
+admitted closed visual observation or typed value-free failure needed for
+immutable consideration history. It never retains raw model streams, prompts,
+reasoning, private paths, credentials, process facts, or unadmitted output. The
+observation contains opaque candidate references and the fixed visual vocabulary
+only; deterministic identity/policy and the owner's explicit outcome remain
+separate authoritative facts.
+
 Policy Preview additionally retains append-only canonical deterministic outcome
 sets. They contain only opaque case/report/proposal/target fingerprints,
 policy/profile/generation and fixed rule/catalogue identities, closed

@@ -10,7 +10,7 @@ src/mechanical_librarian/
 │   ├── providers/           # fixed Hardcover, Open Library, and Google Books observations
 │   └── persistence/         # exact SQLite reports, ProposalSets, and review cases
 ├── infrastructure/  # strict config, private files, local media
-├── interfaces/cli/  # installed review-serve launcher only
+├── interfaces/cli/  # installed review, policy, cover, and activity commands
 └── bootstrap/       # explicit composition and isolated child entrypoint
 workbench/mechanical_librarian_workbench/ # source-only typed contributor scenarios
 ```

@@ -99,7 +99,6 @@ class ImportBoundaryTests(unittest.TestCase):
             "application/contained_reviewer.py",
             "application/shadow_reviews.py",
             "adapters/reviewers/codex_shadow.py",
-            "adapters/reviewers/contained_reviewer.py",
             "adapters/persistence/jobs.py",
             "adapters/persistence/title_proposals.py",
             "infrastructure/persistence/sqlite.py",

@@ -3,7 +3,7 @@
 from .catalogue import CAPABILITIES, Capability
 from .context import IsolatedNetworkProfile, WorkbenchContext
 from .results import WorkbenchResult
-from .cover_policy import CoverPolicy
+from mechanical_librarian.application.cover_policy import CoverPolicy
 from .scenarios import (
     BatchRequest,
     CatalogueRequest,

@@ -2,9 +2,10 @@
 
 ## Principle
 
-An external model is an untrusted source-only experiment. It does not discover
-production credentials, select production inputs, change policy, construct
-service requests, persist product advice, or execute writes.
+An external model is untrusted. It does not discover production credentials,
+select production inputs, change policy, construct service requests, make an
+owner decision, or execute writes. Installed cover review may persist its exact
+closed observation as advisory evidence only after local admission.
 
 The deterministic decision-preview and qualified automatic-decision
 paths are outside the AI boundary. They consume the retained exact,
@@ -13,18 +14,18 @@ catalogue without model/provider dispatch. Their packet, rule identity,
 `source_outcome_id`, `shadow_decision`, and `shadow_outcome` contracts
 remain deterministic and authoritative.
 
-## Source-only contained reviewer
+## Contained reviewer
 
-The repository workbench has one semantic-neutral `contained-reviewer`
-scenario. Its request contains only:
+The repository workbench and installed cover review share one semantic-neutral
+`contained-reviewer` adapter. Its request contains only:
 
 - a bounded instruction;
 - a canonical, bounded, sanitized JSON input document; and
 - a canonical, bounded output schema from the locally admitted JSON Schema
   subset.
 
-The caller supplies no ReviewCase, packet transport, model-advice, recommendation,
-decision, or persistence semantics. The adapter returns exactly one canonical
+The caller supplies no decision, write, service, or persistence authority. The
+adapter returns exactly one canonical
 JSON object that is validated locally against the bound schema, or a closed
 value-free failure. CLI structured-output enforcement is never trusted as the
 sole validator.
@@ -53,11 +54,13 @@ attempt, dispatch, result, inspection, reevaluation, retry, or advice lifecycle.
 
 ## Product boundary
 
-The installed runtime, database, HTTP API, and browser contain no reviewer
-invocation, reviewer authentication, model-advice projection, or F11
-qualification workflow. The former request/result/profile/prompt domain
-contracts and request/attempt/dispatch/result tables are intentionally absent
-under the pre-release exact-current schema policy.
+The installed cover consideration can invoke this adapter only with the exact
+report-bound packet and derived preview transports. Local code separately owns
+identity admission, deterministic policy, owner choice, persistence, and the
+existing guarded field effect. Missing or failed observation leaves the
+model-free manual path available. The runtime contains no F11 qualification
+workflow, generic prompt/model endpoint, model-selected write, or reviewer
+credential path into Audiobookshelf.
 
 Historical ADRs 0015 through 0028 record the retired qualification-only design.
 [ADR-0041](decisions/0041-contract-contained-reviewer-kernel.md) supersedes

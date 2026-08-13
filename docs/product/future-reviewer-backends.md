@@ -7,10 +7,13 @@ the 1.0 checkpoint. It is planning authority for the outcomes and safety
 boundaries below, not a statement of current behavior or permission to begin
 implementation.
 
-F11's qualification-only product workflow has been retired by ADR-0041. The
-repository retains only a semantic-neutral, source-only contained-reviewer
-kernel; it is not a current product backend or persistence contract. Any future
-backend requires a newly promoted outcome and current trust-boundary decision.
+F11's generic qualification-only product workflow has been retired by
+ADR-0041. The repository retains its semantic-neutral contained-reviewer kernel
+for contributor work and installs only the narrowly bounded cover observer and
+deterministic cover policy governed by ADR-0049. That cover-specific boundary
+does not provide a generic reviewer backend or pre-authorize either future
+backend below. Any such backend requires a newly promoted outcome and current
+trust-boundary decision.
 
 After the 1.0.0 checkpoint is complete, two optional reviewer capabilities may
 be scheduled as separate functional slices:
@@ -28,8 +31,9 @@ promote them.
 ## Shared contract
 
 Every future backend must define a new application-owned port and preserve the
-[AI trust boundary](../architecture/ai-boundary.md). The current source-only
-kernel does not pre-decide that port. A backend:
+[AI trust boundary](../architecture/ai-boundary.md). Neither the source-only
+generic kernel nor the installed cover-only observer pre-decides that port. A
+backend:
 
 - receives only the versioned bounded reviewer packet and selected staged
   attachments;

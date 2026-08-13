@@ -48,6 +48,10 @@ class ReviewWebConfiguration:
     library_polling_interval_seconds: int = 900
     graceful_shutdown_seconds: int = 30
     diagnostic_timings_enabled: bool = False
+    cover_reviewer_profile_file: str | None = None
+    cover_avoid_promotional_text: bool = False
+    cover_avoid_tie_in_branding: bool = False
+    cover_prefer_minimal_composition: bool = False
 
     def __post_init__(self) -> None:
         try:
@@ -76,6 +80,10 @@ class ReviewWebConfiguration:
             _absolute_path(self.tls_certificate_file, "TLS certificate file")
             assert self.tls_private_key_file is not None
             _absolute_path(self.tls_private_key_file, "TLS private key file")
+        if self.cover_reviewer_profile_file is not None:
+            _absolute_path(
+                self.cover_reviewer_profile_file, "cover reviewer profile file"
+            )
         if (
             type(self.session_lifetime_seconds) is not int
             or not 300 <= self.session_lifetime_seconds <= 86_400
@@ -94,6 +102,14 @@ class ReviewWebConfiguration:
             or type(self.graceful_shutdown_seconds) is not int
             or not 1 <= self.graceful_shutdown_seconds <= 300
             or type(self.diagnostic_timings_enabled) is not bool
+            or any(
+                type(value) is not bool
+                for value in (
+                    self.cover_avoid_promotional_text,
+                    self.cover_avoid_tie_in_branding,
+                    self.cover_prefer_minimal_composition,
+                )
+            )
         ):
             raise ConfigurationError("review web configuration is invalid")
         try:

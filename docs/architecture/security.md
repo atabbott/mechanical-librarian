@@ -456,19 +456,23 @@ application preflight. It stores bounded identities and canonical proposal
 projections only; no credentials, reviewer identity, decision, or target-write
 capability is accepted by the command.
 
-The installed runtime has no model reviewer, reviewer authentication, model-advice
-projection, or request/attempt/dispatch/result persistence. The retained
-deterministic packet and shadow decision/outcome contracts perform no model or
-provider dispatch.
+The retired generic review lifecycle remains absent from the installed runtime:
+there is no generic model-selected write authority or generic reviewer queue.
+The installed cover-consideration path may invoke one bounded contained visual
+observer. Its result is advisory evidence only; deterministic identity and cover
+policy decide eligibility, and an explicit owner interaction is the sole source
+of cover write authority. A missing, failed, or unqualified observer preserves
+the fully supported model-free manual path. The retained deterministic packet,
+identity, and policy contracts perform no provider dispatch.
 
-The repository-only contained reviewer accepts only bounded canonical sanitized
-JSON/text, one locally admitted output schema, and—only for the closed cover
-packet scenario—exact report-bound PNG previews. Its private profile binds exact
+The installed contained cover observer accepts only bounded canonical sanitized
+JSON/text, one locally admitted output schema, and exact report-bound PNG
+previews. Its private profile binds exact
 artifacts, credential store, limits, and model configuration. The isolated child
 has no repository, database, media, service configuration, target/provider
 credential, shell, tool, plugin, web, history, approval, or environment authority.
-A durable workbench attempt records the bounded authority and input identities
-before adapter invocation. The adapter separately withholds child release until
+A durable installed consideration records bounded attempt evidence and input
+identities before any result can influence advice. The adapter separately withholds child release until
 its in-memory callback has observed the exact PID, process group, and start
 token; those process facts are deliberately not persisted. Returned JSON is
 bounded, duplicate-free, canonical, and locally validated against the bound
@@ -500,7 +504,7 @@ provider covers remain work-level rather than manifestation-level evidence.
 It has no image inference, provider dispatch, child process, persistence,
 policy, or write authority.
 
-The source-only cover observer is the sole semantic consumer of the admitted
+The contained cover observer is the sole semantic consumer of the admitted
 packet images. It has a fixed four-property visual vocabulary with explicit
 unknown values and no owner policy, eligibility, ranking, winner, identity, or
 write fields. Its instruction states that packet data, provider context,
@@ -511,12 +515,12 @@ the complete contained-reviewer execution/request/image/result bindings, and
 emits only opaque identities plus exact preview digest/variant facts. Raw model
 output is not an observation report until that validation passes.
 
-The source-only cover-policy adjudicator introduces no model or provider call.
+The installed cover-policy adjudicator introduces no model or provider call.
 It re-admits the exact packet/images, recomputes identity outcomes from the
 exact retained source report instead of trusting a caller-authored identity
 document, and requires the current classifier, taxonomy, observer instruction
 and output-schema identities before using any candidate facts. The policy
-scenario also binds the exact reviewer profile bytes through workbench
+path also binds the exact reviewer profile bytes through contained-reviewer
 authority and recomputes the observer reference; a substituted profile or
 well-shaped invented observer reference fails closed. Its policy is three
 canonical booleans, never prompt text.
@@ -616,8 +620,10 @@ network, image, output, provider, corpus, or production authority.
 The corrected exact implementation **QUALIFIED** one retained real
 five-preview development packet with five admitted ordered observations, zero
 reference mismatch, 16.263-second end-to-end latency, and successful cleanup.
-The seam remains source-only/report-only; this is transport and schema-admission
-evidence, not semantic-quality proof or runtime activation.
+At 0.15.0 this seam remained source-only/report-only; that result is transport
+and schema-admission evidence, not semantic-quality proof. ADR-0049 later
+activates the same containment in installed owner review without granting it
+identity, decision, credential, provider, or write authority.
 
 The subsequent semantic qualification reused retained report-bound artifacts
 and the same authority boundary. One development configuration admitted 50/50
@@ -664,9 +670,13 @@ replaced only by fresh disjoint cohorts after diagnosis. No model, prompt,
 schema, packaging, taxonomy, threshold, resource, provider, network, corpus,
 production, or write authority was widened.
 
-Authentication actions remain adapter-owned and create no product lifecycle. The
-kernel is reachable only through the source workbench, excluded from installed
-artifacts, and receives only synthetic or irreversibly sanitized inputs.
+Authentication actions remain adapter-owned and create no generic reviewer
+lifecycle. Generic kernel use remains reachable only through the source
+workbench and receives only synthetic or irreversibly sanitized inputs.
+ADRs 0049 and 0050 define the sole installed exception: the cover-specific
+observer is packaged and composed for bounded private report-cover previews,
+with no target credentials, identity admission, owner-decision, or write
+authority.
 
 The final report database, `catalogue-v2` database, `config-v5`, artifact
 records, and `batch-manifest-v5` each accept only absent or their exact current

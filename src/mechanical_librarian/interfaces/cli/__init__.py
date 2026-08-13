@@ -16,6 +16,10 @@ from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 
 ReviewServeRunner = Callable[[Path, Path, Path, Path, str, int], None]
 PolicyPreviewRunner = Callable[[Path, Path, dict[str, object]], dict[str, object]]
+CoverReviewRunner = Callable[
+    [Path, Path, Path, str, str, str | None, str | None], dict[str, object]
+]
+ReviewActivityRunner = Callable[[Path, Path], dict[str, object]]
 _MAX_PROFILE_BYTES = 16_384
 
 
@@ -63,12 +67,32 @@ def _parser() -> _Parser:
     preview.add_argument("--config", required=True, metavar="PATH", type=Path)
     preview.add_argument("--database", required=True, metavar="PATH", type=Path)
     preview.add_argument("--profile", required=True, metavar="PATH", type=Path)
+    cover = commands.add_parser(
+        "cover-review", help="inspect or record one exact current cover consideration"
+    )
+    cover.add_argument(
+        "action", choices=("show", "history", "keep", "select", "no-action")
+    )
+    cover.add_argument("--config", required=True, metavar="PATH", type=Path)
+    cover.add_argument("--database", required=True, metavar="PATH", type=Path)
+    cover.add_argument("--artifacts", required=True, metavar="PATH", type=Path)
+    cover.add_argument("--case", required=True, metavar="ID")
+    cover.add_argument("--artifact", metavar="COVER_ID")
+    cover.add_argument("--idempotency-key", metavar="KEY")
+    activity = commands.add_parser(
+        "review-activity", help="inspect guarded application and recovery history"
+    )
+    activity.add_argument("--config", required=True, metavar="PATH", type=Path)
+    activity.add_argument("--database", required=True, metavar="PATH", type=Path)
     return parser
 
 
 def main(argv: Sequence[str] | None = None, *, review_serve_runner: ReviewServeRunner | None = None,
-         policy_preview_runner: PolicyPreviewRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
-    """Run the one supported installed operation without exposing workbench tools."""
+         policy_preview_runner: PolicyPreviewRunner | None = None,
+         cover_review_runner: CoverReviewRunner | None = None,
+         review_activity_runner: ReviewActivityRunner | None = None,
+         stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
+    """Run the closed installed operations without exposing workbench tools."""
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     try:
@@ -77,6 +101,52 @@ def main(argv: Sequence[str] | None = None, *, review_serve_runner: ReviewServeR
         errors.write("Review server failed: invalid invocation.\n")
         return 2
     try:
+        if arguments.command == "review-activity":
+            if review_activity_runner is None:
+                raise RuntimeError("runtime composition unavailable")
+            value = review_activity_runner(arguments.config, arguments.database)
+            output.write(
+                json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+            return 0
+        if arguments.command == "cover-review":
+            if cover_review_runner is None:
+                raise RuntimeError("runtime composition unavailable")
+            if (
+                (arguments.action == "select") != (arguments.artifact is not None)
+                or (arguments.action in {"show", "history"})
+                != (arguments.idempotency_key is None)
+                or arguments.action not in {"show", "history"} and not (
+                    isinstance(arguments.idempotency_key, str)
+                    and 16 <= len(arguments.idempotency_key.encode("utf-8")) <= 128
+                )
+            ):
+                raise ValueError("invalid cover review invocation")
+            value = cover_review_runner(
+                arguments.config,
+                arguments.database,
+                arguments.artifacts,
+                arguments.case,
+                arguments.action,
+                arguments.artifact,
+                arguments.idempotency_key,
+            )
+            output.write(
+                json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+            return 0
         if arguments.command == "policy-preview":
             if policy_preview_runner is None:
                 raise RuntimeError("runtime composition unavailable")

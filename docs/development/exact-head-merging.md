@@ -37,10 +37,10 @@ permission and:
    validates the installer-updated `RECORD`, and runs the complete public test
    suite with that isolated installed interpreter; and
 7. verifies the recorded install and import origins, then proves from outside
-   the checkout that installed help exposes only `review-serve` and that the
-   contributor workbench cannot be imported. The emitted path-free evidence
-   binds the pull-request head SHA and wheel, payload, and command output SHA-256
-   values.
+   the checkout that installed help exposes exactly the approved runtime
+   commands and that the contributor workbench cannot be imported. The emitted
+   path-free evidence binds the pull-request head SHA and wheel, payload, and
+   command output SHA-256 values.
 
 The concurrency key is scoped to the pull request. A new head cancels obsolete
 work for that pull request. The three independent jobs remain separate because

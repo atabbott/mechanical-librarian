@@ -94,7 +94,11 @@ There is no central speculative ports module, generic provider registry, job
 broker, polling service, or plugin scheduler. Bootstrap
 explicitly composes Audiobookshelf, the isolated EPUB and cover children, the
 closed Hardcover/Open Library/Google Books adapter choice, private-file credentials, SQLite,
-and the private artifact store. The contained-reviewer tuple is workbench-only.
+and the private artifact store. Generic contained-reviewer experiments remain
+workbench-only. The installed owner-confirmed cover flow composes only the
+cover-specific bounded observer contract: sanitized report-bound images enter
+an exact 1 GiB/32-task contained profile, and its typed output is advisory with
+no target credentials, decision authority, or write authority.
 
 The catalogue adapter uses bounded Audiobookshelf library, library-items, and
 item-detail GET routes. It atomically publishes one current generation of at

@@ -21,8 +21,17 @@ from playwright.sync_api import (
 )
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.cover_consideration import CoverConsiderationService
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+)
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from scripts.verify_playwright_browser import verify_playwright_browser
 from tests.unit.review_app_fixture import create_transport_test_app
@@ -31,6 +40,11 @@ from tests.unit.test_bibliographic_bundles import (
     _source as _bibliographic_source,
 )
 from tests.unit.test_review_web import _ActivityApplication
+from tests.unit.test_cover_packets import (
+    _preview as _cover_preview,
+    _report as _cover_report,
+    _source as _cover_source,
+)
 
 
 _PASSWORD = "synthetic browser password"
@@ -76,9 +90,61 @@ def _report():
 @contextmanager
 def _server(
     *, database: Path, hash_path: Path, certificate: Path, key: Path, port: int,
+    cover: bool = False,
 ):
     repository = open_repository(database, create=True, cross_thread=True)
-    report = _report()
+    cover_considerations = None
+    if cover:
+        payloads = (_cover_preview(1), _cover_preview(2))
+        sources = (
+            _cover_source(1, payloads[0], incumbent=True),
+            _cover_source(2, payloads[1], embedded=True),
+        )
+        base = _cover_report(sources)
+        incumbent = sources[0].artifact
+        assert incumbent is not None
+        fields = tuple(
+            TargetField(
+                field.destination,
+                TargetFieldState.VALUE,
+                incumbent.artifact_id,
+            )
+            if field.destination is TargetDestination.COVER
+            else field
+            for field in base.target.fields
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                base.target.connection,
+                base.target.library,
+                base.target.item,
+                fields,
+            ),
+            file=base.file,
+            local_claims=base.local_claims,
+            local_reasons=base.local_reasons,
+            providers=base.providers,
+            cover_sources=base.cover_sources,
+        )
+        artifacts = CoverArtifactStore(database.parent / "cover-artifacts")
+        for index, (source, payload) in enumerate(zip(sources, payloads, strict=True), 1):
+            assert source.artifact is not None
+            artifacts.stage(source.artifact, f"original-{index}".encode(), payload)
+        cover_considerations = CoverConsiderationService(
+            repository,
+            read_preview=lambda artifact_id, _variant: artifacts.read_preview_digest(
+                next(
+                    source.artifact.preview_digest
+                    for source in sources
+                    if source.artifact is not None
+                    and source.artifact.artifact_id == artifact_id
+                )
+            ),
+            read_preview_digest=artifacts.read_preview_digest,
+            clock=lambda: 1_000,
+        )
+    else:
+        report = _report()
     repository.publish(report, lambda: True)
     proposal_set = evaluate_report(report)
     repository.publish_proposal(proposal_set)
@@ -96,6 +162,7 @@ def _server(
         react_asset_loader=ReactAssetLoader(
             Path(os.environ["ML_REACT_ASSET_DIR"])
         ),
+        cover_considerations=cover_considerations,
     )
     server = uvicorn.Server(
         uvicorn.Config(
@@ -361,6 +428,105 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     page.go_forward()
                     page.get_by_role("heading", name="Evidence and source ledger").wait_for()
                     self.assertEqual(documents, initial_documents + 1)
+                    self.assertEqual(errors, [])
+                context.close()
+                browser.close()
+
+    def test_protected_cover_round_trip_preserves_explicit_owner_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            os.chmod(root, 0o700)
+            hash_path = root / "owner.hash"
+            hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+            os.chmod(hash_path, 0o600)
+            certificate, key = _certificate(root)
+            errors: list[str] = []
+            responses: list[tuple[str, int]] = []
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                context = browser.new_context(
+                    ignore_https_errors=True,
+                    viewport={"width": 390, "height": 844},
+                )
+                page = context.new_page()
+                page.on("pageerror", lambda error: errors.append(str(error)))
+                page.on(
+                    "console",
+                    lambda message: errors.append(message.text)
+                    if message.type == "error"
+                    else None,
+                )
+                page.on(
+                    "response",
+                    lambda response: responses.append((response.url, response.status))
+                    if "/cover-considerations" in response.url
+                    or response.url.endswith("/decisions")
+                    else None,
+                )
+                with _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=_unused_port(),
+                    cover=True,
+                ) as (origin, case_id):
+                    _login(page, origin)
+                    page.goto(f"{origin}/review/{case_id}?field=cover&subview=review")
+                    page.get_by_role("button", name="Prepare cover comparison").click()
+                    page.get_by_role("heading", name="Available").first.wait_for()
+                    expect(page.get_by_alt_text("Current library cover")).to_be_visible()
+                    expect(page.get_by_alt_text("Alternative 1 cover")).to_be_visible()
+                    self.assertIn("Policy preferences", page.locator("body").inner_text())
+                    self.assertIn(
+                        "No optional visual preferences enabled",
+                        page.locator("body").inner_text(),
+                    )
+                    with page.expect_response(
+                        lambda response: response.url.endswith("/decisions")
+                    ) as decision_response, page.expect_response(
+                        lambda response: response.url.endswith("/history")
+                    ) as history_response:
+                        page.get_by_role("button", name="Choose this cover").click()
+                    response = decision_response.value
+                    self.assertEqual(
+                        200,
+                        response.status,
+                        f"decision response: {response.text()}",
+                    )
+                    history_result = history_response.value
+                    self.assertEqual(
+                        200,
+                        history_result.status,
+                        f"history response: {history_result.text()}",
+                    )
+                    page.get_by_text(
+                        "Decision recorded from the authoritative case.", exact=True
+                    ).wait_for()
+                    page.get_by_text("Human decision: accept by owner", exact=False).wait_for()
+                    self.assertEqual(
+                        page.get_by_role("button", name="Choose this cover").count(), 0
+                    )
+                    page.get_by_role("button", name="History", exact=True).click()
+                    selected_history = page.get_by_role(
+                        "heading", name="Cover selected"
+                    ).locator("..")
+                    selected_history.get_by_text(
+                        "Historical; it grants no current authority.", exact=False
+                    ).wait_for()
+                    selected_history.get_by_text(
+                        "Owner outcome: accept", exact=False
+                    ).wait_for()
+                    expect(
+                        selected_history.get_by_role(
+                            "list", name="Historical cover candidates"
+                        )
+                    ).to_be_visible()
+                    self.assertLessEqual(
+                        page.evaluate("() => document.documentElement.scrollWidth"), 390
+                    )
+                    self.assertTrue(responses)
+                    self.assertTrue(all(status == 200 for _, status in responses), responses)
                     self.assertEqual(errors, [])
                 context.close()
                 browser.close()

@@ -141,7 +141,11 @@ def _compose_review_client(
     preparation: object,
     continuous: object,
     policy_libraries: tuple[tuple[str, dict[str, object] | None], ...],
+    artifact_store_path: Path,
 ) -> TestClient:
+    cover_considerations = composition._compose_cover_considerations(
+        repository, artifact_store_path, review
+    )
     application = compose_review_application(
         state_owner=repository,  # type: ignore[arg-type]
         session_store=repository,  # type: ignore[arg-type]
@@ -158,6 +162,7 @@ def _compose_review_client(
         preparation=preparation,  # type: ignore[arg-type]
         policy_libraries=policy_libraries,
         field_application=continuous,  # type: ignore[arg-type]
+        cover_considerations=cover_considerations,
     )
     return TestClient(
         create_review_app(application, review),  # type: ignore[arg-type]
@@ -920,6 +925,7 @@ def _installed_continuous_qualification(
                 (item.name, item.policy_override)
                 for item in configuration.libraries
             ),
+            artifacts,
         )
         return client, continuous
 
@@ -1095,12 +1101,68 @@ def _installed_continuous_qualification(
                             or type(field.get("proposed_values")) is not list
                             or not field["proposed_values"]):
                         continue
+                    selected_value = field["proposed_values"][0]
+                    consideration_id = None
+                    if field["destination"] == "cover":
+                        prepared = client.post(
+                            f"/api/v1/review-cases/{case_id}/cover-considerations/retry",
+                            headers=mutation_headers,
+                        )
+                        if prepared.status_code != 200:
+                            prepared_body = prepared.json()
+                            prepared_detail = (
+                                prepared_body.get("error")
+                                if type(prepared_body) is dict
+                                else None
+                            )
+                            prepared_code = (
+                                prepared_detail.get("code")
+                                if type(prepared_detail) is dict
+                                and type(prepared_detail.get("code")) is str
+                                else "unknown"
+                            )
+                            raise QualificationError(
+                                "installed_cover_preparation_failed:"
+                                f"{prepared.status_code}:{prepared_code}"
+                            )
+                        consideration = prepared.json()
+                        candidates = consideration.get("candidates")
+                        if type(candidates) is not list:
+                            raise QualificationError(
+                                "installed_cover_preparation_invalid"
+                            )
+                        selected_cover = next(
+                            (
+                                candidate
+                                for candidate in candidates
+                                if type(candidate) is dict
+                                and candidate.get("incumbent") is False
+                                and candidate.get("selectable") is True
+                                and type(candidate.get("artifact_id")) is str
+                            ),
+                            None,
+                        )
+                        if selected_cover is None:
+                            raise QualificationError(
+                                "installed_cover_selection_unavailable"
+                            )
+                        selected_value = {
+                            "kind": "cover",
+                            "value": selected_cover["artifact_id"],
+                        }
+                        consideration_id = consideration.get("consideration_id")
+                        if type(consideration_id) is not str:
+                            raise QualificationError(
+                                "installed_cover_preparation_invalid"
+                            )
                     payload = {
                         "destination": field["destination"], "outcome": "accept",
                         "proposal_id": field["proposal_id"],
-                        "selected_value": field["proposed_values"][0],
+                        "selected_value": selected_value,
                         "target_fingerprint": field["target_fingerprint"],
                     }
+                    if consideration_id is not None:
+                        payload["consideration_id"] = consideration_id
                     decided = client.post(
                         f"/api/v1/review-cases/{case_id}/decisions",
                         headers={**mutation_headers,

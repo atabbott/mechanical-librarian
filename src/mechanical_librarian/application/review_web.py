@@ -17,6 +17,7 @@ from mechanical_librarian.domain.human_decision import (
 from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.application.operations import StageTimer
+from mechanical_librarian.application.cover_consideration import CoverConsiderationService
 
 
 class ReviewWebError(RuntimeError):
@@ -41,6 +42,8 @@ class CurrentReviewCaseSnapshot:
     decision_documents: tuple[str, ...]
     history: tuple[dict[str, object], ...]
     automatic_attention_destinations: tuple[str, ...] = ()
+    cover_consideration_document: str | None = None
+    cover_history: tuple[dict[str, object], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +112,12 @@ class ReviewLibraryStore(Protocol):
 
 class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
     def find_human_decision(self, idempotency_digest: str) -> str | None: ...
-    def record_human_decision(self, decision: HumanDecision) -> str: ...
+    def record_human_decision(
+        self,
+        decision: HumanDecision,
+        *,
+        cover_consideration_id: str | None = None,
+    ) -> str: ...
 
 
 class OwnerSessionService:
@@ -204,8 +212,13 @@ class OwnerSessionService:
 
 
 class InspectCurrentReviewCase:
-    def __init__(self, repository: CurrentReviewCaseStore) -> None:
+    def __init__(
+        self,
+        repository: CurrentReviewCaseStore,
+        cover_considerations: CoverConsiderationService | None = None,
+    ) -> None:
         self._repository = repository
+        self._cover_considerations = cover_considerations
 
     def _read(
         self, review_case_id: str, history_limit: int | None = None
@@ -249,6 +262,17 @@ class InspectCurrentReviewCase:
             value["destination"]: value
             for value in report.target.to_data()["fields"]  # type: ignore[index]
         }
+        current_cover_consideration = (
+            None
+            if self._cover_considerations is None
+            else self._cover_considerations.project(
+                snapshot.cover_consideration_document
+            )
+        )
+        if current_cover_consideration is None:
+            # A stale or replay-obsolete cover decision remains immutable history,
+            # but it no longer resolves the current owner interaction.
+            decisions.pop("cover", None)
         fields = []
         for proposal in case.proposals:
             result = proposal["result"]
@@ -280,8 +304,7 @@ class InspectCurrentReviewCase:
                     **automatic_decision,
                     "selected_value": selected,
                 }
-            fields.append(
-                {
+            field = {
                     "current": target_fields[destination],
                     "deterministic_disposition": result["outcome"],
                     "destination": destination,
@@ -306,7 +329,9 @@ class InspectCurrentReviewCase:
                         else []
                     ),
                 }
-            )
+            if destination == "cover" and self._cover_considerations is not None:
+                field["cover_consideration"] = current_cover_consideration
+            fields.append(field)
         fields.sort(key=lambda value: not value["needs_attention"])
         return {
             "current": True,
@@ -381,8 +406,37 @@ class InspectCurrentReviewCase:
 
     def history(self, review_case_id: str, limit: int = 50) -> dict[str, object]:
         _, _, snapshot = self._read(review_case_id, limit)
+        decisions: dict[str, dict[str, object]] = {}
+        for document in snapshot.decision_documents:
+            try:
+                decision = HumanDecision.from_json(document)
+            except HumanDecisionError:
+                continue
+            decisions[decision.decision_id] = _decision_projection(decision)
+        cover_history = []
+        for raw in snapshot.cover_history:
+            item = dict(raw)
+            consideration_document = item.pop("consideration_document", None)
+            if (
+                type(consideration_document) is not str
+                or self._cover_considerations is None
+            ):
+                raise ReviewWebError("history")
+            item["consideration"] = self._cover_considerations.project_historical(
+                consideration_document
+            )
+            decision_id = item.get("decision_id")
+            item["decision"] = (
+                decisions.get(decision_id) if type(decision_id) is str else None
+            )
+            cover_history.append(item)
+        items = sorted(
+            (*snapshot.history, *cover_history),
+            key=lambda item: int(item.get("occurred_at", 0)),
+            reverse=True,
+        )[:limit]
         return {
-            "items": list(snapshot.history),
+            "items": list(items),
             "next_cursor": None,
             "review_case_id": review_case_id,
             "schema_version": "review-case-history-v1",
@@ -413,6 +467,7 @@ class RecordHumanDecision:
         outcome: str,
         selected_value: dict[str, object] | None,
         idempotency_key: str,
+        consideration_id: str | None = None,
     ) -> dict[str, object]:
         try:
             idempotency_digest = HumanDecision.idempotency_digest_for(
@@ -441,8 +496,14 @@ class RecordHumanDecision:
                     idempotency_key=idempotency_key,
                 ):
                     raise ReviewWebError("idempotency_conflict")
+                stored_replay = HumanDecision.from_json(
+                    self._repository.record_human_decision(
+                        replay,
+                        cover_consideration_id=consideration_id,
+                    )
+                )
                 return {
-                    **_decision_projection(replay),
+                    **_decision_projection(stored_replay),
                     "schema_version": "human-decision-ack-v1",
                 }
             try:
@@ -480,7 +541,10 @@ class RecordHumanDecision:
                 occurred_at=self._clock(),
             )
             stored = HumanDecision.from_json(
-                self._repository.record_human_decision(decision)
+                self._repository.record_human_decision(
+                    decision,
+                    cover_consideration_id=consideration_id,
+                )
             )
             if stored.request_digest != decision.request_digest:
                 raise ReviewWebError("persistence")
@@ -818,6 +882,10 @@ def _needs_attention(proposal: dict[str, object], automatic_attention_destinatio
     assert type(reasons) is list
     return (
         proposal["destination"] in automatic_attention_destinations
+        or (
+            proposal["destination"] == "cover"
+            and "current_cover_verified" in reasons
+        )
         or result["outcome"] == "unresolved_choice"
         or proposal["manual_required"] is True
         or "no_safe_bibliographic_combination" in reasons
