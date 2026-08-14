@@ -36,7 +36,7 @@ class ProviderRecoveryJob:
                 or self.package_case_id is not None and (type(self.package_case_id) is not str or not self.package_case_id)
                 or self.package_checkpoint is not None and (type(self.package_checkpoint) is not int or self.package_checkpoint < 0)
                 or not valid_package or type(self.generation) is not int or self.generation < 1
-                or self.state not in {"queued", "running", "complete", "failed"}
+                or self.state not in {"queued", "running", "complete", "failed", "stale"}
                 or type(self.attempt) is not int or not 0 <= self.attempt <= 5):
             raise ProviderRecoveryError("provider recovery job is invalid")
 
@@ -60,13 +60,18 @@ class ProviderRecovery:
     def __post_init__(self) -> None:
         if (not all(type(value) is str and 1 <= len(value) <= 64 for value in (self.connection, self.adapter, self.scope))
                 or type(self.generation) is not int or self.generation < 1
-                or self.state not in {"waiting", "dormant", "checking", "recovered"}
+                or self.state not in {
+                    "waiting", "dormant", "checking", "fanout",
+                    "recovered", "exhausted",
+                }
                 or type(self.attempt) is not int or not 0 <= self.attempt <= len(_BACKOFF)
                 or (self.next_eligible_at is not None and (type(self.next_eligible_at) is not int or not 0 <= self.next_eligible_at <= MAX_TIMESTAMP))):
             raise ProviderRecoveryError("provider recovery is invalid")
         if (self.state == "waiting") != (self.next_eligible_at is not None):
             raise ProviderRecoveryError("provider recovery is invalid")
-        if self.state == "recovered" and (self.attempt != 0 or self.next_eligible_at is not None):
+        if self.state in {"fanout", "recovered", "exhausted"} and self.next_eligible_at is not None:
+            raise ProviderRecoveryError("provider recovery is invalid")
+        if self.state == "recovered" and self.attempt != 0:
             raise ProviderRecoveryError("provider recovery is invalid")
 
     @classmethod

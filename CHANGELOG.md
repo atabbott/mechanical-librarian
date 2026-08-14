@@ -4,8 +4,11 @@
 
 - Add durable provider- and configuration-scoped recovery canaries. Terminal
   packages register only retry-eligible lanes; the existing supervisor claims
-  one exact-current canary before bounded sibling fanout, while shared failures,
-  stale work, and disabled configuration stop safely without metadata writes.
+  one exact-current canary before durable, independently leased sibling fanout.
+  Shared failures publish nothing and retain bounded Retry-After/backoff;
+  successful members complete ordinary proposal, admission, projection, and
+  atomic package cutover while stale work and disabled configuration stop safely
+  without target metadata writes.
   (#408)
 
 - Add the internal, unreachable scoped provider retry-successor seam. It

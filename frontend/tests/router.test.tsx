@@ -1954,6 +1954,29 @@ describe('typed review routes', () => {
     expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
   })
 
+  it('projects all durable provider-recovery phases with safe scope and work units', async () => {
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
+      provider_recovery: [
+        { state: 'waiting', affected_count: 2, next_eligible_at: 1 },
+        { state: 'checking', affected_count: 1, next_eligible_at: null },
+        { state: 'fanout', affected_count: 3, next_eligible_at: null },
+        { state: 'recovered', affected_count: 1, next_eligible_at: null },
+        { state: 'dormant', affected_count: 2, next_eligible_at: null },
+        { state: 'exhausted', affected_count: 1, next_eligible_at: null },
+      ],
+    })) }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByRole('heading', { name: 'Provider recovery' })).toBeVisible()
+    expect(screen.getByText('Waiting for a safe retry').parentElement).toHaveTextContent('2 affected scopes')
+    expect(screen.getByText('Checking provider health').parentElement).toHaveTextContent('1 affected scope')
+    expect(screen.getByText('Retrying affected work').parentElement).toHaveTextContent('3 affected works')
+    expect(screen.getByText('Recovered').parentElement).toHaveTextContent('1 affected scope')
+    expect(screen.getByText('Needs a configuration change').parentElement).toHaveTextContent('2 affected scopes')
+    expect(screen.getByText('No further retry scheduled').parentElement).toHaveTextContent('1 affected scope')
+    expect(screen.queryByRole('button', { name: /provider.*retry/i })).toBeNull()
+  })
+
   it('retains distinct recovery facts without a completion estimate', async () => {
     const user = userEvent.setup()
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({

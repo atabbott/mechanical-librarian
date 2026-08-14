@@ -139,6 +139,9 @@ class ReviewPipelineRepository(Protocol):
     def set_review_pipeline_paused(self, paused: bool, updated_at: int) -> None: ...
 
     def claim_review_pipeline_action(self, claimed_at: int) -> PipelineAction | None: ...
+    def claim_review_pipeline_work(self, work_id: str, claimed_at: int) -> PipelineAction | None: ...
+    def provider_retry_work_id(self, report_id: str) -> str: ...
+    def provider_retry_complete(self, report_id: str) -> bool: ...
 
     def take_review_pipeline_claim(self) -> PipelineAction | None: ...
 
@@ -165,6 +168,7 @@ class ReviewPipelineRepository(Protocol):
         output_id: str | None,
         completed_at: int,
         claim_next: bool = False,
+        exact_next: bool = False,
     ) -> PipelineAction | None: ...
 
     def fail_review_pipeline_action(
@@ -367,12 +371,33 @@ class ReviewPreparationPipeline:
         finally:
             repository.close()
 
+    def run_recovery_successor(self, report_id: str) -> bool:
+        """Complete one staged successor through ordinary F22 stages."""
+        repository = self._open_repository()
+        try:
+            work_id = repository.provider_retry_work_id(report_id)
+            action = repository.claim_review_pipeline_work(work_id, self._clock())
+            if action is None:
+                return repository.provider_retry_complete(report_id)
+            for index in range(4):
+                if action is None:
+                    return False
+                action = self._run_claimed_action(
+                    repository, action, claim_next=False, exact_next=True,
+                )
+                if action is None:
+                    return repository.provider_retry_complete(report_id)
+            return False
+        finally:
+            repository.close()
+
     def _run_claimed_action(
         self,
         repository: ReviewPipelineRepository,
         action: PipelineAction,
         *,
         claim_next: bool,
+        exact_next: bool = False,
     ) -> PipelineAction | None:
         timing = {
             "proposal": ("policy_evaluation", "none"),
@@ -381,11 +406,13 @@ class ReviewPreparationPipeline:
         }.get(action.stage)
         if timing is None:
             return self._execute_claimed_action(
-                repository, action, claim_next=claim_next
+                repository, action, claim_next=claim_next,
+                exact_next=exact_next,
             )
         with self._timing.measure(*timing):
             return self._execute_claimed_action(
-                repository, action, claim_next=claim_next
+                repository, action, claim_next=claim_next,
+                exact_next=exact_next,
             )
 
     def _execute_claimed_action(
@@ -394,6 +421,7 @@ class ReviewPreparationPipeline:
         action: PipelineAction,
         *,
         claim_next: bool,
+        exact_next: bool = False,
     ) -> PipelineAction | None:
         output_transaction = False
         try:
@@ -446,6 +474,7 @@ class ReviewPreparationPipeline:
                 action,
                 output_id,
                 claim_next=claim_next,
+                exact_next=exact_next,
             )
         except ReviewPipelineError as error:
             if output_transaction:
@@ -497,6 +526,7 @@ class ReviewPreparationPipeline:
         output_id: str | None,
         *,
         claim_next: bool,
+        exact_next: bool = False,
     ) -> PipelineAction | None:
         try:
             if claim_next:
@@ -505,6 +535,10 @@ class ReviewPreparationPipeline:
                         action, output_id, self._clock(),
                         not self._draining.is_set(),
                     )
+            if exact_next:
+                return repository.advance_review_pipeline_action(
+                    action, output_id, self._clock(), False, True,
+                )
             return repository.advance_review_pipeline_action(
                 action, output_id, self._clock(), False
             )
@@ -542,6 +576,8 @@ class ReviewPreparationSupervisor:
         graceful_shutdown_seconds: int = 30,
         clock: Callable[[], int] = lambda: int(time.time()),
         recovery_wake: Callable[[int], None] | None = None,
+        recovery_drain: Callable[[], None] | None = None,
+        recovery_resume: Callable[[], None] | None = None,
         on_stop: Callable[[], None] | None = None,
     ) -> None:
         if polling_interval_seconds is not None and (
@@ -557,6 +593,8 @@ class ReviewPreparationSupervisor:
         self._graceful_shutdown_seconds = graceful_shutdown_seconds
         self._clock = clock
         self._recovery_wake = recovery_wake
+        self._recovery_drain = recovery_drain
+        self._recovery_resume = recovery_resume
         self._schedule_lock = threading.Lock()
         self._next_schedule_at: int | None = None
         self._schedule_paused = False
@@ -574,6 +612,8 @@ class ReviewPreparationSupervisor:
         if self._threads:
             return
         self._stop.clear()
+        if self._recovery_resume is not None:
+            self._recovery_resume()
         resume = getattr(self._pipeline, "resume_claiming", None)
         if resume is not None:
             resume()
@@ -597,6 +637,8 @@ class ReviewPreparationSupervisor:
         drain = getattr(self._pipeline, "begin_drain", None)
         if drain is not None:
             drain()
+        if self._recovery_drain is not None:
+            self._recovery_drain()
         self._stop.set()
         self._wake.set()
 

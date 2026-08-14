@@ -126,6 +126,8 @@ from mechanical_librarian.application.provider_recovery_runner import ScopedProv
 from mechanical_librarian.application.provider_retry_successor import (
     ConfiguredProviderRetry,
     GenerateProviderRetrySuccessor,
+    ProviderRetryDisabled,
+    ProviderRetrySharedFailure,
     ProviderRetrySuccessorError,
 )
 from mechanical_librarian.application.review_application import (
@@ -1109,8 +1111,10 @@ def create_review_pipeline(
         except ConfigurationError:
             return None
         provider = next((value for value in configured if value.name == name and value.adapter == adapter), None)
-        if provider is None or not provider.enabled:
+        if provider is None:
             return None
+        if not provider.enabled:
+            raise ProviderRetryDisabled("provider retry is disabled")
 
         def factory(value=provider):
             if value.adapter == "google_books":
@@ -1124,14 +1128,42 @@ def create_review_pipeline(
 
         return ConfiguredProviderRetry(ProviderBinding(name, True, factory, adapter), adapter, generation)
 
+    pipeline_holder: dict[str, ReviewPreparationPipeline] = {}
+
     def retry_member(_recovery, job: ProviderRecoveryJob) -> None:
+        staged_report_id: str | None = None
         repository = repository_factory()
         try:
             package = repository.current_review_package(job.target_connection, job.library, job.item)
             if package != (job.package_proposal_id, job.package_report_id, job.package_case_id, job.package_checkpoint, job.package_outcome):
                 raise CurrentnessError("target or media changed")
+            current_document = repository.current_optional(
+                job.target_connection, job.library, job.item, job.file_identity,
+            )
+            if current_document is not None:
+                current_report_id = MetadataReport.from_json(current_document).report_id
+                if current_report_id != job.source_report_id:
+                    try:
+                        repository.provider_retry_work_id(current_report_id)
+                    except MetadataReportError:
+                        raise CurrentnessError("target or media changed") from None
+                    staged_report_id = current_report_id
         finally:
             repository.close()
+        pipeline = pipeline_holder.get("pipeline")
+        if staged_report_id is not None:
+            if pipeline is None or not pipeline.run_recovery_successor(staged_report_id):
+                raise ProviderRetrySuccessorError("provider retry package incomplete")
+            repository = repository_factory()
+            try:
+                package = repository.current_review_package(
+                    job.target_connection, job.library, job.item
+                )
+                if package is None or package[1] != staged_report_id:
+                    raise ProviderRetrySuccessorError("provider retry package incomplete")
+            finally:
+                repository.close()
+            return
         connection, library, mount, _ = configuration.select(job.target_connection, job.library)
         if mount is None:
             raise CurrentnessError("target or media changed")
@@ -1143,22 +1175,47 @@ def create_review_pipeline(
             maximum_bytes=configuration.limits.target_response_bytes,
             timeout_seconds=configuration.limits.timeout_seconds,
         )
-        GenerateProviderRetrySuccessor(
+        serialized = GenerateProviderRetrySuccessor(
             target=target, inspector=_IsolatedEpubInspector(artifacts),
             repository_factory=repository_factory, provider_resolver=retry_resolver,
-            mount=mount, limits=configuration.limits, after_publication=lambda _repository, _report: None,
+            mount=mount, limits=configuration.limits,
+            after_publication=lambda bound, report: bound.stage_provider_retry_successor(
+                job.source_report_id, report, int(time.time())
+            ),
         ).run(job.source_report_id, tuple(json.loads(job.lane_ids)), provider_name=job.connection, adapter=job.adapter, generation=job.generation)
+        successor = MetadataReport.from_json(serialized)
+        if pipeline is None or not pipeline.run_recovery_successor(successor.report_id):
+            raise ProviderRetrySuccessorError("provider retry package incomplete")
+        repository = repository_factory()
+        try:
+            package = repository.current_review_package(
+                job.target_connection, job.library, job.item
+            )
+            if package is None or package[1] != successor.report_id:
+                raise ProviderRetrySuccessorError("provider retry package incomplete")
+        finally:
+            repository.close()
 
     def classify_recovery_failure(error: Exception) -> tuple[str, int | None]:
+        if isinstance(error, ProviderRetryDisabled):
+            return "disabled", None
+        if isinstance(error, ProviderRetrySharedFailure):
+            failure = (
+                "transient" if error.failure in {"unavailable", "incomplete"}
+                else error.failure
+            )
+            return failure, error.retry_after
         if isinstance(error, ProviderRetrySuccessorError) and "configuration" in str(error):
             return "configuration", None
         if isinstance(error, (CurrentnessError, TargetNotFoundError)):
             return "stale", None
         return "transient", None
 
+    recovery_cancel = threading.Event()
     recovery_runner = ScopedProviderRecoveryRunner(
         store=provider_recovery, generation=configuration.provider_recovery_generation,
         retry=retry_member, classify_failure=classify_recovery_failure,
+        clock=lambda: int(time.time()), cancelled=recovery_cancel.is_set,
     )
 
     def discover(connection: str, library: str):
@@ -1345,11 +1402,14 @@ def create_review_pipeline(
         project=project,
         timing=timing,
     )
+    pipeline_holder["pipeline"] = pipeline
     return ReviewPreparationSupervisor(
         pipeline,
         polling_interval_seconds=configuration.review.library_polling_interval_seconds,
         graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
         recovery_wake=lambda now: recovery_runner.run_one(now=now),
+        recovery_drain=recovery_cancel.set,
+        recovery_resume=recovery_cancel.clear,
         on_stop=provider_recovery.close,
     )
 

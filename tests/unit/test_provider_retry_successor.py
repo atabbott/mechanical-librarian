@@ -14,8 +14,10 @@ from mechanical_librarian.application.metadata_report import (
     provider_observation,
 )
 from mechanical_librarian.application.provider_retry_successor import (
-    ConfiguredProviderRetry, GenerateProviderRetrySuccessor, ProviderRetrySuccessorError,
+    ConfiguredProviderRetry, GenerateProviderRetrySuccessor,
+    ProviderRetrySharedFailure, ProviderRetrySuccessorError,
 )
+from mechanical_librarian.adapters.providers.retry_safety import ProviderAttemptRecord
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind, ClaimScope, FileFacts, LocalClaim, MetadataReport, ProviderCandidate, ProviderQueryKind, ProviderRequestAccounting, ProviderStatus,
     TargetDestination, TargetFacts, TargetFieldState,
@@ -51,7 +53,7 @@ class _Repository:
 
 
 class _Provider:
-    def __init__(self, observation): self.observation = observation; self.plans = []; self.deadlines = []
+    def __init__(self, observation, attempt_records=()): self.observation = observation; self.plans = []; self.deadlines = []; self.attempt_records = attempt_records
     def observe(self, plan, *, deadline=None): self.plans.append(plan); self.deadlines.append(deadline); return self.observation
 
 
@@ -202,6 +204,54 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
             service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)
         self.assertEqual(self.report.report_id, self.repository.current_id)
         self.assertEqual(self.report.report_id, self.repository.package[1])
+
+    def test_shared_terminal_matrix_is_typed_before_publication(self):
+        for status, failure in (
+            (ProviderStatus.AUTHENTICATION, "authentication"),
+            (ProviderStatus.AUTHORIZATION, "authorization"),
+            (ProviderStatus.RATE_LIMITED, "rate_limited"),
+            (ProviderStatus.UNAVAILABLE, "unavailable"),
+            (ProviderStatus.INCOMPLETE, "incomplete"),
+        ):
+            with self.subTest(status=status):
+                self.repository = _Repository(self.report)
+                provider = _Provider(provider_observation(
+                    "catalogue", (ProviderLaneResult(self.failed, status),),
+                    authority="open_library",
+                ))
+                service = self.service(ConfiguredProviderRetry(
+                    ProviderBinding("catalogue", True, lambda: provider, "open_library"),
+                    "open_library", 2,
+                ))
+                with self.assertRaises(ProviderRetrySharedFailure) as raised:
+                    service.run(
+                        self.report.report_id, (self.failed.identity,),
+                        provider_name="catalogue", adapter="open_library", generation=2,
+                    )
+                self.assertEqual(failure, raised.exception.failure)
+                self.assertEqual(self.report.report_id, self.repository.current_id)
+                self.assertEqual(self.report.report_id, self.repository.package[1])
+
+    def test_validated_final_retry_after_is_carried_by_shared_failure(self):
+        record = ProviderAttemptRecord(
+            "catalogue", 1, "http_429", 37.0, 0.1, "exhausted"
+        )
+        provider = _Provider(provider_observation(
+            "catalogue", (ProviderLaneResult(self.failed, ProviderStatus.RATE_LIMITED),),
+            authority="open_library",
+        ), (record,))
+        service = self.service(ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, lambda: provider, "open_library"),
+            "open_library", 2,
+        ))
+        with self.assertRaises(ProviderRetrySharedFailure) as raised:
+            service.run(
+                self.report.report_id, (self.failed.identity,),
+                provider_name="catalogue", adapter="open_library", generation=2,
+            )
+        self.assertEqual(("rate_limited", 37), (
+            raised.exception.failure, raised.exception.retry_after,
+        ))
 
     def test_merge_uses_one_timestamp_and_retains_bounded_evidence(self):
         diagnostic = FailureDiagnostic(

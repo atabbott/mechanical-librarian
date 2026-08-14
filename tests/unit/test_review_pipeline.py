@@ -2008,6 +2008,102 @@ class _ScheduledPipeline:
         self.is_paused = paused
 
 
+class ProviderRecoveryPipelineTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.path = Path(self.temporary.name) / "reports.sqlite3"
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(self) -> None:
+        predecessor = _report(
+            title="Visible predecessor", content_digest="a", file_identity="b"
+        )
+        successor = _report(
+            title="Recovered successor", content_digest="a", file_identity="b"
+        )
+        repository = open_repository(self.path)
+        repository.enter_shadow_preview(1)
+        repository.close()
+
+        def pipeline_for(report: MetadataReport, now: int) -> ReviewPreparationPipeline:
+            proposal = evaluate_report(report)
+
+            def extract(bound, action: PipelineAction, claim_next: bool):
+                bound.publish(
+                    report, lambda: True,
+                    after_publication=lambda current, published: current.complete_review_extraction_publication(
+                        action, published.report_id, now, 0, None, claim_next, None
+                    ),
+                )
+                return report.report_id, True
+
+            def propose(bound, _: str) -> str:
+                bound.publish_proposal(proposal)
+                return proposal.proposal_set_id
+
+            def admit(bound, _: str) -> tuple[str, str | None]:
+                value = json.loads(bound.admit_review_case(proposal))
+                return value["status"], value.get("review_case_id")
+
+            def project(bound, action: PipelineAction) -> str:
+                outcome = bound.persist_shadow_outcome(
+                    action.review_case_id or "", now, staged_action=action
+                )
+                return "stale" if outcome == "stale" else "complete"
+
+            return ReviewPreparationPipeline(
+                repository_factory=lambda: open_repository(self.path),
+                libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
+                discover=lambda *_: (
+                    1, report.file.content_digest,
+                    (replace(_entry("item-1", report.file.identity), library="ebooks"),),
+                ),
+                extract=extract, providers=lambda *_: (), propose=propose,
+                admit=admit, project=project, clock=lambda: now,
+            )
+
+        initial = pipeline_for(predecessor, 20)
+        initial.request("primary", "ebooks")
+        for _ in range(5):
+            self.assertTrue(initial.run_next(1))
+        repository = open_repository(self.path)
+        predecessor_package = repository.current_review_package(
+            "primary", "ebooks", "item-1"
+        )
+        self.assertIsNotNone(predecessor_package)
+        current_document = repository.current_optional(
+            "primary", "ebooks", "item-1", predecessor.file.identity
+        )
+        self.assertIsNotNone(current_document)
+        assert current_document is not None
+        expected_current = MetadataReport.from_json(current_document).report_id
+        self.assertEqual(predecessor.report_id, expected_current)
+        repository.publish(
+            successor, lambda: True, expected_current,
+            after_publication=lambda bound, report: bound.stage_provider_retry_successor(
+                predecessor.report_id, report, 30
+            ),
+            expected_package=predecessor_package,
+        )
+        self.assertEqual(
+            predecessor_package,
+            repository.current_review_package("primary", "ebooks", "item-1"),
+        )
+        repository.close()
+
+        recovery = pipeline_for(successor, 30)
+        self.assertTrue(recovery.run_recovery_successor(successor.report_id))
+        repository = open_repository(self.path)
+        current = repository.current_review_package("primary", "ebooks", "item-1")
+        self.assertIsNotNone(current)
+        assert current is not None
+        self.assertEqual(successor.report_id, current[1])
+        self.assertNotEqual(predecessor_package, current)
+        repository.close()
+
+
 class ReviewPipelineSchedulingTests(unittest.TestCase):
     def test_startup_interval_and_pause_admission_are_bounded(self) -> None:
         clock = [100]

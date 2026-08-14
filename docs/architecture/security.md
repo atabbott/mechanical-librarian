@@ -734,6 +734,17 @@ endpoints disabled. Per-response, aggregate-byte, row, lane, request, and
 deadline bounds fail closed into typed provider outcomes; quota and service
 failures are never reclassified as `no_match`.
 
+Provider recovery is credential-bearing background egress under the same
+adapter limits, never a new network authority. The claimant revalidates the
+exact source report, full current review-package tuple, target/media identity,
+enabled provider binding, and positive configuration generation immediately
+before constructing the provider client. Provider work runs outside SQLite
+writer transactions with the existing aggregate request, byte, 60-second
+deadline, retry, pacing, and cancellation bounds. Shared authentication,
+authorization, quota, unavailable, or incomplete results are classified before
+publication; diagnostics retain neither credentials, raw headers, queries,
+payloads, response bodies, work identifiers, nor private paths.
+
 The deterministic shadow-decision preview adds no network or credential
 authority. It opens only an existing regular exact-current report database by
 the dedicated read-only/no-create path, verifies query-only behavior, and never

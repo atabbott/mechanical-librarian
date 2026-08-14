@@ -42,6 +42,26 @@ class ProviderRetrySuccessorError(MetadataReportError):
     """Reject a stale, rebound, or non-retryable internal retry request."""
 
 
+class ProviderRetrySharedFailure(ProviderRetrySuccessorError):
+    """A bounded provider-health result that must not publish a successor."""
+
+    def __init__(self, failure: str, retry_after: int | None = None) -> None:
+        if failure not in {
+            "authentication", "authorization", "configuration",
+            "rate_limited", "unavailable", "incomplete",
+        } or (retry_after is not None and (
+            type(retry_after) is not int or not 1 <= retry_after <= 86_400
+        )):
+            raise ProviderRetrySuccessorError("provider retry failure is invalid")
+        super().__init__("provider retry shared failure")
+        self.failure = failure
+        self.retry_after = retry_after
+
+
+class ProviderRetryDisabled(ProviderRetrySuccessorError):
+    """The exact configured provider was disabled before recovery egress."""
+
+
 _RETRYABLE = frozenset({
     ProviderStatus.RATE_LIMITED,
     ProviderStatus.UNAVAILABLE,
@@ -140,14 +160,18 @@ class GenerateProviderRetrySuccessor:
             live_provider = self._provider(source, provider_name, adapter, generation)
             if self._provider_identity(live_provider) != self._provider_identity(provider):
                 raise ProviderRetrySuccessorError("provider retry configuration changed")
-            replacement = self._observe(
+            replacement, retry_after = self._observe(
                 live_provider, plan, selected, deadline=time.monotonic() + 60.0
             )
             # A shared provider condition is not evidence for a successor.
             # Leave the predecessor current so the recovery claim can back off
             # before any sibling is contacted.
-            if any(lane.status in _RETRYABLE for lane in replacement.lanes):
-                raise ProviderRetrySuccessorError("provider retry shared failure")
+            shared = self._shared_failure(replacement)
+            if shared is not None:
+                raise ProviderRetrySharedFailure(
+                    shared,
+                    retry_after if shared == "rate_limited" else None,
+                )
             merged = self._merged(plan, original, selected, replacement)
             successor = MetadataReport.create(
                 target=source.target, file=source.file,
@@ -272,7 +296,7 @@ class GenerateProviderRetrySuccessor:
         selected: tuple,
         *,
         deadline: float,
-    ) -> ProviderObservation:
+    ) -> tuple[ProviderObservation, int | None]:
         try:
             client: MetadataProvider = provider.binding.factory()
             observation = client.observe(
@@ -291,7 +315,50 @@ class GenerateProviderRetrySuccessor:
             or any(lane.status is ProviderStatus.MALFORMED for lane in observation.lanes)
         ):
             raise ProviderRetrySuccessorError("provider retry result is invalid")
-        return observation
+        return observation, self._retry_after(client)
+
+    @staticmethod
+    def _shared_failure(observation: ProviderObservation) -> str | None:
+        """Classify provider health before any successor can be published."""
+        statuses = (observation.status, *(lane.status for lane in observation.lanes))
+        for status in (
+            ProviderStatus.AUTHENTICATION,
+            ProviderStatus.AUTHORIZATION,
+            ProviderStatus.RATE_LIMITED,
+            ProviderStatus.UNAVAILABLE,
+            ProviderStatus.INCOMPLETE,
+        ):
+            if status in statuses:
+                return status.value
+        return None
+
+    @staticmethod
+    def _retry_after(provider: MetadataProvider) -> int | None:
+        """Read only a canonical final bounded delay from adapter-safe evidence."""
+        try:
+            records = provider.attempt_records
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if type(records) is not tuple or not records:
+            return None
+        record = records[-1]
+        try:
+            category = record.category
+            delay = record.delay_seconds
+            outcome = record.outcome
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if category != "http_429" or outcome not in {"exhausted", "terminal"}:
+            return None
+        if type(delay) not in {int, float} or isinstance(delay, bool):
+            return None
+        try:
+            integer = int(delay)
+        except (OverflowError, ValueError):
+            return None
+        if float(integer) != float(delay) or not 1 <= integer <= 86_400:
+            return None
+        return integer
 
     def _merged(self, plan, original, selected, replacement) -> ProviderObservation:
         selected_ids = {lane.identity for lane in selected}
@@ -365,4 +432,8 @@ class GenerateProviderRetrySuccessor:
         return result
 
 
-__all__ = ["ConfiguredProviderRetry", "GenerateProviderRetrySuccessor", "ProviderRetryResolver", "ProviderRetrySuccessorError"]
+__all__ = [
+    "ConfiguredProviderRetry", "GenerateProviderRetrySuccessor",
+    "ProviderRetryDisabled", "ProviderRetryResolver", "ProviderRetrySharedFailure",
+    "ProviderRetrySuccessorError",
+]

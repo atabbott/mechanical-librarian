@@ -18,10 +18,14 @@ Persist a closed provider-connection, adapter, and scope recovery state. A
 transient or rate-limited failure waits for a bounded delay; authentication,
 authorization, and configuration failures are dormant until the operator
 increments `provider_recovery_generation` in `config-v6` and restarts. The
-store atomically leases one due canary. The existing preparation supervisor is its
+store atomically leases one due canary for five minutes, covering the final
+preflight and 60-second provider budget. The existing preparation supervisor is its
 only wake, clock, drain, and shutdown owner; it has no independent queue or
 endpoint. A successful canary may process remaining durable members in that
-exact scope once. A shared failure publishes no successor, has zero fanout,
+exact scope once. Canary success first commits an explicit durable fanout phase;
+each sibling then receives its own lease, so restart can continue partial fanout
+without extending a scope lease or repeating the canary. A shared failure
+requeues the canary, publishes no successor, has zero fanout,
 and takes Retry-After when supplied before bounded backoff. Target and package
 drift close safely without a provider call.
 
@@ -29,9 +33,10 @@ Health rows are exact-current and events are append-only. Existing state must
 match this exact schema; there are no migrations or imports.
 
 Startup rejects a persisted generation newer than configuration and advances
-every older row atomically through its domain generation transition. Checking
+every older row and its unfinished exact jobs atomically through its domain
+generation transition. Checking
 can only transition through strict lease completion. Terminal health
-observations are atomic and idempotent: checking and dormant take precedence,
+observations are atomic and idempotent: checking, fanout, and dormant take precedence,
 and a dormant observation replaces waiting once without rescheduling repeated
 transient or rate-limited observations.
 
@@ -44,7 +49,8 @@ and transaction across worker threads and closes after the supervisor drains.
 
 ### Positive
 
-- A restart and competing workers cannot claim more than one eligible scope.
+- A restart and competing manual/background workers cannot duplicate canary or
+  sibling egress.
 - Operators have one explicit, documented recovery wake mechanism.
 
 ### Negative

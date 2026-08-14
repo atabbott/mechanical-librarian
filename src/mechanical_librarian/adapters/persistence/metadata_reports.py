@@ -3829,6 +3829,121 @@ class SQLiteMetadataReportRepository:
                 raise
             raise MetadataReportError("review preparation claim failed") from error
 
+    def claim_review_pipeline_work(
+        self, work_id: str, claimed_at: int
+    ) -> PipelineAction | None:
+        """Claim one named queued successor without bypassing stage handling."""
+        if type(work_id) is not str or type(claimed_at) is not int or claimed_at < 0:
+            raise MetadataReportError("review preparation state is invalid")
+        owns_transaction = not self._connection.in_transaction
+        try:
+            if owns_transaction:
+                self._connection.execute("BEGIN IMMEDIATE")
+            work = self._connection.execute(
+                "SELECT work_id,scan_id,stage,attempt,connection_name,library_name,library_id,"
+                "producer_fingerprint,catalogue_generation,catalogue_fingerprint,item_id,"
+                "file_identity,source_revision,report_id,proposal_set_id,review_case_id,"
+                "source_fingerprint,(SELECT checkpoint FROM current_review_case_lineages lineage "
+                "WHERE lineage.connection_name=review_preparation_work.connection_name "
+                "AND lineage.library_name=review_preparation_work.library_name "
+                "AND lineage.item_id=review_preparation_work.item_id "
+                "AND lineage.proposal_set_id=review_preparation_work.proposal_set_id "
+                "AND lineage.report_id=review_preparation_work.report_id "
+                "AND lineage.review_case_id=review_preparation_work.review_case_id),"
+                "(SELECT generation FROM metadata_policy_state WHERE singleton=1) "
+                "FROM review_preparation_work WHERE work_id=? AND state='queued' "
+                "AND retry_not_before<=? AND EXISTS(SELECT 1 FROM review_preparation_scans s "
+                "WHERE s.scan_id=review_preparation_work.scan_id AND s.state='processing')",
+                (work_id, claimed_at),
+            ).fetchone()
+            if work is None:
+                if owns_transaction:
+                    self._connection.execute("COMMIT")
+                return None
+            attempt = work[3] + 1
+            if self._connection.execute(
+                "UPDATE review_preparation_work SET state='running',attempt=?,updated_at=? "
+                "WHERE work_id=? AND state='queued'",
+                (attempt, claimed_at, work_id),
+            ).rowcount != 1:
+                raise MetadataReportError("review preparation claim changed")
+            if owns_transaction:
+                self._connection.execute("COMMIT")
+            return PipelineAction(
+                work[0], work[1], work[2], attempt, work[4], work[5], work[6],
+                work[7], work[8], work[9], work[10], work[11], work[12], work[13],
+                work[14], work[15], work[16], work[17], work[18],
+            )
+        except (sqlite3.Error, MetadataReportError) as error:
+            if owns_transaction and self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("review preparation claim failed") from error
+
+    def stage_provider_retry_successor(
+        self, source_report_id: str, report: MetadataReport, staged_at: int
+    ) -> str:
+        """Attach a retry report to its existing work before publication commits."""
+        if (
+            not self._connection.in_transaction
+            or type(source_report_id) is not str
+            or not source_report_id
+            or type(report) is not MetadataReport
+            or type(staged_at) is not int
+            or staged_at < 0
+        ):
+            raise MetadataReportError("provider retry staging is invalid")
+        row = self._connection.execute(
+            "SELECT work_id,scan_id FROM review_preparation_work WHERE connection_name=? "
+            "AND library_name=? AND item_id=? AND file_identity=? "
+            "AND report_id=? AND state IN ('complete','failed','stale')",
+            (report.target.connection, report.target.library, report.target.item,
+             report.file.identity, source_report_id),
+        ).fetchone()
+        if row is None:
+            raise MetadataReportError("provider retry staging is stale")
+        if self._connection.execute(
+            "UPDATE review_preparation_work SET stage='provider',state='queued',attempt=0,"
+            "recovery_attempt=0,retry_not_before=0,report_id=?,proposal_set_id=NULL,"
+            "review_case_id=NULL,failure_code=NULL,failure_root=NULL,updated_at=? "
+            "WHERE work_id=? AND state IN ('complete','failed','stale')",
+            (report.report_id, staged_at, row[0]),
+        ).rowcount != 1:
+            raise MetadataReportError("provider retry staging changed")
+        self._connection.execute(
+            "UPDATE review_preparation_scans SET state='processing',updated_at=? "
+            "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
+            (staged_at, row[1]),
+        )
+        return row[0]
+
+    def provider_retry_work_id(self, report_id: str) -> str:
+        try:
+            row = self._connection.execute(
+                "SELECT work_id FROM review_preparation_work WHERE report_id=? "
+                "AND stage IN ('provider','proposal','admission','projection','complete')",
+                (report_id,),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise MetadataReportError("provider retry staging is unavailable") from error
+        if row is None:
+            raise MetadataReportError("provider retry staging is stale")
+        return row[0]
+
+    def provider_retry_complete(self, report_id: str) -> bool:
+        try:
+            row = self._connection.execute(
+                "SELECT 1 FROM review_preparation_work w WHERE w.report_id=? "
+                "AND w.stage='complete' AND w.state='complete' AND EXISTS("
+                "SELECT 1 FROM current_review_packages p WHERE p.connection_name=w.connection_name "
+                "AND p.library_name=w.library_name AND p.item_id=w.item_id AND p.report_id=w.report_id)",
+                (report_id,),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise MetadataReportError("provider retry staging is unavailable") from error
+        return row is not None
+
     def complete_review_discovery(
         self,
         action: PipelineAction,
@@ -4159,8 +4274,9 @@ class SQLiteMetadataReportRepository:
         output_id: str | None,
         completed_at: int,
         claim_next: bool = False,
+        exact_next: bool = False,
     ) -> PipelineAction | None:
-        if type(claim_next) is not bool:
+        if type(claim_next) is not bool or type(exact_next) is not bool or (claim_next and exact_next):
             raise MetadataReportError("review preparation state is invalid")
         stages = {
             "extraction": ("provider", "report_id"),
@@ -4262,7 +4378,11 @@ class SQLiteMetadataReportRepository:
             next_action = (
                 self.claim_review_pipeline_action(completed_at)
                 if claim_next
-                else None
+                else (
+                    self.claim_review_pipeline_work(action.action_id, completed_at)
+                    if exact_next and target[0] != "complete"
+                    else None
+                )
             )
             self._connection.commit()
             return next_action

@@ -18,11 +18,17 @@ of failed lane identities. It revalidates the source target and file, resolves
 the current persisted source report, reconstructs the same discovery lanes,
 and dispatches only `rate_limited`, `unavailable`, or `incomplete` lanes.
 
+Authentication, authorization, rate-limit, unavailable, and incomplete
+terminal observations are classified before publication and become typed,
+bounded recovery failures. A canonical final rate-limit delay is retained from
+adapter-safe attempt evidence; no raw header is stored. No-match and other valid
+non-shared terminal outcomes may form a successor.
+
 The replacement observation is merged with untouched sibling lane data. Exact
 candidate identity duplicates coalesce; conflicting evidence is rejected by the
 existing bounded observation constructor. Publication uses the existing
-expected-current report transaction and optional review-package publication
-callback. It also asserts the closed source package identity (report, proposal,
+expected-current report transaction and atomically stages the existing F22
+provider/proposal/admission/projection work. It also asserts the closed source package identity (report, proposal,
 case, checkpoint, and outcome) inside that transaction,
 while the final target/media/cover currentness check remains immediately before
 it. This keeps provider and target work outside the SQLite writer lock, while
@@ -37,6 +43,10 @@ selected and retained evidence without discarding bounded diagnostics, request
 accounting, or a valid edition-overflow witness.
 If a retained overflow witness would become invalid after a sibling retry, or a
 replacement lane is malformed, it fails closed before publication.
+
+The recovery member succeeds only after that ordinary F22 work has projected
+and atomically replaced `current_review_packages`; the predecessor package
+remains owner-visible until then.
 
 F24 activation composes this seam behind the existing preparation supervisor
 and its explicit owner CLI invocation. Neither path is an endpoint, bulk
