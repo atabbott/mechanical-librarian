@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-14T18:32:44Z",
+  "title": "Design System: Mechanical Librarian",
+  "extensions": {
+    "colorMeta": {
+      "reading-room-paper": { "role": "neutral", "displayName": "Reading Room Paper", "canonical": "#f4f2ec", "tonalRamp": ["oklch(15% 0.008 91.5)", "oklch(27% 0.008 91.5)", "oklch(39% 0.008 91.5)", "oklch(51% 0.008 91.5)", "oklch(63% 0.008 91.5)", "oklch(75% 0.008 91.5)", "oklch(87% 0.008 91.5)", "oklch(95% 0.008 91.5)"] },
+      "porcelain-sheet": { "role": "neutral", "displayName": "Porcelain Sheet", "canonical": "#fbfaf6", "tonalRamp": ["oklch(15% 0.005 95.1)", "oklch(27% 0.005 95.1)", "oklch(39% 0.005 95.1)", "oklch(51% 0.005 95.1)", "oklch(63% 0.005 95.1)", "oklch(75% 0.005 95.1)", "oklch(87% 0.005 95.1)", "oklch(95% 0.005 95.1)"] },
+      "bright-sheet": { "role": "neutral", "displayName": "Bright Sheet", "canonical": "#ffffff", "tonalRamp": ["oklch(15% 0.000 89.9)", "oklch(27% 0.000 89.9)", "oklch(39% 0.000 89.9)", "oklch(51% 0.000 89.9)", "oklch(63% 0.000 89.9)", "oklch(75% 0.000 89.9)", "oklch(87% 0.000 89.9)", "oklch(95% 0.000 89.9)"] },
+      "inkwell": { "role": "neutral", "displayName": "Inkwell", "canonical": "#17201e", "tonalRamp": ["oklch(15% 0.014 180.0)", "oklch(27% 0.014 180.0)", "oklch(39% 0.014 180.0)", "oklch(51% 0.014 180.0)", "oklch(63% 0.014 180.0)", "oklch(75% 0.014 180.0)", "oklch(87% 0.014 180.0)", "oklch(95% 0.014 180.0)"] },
+      "quiet-ink": { "role": "neutral", "displayName": "Quiet Ink", "canonical": "#56615e", "tonalRamp": ["oklch(15% 0.014 177.5)", "oklch(27% 0.014 177.5)", "oklch(39% 0.014 177.5)", "oklch(51% 0.014 177.5)", "oklch(63% 0.014 177.5)", "oklch(75% 0.014 177.5)", "oklch(87% 0.014 177.5)", "oklch(95% 0.014 177.5)"] },
+      "archive-teal": { "role": "primary", "displayName": "Archive Teal", "canonical": "#1b6558", "tonalRamp": ["oklch(15% 0.074 178.5)", "oklch(27% 0.074 178.5)", "oklch(39% 0.074 178.5)", "oklch(51% 0.074 178.5)", "oklch(63% 0.074 178.5)", "oklch(75% 0.074 178.5)", "oklch(87% 0.074 178.5)", "oklch(95% 0.074 178.5)"] },
+      "archive-teal-deep": { "role": "primary", "displayName": "Deep Archive Teal", "canonical": "#0f4c42", "tonalRamp": ["oklch(15% 0.062 179.1)", "oklch(27% 0.062 179.1)", "oklch(39% 0.062 179.1)", "oklch(51% 0.062 179.1)", "oklch(63% 0.062 179.1)", "oklch(75% 0.062 179.1)", "oklch(87% 0.062 179.1)", "oklch(95% 0.062 179.1)"] },
+      "archive-teal-wash": { "role": "primary", "displayName": "Archive Teal Wash", "canonical": "#dcebe6", "tonalRamp": ["oklch(15% 0.017 174.0)", "oklch(27% 0.017 174.0)", "oklch(39% 0.017 174.0)", "oklch(51% 0.017 174.0)", "oklch(63% 0.017 174.0)", "oklch(75% 0.017 174.0)", "oklch(87% 0.017 174.0)", "oklch(95% 0.017 174.0)"] },
+      "catalogue-line": { "role": "neutral", "displayName": "Catalogue Line", "canonical": "#d9d7cf", "tonalRamp": ["oklch(15% 0.011 95.2)", "oklch(27% 0.011 95.2)", "oklch(39% 0.011 95.2)", "oklch(51% 0.011 95.2)", "oklch(63% 0.011 95.2)", "oklch(75% 0.011 95.2)", "oklch(87% 0.011 95.2)", "oklch(95% 0.011 95.2)"] },
+      "catalogue-line-strong": { "role": "neutral", "displayName": "Strong Catalogue Line", "canonical": "#b9beb9", "tonalRamp": ["oklch(15% 0.009 145.5)", "oklch(27% 0.009 145.5)", "oklch(39% 0.009 145.5)", "oklch(51% 0.009 145.5)", "oklch(63% 0.009 145.5)", "oklch(75% 0.009 145.5)", "oklch(87% 0.009 145.5)", "oklch(95% 0.009 145.5)"] },
+      "margin-ochre": { "role": "secondary", "displayName": "Margin Ochre", "canonical": "#8a5a16", "tonalRamp": ["oklch(15% 0.101 70.0)", "oklch(27% 0.101 70.0)", "oklch(39% 0.101 70.0)", "oklch(51% 0.101 70.0)", "oklch(63% 0.101 70.0)", "oklch(75% 0.101 70.0)", "oklch(87% 0.101 70.0)", "oklch(95% 0.101 70.0)"] },
+      "margin-ochre-wash": { "role": "secondary", "displayName": "Margin Ochre Wash", "canonical": "#f4e7cf", "tonalRamp": ["oklch(15% 0.035 82.9)", "oklch(27% 0.035 82.9)", "oklch(39% 0.035 82.9)", "oklch(51% 0.035 82.9)", "oklch(63% 0.035 82.9)", "oklch(75% 0.035 82.9)", "oklch(87% 0.035 82.9)", "oklch(95% 0.035 82.9)"] },
+      "correction-red": { "role": "tertiary", "displayName": "Correction Red", "canonical": "#8c3434", "tonalRamp": ["oklch(15% 0.120 23.2)", "oklch(27% 0.120 23.2)", "oklch(39% 0.120 23.2)", "oklch(51% 0.120 23.2)", "oklch(63% 0.120 23.2)", "oklch(75% 0.120 23.2)", "oklch(87% 0.120 23.2)", "oklch(95% 0.120 23.2)"] },
+      "focus-blue": { "role": "tertiary", "displayName": "Focus Blue", "canonical": "#146fba", "tonalRamp": ["oklch(15% 0.141 249.9)", "oklch(27% 0.141 249.9)", "oklch(39% 0.141 249.9)", "oklch(51% 0.141 249.9)", "oklch(63% 0.141 249.9)", "oklch(75% 0.141 249.9)", "oklch(87% 0.141 249.9)", "oklch(95% 0.141 249.9)"] },
+      "after-hours-paper": { "role": "neutral", "displayName": "After-Hours Paper", "canonical": "#0f1512", "tonalRamp": ["oklch(15% 0.011 163.5)", "oklch(27% 0.011 163.5)", "oklch(39% 0.011 163.5)", "oklch(51% 0.011 163.5)", "oklch(63% 0.011 163.5)", "oklch(75% 0.011 163.5)", "oklch(87% 0.011 163.5)", "oklch(95% 0.011 163.5)"] },
+      "deep-stacks": { "role": "neutral", "displayName": "Deep Stacks", "canonical": "#151d19", "tonalRamp": ["oklch(15% 0.014 163.3)", "oklch(27% 0.014 163.3)", "oklch(39% 0.014 163.3)", "oklch(51% 0.014 163.3)", "oklch(63% 0.014 163.3)", "oklch(75% 0.014 163.3)", "oklch(87% 0.014 163.3)", "oklch(95% 0.014 163.3)"] },
+      "raised-night-sheet": { "role": "neutral", "displayName": "Raised Night Sheet", "canonical": "#1b2520", "tonalRamp": ["oklch(15% 0.017 163.2)", "oklch(27% 0.017 163.2)", "oklch(39% 0.017 163.2)", "oklch(51% 0.017 163.2)", "oklch(63% 0.017 163.2)", "oklch(75% 0.017 163.2)", "oklch(87% 0.017 163.2)", "oklch(95% 0.017 163.2)"] },
+      "night-ink": { "role": "neutral", "displayName": "Night Ink", "canonical": "#edf2ee", "tonalRamp": ["oklch(15% 0.007 151.9)", "oklch(27% 0.007 151.9)", "oklch(39% 0.007 151.9)", "oklch(51% 0.007 151.9)", "oklch(63% 0.007 151.9)", "oklch(75% 0.007 151.9)", "oklch(87% 0.007 151.9)", "oklch(95% 0.007 151.9)"] },
+      "night-quiet-ink": { "role": "neutral", "displayName": "Night Quiet Ink", "canonical": "#a9b6b0", "tonalRamp": ["oklch(15% 0.017 166.6)", "oklch(27% 0.017 166.6)", "oklch(39% 0.017 166.6)", "oklch(51% 0.017 166.6)", "oklch(63% 0.017 166.6)", "oklch(75% 0.017 166.6)", "oklch(87% 0.017 166.6)", "oklch(95% 0.017 166.6)"] },
+      "lamplight-teal": { "role": "primary", "displayName": "Lamplight Teal", "canonical": "#61b29f", "tonalRamp": ["oklch(15% 0.085 176.7)", "oklch(27% 0.085 176.7)", "oklch(39% 0.085 176.7)", "oklch(51% 0.085 176.7)", "oklch(63% 0.085 176.7)", "oklch(75% 0.085 176.7)", "oklch(87% 0.085 176.7)", "oklch(95% 0.085 176.7)"] },
+      "lamplight-teal-bright": { "role": "primary", "displayName": "Bright Lamplight Teal", "canonical": "#8ed2c1", "tonalRamp": ["oklch(15% 0.073 177.0)", "oklch(27% 0.073 177.0)", "oklch(39% 0.073 177.0)", "oklch(51% 0.073 177.0)", "oklch(63% 0.073 177.0)", "oklch(75% 0.073 177.0)", "oklch(87% 0.073 177.0)", "oklch(95% 0.073 177.0)"] },
+      "lamplight-teal-wash": { "role": "primary", "displayName": "Lamplight Teal Wash", "canonical": "#203b34", "tonalRamp": ["oklch(15% 0.036 175.6)", "oklch(27% 0.036 175.6)", "oklch(39% 0.036 175.6)", "oklch(51% 0.036 175.6)", "oklch(63% 0.036 175.6)", "oklch(75% 0.036 175.6)", "oklch(87% 0.036 175.6)", "oklch(95% 0.036 175.6)"] },
+      "night-line": { "role": "neutral", "displayName": "Night Line", "canonical": "#2d3933", "tonalRamp": ["oklch(15% 0.019 163.5)", "oklch(27% 0.019 163.5)", "oklch(39% 0.019 163.5)", "oklch(51% 0.019 163.5)", "oklch(63% 0.019 163.5)", "oklch(75% 0.019 163.5)", "oklch(87% 0.019 163.5)", "oklch(95% 0.019 163.5)"] },
+      "night-line-strong": { "role": "neutral", "displayName": "Strong Night Line", "canonical": "#4a5a52", "tonalRamp": ["oklch(15% 0.024 163.7)", "oklch(27% 0.024 163.7)", "oklch(39% 0.024 163.7)", "oklch(51% 0.024 163.7)", "oklch(63% 0.024 163.7)", "oklch(75% 0.024 163.7)", "oklch(87% 0.024 163.7)", "oklch(95% 0.024 163.7)"] },
+      "gilded-note": { "role": "secondary", "displayName": "Gilded Note", "canonical": "#efbd70", "tonalRamp": ["oklch(15% 0.111 77.0)", "oklch(27% 0.111 77.0)", "oklch(39% 0.111 77.0)", "oklch(51% 0.111 77.0)", "oklch(63% 0.111 77.0)", "oklch(75% 0.111 77.0)", "oklch(87% 0.111 77.0)", "oklch(95% 0.111 77.0)"] },
+      "gilded-note-wash": { "role": "secondary", "displayName": "Gilded Note Wash", "canonical": "#3b2d1b", "tonalRamp": ["oklch(15% 0.036 72.8)", "oklch(27% 0.036 72.8)", "oklch(39% 0.036 72.8)", "oklch(51% 0.036 72.8)", "oklch(63% 0.036 72.8)", "oklch(75% 0.036 72.8)", "oklch(87% 0.036 72.8)", "oklch(95% 0.036 72.8)"] },
+      "night-correction-red": { "role": "tertiary", "displayName": "Night Correction Red", "canonical": "#f39b9b", "tonalRamp": ["oklch(15% 0.106 19.7)", "oklch(27% 0.106 19.7)", "oklch(39% 0.106 19.7)", "oklch(51% 0.106 19.7)", "oklch(63% 0.106 19.7)", "oklch(75% 0.106 19.7)", "oklch(87% 0.106 19.7)", "oklch(95% 0.106 19.7)"] },
+      "night-focus-blue": { "role": "tertiary", "displayName": "Night Focus Blue", "canonical": "#78bdf2", "tonalRamp": ["oklch(15% 0.103 242.8)", "oklch(27% 0.103 242.8)", "oklch(39% 0.103 242.8)", "oklch(51% 0.103 242.8)", "oklch(63% 0.103 242.8)", "oklch(75% 0.103 242.8)", "oklch(87% 0.103 242.8)", "oklch(95% 0.103 242.8)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Page identity and large bibliographic emphasis." },
+      "headline": { "displayName": "Headline", "purpose": "Section and work headings." },
+      "title": { "displayName": "Title", "purpose": "Work titles, field values, and compact editorial emphasis." },
+      "body": { "displayName": "Body", "purpose": "Bounded operational explanation and evidence." },
+      "label": { "displayName": "Label", "purpose": "Navigation, state, category, and compact controls." }
+    },
+    "shadows": [
+      { "name": "reading-room-lift", "value": "0 16px 46px rgb(30 40 37 / 0.08)", "purpose": "Light-theme floating surfaces and consequential overlays." },
+      { "name": "after-hours-lift", "value": "0 18px 52px rgb(0 0 0 / 0.28)", "purpose": "Dark-theme floating surfaces and consequential overlays." },
+      { "name": "compact-index-lift", "value": "0 8px 18px rgb(0 0 0 / 0.08)", "purpose": "Compact sticky Policy chapter picker only." }
+    ],
+    "motion": [
+      { "name": "reduced-motion-override", "value": "0.01ms", "purpose": "Effectively removes animation and transition duration when reduced motion is requested." }
+    ],
+    "breakpoints": [
+      { "name": "detail-stack", "value": "1300px" },
+      { "name": "attention-drawer", "value": "1199px" },
+      { "name": "workspace-tighten", "value": "1024px" },
+      { "name": "compact", "value": "760px" },
+      { "name": "phone-controls", "value": "420px" },
+      { "name": "narrow-ledger", "value": "390px" },
+      { "name": "minimum-supported", "value": "320px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button-default",
+      "description": "A restrained paper-toned action for ordinary operations.",
+      "html": "<button class=\"ds-button\">Preview</button>",
+      "css": ".ds-button { min-height: 44px; padding: .6rem .85rem; color: var(--ink, #17201e); background: var(--surface, #fbfaf6); border: 1px solid var(--line, #d9d7cf); border-radius: .5rem; font: 700 .74rem Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; } .ds-button:hover { border-color: var(--accent, #1b6558); background: var(--accent-soft, #dcebe6); } .ds-button:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus, #146fba) 75%, white); outline-offset: 3px; } .ds-button:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The next authoritative affirmative action.",
+      "html": "<button class=\"ds-button-primary\">Record choice</button>",
+      "css": ".ds-button-primary { min-height: 44px; padding: .6rem .85rem; color: var(--surface, #fbfaf6); background: var(--accent-strong, #0f4c42); border: 1px solid var(--accent, #1b6558); border-radius: .5rem; font: 800 .74rem Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; } .ds-button-primary:hover { filter: brightness(1.08); } .ds-button-primary:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus, #146fba) 75%, white); outline-offset: 3px; } .ds-button-primary:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Active Navigation",
+      "kind": "nav",
+      "refersTo": "navigation-active",
+      "description": "The three permanent workspace destinations with one clearly active page.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Workspace\"><a href=\"#\" aria-current=\"page\">Library</a><a href=\"#\">Policy</a><a href=\"#\">Activity</a></nav>",
+      "css": ".ds-nav { display: flex; gap: .35rem; align-items: center; font-family: Inter, ui-sans-serif, system-ui, sans-serif; } .ds-nav a { display: inline-flex; min-height: 44px; align-items: center; padding: .65rem .8rem; border-radius: 999px; color: var(--soft, #56615e); font-size: .74rem; font-weight: 800; text-decoration: none; } .ds-nav a:hover { color: var(--accent-strong, #0f4c42); } .ds-nav a[aria-current=\"page\"] { color: var(--accent-strong, #0f4c42); background: var(--accent-soft, #dcebe6); } .ds-nav a:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus, #146fba) 75%, white); outline-offset: 3px; }"
+    },
+    {
+      "name": "Lens Chip",
+      "kind": "chip",
+      "description": "A compact filter whose selected state uses the teal semantic family.",
+      "html": "<button class=\"ds-lens\" aria-pressed=\"true\">Needs attention</button>",
+      "css": ".ds-lens { min-height: 44px; padding: .55rem .7rem; border: 1px solid var(--accent, #1b6558); border-radius: 999px; color: var(--accent-strong, #0f4c42); background: var(--accent-soft, #dcebe6); font: 750 .64rem Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; } .ds-lens:hover { filter: brightness(.98); } .ds-lens:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus, #146fba) 75%, white); outline-offset: 3px; }"
+    },
+    {
+      "name": "Search Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A strong-sheet field for bounded library and attention search.",
+      "html": "<label class=\"ds-search\"><span>Search library</span><input type=\"search\" placeholder=\"Title, author, library…\"></label>",
+      "css": ".ds-search { display: grid; gap: .3rem; color: var(--ink, #17201e); font: 700 .76rem Inter, ui-sans-serif, system-ui, sans-serif; } .ds-search input { min-height: 44px; padding: .7rem; color: var(--ink, #17201e); background: var(--surface-strong, #fff); border: 1px solid var(--line-strong, #b9beb9); border-radius: .45rem; font: 400 .78rem Inter, ui-sans-serif, system-ui, sans-serif; } .ds-search input:hover { border-color: var(--accent, #1b6558); } .ds-search input:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus, #146fba) 75%, white); outline-offset: 3px; }"
+    },
+    {
+      "name": "Policy Notebook",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A chapter of deterministic policy with its consequence kept in view.",
+      "html": "<section class=\"ds-policy\"><p>Matching · Title</p><h2>Choose how Title is handled</h2><div role=\"group\" aria-label=\"Title review mode\"><button aria-pressed=\"true\">Automatic</button><button>Ask me</button><button>Ignore</button></div><aside><strong>Impact</strong><span>12 works would be reconsidered</span></aside></section>",
+      "css": ".ds-policy { display: grid; max-width: 34rem; gap: .75rem; padding: 1rem; color: var(--ink, #17201e); background: var(--surface, #fbfaf6); border: 1px solid var(--line, #d9d7cf); border-radius: 1rem; font: 400 .78rem/1.55 Inter, ui-sans-serif, system-ui, sans-serif; } .ds-policy > p { margin: 0; color: var(--soft, #56615e); font-size: .64rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; } .ds-policy h2 { margin: 0; font: 700 1.25rem/1.2 Georgia, 'Times New Roman', serif; } .ds-policy div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: .2rem; border: 1px solid var(--line, #d9d7cf); border-radius: .65rem; background: var(--page, #f4f2ec); } .ds-policy button { min-height: 44px; border: 0; color: var(--soft, #56615e); background: transparent; } .ds-policy button[aria-pressed=\"true\"] { color: var(--surface, #fbfaf6); background: var(--accent-strong, #0f4c42); } .ds-policy aside { display: grid; gap: .15rem; padding: .75rem; border-left: 3px solid var(--accent, #1b6558); background: var(--accent-soft, #dcebe6); } .ds-policy aside span { color: var(--soft, #56615e); font-size: .68rem; }"
+    },
+    {
+      "name": "Library Work Row",
+      "kind": "custom",
+      "description": "A bibliographic work identity with a synthetic book-spine mark.",
+      "html": "<article class=\"ds-work\"><span class=\"ds-book\" aria-hidden=\"true\">LH</span><div><h3><button type=\"button\" aria-pressed=\"false\">The Left Hand of Darkness</button></h3><p>Ursula K. Le Guin · Ebook</p><small>2 fields need attention</small></div></article>",
+      "css": ".ds-work { display: grid; grid-template-columns: 42px minmax(0, 1fr); align-items: center; gap: .75rem; min-height: 104px; padding: .7rem; color: var(--ink, #17201e); background: var(--surface, #fbfaf6); border: 1px solid transparent; border-radius: .65rem; font-family: Inter, ui-sans-serif, system-ui, sans-serif; } .ds-work:hover { background: color-mix(in srgb, var(--surface, #fbfaf6) 60%, var(--page, #f4f2ec)); } .ds-book { display: grid; width: 42px; height: 58px; place-items: center; border-radius: 2px 5px 5px 2px; color: #f5ead2; background: #3b5550; font: 400 .66rem Georgia, serif; letter-spacing: .07em; } .ds-work h3 { margin: .15rem 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-work h3 button { min-height: 44px; max-width: 100%; padding: 0; overflow: hidden; color: inherit; background: transparent; border: 0; font: 700 .9rem Georgia, serif; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; } .ds-work p { margin: .15rem 0; color: var(--soft, #56615e); font-size: .68rem; } .ds-work small { display: inline-block; padding: .22rem .4rem; border-radius: 999px; color: var(--accent-strong, #0f4c42); background: var(--accent-soft, #dcebe6); font-size: .56rem; font-weight: 750; } .ds-work h3 button:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus, #146fba) 75%, white); outline-offset: 3px; }"
+    },
+    {
+      "name": "Direct Value Choice",
+      "kind": "custom",
+      "description": "A field-local authoritative choice with the value as the action.",
+      "html": "<button class=\"ds-choice\"><small>Proposed value</small><strong>Ursula K. Le Guin</strong><span>Supported by two catalogue observations</span></button>",
+      "css": ".ds-choice { display: grid; width: 100%; min-height: 9.5rem; align-content: start; gap: .55rem; padding: 1rem; color: var(--ink, #17201e); background: var(--surface-strong, #fff); border: 1px solid var(--line-strong, #b9beb9); border-radius: .7rem; text-align: left; cursor: pointer; } .ds-choice small { color: var(--soft, #56615e); font: 800 .58rem Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .05em; text-transform: uppercase; } .ds-choice strong { overflow-wrap: anywhere; font: 700 1.05rem/1.3 Georgia, serif; } .ds-choice span { color: var(--soft, #56615e); font: 400 .68rem Inter, ui-sans-serif, system-ui, sans-serif; } .ds-choice:hover, .ds-choice:focus-visible { border-color: var(--accent, #1b6558); background: var(--accent-soft, #dcebe6); } .ds-choice:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus, #146fba) 75%, white); outline-offset: 3px; }"
+    },
+    {
+      "name": "Activity Ledger Row",
+      "kind": "custom",
+      "description": "A compact auditable event with evidence available in place.",
+      "html": "<article class=\"ds-event\"><time>14:32</time><span class=\"ds-category\">Review</span><div><strong>Author choice recorded</strong><span>The Left Hand of Darkness · Ursula K. Le Guin</span></div><b>Applied</b><button aria-expanded=\"false\">Evidence</button></article>",
+      "css": ".ds-event { display: grid; grid-template-columns: 64px 92px minmax(0, 1fr) 72px auto; align-items: center; gap: 1rem; min-height: 72px; padding: .65rem 1.25rem; color: var(--ink, #17201e); background: var(--surface, #fbfaf6); border: 1px solid var(--line, #d9d7cf); border-radius: .75rem; font: 400 .78rem Inter, ui-sans-serif, system-ui, sans-serif; } .ds-event time { color: var(--soft, #56615e); font-variant-numeric: tabular-nums; } .ds-category { justify-self: start; padding: .3rem .45rem; border: 1px solid var(--line, #d9d7cf); border-radius: .35rem; color: var(--soft, #56615e); background: var(--surface-strong, #fff); font-size: .68rem; font-weight: 800; } .ds-event div { display: grid; min-width: 0; gap: .2rem; } .ds-event div span { overflow: hidden; color: var(--soft, #56615e); font-size: .8rem; text-overflow: ellipsis; white-space: nowrap; } .ds-event b { color: var(--accent-strong, #0f4c42); font-size: .75rem; } .ds-event button { min-height: 40px; padding: .55rem .7rem; color: var(--ink, #17201e); background: transparent; border: 1px solid var(--line, #d9d7cf); border-radius: .5rem; } @media (max-width: 760px) { .ds-event { grid-template-columns: 50px minmax(0, 1fr) auto; gap: .45rem .7rem; min-height: 0; padding: .8rem .9rem; } .ds-event time { grid-column: 1; grid-row: 1; } .ds-category { grid-column: 2; grid-row: 1; } .ds-event div { grid-column: 1 / -1; grid-row: 2; } .ds-event div span { overflow: visible; white-space: normal; } .ds-event > b { grid-column: 3; grid-row: 1; } .ds-event > button { grid-column: 1 / -1; grid-row: 3; min-height: 44px; } } @media (max-width: 390px) { .ds-event { grid-template-columns: 44px minmax(0, 1fr); } .ds-event > b { grid-column: 2; grid-row: 3; justify-self: start; } .ds-event > button { grid-row: 4; } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Conservator's Reading Room",
+    "overview": "Mechanical Librarian feels like a carefully kept private reading room where every book, note, and decision has a precise place. The interface is calm, exact, editorial, and quietly domestic: warm paper planes, green-black ink, restrained archive teal, and serif bibliographic emphasis make operational work feel considered without disguising its technical authority.\n\nThe system remains dense enough for serious review, but hierarchy comes from typography, spacing, borders, and tonal layers rather than dashboard spectacle. Glossy SaaS chrome, playful consumer-library styling, decorative gradients, and attention-seeking motion are anti-references.",
+    "keyCharacteristics": [
+      "Warm paper surfaces with a semantic, fully paired dark theme.",
+      "Editorial serif emphasis inside a compact sans-serif operating system.",
+      "Thin catalogue-like rules, restrained controls, and rounded reading surfaces.",
+      "Archive teal for current selection and affirmative action; ochre and red for exceptional states.",
+      "Responsive task continuity from wide workspaces to a 320px minimum viewport."
+    ],
+    "rules": [
+      { "name": "The Marginalia Rule", "body": "Color annotates state; it does not decorate empty space. Archive teal identifies the current or affirmative path, ochre calls for care, and red is reserved for failure or destructive consequence.", "section": "colors" },
+      { "name": "The Semantic Pairing Rule", "body": "Light and dark themes preserve role and hierarchy, not literal brightness relationships. Never substitute an unpaired hue when switching themes.", "section": "colors" },
+      { "name": "The Catalogue Voice Rule", "body": "Use serif type for bibliographic identity, decision values, and measured emphasis. Use sans-serif type for everything the owner must operate, scan, or verify.", "section": "typography" },
+      { "name": "The Borders-Before-Shadows Rule", "body": "Establish grouping with tone and a one-pixel border. Add shadow only when a surface actually floats, overlaps, or must remain consequential while content moves beneath it.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do use warm paper, ink, and catalogue lines as the default hierarchy.",
+      "Do reserve Archive Teal for current selection, affirmative action, and calm recorded state.",
+      "Do keep primary task and touch targets at least 44px high. Dense desktop inspection controls may use 40px when they return to 44px at compact widths; preserve the default three-pixel offset focus outline and documented compact field exceptions.",
+      "Do keep task identity and direct values in serif type while operational controls and evidence remain sans-serif.",
+      "Do collapse wide workspaces into explicit, continuous mobile tasks rather than squeezing desktop columns.",
+      "Do honor prefers-reduced-motion; state changes must remain understandable with animation effectively removed."
+    ],
+    "donts": [
+      "Don't use color as ambient decoration or introduce an unpaired theme hue.",
+      "Don't add shadow to a surface that does not float, overlap, or remain consequential while scrolling.",
+      "Don't turn every control or container into a pill; pills are reserved for navigation, lenses, and compact state.",
+      "Don't imitate a glossy analytics dashboard, playful bookshelf app, or cover-led streaming catalogue.",
+      "Don't fabricate cover art where the interface only has initials or target identity.",
+      "Don't add attention-seeking motion; the incumbent system uses motion only as a reducible state transition."
+    ]
+  }
+}
