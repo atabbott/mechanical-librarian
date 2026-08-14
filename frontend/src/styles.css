@@ -71,6 +71,11 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .library-work-row { display:grid; min-width:0; grid-template-columns:42px minmax(0,1fr) auto; align-items:center; gap:.75rem; min-height:104px; padding:.7rem; border:1px solid transparent; border-radius:.65rem; }
 .library-work-row:hover { background:color-mix(in srgb,var(--surface) 60%,var(--page)); }
 .library-work-row.active { border-color:var(--accent); background:var(--accent-soft); }
+.provider-outcomes { margin-top:.45rem; font-size:.86rem; }
+.provider-outcomes summary { cursor:pointer; color:var(--text-muted); font-weight:650; }
+.provider-outcomes p,.provider-outcomes ul { margin:.35rem 0 0; }
+.provider-outcomes ul { padding-left:1.1rem; }
+.provider-outcomes li + li { margin-top:.25rem; }
 .library-book-mark { display:grid; width:42px; height:58px; place-items:center; border-radius:2px 5px 5px 2px; color:#f5ead2; background:#3b5550; font-family:Georgia,serif; font-size:.66rem; letter-spacing:.07em; }
 :root[data-theme='dark'] .library-book-mark { background:#315c52; }
 .library-work-copy { min-width:0; }

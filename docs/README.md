@@ -22,6 +22,7 @@
 - [ADR-0013: pre-release clean schema](architecture/decisions/0013-pre-release-clean-schema.md)
 - [ADR-0014: review-case admission](architecture/decisions/0014-review-case-admission.md)
 - [ADR-0015: isolated qualification-only shadow review](architecture/decisions/0015-isolated-shadow-reviewer.md)
+- [ADR-0051: publish review packages after projection](architecture/decisions/0051-atomic-current-review-packages.md)
 - [ADR-0016: explainable publication-date shadow review](architecture/decisions/0016-freeze-explainable-shadow-reviewer.md)
 - [ADR-0040: source-only contributor workbench](architecture/decisions/0040-source-only-contributor-workbench.md)
 - [ADR-0041: contained reviewer kernel](architecture/decisions/0041-contract-contained-reviewer-kernel.md)

@@ -15,7 +15,9 @@ export interface AttentionSearch { q?: string; cursor?: string }
 export interface DetailSearch { field?: string; subview: DetailSubview }
 export interface PolicySearch { section: PolicySection }
 
-export interface LibraryWorkView { id: string; reviewCaseId?: string; title: string; authors: readonly string[]; library: string; mediaKind: string; attentionCount: number; attention: string }
+export interface ProviderOutcomeView { providerRequests: number; laneKind: string; provider: string; reason: string; status: string }
+export interface PreparationFailureView { attempt: number; provider: string; reason: string; recovery: string; recoveryAttempt: number; stage: string; status: string }
+export interface LibraryWorkView { id: string; reviewCaseId?: string; title: string; authors: readonly string[]; library: string; mediaKind: string; attentionCount: number; attention: string; preparation: PreparationFailureView | null; preparationOutcomes: readonly ProviderOutcomeView[] }
 export interface LibraryView { lens: LibraryLens; query?: string; nextCursor?: string; counts: { attention: number; all: number; clear: number }; works: readonly LibraryWorkView[] }
 export interface AttentionItemView { id: string; destination: string; title: string; authors: readonly string[]; library: string; mediaKind: string; notices: readonly string[]; provenance: readonly string[]; workAttentionCount: number }
 export interface AttentionView { query?: string; nextCursor?: string; total: number; items: readonly AttentionItemView[] }
@@ -317,7 +319,16 @@ export const mapLibrary = (value: unknown): LibraryView => {
   const lens = stringValue(value.lens, 'library_lens'); if (!['needs_attention', 'all', 'no_attention_needed'].includes(lens)) throw new ApiError(502, 'invalid_library_lens')
   const dto = value as unknown as LibraryDto; stringValue(dto.schema_version, 'schema_version')
   const query = optionalString(dto.query, 'library_query'); const nextCursor = optionalString(dto.next_cursor, 'library_cursor')
-  return { lens: lens as LibraryLens, ...(query ? { query } : {}), ...(nextCursor ? { nextCursor } : {}), counts: { attention: integerValue(dto.counts.needs_attention, 'attention_count'), all: integerValue(dto.counts.all, 'all_count'), clear: integerValue(dto.counts.no_attention_needed, 'clear_count') }, works: dto.items.map((item) => { const reviewCaseId = optionalString(item.review_case_id, 'review_case_id'); return { id: reviewCaseId ?? stringValue(item.work_id, 'work_id'), ...(reviewCaseId ? { reviewCaseId } : {}), title: stringValue(item.title, 'title'), authors: stringArray(item.authors, 'authors'), library: stringValue(item.library, 'library'), mediaKind: stringValue(item.media_kind, 'media_kind'), attentionCount: integerValue(item.attention_count, 'attention_count'), attention: stringValue(item.attention_state, 'attention_state') } }) }
+  return { lens: lens as LibraryLens, ...(query ? { query } : {}), ...(nextCursor ? { nextCursor } : {}), counts: { attention: integerValue(dto.counts.needs_attention, 'attention_count'), all: integerValue(dto.counts.all, 'all_count'), clear: integerValue(dto.counts.no_attention_needed, 'clear_count') }, works: dto.items.map((item) => {
+    const reviewCaseId = optionalString(item.review_case_id, 'review_case_id')
+    const preparation = item.preparation == null ? null : { attempt: integerValue(item.preparation.attempt, 'preparation_attempt'), provider: stringValue(item.preparation.provider, 'preparation_provider'), reason: stringValue(item.preparation.reason, 'preparation_reason'), recovery: stringValue(item.preparation.recovery, 'preparation_recovery'), recoveryAttempt: integerValue(item.preparation.recovery_attempt, 'preparation_recovery_attempt'), stage: stringValue(item.preparation.stage, 'preparation_stage'), status: stringValue(item.preparation.status, 'preparation_status') }
+    if (!Array.isArray(item.preparation_outcomes)) throw new ApiError(502, 'invalid_preparation_outcomes')
+    const preparationOutcomes = (item.preparation_outcomes as unknown[]).map((outcome, index) => {
+      if (!record(outcome)) throw new ApiError(502, `invalid_provider_outcome_${String(index)}`)
+      return { providerRequests: integerValue(outcome.provider_requests, `provider_outcome_${String(index)}_requests`), laneKind: stringValue(outcome.lane_kind, `provider_outcome_${String(index)}_lane`), provider: stringValue(outcome.provider, `provider_outcome_${String(index)}_provider`), reason: stringValue(outcome.reason, `provider_outcome_${String(index)}_reason`), status: stringValue(outcome.status, `provider_outcome_${String(index)}_status`) }
+    })
+    return { id: reviewCaseId ?? stringValue(item.work_id, 'work_id'), ...(reviewCaseId ? { reviewCaseId } : {}), title: stringValue(item.title, 'title'), authors: stringArray(item.authors, 'authors'), library: stringValue(item.library, 'library'), mediaKind: stringValue(item.media_kind, 'media_kind'), attentionCount: integerValue(item.attention_count, 'attention_count'), attention: stringValue(item.attention_state, 'attention_state'), preparation, preparationOutcomes }
+  }) }
 }
 
 export const mapAttention = (value: unknown): AttentionView => {

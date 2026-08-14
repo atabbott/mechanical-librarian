@@ -216,6 +216,19 @@ _REVIEW_POINTERS_SQL = (
     "CHECK ((outcome IN ('admitted','superseded') AND review_case_id IS NOT NULL) OR (outcome IN ('no_case','retired','tombstoned') AND review_case_id IS NULL)), "
     "PRIMARY KEY (connection_name,library_name,item_id))"
 )
+_CURRENT_REVIEW_PACKAGES_SQL = (
+    "CREATE TABLE current_review_packages ("
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
+    "proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), "
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "review_case_id TEXT REFERENCES review_cases(review_case_id), "
+    "checkpoint INTEGER CHECK(checkpoint IS NULL OR checkpoint>=1), "
+    "outcome TEXT NOT NULL CHECK(outcome IN ('report_only','admitted','superseded','no_case','retired')), "
+    "CHECK ((outcome='report_only' AND proposal_set_id IS NULL AND review_case_id IS NULL AND checkpoint IS NULL) "
+    "OR (outcome IN ('admitted','superseded') AND proposal_set_id IS NOT NULL AND review_case_id IS NOT NULL AND checkpoint IS NOT NULL) "
+    "OR (outcome IN ('no_case','retired') AND proposal_set_id IS NOT NULL AND review_case_id IS NULL AND checkpoint IS NOT NULL)), "
+    "PRIMARY KEY(connection_name,library_name,item_id))"
+)
 _REVIEW_TRANSITIONS_SQL = (
     "CREATE TABLE review_case_transitions ("
     "transition_id TEXT PRIMARY KEY NOT NULL CHECK(transition_id GLOB 'review_transition_[0-9a-f]*' AND length(transition_id)=82), "
@@ -252,7 +265,7 @@ _REVIEW_WORK_SQL = (
     "producer_fingerprint TEXT NOT NULL CHECK(length(producer_fingerprint)=64 AND producer_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "catalogue_generation INTEGER NOT NULL CHECK(catalogue_generation>0), catalogue_fingerprint TEXT NOT NULL CHECK(length(catalogue_fingerprint)=64 AND catalogue_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "stage TEXT NOT NULL CHECK(stage IN ('extraction','provider','proposal','admission','projection','complete')), "
-    "state TEXT NOT NULL CHECK(state IN ('queued','running','complete','failed','stale')), attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt BETWEEN 0 AND 3), recovery_attempt INTEGER NOT NULL DEFAULT 0 CHECK(recovery_attempt BETWEEN 0 AND 3), "
+    "state TEXT NOT NULL CHECK(state IN ('queued','running','complete','failed','stale')), attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt BETWEEN 0 AND 3), recovery_attempt INTEGER NOT NULL DEFAULT 0 CHECK(recovery_attempt BETWEEN 0 AND 3), retry_not_before INTEGER NOT NULL DEFAULT 0 CHECK(retry_not_before>=0), "
     "report_id TEXT REFERENCES metadata_reports(report_id), proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
     "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('provider','configuration','authentication','stale','transient','projection','failed','currentness')), "
     "failure_root TEXT CHECK(failure_root IS NULL OR (failure_code='authentication' AND typeof(failure_root)='text' AND length(CAST(failure_root AS BLOB)) BETWEEN 1 AND 64 AND failure_root NOT GLOB '*[^a-z0-9_-]*' AND substr(failure_root,1,1) GLOB '[a-z]')), "
@@ -436,31 +449,19 @@ _FIELD_EFFECT_EVENTS_SQL = (
 _FIELD_EFFECT_EVENT_NO_UPDATE_SQL = "CREATE TRIGGER field_effect_events_no_update BEFORE UPDATE ON field_effect_events BEGIN SELECT RAISE(ABORT, 'field effect events are append-only'); END"
 _FIELD_EFFECT_EVENT_NO_DELETE_SQL = "CREATE TRIGGER field_effect_events_no_delete BEFORE DELETE ON field_effect_events BEGIN SELECT RAISE(ABORT, 'field effect events are append-only'); END"
 _CURRENT_REVIEW_FROM_SQL = (
-    "FROM current_review_case_lineages c "
+    "FROM current_review_packages c "
+    "JOIN current_review_packages ml ON ml.connection_name=c.connection_name "
+    "AND ml.library_name=c.library_name AND ml.item_id=c.item_id "
     "JOIN review_cases rc ON rc.review_case_id=c.review_case_id "
     "JOIN metadata_reports mr ON mr.report_id=rc.report_id "
-    "JOIN current_metadata_report_lineages ml "
-    "ON ml.connection_name=c.connection_name "
-    "AND ml.library_name=c.library_name AND ml.item_id=c.item_id "
-    "AND ml.report_id=rc.report_id "
-    "JOIN current_metadata_reports mf "
-    "ON mf.connection_name=c.connection_name "
-    "AND mf.library_name=c.library_name AND mf.item_id=c.item_id "
-    "AND mf.file_identity=json_extract(rc.document,'$.file_identity') "
-    "AND mf.report_id=rc.report_id"
 )
 _CURRENT_LIBRARY_FROM_SQL = (
-    "FROM current_metadata_report_lineages ml "
+    "FROM current_review_packages ml "
     "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
-    "JOIN current_metadata_reports mf "
-    "ON mf.connection_name=ml.connection_name "
-    "AND mf.library_name=ml.library_name AND mf.item_id=ml.item_id "
-    "AND mf.report_id=ml.report_id "
-    "LEFT JOIN current_review_case_lineages c "
+    "LEFT JOIN current_review_packages c "
     "ON c.connection_name=ml.connection_name "
     "AND c.library_name=ml.library_name AND c.item_id=ml.item_id "
-    "AND c.report_id=ml.report_id "
-    "LEFT JOIN review_cases rc ON rc.review_case_id=c.review_case_id"
+    "LEFT JOIN review_cases rc ON rc.review_case_id=ml.review_case_id"
 )
 _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL = (
     "EXISTS (SELECT 1 FROM json_each(rc.document,'$.results') manual_result "
@@ -950,6 +951,8 @@ class SQLiteMetadataReportRepository:
         self, decision: HumanDecision | AutomaticDecision
     ) -> dict[str, object]:
         """Resolve one exact persisted decision against its current case lineage."""
+        if not self._review_case_accepts_authority(decision.review_case_id):
+            raise FieldEffectError("authority_binding")
         table = "human_decisions" if type(decision) is HumanDecision else "automatic_decisions"
         row = self._connection.execute(
             f"SELECT document FROM {table} WHERE decision_id=?", (decision.decision_id,)
@@ -1109,7 +1112,9 @@ class SQLiteMetadataReportRepository:
         ).fetchone() == (1,) and self._connection.execute(
             "SELECT 1 FROM current_review_case_lineages WHERE review_case_id=?",
             (authority.review_case_id,),
-        ).fetchone() == (1,))
+        ).fetchone() == (1,) and self._review_case_accepts_authority(
+            authority.review_case_id
+        ))
         if not current or authority.origin != "automatic_policy":
             return current
         lineage = self._connection.execute(
@@ -2672,6 +2677,9 @@ class SQLiteMetadataReportRepository:
                         json.JSONDecodeError) as error:
                     raise FieldEffectError("authority") from error
                 if (case_envelope.get("current") is not True
+                        or not self._review_case_accepts_authority(
+                            authority.review_case_id
+                        )
                         or case.get("target_fingerprint")
                         != authority.target_fingerprint
                         or (target.get("connection"), target.get("library"),
@@ -3601,11 +3609,11 @@ class SQLiteMetadataReportRepository:
                 "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
                 "WHERE s.scan_id=review_preparation_work.scan_id "
                 "AND s.state='processing') "
-                "AND (stage!='extraction' OR ?<=?) "
+                "AND retry_not_before<=? "
                 "GROUP BY library_name "
                 "ORDER BY CASE WHEN library_name>? THEN 0 ELSE 1 END,library_name "
                 "LIMIT 1",
-                (control[2], claimed_at, control[1] or ""),
+                (claimed_at, control[1] or ""),
             ).fetchone()
             ordering = (
                 "updated_at DESC,ordinal"
@@ -3621,11 +3629,10 @@ class SQLiteMetadataReportRepository:
                 "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
                 "WHERE s.scan_id=review_preparation_work.scan_id "
                 "AND s.state='processing') "
-                "AND (stage!='extraction' OR ?<=?) "
+                "AND retry_not_before<=? "
                 f"ORDER BY {ordering} LIMIT 1",
                 (
                     library[0],
-                    control[2],
                     claimed_at,
                 ),
             ).fetchone()
@@ -3893,9 +3900,9 @@ class SQLiteMetadataReportRepository:
                     "INSERT INTO review_preparation_work("
                     "work_id,scan_id,ordinal,connection_name,library_name,library_id,"
                     "item_id,file_identity,source_revision,source_fingerprint,producer_fingerprint,"
-                    "catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,"
+                    "catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,retry_not_before,"
                     "report_id,proposal_set_id,review_case_id,failure_code,failure_root,updated_at"
-                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT(work_id) DO UPDATE SET ordinal=excluded.ordinal,"
                     "library_id=excluded.library_id,file_identity=excluded.file_identity,"
                     "source_revision=excluded.source_revision,"
@@ -3903,7 +3910,7 @@ class SQLiteMetadataReportRepository:
                     "producer_fingerprint=excluded.producer_fingerprint,"
                     "catalogue_generation=excluded.catalogue_generation,"
                     "catalogue_fingerprint=excluded.catalogue_fingerprint,"
-                    "stage=excluded.stage,state=excluded.state,attempt=0,recovery_attempt=0,"
+                    "stage=excluded.stage,state=excluded.state,attempt=0,recovery_attempt=0,retry_not_before=0,"
                     "report_id=excluded.report_id,proposal_set_id=excluded.proposal_set_id,"
                     "review_case_id=excluded.review_case_id,failure_code=NULL,failure_root=NULL,"
                     "updated_at=excluded.updated_at",
@@ -3923,6 +3930,7 @@ class SQLiteMetadataReportRepository:
                         fingerprint,
                         stage,
                         state,
+                        0,
                         0,
                         0,
                         report_id,
@@ -3996,6 +4004,12 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             if current != (proposal_id, report_id, case_id, checkpoint):
                 continue
+            published = self._connection.execute(
+                "SELECT proposal_set_id,report_id,review_case_id,checkpoint "
+                "FROM current_review_packages WHERE connection_name=? "
+                "AND library_name=? AND item_id=?",
+                (connection, library, item_id),
+            ).fetchone()
             transition = ReviewTransition(
                 connection,
                 library,
@@ -4045,6 +4059,12 @@ class SQLiteMetadataReportRepository:
                     checkpoint,
                 ),
             )
+            if published is not None:
+                if self._connection.execute(
+                    "DELETE FROM current_review_packages WHERE connection_name=? AND library_name=? AND item_id=? AND proposal_set_id=? AND report_id=? AND review_case_id=? AND checkpoint=?",
+                    (connection, library, item_id, *published),
+                ).rowcount != 1:
+                    raise MetadataReportError("review preparation state changed")
         self._connection.execute(
             "DELETE FROM review_preparation_absences WHERE scan_id=?", (scan_id,)
         )
@@ -4104,6 +4124,32 @@ class SQLiteMetadataReportRepository:
                     self._refresh_metadata_policy_transition(
                         transition_row[0], completed_at
                     )
+            if (
+                target[0] == "complete"
+                and action.stage in {"admission", "projection"}
+                and action.proposal_set_id is not None
+                and action.report_id is not None
+            ):
+                pointer = self._connection.execute(
+                    "SELECT proposal_set_id,report_id,review_case_id,checkpoint,outcome FROM current_review_case_lineages "
+                    "WHERE connection_name=? AND library_name=? AND item_id=?",
+                    (action.connection, action.library, action.item_id),
+                ).fetchone()
+                if (
+                    pointer is None
+                    or pointer[0] != action.proposal_set_id
+                    or pointer[1] != action.report_id
+                    or pointer[4] not in {"admitted", "superseded", "no_case", "retired"}
+                    or (action.stage == "projection" and pointer[2] != action.review_case_id)
+                ):
+                    raise MetadataReportError("review preparation state changed")
+                self._connection.execute(
+                    "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) "
+                    "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET "
+                    "proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,"
+                    "review_case_id=excluded.review_case_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
+                    (action.connection, action.library, action.item_id, *pointer),
+                )
             if target[0] == "complete":
                 transition_row = self._connection.execute(
                     "SELECT transition_id FROM metadata_policy_transition_items WHERE work_id=? AND state='pending'",
@@ -4194,24 +4240,34 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("review preparation state is invalid")
         if provider_failure_code == "transient":
             updated = self._connection.execute(
-                "UPDATE review_preparation_work SET stage='extraction',"
-                "state=CASE WHEN recovery_attempt<2 THEN 'queued' ELSE 'failed' END,"
-                "attempt=0,recovery_attempt=recovery_attempt+1,report_id=NULL,"
-                "proposal_set_id=NULL,review_case_id=NULL,failure_code='transient',"
-                "failure_root=NULL,"
+                "UPDATE review_preparation_work SET "
+                "stage=CASE WHEN recovery_attempt<2 THEN 'extraction' ELSE 'proposal' END,"
+                "state='queued',attempt=0,recovery_attempt=recovery_attempt+1,"
+                "retry_not_before=CASE WHEN recovery_attempt<2 THEN ? "
+                "ELSE 0 END,report_id=?,proposal_set_id=NULL,review_case_id=NULL,"
+                "failure_code='transient',failure_root=NULL,"
                 "updated_at=? WHERE work_id=? AND stage='extraction' "
                 "AND state='running' AND attempt=?",
-                (completed_at, action.action_id, action.attempt),
+                (
+                    completed_at + max(
+                        recovery_delay_seconds,
+                        5 * (1 << min(3, action.attempt)),
+                    ),
+                    report_id,
+                    completed_at,
+                    action.action_id,
+                    action.attempt,
+                ),
             ).rowcount
         else:
-            state = "queued" if provider_failure_code is None else "failed"
+            terminal_failure = provider_failure_code in {"authentication", "configuration"}
             updated = self._connection.execute(
                 "UPDATE review_preparation_work SET stage=?,state=?,attempt=0,"
-                "report_id=?,failure_code=?,failure_root=?,updated_at=? WHERE work_id=? "
+                "retry_not_before=0,report_id=?,failure_code=?,failure_root=?,updated_at=? WHERE work_id=? "
                 "AND stage='extraction' AND state='running' AND attempt=?",
                 (
-                    "proposal" if provider_failure_code is None else "provider",
-                    state,
+                    "provider" if terminal_failure else "proposal",
+                    "failed" if terminal_failure else "queued",
                     report_id,
                     provider_failure_code,
                     provider_failure_root,
@@ -4257,21 +4313,6 @@ class SQLiteMetadataReportRepository:
                 self._refresh_metadata_policy_transition(
                     transition_row[0], completed_at
                 )
-        if provider_failure_code == "transient":
-            self._connection.execute(
-                "UPDATE review_preparation_control SET "
-                "circuit_failures=MIN(3,circuit_failures+1),"
-                "circuit_open_until=MAX(circuit_open_until,"
-                "?+(5*(1 << MIN(3,circuit_failures+1)))),updated_at=? "
-                "WHERE singleton=1",
-                (completed_at, completed_at),
-            )
-        if recovery_delay_seconds:
-            self._connection.execute(
-                "UPDATE review_preparation_control SET circuit_open_until="
-                "MAX(circuit_open_until,?+?),updated_at=? WHERE singleton=1",
-                (completed_at, recovery_delay_seconds, completed_at),
-            )
         self._review_pipeline_claim = (
             self.claim_review_pipeline_action(completed_at) if claim_next else None
         )
@@ -4343,10 +4384,17 @@ class SQLiteMetadataReportRepository:
                     "UPDATE review_preparation_work SET stage='extraction',"
                     "state=CASE WHEN recovery_attempt<2 THEN 'queued' ELSE 'failed' END,"
                     "attempt=0,recovery_attempt=recovery_attempt+1,"
+                    "retry_not_before=CASE WHEN recovery_attempt<2 THEN ? ELSE 0 END,"
                     "report_id=NULL,proposal_set_id=NULL,review_case_id=NULL,"
                     "failure_code='transient',failure_root=NULL,updated_at=? WHERE work_id=? AND stage=? "
                     "AND state='running' AND attempt=?",
-                    (completed_at, action.action_id, action.stage, action.attempt),
+                    (
+                        completed_at + 5 * (1 << min(3, action.attempt)),
+                        completed_at,
+                        action.action_id,
+                        action.stage,
+                        action.attempt,
+                    ),
                 ).rowcount
                 if updated == 1:
                     state = self._connection.execute(
@@ -4387,14 +4435,6 @@ class SQLiteMetadataReportRepository:
                         ("stale" if state == "stale" else "failed", completed_at, transition_row[0], action.action_id),
                     )
                     self._refresh_metadata_policy_transition(transition_row[0], completed_at)
-            if code == "transient":
-                self._connection.execute(
-                    "UPDATE review_preparation_control SET "
-                    "circuit_failures=MIN(3,circuit_failures+1),"
-                    "circuit_open_until=MAX(circuit_open_until,?+(5*(1 << MIN(3,circuit_failures+1)))),"
-                    "updated_at=? WHERE singleton=1",
-                    (completed_at, completed_at),
-                )
             self._connection.commit()
         except (sqlite3.Error, MetadataReportError) as error:
             if self._connection.in_transaction:
@@ -4512,6 +4552,12 @@ class SQLiteMetadataReportRepository:
                 "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET report_id=excluded.report_id",
                 (report.target.connection, report.target.library, report.target.item, report.report_id),
             )
+            if after_publication is None:
+                self._connection.execute(
+                    "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) VALUES(?,?,?,NULL,?,NULL,NULL,'report_only') "
+                    "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=NULL,report_id=excluded.report_id,review_case_id=NULL,checkpoint=NULL,outcome='report_only'",
+                    (report.target.connection, report.target.library, report.target.item, report.report_id),
+                )
             if after_publication is not None:
                 after_publication(self, report)
             if self._binding is not None:
@@ -4740,6 +4786,12 @@ class SQLiteMetadataReportRepository:
                 transition = ReviewTransition(*lineage, checkpoint, proposal_set.proposal_set_id, report.report_id, outcome, prior_case_id, None, "nonactionable")
                 self._connection.execute("INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (transition.transition_id, *lineage, checkpoint, transition.actor, transition.from_review_case_id, None, proposal_set.proposal_set_id, report.report_id, outcome, "nonactionable"))
                 self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?, ?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=NULL,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome", (*lineage, proposal_set.proposal_set_id, report.report_id, None, transition.transition_id, checkpoint, outcome))
+                if owns_transaction:
+                    self._connection.execute(
+                        "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?) "
+                        "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
+                        (*lineage, proposal_set.proposal_set_id, report.report_id, None, checkpoint, outcome),
+                    )
                 if self._binding is not None:
                     self._binding.require_current()
                 if owns_transaction:
@@ -4755,6 +4807,12 @@ class SQLiteMetadataReportRepository:
             transition = ReviewTransition(*lineage, checkpoint, proposal_set.proposal_set_id, report.report_id, outcome, prior_case_id, case.review_case_id, "actionable")
             self._connection.execute("INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (transition.transition_id, *lineage, checkpoint, transition.actor, transition.from_review_case_id, case.review_case_id, proposal_set.proposal_set_id, report.report_id, outcome, "actionable"))
             self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome", (*lineage, proposal_set.proposal_set_id, report.report_id, case.review_case_id, transition.transition_id, checkpoint, outcome))
+            if owns_transaction:
+                self._connection.execute(
+                    "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
+                    (*lineage, proposal_set.proposal_set_id, report.report_id, case.review_case_id, checkpoint, outcome),
+                )
             if self._binding is not None:
                 self._binding.require_current()
             if owns_transaction:
@@ -4819,15 +4877,12 @@ class SQLiteMetadataReportRepository:
                 or tuple(value.to_data() for value in proposal.results) != case.results
             ):
                 raise MetadataReportError("review case source disagrees")
-            current = self._connection.execute("SELECT review_case_id FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", (case.target["connection"], case.target["library"], case.target["item"])).fetchone()
-            if current is not None and current[0] is not None and (
-                type(current[0]) is not str
-                or not current[0].startswith("review_case_")
-            ):
-                raise MetadataReportError("review case pointer is invalid")
-            source_current = self._connection.execute("SELECT report_id FROM current_metadata_report_lineages WHERE connection_name=? AND library_name=? AND item_id=?", (case.target["connection"], case.target["library"], case.target["item"])).fetchone()
-            file_current = self._connection.execute("SELECT report_id FROM current_metadata_reports WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?", (case.target["connection"], case.target["library"], case.target["item"], case.file_identity)).fetchone()
-            return _canonical_json({"case": case.to_data(), "current": current == (case.review_case_id,) and source_current == (case.report_id,) and file_current == (case.report_id,), "schema_version": "review-case-get-v1"})
+            package = self._connection.execute(
+                "SELECT proposal_set_id,report_id,review_case_id FROM current_review_packages WHERE connection_name=? AND library_name=? AND item_id=?",
+                (case.target["connection"], case.target["library"], case.target["item"]),
+            ).fetchone()
+            current = package == (case.proposal_set_id, case.report_id, case.review_case_id)
+            return _canonical_json({"case": case.to_data(), "current": current, "schema_version": "review-case-get-v1"})
         except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
             raise MetadataReportError("review case is unavailable") from error
 
@@ -4898,34 +4953,38 @@ class SQLiteMetadataReportRepository:
             rows = self.list_current_review_case_documents(
                 search, limit, offset, attention
             )
-            projected = tuple(
-                (
-                    case_document,
-                    report_document,
-                    (
-                        ()
-                        if case_document is None
-                        else self.get_review_case_decisions(
-                            ReviewCase.from_json(case_document).review_case_id
-                        )
-                    ),
-                    (
-                        ()
-                        if case_document is None
-                        else self._automatic_attention_destinations(
-                            ReviewCase.from_json(case_document).review_case_id
-                        )
-                    ),
-                    (
-                        ()
-                        if case_document is None
-                        else self._field_effect_capability_suspended_destinations(
-                            ReviewCase.from_json(case_document).review_case_id
-                        )
-                    ),
-                )
-                for case_document, report_document in rows
-            )
+            projected_rows = []
+            for case_document, report_document in rows:
+                if case_document is None and '"schema_version":"review-terminal-work-v1"' in report_document:
+                    projected_rows.append((case_document, report_document, (), (), (), None))
+                    continue
+                report = MetadataReport.from_json(report_document)
+                terminal = self._connection.execute(
+                    "SELECT work_id,stage,attempt,recovery_attempt,state,failure_code,failure_root "
+                    "FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=? "
+                    "ORDER BY updated_at DESC,work_id DESC LIMIT 1",
+                    (report.target.connection, report.target.library, report.target.item),
+                ).fetchone()
+                terminal_document = None if (
+                    terminal is None
+                    or terminal[4] != "failed"
+                    or terminal[5] is None
+                ) else _canonical_json({
+                    "attempt": terminal[2], "connection": report.target.connection,
+                    "failure_root": terminal[6], "item": report.target.item,
+                    "lane": terminal[1], "library": report.target.library,
+                    "recovery_attempt": terminal[3], "schema_version": "review-terminal-work-v1",
+                    "status": terminal[5], "work_id": terminal[0],
+                })
+                case_id = None if case_document is None else ReviewCase.from_json(case_document).review_case_id
+                projected_rows.append((
+                    case_document, report_document,
+                    () if case_id is None else self.get_review_case_decisions(case_id),
+                    () if case_id is None else self._automatic_attention_destinations(case_id),
+                    () if case_id is None else self._field_effect_capability_suspended_destinations(case_id),
+                    terminal_document,
+                ))
+            projected = tuple(projected_rows)
             total, attention_total = self.count_current_review_cases(search)
             snapshot = ReviewLibrarySnapshot(
                 rows=projected,
@@ -4992,20 +5051,54 @@ class SQLiteMetadataReportRepository:
                 condition = f"NOT ({condition})"
             elif attention is None:
                 condition = "1"
+            terminal_union = ""
+            parameters: list[object] = [
+                query,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+            ]
+            if attention is not True:
+                terminal_union = (
+                    " UNION ALL SELECT NULL,json_object("
+                    "'attempt',attempt,'connection',connection_name,"
+                    "'failure_root',failure_root,'item',item_id,'lane',stage,"
+                    "'library',library_name,'recovery_attempt',recovery_attempt,"
+                    "'schema_version','review-terminal-work-v1','status',failure_code,"
+                    "'work_id',work_id),connection_name,library_name,item_id,NULL,"
+                    "1,'preparation unavailable','' FROM review_preparation_work "
+                    "WHERE state='failed' AND failure_code IS NOT NULL AND NOT EXISTS ("
+                    "SELECT 1 FROM current_review_packages p WHERE "
+                    "p.connection_name=review_preparation_work.connection_name AND "
+                    "p.library_name=review_preparation_work.library_name AND "
+                    "p.item_id=review_preparation_work.item_id) AND "
+                    "(?='' OR ml_casefold(item_id) LIKE ? ESCAPE '\\' OR "
+                    "ml_casefold(library_name) LIKE ? ESCAPE '\\' OR "
+                    "ml_casefold('Preparation unavailable') LIKE ? ESCAPE '\\' OR "
+                    "ml_casefold('unknown') LIKE ? ESCAPE '\\')"
+                )
+                parameters.extend((query, pattern, pattern, pattern, pattern))
+            parameters.extend((limit, offset))
             rows = self._connection.execute(
-                "SELECT rc.document,mr.document,ml.connection_name,ml.library_name,"
-                "ml.item_id,c.outcome "
+                "SELECT case_document,report_document,connection_name,library_name,"
+                "item_id,outcome FROM (SELECT rc.document AS case_document,"
+                "mr.document AS report_document,ml.connection_name AS connection_name,"
+                "ml.library_name AS library_name,ml.item_id AS item_id,c.outcome AS outcome,"
+                "CASE WHEN "
+                + _REVIEW_ATTENTION_SQL
+                + " THEN 0 ELSE 1 END AS attention_order,"
+                "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) AS title_order,"
+                "COALESCE(rc.review_case_id,'') AS case_order "
                 + _CURRENT_LIBRARY_FROM_SQL
                 + " WHERE COALESCE(c.outcome,'')<>'tombstoned' AND "
                 + condition
                 + _REVIEW_SEARCH_SQL
-                + " ORDER BY CASE WHEN "
-                + _REVIEW_ATTENTION_SQL
-                + " THEN 0 ELSE 1 END,"
-                "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')),"
-                "ml.library_name,ml.item_id,ml.connection_name,"
-                "COALESCE(rc.review_case_id,'') LIMIT ? OFFSET ?",
-                (query, pattern, pattern, pattern, pattern, pattern, limit, offset),
+                + terminal_union
+                + ") ORDER BY attention_order,title_order,library_name,item_id,"
+                "connection_name,case_order LIMIT ? OFFSET ?",
+                tuple(parameters),
             ).fetchall()
             values: list[tuple[str | None, str]] = []
             for row in rows:
@@ -5016,6 +5109,15 @@ class SQLiteMetadataReportRepository:
                     or (row[5] is not None and type(row[5]) is not str)
                 ):
                     raise MetadataReportError("review browse row is invalid")
+                if row[0] is None and row[5] is None:
+                    terminal = json.loads(row[1])
+                    if (
+                        type(terminal) is dict
+                        and terminal.get("schema_version")
+                        == "review-terminal-work-v1"
+                    ):
+                        values.append((None, _canonical_json(terminal)))
+                        continue
                 lineage = (row[2], row[3], row[4])
                 report = MetadataReport.from_json(row[1])
                 if (
@@ -5032,15 +5134,8 @@ class SQLiteMetadataReportRepository:
                         raise MetadataReportError("review browse row disagrees")
                     values.append((None, report.to_json()))
                     continue
-                pointer = self._validated_review_pointer(lineage)
-                if (
-                    pointer is None
-                    or pointer[1] != report.report_id
-                    or pointer[5] != row[5]
-                ):
-                    raise MetadataReportError("review browse row disagrees")
                 if row[0] is None:
-                    if row[5] not in {"no_case", "retired"}:
+                    if row[5] not in {"report_only", "no_case", "retired"}:
                         raise MetadataReportError("review browse row disagrees")
                     values.append((None, report.to_json()))
                     continue
@@ -5086,7 +5181,16 @@ class SQLiteMetadataReportRepository:
                 or row[1] > row[0]
             ):
                 raise MetadataReportError("review library count is invalid")
-            return row
+            terminal = self._connection.execute(
+                "SELECT count(*) FROM review_preparation_work WHERE state='failed' AND failure_code IS NOT NULL "
+                "AND NOT EXISTS (SELECT 1 FROM current_review_packages p WHERE p.connection_name=review_preparation_work.connection_name AND p.library_name=review_preparation_work.library_name AND p.item_id=review_preparation_work.item_id) "
+                "AND (?='' OR ml_casefold(item_id) LIKE ? ESCAPE '\\' OR ml_casefold(library_name) LIKE ? ESCAPE '\\' "
+                "OR ml_casefold('Preparation unavailable') LIKE ? ESCAPE '\\' OR ml_casefold('unknown') LIKE ? ESCAPE '\\')",
+                (query, pattern, pattern, pattern, pattern),
+            ).fetchone()
+            if terminal is None or type(terminal[0]) is not int or terminal[0] < 0:
+                raise MetadataReportError("review library count is invalid")
+            return row[0] + terminal[0], row[1]
         except (sqlite3.Error, TypeError, ValueError) as error:
             raise MetadataReportError("review library is unavailable") from error
 
@@ -6940,6 +7044,9 @@ class SQLiteMetadataReportRepository:
                 type(case_envelope) is not dict
                 or case_envelope.get("current") is not True
                 or type(case_envelope.get("case")) is not dict
+                or not self._review_case_accepts_authority(
+                    decision.review_case_id
+                )
             ):
                 raise HumanDecisionError("stale")
             case = ReviewCase.create_from_data(case_envelope["case"])
@@ -7347,8 +7454,24 @@ class SQLiteMetadataReportRepository:
             type(reopened) is not dict
             or reopened.get("current") is not True
             or type(reopened.get("case")) is not dict
+            or not self._review_case_accepts_authority(review_case_id)
         ):
             raise ReviewAdmissionStaleError
+
+    def _review_case_accepts_authority(self, review_case_id: str) -> bool:
+        return self._connection.execute(
+            "SELECT 1 FROM current_review_case_lineages staged "
+            "JOIN current_review_packages published ON "
+            "published.connection_name=staged.connection_name AND "
+            "published.library_name=staged.library_name AND "
+            "published.item_id=staged.item_id AND "
+            "published.proposal_set_id=staged.proposal_set_id AND "
+            "published.report_id=staged.report_id AND "
+            "published.review_case_id=staged.review_case_id AND "
+            "published.checkpoint=staged.checkpoint "
+            "WHERE staged.review_case_id=?",
+            (review_case_id,),
+        ).fetchone() == (1,)
 
     def _policy_destinations_for(
         self, report: MetadataReport, proposal: ProposalSet
@@ -7859,6 +7982,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             )
             connection.execute(_REVIEW_CASES_SQL)
             connection.execute(_REVIEW_POINTERS_SQL)
+            connection.execute(_CURRENT_REVIEW_PACKAGES_SQL)
             connection.execute(_REVIEW_TRANSITIONS_SQL)
             connection.execute(_REVIEW_SCANS_SQL)
             connection.execute(_REVIEW_CONTROL_SQL)
@@ -8156,6 +8280,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_current_metadata_reports_1", None),
         ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
         ("index", "sqlite_autoindex_current_review_case_lineages_1", None),
+        ("index", "sqlite_autoindex_current_review_packages_1", None),
         ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
         ("index", "metadata_report_cover_references_artifact_id", _COVER_ARTIFACT_INDEX_SQL),
         ("index", "metadata_report_cover_references_preview_digest", _COVER_PREVIEW_INDEX_SQL),
@@ -8211,6 +8336,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "current_metadata_reports", _CURRENT_SQL),
         ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
         ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
+        ("table", "current_review_packages", _CURRENT_REVIEW_PACKAGES_SQL),
         ("table", "cover_considerations", _COVER_CONSIDERATIONS_SQL),
         ("table", "current_cover_considerations", _CURRENT_COVER_CONSIDERATIONS_SQL),
         ("table", "cover_consideration_events", _COVER_CONSIDERATION_EVENTS_SQL),

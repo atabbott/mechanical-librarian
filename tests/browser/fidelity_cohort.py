@@ -62,6 +62,8 @@ def _work(
     case: str | None,
     attention: int,
     dispositions: list[str],
+    preparation: dict[str, object] | None = None,
+    preparation_outcomes: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     return {
         "work_id": f"library_work_{number:064d}",
@@ -77,6 +79,8 @@ def _work(
         ),
         "detail_url": f"/review/{case}" if case else None,
         "dispositions": dispositions,
+        "preparation": preparation,
+        "preparation_outcomes": preparation_outcomes or [],
     }
 
 
@@ -140,6 +144,8 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         case=None,
         attention=0,
         dispositions=[],
+        preparation={"attempt": 1, "provider": "hardcover-main", "reason": "Provider credentials need owner attention.", "recovery": "Retry review preparation after correcting the reported condition.", "recovery_attempt": 0, "stage": "provider", "status": "authentication"},
+        preparation_outcomes=[{"provider_requests": 1, "lane_kind": "work", "provider": "hardcover-main", "reason": "Provider credentials need owner attention.", "status": "authentication"}],
     ),
     _work(
         7,
