@@ -3054,7 +3054,7 @@ class ProviderAdapterTests(unittest.TestCase):
                 )
             )
 
-    def test_nullable_contribution_roles_preserve_candidate_with_typed_malformed_claims(self) -> None:
+    def test_nullable_contribution_roles_preserve_neutral_identity_bound_creators(self) -> None:
         contribution = {
             "id": 1,
             "contribution": None,
@@ -3063,15 +3063,39 @@ class ProviderAdapterTests(unittest.TestCase):
         observation = self._observe_contributions([contribution])
 
         self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
-        malformed = [
+        creators = [
             claim
             for claim in observation.candidates[0].claims
-            if claim.kind is ClaimKind.CONTRIBUTOR
-            and claim.state is FieldState.MALFORMED
+            if claim.kind is ClaimKind.CREATOR
+            and claim.state is FieldState.VALID
+            and claim.role is None
         ]
         self.assertEqual(
             {ClaimScope.EDITION, ClaimScope.WORK},
-            {claim.scope for claim in malformed},
+            {claim.scope for claim in creators},
+        )
+        work_creator = next(
+            claim for claim in creators if claim.scope is ClaimScope.WORK
+        )
+        self.assertEqual(
+            ((work_creator.reference, "hardcover-author-0000000001", None),),
+            tuple(
+                (binding.claim_reference, binding.identity, binding.role)
+                for binding in observation.candidates[0].identity_bindings
+            ),
+        )
+        qualified = qualify_provider_observation(
+            observation,
+            _work_lookup("Synthetic title", ("Synthetic Contributor",)),
+        )
+        self.assertEqual(ProviderStatus.CANDIDATES, qualified.status)
+        self.assertEqual(
+            (None,),
+            tuple(
+                claim.role
+                for claim in qualified.candidates[0].claims
+                if claim.kind is ClaimKind.CREATOR
+            ),
         )
         self.assertEqual(
             {ProviderEvidenceKind.FIRST_PUBLICATION_DATE},
@@ -3080,7 +3104,7 @@ class ProviderAdapterTests(unittest.TestCase):
 
     def test_nullable_and_malformed_contribution_authors_are_field_local(self) -> None:
         for label, role, author, expected_kind in (
-            ("both-null", None, None, ClaimKind.CONTRIBUTOR),
+            ("both-null", None, None, ClaimKind.CREATOR),
             ("null-author", "Author", None, ClaimKind.CREATOR),
             ("malformed-author", "Translator", "invalid", ClaimKind.CONTRIBUTOR),
             ("malformed-role-and-author", {}, "invalid", ClaimKind.CONTRIBUTOR),

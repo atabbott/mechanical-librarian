@@ -221,8 +221,18 @@ parsed name-to-identity bindings may treat multiple names for one provider
 identity as aliases. Incomplete bindings remain non-authoritative and direct
 complete-name comparison still applies; conflicting complete bindings,
 reordered, duplicated, multi-author-inverted or role/scope-incompatible sets
-cannot agree. Alternative
-work titles remain distinct original claims bound to the same admitted work;
+cannot agree.
+An unlabelled Hardcover creator remains a neutral, identity-bound work claim
+when its complete ordered set exactly substantiates an existing target-backed
+work lookup. It never becomes author evidence by itself. One independently
+qualified provider's complete explicit author set compares complete ordered
+identity bindings first. Provider-native identity namespaces are not a global
+person registry, so nonmatching namespaces fall back only to exact closed
+normalized names.
+Repeated endpoints and providers with the same authority are one source;
+partial, duplicated, reordered, mixed-role, malformed, or contradictory sets
+remain unresolved.
+Alternative work titles remain distinct original claims bound to the same admitted work;
 titles are never assembled from subtitles. Fuzzy matching, token subsets,
 variant/translation/abridgement markers, provider rank and repeated queries do
 not create agreement or independent corroboration.

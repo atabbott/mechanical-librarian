@@ -30,6 +30,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderRequestAccounting,
     ProviderQueryKind,
+    complete_creator_identity_bindings,
     ProviderStatus,
     PublicationDateRelation,
     TargetDestination,
@@ -827,6 +828,7 @@ def qualify_provider_observation(
             and claim.state is FieldState.VALID
             and claim.value is not None
         )
+        untyped_creators = _complete_work_creators(candidate, None)
         disqualifying_roles = {
             claim.role
             for claim in candidate.claims
@@ -845,8 +847,26 @@ def qualify_provider_observation(
             blocked_work_identities.add(qualification_identity)
         if (
             titles == (expected_title,)
-            and len(authors) == len(expected_authors)
-            and authors == expected_authors
+            and (
+                (
+                    len(authors) == len(expected_authors)
+                    and authors == expected_authors
+                )
+                or (
+                    untyped_creators == expected_authors
+                    and complete_creator_identity_bindings(
+                        candidate,
+                        tuple(
+                            claim
+                            for claim in candidate.claims
+                            if claim.scope is ClaimScope.WORK
+                            and claim.kind is ClaimKind.CREATOR
+                            and claim.role is None
+                        ),
+                    )
+                    is not None
+                )
+            )
             and not disqualifying_roles
             and not variant_marker
         ):
@@ -930,6 +950,33 @@ def qualify_provider_observation(
         accessed_at=observation.accessed_at,
         diagnostics=observation.diagnostics,
     )
+
+
+def _complete_work_creators(
+    candidate: ProviderCandidate, role: str | None
+) -> tuple[str, ...] | None:
+    """Return one closed work creator set without inferring an omitted role."""
+    creators = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
+    )
+    if (
+        not creators
+        or any(
+            claim.role != role
+            or claim.state is not FieldState.VALID
+            or claim.value is None
+            for claim in creators
+        )
+        or any(
+            claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.CONTRIBUTOR
+            for claim in candidate.claims
+        )
+    ):
+        return None
+    return tuple(normalize_title(claim.value).casefold() for claim in creators)
 
 
 def _variant_marker(value: str) -> bool:

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Preserve valid unlabelled Hardcover work creators as neutral,
+  identity-bound evidence and admit one deterministic authors proposal only
+  when a distinct provider's complete explicit author set exactly corroborates
+  the same qualified work. Partial, reordered, mixed-role, malformed, and
+  same-authority creator sets remain unresolved. (#416)
+
 - Add durable provider- and configuration-scoped recovery canaries. Terminal
   packages register only retry-eligible lanes; the existing supervisor claims
   one exact-current canary before durable, independently leased sibling fanout.

@@ -1,7 +1,11 @@
 import json
+import tempfile
 import unittest
 from dataclasses import replace
+from pathlib import Path
 
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverDesignation,
@@ -54,6 +58,7 @@ from mechanical_librarian.domain.proposal_set import (
     _ignored_policy_targets,
     evaluate_report,
 )
+from mechanical_librarian.domain.review_case import ReviewCase
 
 
 def _fields(
@@ -469,6 +474,181 @@ def _result(proposal_set: ProposalSet, destination: TargetDestination):
 
 
 class ProposalSetTests(unittest.TestCase):
+    def test_untyped_creator_corroboration_rejects_closed_matrix(self) -> None:
+        def candidate(
+            provider: str,
+            identity: str,
+            values: tuple[str, ...],
+            roles: tuple[str | None, ...],
+            bindings: int,
+        ) -> ProviderCandidate:
+            claims = tuple(
+                _claim(
+                    provider, identity, ClaimKind.CREATOR, value,
+                    scope=ClaimScope.WORK, role=role, order=index,
+                )
+                for index, (value, role) in enumerate(zip(values, roles, strict=True))
+            )
+            prefix = "open-library-author-OL" if provider == "open-library" else "hardcover-author-"
+            return ProviderCandidate(
+                identity, provider + "-work", claims, (),
+                tuple(
+                    ProviderIdentityBinding(
+                        claim.reference, prefix + str(index + 1), ClaimScope.WORK,
+                        claim.role, index,
+                    )
+                    for index, claim in enumerate(claims[:bindings])
+                    if claim.role in {None, "author"}
+                ),
+            )
+
+        author = candidate(
+            "open-library", "author-edition", ("Mick Herron", "Jane Doe"),
+            ("author", "author"), 2,
+        )
+
+        def has_pair(
+            neutral_values: tuple[str, ...],
+            neutral_roles: tuple[str | None, ...],
+            bindings: int,
+            query_kind: ProviderQueryKind = ProviderQueryKind.WORK,
+        ) -> bool:
+            neutral = candidate(
+                "hardcover", "neutral-edition", neutral_values, neutral_roles,
+                bindings,
+            )
+            report = _report(
+                title=None,
+                fields=_fields(
+                    None,
+                    authors=TargetField(
+                        TargetDestination.AUTHORS, TargetFieldState.MISSING,
+                    ),
+                ),
+                providers=(
+                    ProviderObservation("hardcover", ProviderStatus.CANDIDATES, (), (neutral,), query_kind, "hardcover"),
+                    ProviderObservation("open-library", ProviderStatus.CANDIDATES, (), (author,), ProviderQueryKind.WORK, "open_library"),
+                ),
+            )
+            references = {
+                reference
+                for alternative in _result(
+                    evaluate_report(report), TargetDestination.AUTHORS,
+                ).alternatives
+                for reference in alternative.evidence_references
+            }
+            return all(claim.reference in references for claim in neutral.claims)
+
+        cases = (
+            ("name_mismatch", ("Mick Herron", "Other Doe"), (None, None), 2, ProviderQueryKind.WORK),
+            ("reordered", ("Jane Doe", "Mick Herron"), (None, None), 2, ProviderQueryKind.WORK),
+            ("duplicate", ("Mick Herron", "MICK HERRON"), (None, None), 2, ProviderQueryKind.WORK),
+            ("partial", ("Mick Herron", "Jane Doe"), (None, None), 1, ProviderQueryKind.WORK),
+            ("mixed_role", ("Mick Herron", "Jane Doe"), (None, "translator"), 2, ProviderQueryKind.WORK),
+            ("work_mismatch", ("Mick Herron", "Jane Doe"), (None, None), 2, ProviderQueryKind.ISBN),
+        )
+        for label, values, roles, bindings, query_kind in cases:
+            with self.subTest(label=label):
+                self.assertFalse(has_pair(values, roles, bindings, query_kind))
+
+        untyped_only = candidate(
+            "hardcover", "untyped-only", ("Mick Herron",), (None,), 1,
+        )
+        report = _report(
+            title=None,
+            fields=_fields(
+                None,
+                authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING),
+            ),
+            providers=(
+                ProviderObservation("hardcover", ProviderStatus.CANDIDATES, (), (untyped_only,), ProviderQueryKind.WORK, "hardcover"),
+            ),
+        )
+        self.assertEqual(
+            ProposalOutcome.INELIGIBLE,
+            _result(evaluate_report(report), TargetDestination.AUTHORS).outcome,
+        )
+
+    def test_distinct_author_and_untyped_creator_sets_corroborate_without_payloads(self) -> None:
+        def creator(provider: str, candidate: str, value: str, role: str | None) -> ProviderClaim:
+            return _claim(
+                provider, candidate, ClaimKind.CREATOR, value,
+                scope=ClaimScope.WORK, role=role,
+            )
+
+        author_claim = creator("open-library", "author-edition", "Mick Herron", "author")
+        neutral_claim = creator("hardcover", "neutral-edition", "Mick Herron", None)
+        author_candidate = ProviderCandidate(
+            "author-edition", "open-library-work", (author_claim,), (),
+            (ProviderIdentityBinding(author_claim.reference, "open-library-author-OL1", ClaimScope.WORK, "author"),),
+        )
+        neutral_candidate = ProviderCandidate(
+            "neutral-edition", "hardcover-work", (neutral_claim,), (),
+            (ProviderIdentityBinding(neutral_claim.reference, "hardcover-author-0000000001", ClaimScope.WORK, None),),
+        )
+        report = _report(
+            title=None,
+            fields=_fields(
+                None,
+                authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING),
+            ),
+            providers=(
+                ProviderObservation("hardcover", ProviderStatus.CANDIDATES, (), (neutral_candidate,), ProviderQueryKind.WORK, "hardcover"),
+                ProviderObservation("open-library", ProviderStatus.CANDIDATES, (), (author_candidate,), ProviderQueryKind.WORK, "open_library"),
+            ),
+        )
+        replayed_report = MetadataReport.from_json(report.to_json())
+        proposal = evaluate_report(replayed_report)
+        result = _result(proposal, TargetDestination.AUTHORS)
+
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
+        self.assertEqual(("explicit_author_corroborates_untyped_creator",), result.reasons)
+        self.assertEqual(
+            {author_claim.reference, neutral_claim.reference},
+            set(result.alternatives[0].evidence_references),
+        )
+        replayed_proposal = ProposalSet.from_json(proposal.to_json())
+        review_case = ReviewCase.create(replayed_proposal, replayed_report)
+        self.assertEqual(review_case, ReviewCase.from_json(review_case.to_json()))
+        self.assertNotIn("raw_payload", report.to_json())
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            repository.publish(replayed_report, lambda: True)
+            repository.publish_proposal(replayed_proposal)
+            admitted = json.loads(repository.admit_review_case(replayed_proposal))
+            detail = InspectCurrentReviewCase(repository).run(admitted["review_case_id"])
+            author_field = next(
+                field for field in detail["fields"]
+                if field["destination"] == TargetDestination.AUTHORS.value
+            )
+            self.assertEqual(
+                {author_claim.reference, neutral_claim.reference},
+                set(author_field["provenance"]),
+            )
+            self.assertEqual(
+                ["explicit_author_corroborates_untyped_creator"],
+                author_field["notices"],
+            )
+            self.assertNotIn("raw_payload", json.dumps(detail))
+            repository.close()
+
+        same_authority = ProviderObservation(
+            "hardcover", ProviderStatus.CANDIDATES, (), (neutral_candidate,),
+            ProviderQueryKind.WORK, "open_library",
+        )
+        same_authority_report = MetadataReport.create(
+            target=replayed_report.target,
+            file=replayed_report.file,
+            local_claims=replayed_report.local_claims,
+            local_reasons=replayed_report.local_reasons,
+            providers=(same_authority, replayed_report.providers[1]),
+        )
+        rejected = _result(evaluate_report(same_authority_report), TargetDestination.AUTHORS)
+        self.assertNotIn(
+            neutral_claim.reference,
+            rejected.alternatives[0].evidence_references,
+        )
+
     def test_shared_title_subtitle_destination_requires_every_owner_to_ignore(self) -> None:
         from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 

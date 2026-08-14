@@ -35,6 +35,8 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderCandidate,
     ProviderClaim,
     ProviderEvidenceKind,
+    ProviderIdentityBinding,
+    ProviderQueryKind,
     TargetDestination,
     TargetField,
     TargetFieldState,
@@ -185,7 +187,11 @@ _DESTINATION_DATE_SEMANTICS: dict[
 
 _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.PROPOSE_CHANGE: frozenset(
-        {("unique_safe_cover",), ("unique_typed_candidate",)}
+        {
+            ("unique_safe_cover",),
+            ("unique_typed_candidate",),
+            ("explicit_author_corroborates_untyped_creator",),
+        }
     ),
     ProposalOutcome.ACCEPTABLE_CHOICE: frozenset(
         {("field_policy_acceptable_choice",)}
@@ -886,6 +892,7 @@ class _Observed:
     representation: str
     date_event: DateEvent | None = None
     date_precision: DatePrecision | None = None
+    corroborated_untyped_creator: bool = False
 
 
 def _ignored_policy_targets(
@@ -1267,7 +1274,140 @@ def _list_observations(
                         _provider_representation(provider, candidate),
                     )
                 )
+    if destination is TargetDestination.AUTHORS:
+        values.extend(_corroborated_untyped_author_observations(report))
     return tuple(values)
+
+
+def _corroborated_untyped_author_observations(
+    report: MetadataReport,
+) -> tuple[_Observed, ...]:
+    """Pair only one complete neutral creator set with a distinct author set."""
+    authors = tuple(
+        (provider, candidate, claims, bindings)
+        for provider in report.providers
+        for candidate in provider.candidates
+        if provider.query_kind is ProviderQueryKind.WORK
+        if (set_value := _complete_provider_creator_set(candidate, "author")) is not None
+        for claims, bindings in (set_value,)
+    )
+    untyped = tuple(
+        (provider, candidate, claims, bindings)
+        for provider in report.providers
+        for candidate in provider.candidates
+        if provider.query_kind is ProviderQueryKind.WORK
+        if (set_value := _complete_provider_creator_set(candidate, None)) is not None
+        for claims, bindings in (set_value,)
+        if bindings is not None
+    )
+    observations: list[_Observed] = []
+    for author_provider, author_candidate, author_claims, author_bindings in authors:
+        for neutral_provider, neutral_candidate, neutral_claims, neutral_bindings in untyped:
+            if (
+                author_provider.authority is None
+                or neutral_provider.authority is None
+                or author_provider.authority == neutral_provider.authority
+                or author_provider.provider == neutral_provider.provider
+            ):
+                continue
+            if not _creator_sets_match(
+                author_claims,
+                author_bindings,
+                neutral_claims,
+                neutral_bindings,
+            ):
+                continue
+            observations.append(
+                _Observed(
+                    _value(
+                        TargetDestination.AUTHORS,
+                        tuple(claim.value for claim in author_claims if claim.value is not None),
+                    ),
+                    tuple(
+                        claim.reference
+                        for claim in (*author_claims, *neutral_claims)
+                    ),
+                    _correlation(
+                        "creator-corroboration:"
+                        + ":".join(
+                            sorted(
+                                (author_provider.authority, neutral_provider.authority)
+                            )
+                        )
+                    ),
+                    ProposalScope.WORK,
+                    _representation(
+                        canonical_json(
+                            {
+                                "author": _provider_representation(author_provider, author_candidate),
+                                "untyped": _provider_representation(neutral_provider, neutral_candidate),
+                            }
+                        )
+                    ),
+                    corroborated_untyped_creator=True,
+                )
+            )
+    return tuple(observations)
+
+
+def _complete_provider_creator_set(
+    candidate: ProviderCandidate, role: str | None,
+) -> tuple[
+    tuple[ProviderClaim, ...], tuple[ProviderIdentityBinding, ...] | None
+] | None:
+    creators = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.CREATOR and claim.scope is ClaimScope.WORK
+    )
+    if (
+        not creators
+        or any(
+            claim.role != role
+            or claim.state is not FieldState.VALID
+            or claim.value is None
+            for claim in creators
+        )
+        or any(
+            claim.kind is ClaimKind.CONTRIBUTOR and claim.scope is ClaimScope.WORK
+            for claim in candidate.claims
+        )
+        or len({creator_comparison_key(claim.value or "") for claim in creators})
+        != len(creators)
+    ):
+        return None
+    bindings = complete_creator_identity_bindings(candidate, creators)
+    if any(
+        binding.scope is ClaimScope.WORK and binding.role == role
+        for binding in candidate.identity_bindings
+    ) and bindings is None:
+        return None
+    return creators, bindings
+
+
+def _creator_sets_match(
+    authors: tuple[ProviderClaim, ...],
+    author_bindings: tuple[ProviderIdentityBinding, ...] | None,
+    untyped: tuple[ProviderClaim, ...],
+    untyped_bindings: tuple[ProviderIdentityBinding, ...] | None,
+) -> bool:
+    if len(authors) != len(untyped) or untyped_bindings is None:
+        return False
+    names_match = tuple(
+        creator_comparison_key(claim.value or "") for claim in authors
+    ) == tuple(
+        creator_comparison_key(claim.value or "") for claim in untyped
+    )
+    if author_bindings is not None:
+        identities_match = tuple(
+            binding.identity for binding in author_bindings
+        ) == tuple(binding.identity for binding in untyped_bindings)
+        if identities_match:
+            return names_match
+        # Provider adapters retain their opaque, provider-namespaced person
+        # identifiers.  Different namespaces are not a cross-provider identity
+        # registry, so the closed name comparison is the permitted fallback.
+    return names_match
 
 
 def _provider_author_bindings_allow_observation(
@@ -1946,7 +2086,17 @@ def _evaluate(
         ProposalOutcome.PROPOSE_CHANGE,
         alternatives,
         alternative.alternative_id,
-        ("unique_typed_candidate",),
+        (
+            "explicit_author_corroborates_untyped_creator"
+            if destination is TargetDestination.AUTHORS
+            and any(
+                observed.corroborated_untyped_creator
+                and set(observed.references)
+                <= set(alternative.evidence_references)
+                for observed in observations
+            )
+            else "unique_typed_candidate",
+        ),
         dependencies,
     )
 

@@ -1402,7 +1402,7 @@ class ProviderIdentityBinding:
     claim_reference: str
     identity: str
     scope: ClaimScope
-    role: str
+    role: str | None
     source_ordinal: int = 0
 
     def __post_init__(self) -> None:
@@ -1410,16 +1410,17 @@ class ProviderIdentityBinding:
             _REFERENCE.fullmatch(self.claim_reference) is None
             or not self.claim_reference.startswith("provider_")
             or type(self.scope) is not ClaimScope
-            or self.role != "author"
+            or self.role not in {None, "author"}
             or type(self.source_ordinal) is not int
             or not 0 <= self.source_ordinal <= 2_147_483_647
         ):
             raise ReportValueError("provider identity binding is invalid")
         _text(self.identity, "provider identity binding identity", 128)
-        try:
-            validate_role_projection(self.role)
-        except EvidenceValueError as error:
-            raise ReportValueError("provider identity binding role is invalid") from error
+        if self.role is not None:
+            try:
+                validate_role_projection(self.role)
+            except EvidenceValueError as error:
+                raise ReportValueError("provider identity binding role is invalid") from error
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -1531,7 +1532,7 @@ class ProviderCandidate:
                     self.identity_bindings,
                     key=lambda value: (
                         value.scope.value,
-                        value.role,
+                        value.role or "",
                         value.source_ordinal,
                         value.identity,
                         value.claim_reference,
