@@ -23,6 +23,9 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     FakeTargetService,
 )
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
 from mechanical_librarian.application.metadata_policy import (
     MAX_SHADOW_SAMPLE_RESPONSE_BYTES,
     PolicyNotebook,
@@ -280,6 +283,127 @@ def _human_title_decision(repository, case_id: str, occurred_at: int) -> HumanDe
 
 
 class ShadowOutcomePersistenceTests(unittest.TestCase):
+    def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards(self) -> None:
+        isbn10 = LocalClaim.create(
+            kind=ClaimKind.ISBN, observed="0306406152", canonical="0306406152",
+            excerpt="0306406152", applicability="ebook", checksum="valid_isbn_10",
+            applicability_basis="ebook", scope=ClaimScope.EDITION,
+        )
+        report = _proposal_report(
+            fields=_fields(isbn=TargetField(
+                TargetDestination.ISBN, TargetFieldState.VALUE, "0306406152",
+            )),
+            local_claims=(isbn10,), providers=(_provider(
+                "catalogue", "edition-1", (_claim(
+                    "catalogue", "edition-1", ClaimKind.ISBN, "9780306406157",
+                    scope=ClaimScope.EDITION, applicability="ebook",
+                ),),
+            ),),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports.sqlite"
+            repository = open_repository(path)
+            options = dict(DEFAULT_OPTIONS)
+            options["isbn_form"] = "preserve_exact"
+            destinations = {
+                name: "unsupported" if name == "explicit" else "ask"
+                for name in OPTION_CATALOGUE
+            }
+            destinations["isbn_form"] = "automatic"
+            profile = MetadataPolicyProfile.create("No-change ISBN", options, destinations)
+            resolved = resolve_policy(profile, report.target.library)
+            repository.enter_shadow_preview(1)
+            repository.create_metadata_policy_draft(profile.canonical_json)
+            repository.activate_metadata_policy(
+                profile.policy_id, MetadataPolicyProfile.builtin().policy_id,
+                ((report.target.library, resolved.resolved_id, resolved.canonical_json),), 2,
+            )
+            repository.activate_qualified_automatic(3)
+            proposal_set = evaluate_report(
+                report, resolved.resolved_id, human_review_destinations(resolved),
+            )
+            repository.publish(report, lambda: True)
+            repository.publish_proposal(proposal_set)
+            case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
+            assert case_id is not None
+            case = ReviewCase.create_from_data(
+                json.loads(repository.get_review_case(case_id))["case"]
+            )
+            proposal = next(value for value in case.proposals if value["destination"] == "isbn")
+            alternative = proposal["result"]["alternatives"][0]
+            decision = AutomaticDecision.create(
+                review_case_id=case.review_case_id, report_id=case.report_id,
+                proposal_set_id=case.proposal_set_id, proposal_id=proposal["proposal_id"],
+                target_fingerprint=case.target_fingerprint, destination="isbn",
+                outcome="candidate", candidate_id=alternative["alternative_id"],
+                resolved_policy_id=resolved.resolved_id, policy_generation=2,
+                rule_id="shadow_rule_" + "1" * 64, policy_category="isbn_form",
+                policy_option="preserve_exact",
+                qualification_manifest_sha256="aba7b436d88bb4e884cda0c4b247aa871063dce459e0f5fbea298227a1e9b06c",
+                source_outcome_id="shadow_outcome_" + "2" * 64,
+                bundle_id=None, occurred_at=4,
+            )
+            repository._connection.execute(
+                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
+                "idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
+                (decision.decision_id, decision.review_case_id, decision.destination,
+                 decision.idempotency_digest, decision.occurred_at, decision.to_json()),
+            )
+            repository._connection.commit()
+
+            self.assertTrue(repository.record_current_field_effect_no_change(decision, 5))
+            self.assertTrue(repository.record_current_field_effect_no_change(decision, 9))
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT count(*) FROM field_effect_no_changes"
+                ).fetchone(), (1,),
+            )
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT count(*) FROM field_effects"
+                ).fetchone(), (0,),
+            )
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT count(*) FROM field_effect_authorities"
+                ).fetchone(), (0,),
+            )
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT count(*) FROM field_effect_consents"
+                ).fetchone(), (0,),
+            )
+
+            class UnexpectedAuthority:
+                def resolve(self, _decision):
+                    raise AssertionError("equal decision reached authority")
+
+            scheduler = ContinuousGuardedApplication(
+                repository, {("primary", "ebooks"): SimpleNamespace()},
+                {("primary", "ebooks"): SimpleNamespace()}, UnexpectedAuthority(),
+                (("primary", "ebooks"),), lambda: 10, lambda *_: None,
+            )
+            self.assertEqual(scheduler.schedule(), 0)
+            self.assertEqual(repository.pending_field_effect_decision_documents(100), ())
+            page = repository.field_effect_activity_page(
+                search="item-1", event_type="metadata", occurred_after=0, page=1,
+                page_size=25,
+            )
+            no_change = next(
+                event for event in page["events"]
+                if event["state"] == "no_change_required"
+            )
+            self.assertEqual(no_change["report_id"], report.report_id)
+            repository.close()
+            reopened = open_repository(path, create=False)
+            self.assertEqual(
+                reopened.field_effect_activity_page(
+                    search="item-1", event_type="metadata", occurred_after=0,
+                    page=1, page_size=25,
+                )["events"][0]["state"], "no_change_required",
+            )
+            reopened.close()
+
     def test_every_f20_automatic_option_reaches_persisted_effect_authority(self) -> None:
         isbn10 = LocalClaim.create(
             kind=ClaimKind.ISBN, observed="0306406152", canonical="0306406152",

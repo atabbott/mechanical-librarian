@@ -980,53 +980,25 @@ class SQLiteMetadataReportRepository:
             decision.validate_for(case)
             value = decision.selected_value
         else:
-            if (decision.review_case_id != case.review_case_id
-                    or decision.report_id != case.report_id
-                    or decision.proposal_set_id != case.proposal_set_id
-                    or decision.target_fingerprint != case.target_fingerprint):
+            report_row = self._connection.execute(
+                "SELECT document FROM metadata_reports WHERE report_id=?",
+                (decision.report_id,),
+            ).fetchone()
+            proposal_row = self._connection.execute(
+                "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+                (decision.proposal_set_id,),
+            ).fetchone()
+            if report_row is None or proposal_row is None:
                 raise FieldEffectError("authority_binding")
-            proposal = next((item for item in case.proposals
-                             if item["proposal_id"] == decision.proposal_id
-                             and item["destination"] == decision.destination), None)
-            alternatives = None if proposal is None else proposal["result"].get("alternatives")
-            selected = next((item for item in alternatives or ()
-                             if item.get("alternative_id") == decision.candidate_id), None)
-            if selected is None:
-                raise FieldEffectError("authority_binding")
-            value = selected["value"]
-            if decision.policy_category == "isbn_form":
-                report_row = self._connection.execute(
-                    "SELECT document FROM metadata_reports WHERE report_id=?",
-                    (decision.report_id,),
-                ).fetchone()
-                proposal_row = self._connection.execute(
-                    "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
-                    (decision.proposal_set_id,),
-                ).fetchone()
-                if report_row is None or proposal_row is None:
-                    raise FieldEffectError("authority_binding")
-                try:
-                    report = MetadataReport.from_json(report_row[0])
-                    proposal_set = ProposalSet.from_json(proposal_row[0])
-                    result = next(
-                        item for item in proposal_set.results
-                        if item.destination.value == decision.destination
-                    )
-                    candidate = next(
-                        item for item in result.alternatives
-                        if item.alternative_id == decision.candidate_id
-                    )
-                    exact_value = select_isbn_representation(
-                        report, candidate, decision.policy_option
-                    )
-                except (
-                    ReportValueError, ProposalValueError, StopIteration,
-                    RichMetadataPreviewError,
-                ) as error:
-                    raise FieldEffectError("authority_binding") from error
-                if exact_value is None:
-                    raise FieldEffectError("authority_binding")
-                value = {"kind": "text", "value": exact_value}
+            try:
+                value = _automatic_decision_value(
+                    decision, case, MetadataReport.from_json(report_row[0]),
+                    ProposalSet.from_json(proposal_row[0]),
+                )
+            except (
+                ReportValueError, ProposalValueError, RichMetadataPreviewError,
+            ) as error:
+                raise FieldEffectError("authority_binding") from error
         lineage = self._connection.execute(
             "SELECT connection_name,library_name,item_id FROM current_review_case_lineages "
             "WHERE review_case_id=?", (decision.review_case_id,),
@@ -1052,18 +1024,6 @@ class SQLiteMetadataReportRepository:
             if target_field["state"] == "value"
             else None
         )
-        if type(decision) is AutomaticDecision and decision.policy_category in {
-            "series", "genres", "tags", "description_fill", "isbn_form",
-        }:
-            try:
-                value = project_f20_automatic_decision_value(
-                    decision.policy_category,
-                    decision.policy_option,
-                    value,
-                    pre_value,
-                )
-            except RichMetadataPreviewError as error:
-                raise FieldEffectError("authority_binding") from error
         dependency_digests = (decision.target_fingerprint,)
         if type(decision) is HumanDecision and decision.destination == "cover":
             consideration_row = self._connection.execute(
@@ -8557,6 +8517,78 @@ def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:
         ) from error
 
 
+def _automatic_decision_value(
+    decision: AutomaticDecision, case: ReviewCase, report: MetadataReport,
+    proposal_set: ProposalSet,
+) -> object:
+    """Project one persisted automatic decision to its exact target envelope."""
+    target = case.target
+    if (
+        decision.outcome != "candidate"
+        or decision.review_case_id != case.review_case_id
+        or decision.report_id != case.report_id
+        or decision.proposal_set_id != case.proposal_set_id
+        or decision.target_fingerprint != case.target_fingerprint
+        or proposal_set.proposal_set_id != case.proposal_set_id
+        or proposal_set.report_id != case.report_id
+        or proposal_set.target_fingerprint != case.target_fingerprint
+        or report.report_id != case.report_id
+        or report.target.fingerprint != case.target_fingerprint
+        or (target.get("connection"), target.get("library"), target.get("item"))
+        != (report.target.connection, report.target.library, report.target.item)
+    ):
+        raise FieldEffectError("authority_binding")
+    proposal = next(
+        (item for item in case.proposals
+         if item["proposal_id"] == decision.proposal_id
+         and item["destination"] == decision.destination),
+        None,
+    )
+    alternatives = None if proposal is None else proposal["result"].get("alternatives")
+    selected = next(
+        (item for item in alternatives or ()
+         if item.get("alternative_id") == decision.candidate_id),
+        None,
+    )
+    target_field = next(
+        (item for item in target.get("fields", ())
+         if type(item) is dict and item.get("destination") == decision.destination),
+        None,
+    )
+    if (
+        selected is None
+        or type(target_field) is not dict
+        or target_field.get("state") not in {"value", "null", "empty", "missing"}
+    ):
+        raise FieldEffectError("authority_binding")
+    value = selected["value"]
+    if decision.policy_category == "isbn_form":
+        try:
+            result = next(
+                item for item in proposal_set.results
+                if item.destination.value == decision.destination
+            )
+            candidate = next(
+                item for item in result.alternatives
+                if item.alternative_id == decision.candidate_id
+            )
+            exact_value = select_isbn_representation(report, candidate, decision.policy_option)
+        except (StopIteration, RichMetadataPreviewError) as error:
+            raise FieldEffectError("authority_binding") from error
+        if exact_value is None:
+            raise FieldEffectError("authority_binding")
+        value = {"kind": "text", "value": exact_value}
+    pre_value = target_field.get("value") if target_field["state"] == "value" else None
+    if decision.policy_category in {"series", "genres", "tags", "description_fill", "isbn_form"}:
+        try:
+            value = project_f20_automatic_decision_value(
+                decision.policy_category, decision.policy_option, value, pre_value,
+            )
+        except RichMetadataPreviewError as error:
+            raise FieldEffectError("authority_binding") from error
+    return value
+
+
 def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
     """Fail closed on any non-canonical field-effect envelope or row mismatch."""
     try:
@@ -8584,13 +8616,15 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             decision = AutomaticDecision.from_json(decision_row[0])
             case = ReviewCase.from_json(case_row[0])
             report = MetadataReport.from_json(report_row[0])
+            proposal_row = connection.execute(
+                "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+                (decision.proposal_set_id,),
+            ).fetchone()
+            if proposal_row is None:
+                raise FieldEffectError("persistence")
+            proposal_set = ProposalSet.from_json(proposal_row[0])
             if (
-                decision.outcome != "candidate"
-                or decision.review_case_id != case.review_case_id
-                or decision.report_id != case.report_id
-                or decision.proposal_set_id != case.proposal_set_id
-                or decision.target_fingerprint != case.target_fingerprint
-                or decision.destination != record.destination
+                decision.destination != record.destination
                 or decision.target_fingerprint != record.target_fingerprint
                 or report.target.connection != record.connection
                 or report.target.library != record.library
@@ -8612,13 +8646,10 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                     or type(selected) is not dict):
                 raise FieldEffectError("persistence")
             pre_value = target.get("value") if target["state"] == "value" else None
-            desired = selected.get("value")
-            if decision.policy_category in {"series", "genres", "tags", "description_fill", "isbn_form"}:
-                desired = project_f20_automatic_decision_value(
-                    decision.policy_category, decision.policy_option, desired, pre_value,
-                )
-            else:
-                desired = project_decision_value(record.destination, desired)
+            desired = project_decision_value(
+                record.destination,
+                _automatic_decision_value(decision, case, report, proposal_set),
+            )
             if desired != pre_value or record.target_version != field_value_version(record.destination, pre_value):
                 raise FieldEffectError("persistence")
         control = connection.execute(
