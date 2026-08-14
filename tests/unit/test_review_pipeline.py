@@ -1324,6 +1324,34 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         )
         reopened.close()
 
+        reused_report = open_repository(self.path)
+        self.assertEqual(
+            reused_report._connection.execute(
+                "UPDATE review_preparation_work SET report_id=? WHERE state='failed'",
+                (reports[1].report_id,),
+            ).rowcount,
+            1,
+        )
+        reused_report_page = BrowseReviewLibrary(reused_report).library(
+            lens="all", search="Staged successor", limit=1, cursor=None
+        )
+        self.assertEqual(reused_report_page["counts"]["all"], 1)
+        self.assertIsNotNone(reused_report_page["items"][0]["preparation"])
+        self.assertEqual(
+            reused_report._connection.execute(
+                "SELECT report_id FROM current_review_packages"
+            ).fetchone(),
+            (reports[1].report_id,),
+        )
+        self.assertEqual(
+            reused_report._connection.execute(
+                "UPDATE review_preparation_work SET report_id=? WHERE state='failed'",
+                (reports[2].report_id,),
+            ).rowcount,
+            1,
+        )
+        reused_report.close()
+
         recovery = pipeline_for(reports[3], now=50)
         recovery.request("primary", "ebooks")
         recovery_steps = 0

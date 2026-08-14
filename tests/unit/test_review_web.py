@@ -2567,7 +2567,17 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             repository.publish(_report(), lambda: True)
             first_page = repository.list_current_review_case_documents(None, 1, 0, None)
             second_page = repository.list_current_review_case_documents(None, 1, 1, None)
+            title_rows = repository.list_current_review_case_documents(
+                "Preparation unavailable", 10, 0, None
+            )
+            media_rows = repository.list_current_review_case_documents(
+                "unknown", 10, 0, None
+            )
             snapshot = repository.read_review_library(None, 10, 0, None)
+            title_total = repository.count_current_review_cases(
+                "Preparation unavailable"
+            )
+            media_total = repository.count_current_review_cases("unknown")
             attention = repository.read_review_attention(None, 10, 0)
             repository.close()
         self.assertEqual(len(first_page), 1)
@@ -2576,6 +2586,8 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
         self.assertEqual(snapshot.total, 2)
         self.assertEqual(snapshot.attention_total, 0)
         self.assertEqual(len(snapshot.rows), 2)
+        self.assertEqual((len(title_rows), title_total), (1, (1, 0)))
+        self.assertEqual((len(media_rows), media_total), (1, (1, 0)))
         self.assertEqual(attention.total, 0)
         from mechanical_librarian.application.review_web import _library_item
         item = next(
@@ -2584,7 +2596,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             if _library_item(*row[:3])["preparation"] is not None
         )
         self.assertEqual(item["preparation"], {"attempt": 1, "provider": "hardcover-main", "reason": "Provider credentials need owner attention.", "recovery": "Retry review preparation after correcting the reported condition.", "recovery_attempt": 0, "stage": "provider", "status": "authentication"})
-        self.assertEqual(item["preparation_outcomes"], [{"provider_requests": 1, "lane_kind": "provider", "provider": "hardcover-main", "reason": "Provider credentials need owner attention.", "status": "authentication"}])
+        self.assertEqual(item["preparation_outcomes"], [])
         self.assertNotIn("credential unavailable", json.dumps(item))
     def test_cover_state_is_inside_the_current_case_read_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

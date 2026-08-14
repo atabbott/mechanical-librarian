@@ -4960,18 +4960,21 @@ class SQLiteMetadataReportRepository:
                     continue
                 report = MetadataReport.from_json(report_document)
                 terminal = self._connection.execute(
-                    "SELECT work_id,stage,attempt,recovery_attempt,failure_code,failure_root "
+                    "SELECT work_id,stage,attempt,recovery_attempt,state,failure_code,failure_root "
                     "FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=? "
-                    "AND state='failed' AND failure_code IS NOT NULL AND (report_id IS NULL OR report_id<>?) "
                     "ORDER BY updated_at DESC,work_id DESC LIMIT 1",
-                    (report.target.connection, report.target.library, report.target.item, report.report_id),
+                    (report.target.connection, report.target.library, report.target.item),
                 ).fetchone()
-                terminal_document = None if terminal is None else _canonical_json({
+                terminal_document = None if (
+                    terminal is None
+                    or terminal[4] != "failed"
+                    or terminal[5] is None
+                ) else _canonical_json({
                     "attempt": terminal[2], "connection": report.target.connection,
-                    "failure_root": terminal[5], "item": report.target.item,
+                    "failure_root": terminal[6], "item": report.target.item,
                     "lane": terminal[1], "library": report.target.library,
                     "recovery_attempt": terminal[3], "schema_version": "review-terminal-work-v1",
-                    "status": terminal[4], "work_id": terminal[0],
+                    "status": terminal[5], "work_id": terminal[0],
                 })
                 case_id = None if case_document is None else ReviewCase.from_json(case_document).review_case_id
                 projected_rows.append((
@@ -5072,9 +5075,11 @@ class SQLiteMetadataReportRepository:
                     "p.library_name=review_preparation_work.library_name AND "
                     "p.item_id=review_preparation_work.item_id) AND "
                     "(?='' OR ml_casefold(item_id) LIKE ? ESCAPE '\\' OR "
-                    "ml_casefold(library_name) LIKE ? ESCAPE '\\')"
+                    "ml_casefold(library_name) LIKE ? ESCAPE '\\' OR "
+                    "ml_casefold('Preparation unavailable') LIKE ? ESCAPE '\\' OR "
+                    "ml_casefold('unknown') LIKE ? ESCAPE '\\')"
                 )
-                parameters.extend((query, pattern, pattern))
+                parameters.extend((query, pattern, pattern, pattern, pattern))
             parameters.extend((limit, offset))
             rows = self._connection.execute(
                 "SELECT case_document,report_document,connection_name,library_name,"
@@ -5179,8 +5184,9 @@ class SQLiteMetadataReportRepository:
             terminal = self._connection.execute(
                 "SELECT count(*) FROM review_preparation_work WHERE state='failed' AND failure_code IS NOT NULL "
                 "AND NOT EXISTS (SELECT 1 FROM current_review_packages p WHERE p.connection_name=review_preparation_work.connection_name AND p.library_name=review_preparation_work.library_name AND p.item_id=review_preparation_work.item_id) "
-                "AND (?='' OR ml_casefold(item_id) LIKE ? ESCAPE '\\' OR ml_casefold(library_name) LIKE ? ESCAPE '\\')",
-                (query, pattern, pattern),
+                "AND (?='' OR ml_casefold(item_id) LIKE ? ESCAPE '\\' OR ml_casefold(library_name) LIKE ? ESCAPE '\\' "
+                "OR ml_casefold('Preparation unavailable') LIKE ? ESCAPE '\\' OR ml_casefold('unknown') LIKE ? ESCAPE '\\')",
+                (query, pattern, pattern, pattern, pattern),
             ).fetchone()
             if terminal is None or type(terminal[0]) is not int or terminal[0] < 0:
                 raise MetadataReportError("review library count is invalid")
