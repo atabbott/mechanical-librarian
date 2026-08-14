@@ -63,6 +63,8 @@ context and consequences rather than reproducing code.
 | [0048](0048-compile-rich-metadata-policy-preview.md) | accepted | Compile closed rich-metadata policy previews |
 | [0049](0049-owner-confirmed-cover-considerations.md) | accepted | Activate owner-confirmed cover considerations |
 | [0050](0050-bound-installed-owner-assistance.md) | accepted | Bound installed owner-assistance commands and cover observation |
+| [0051](0051-atomic-current-review-packages.md) | accepted | Publish review packages after projection |
+| [0052](0052-record-automatic-no-change.md) | accepted | Record automatic no-change outcomes |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

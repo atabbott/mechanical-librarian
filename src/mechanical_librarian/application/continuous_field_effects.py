@@ -344,7 +344,8 @@ class ContinuousGuardedApplication:
             self._schedule_cursor = (decision.occurred_at, decision.decision_id)
             # This is intentionally before authority, consent and capability: an
             # equal automatic candidate is a terminal decision fact, not a write.
-            if self._repository.record_current_field_effect_no_change(decision, self._clock()):
+            no_change = getattr(self._repository, "record_current_field_effect_no_change", None)
+            if no_change is not None and no_change(decision, self._clock()):
                 continue
             try:
                 snapshot = self._authority.resolve(decision)

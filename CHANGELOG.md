@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Record an equal automatic metadata candidate as a durable **No change
+  required** Activity outcome without creating a guarded write plan or
+  consulting write authority, consent, capability, backup, target, or read-back
+  services. (#599)
+
 - Keep authenticated Library and Attention reads bound to one completed review
   package. In-progress, stale, and failed preparation no longer replaces a
   visible prior package or exposes a first-generation partial result. Complete

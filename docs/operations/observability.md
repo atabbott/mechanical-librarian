@@ -30,6 +30,9 @@ display identity. A common suspension is grouped only when its persisted reason,
 connection, and scope match; Activity reports affected destinations and an honest
 indeterminate reconciliation state rather than an invented completion estimate.
 It does not add a retry command or duplicate the human decision queue in Attention.
+An equal automatic candidate is shown as **No change required** from its
+identifier-only immutable ledger fact; it is not pending guarded work and no
+write guard or service operation is consulted.
 
 Timing is disabled by default. Set the documented
 `review.diagnostic_timings_enabled` configuration field to retain at most 256

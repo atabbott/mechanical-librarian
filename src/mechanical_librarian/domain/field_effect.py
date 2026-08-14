@@ -134,6 +134,40 @@ class FieldEffectNoChange:
     occurred_at: int
     event_id: str
 
+    @classmethod
+    def create(
+        cls, *, decision_id: str, review_case_id: str, report_id: str,
+        connection: str, library: str, work_id: str, destination: str,
+        target_fingerprint: str, target_version: str, occurred_at: int,
+    ) -> Self:
+        if (
+            type(decision_id) is not str
+            or not decision_id.startswith("automatic_decision_")
+            or _HEX.fullmatch(decision_id.removeprefix("automatic_decision_")) is None
+            or type(review_case_id) is not str
+            or not review_case_id.startswith("review_case_")
+            or _HEX.fullmatch(review_case_id.removeprefix("review_case_")) is None
+            or type(report_id) is not str
+            or not report_id.startswith("report_")
+            or _HEX.fullmatch(report_id.removeprefix("report_")) is None
+            or any(type(value) is not str or _IDENTITY.fullmatch(value) is None
+                   for value in (connection, library))
+            or not _valid_service_token(work_id)
+            or destination not in SUPPORTED_DESTINATIONS
+            or type(target_fingerprint) is not str or _HEX.fullmatch(target_fingerprint) is None
+            or type(target_version) is not str or _HEX.fullmatch(target_version) is None
+            or type(occurred_at) is not int or occurred_at < 0
+        ):
+            raise FieldEffectError("invalid_no_change")
+        core = {
+            "connection": connection, "decision_id": decision_id,
+            "destination": destination, "library": library, "occurred_at": occurred_at,
+            "origin": "automatic_policy", "report_id": report_id,
+            "review_case_id": review_case_id, "target_fingerprint": target_fingerprint,
+            "target_version": target_version, "work_id": work_id,
+        }
+        return cls(**core, event_id="field_effect_no_change_" + _digest(core))
+
 
 @dataclass(frozen=True, slots=True)
 class EffectAuthority:

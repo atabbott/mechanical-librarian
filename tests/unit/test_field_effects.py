@@ -41,6 +41,7 @@ from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
     FieldEffectError,
+    FieldEffectNoChange,
     FieldEffectOperation,
     FieldEffectPlan,
     SUPPORTED_DESTINATIONS,
@@ -1974,6 +1975,22 @@ class FieldEffectTests(unittest.TestCase):
 
 
 class FieldEffectDomainTests(unittest.TestCase):
+    def test_no_change_identity_is_canonical_and_closed(self) -> None:
+        values = dict(
+            decision_id="automatic_decision_" + "a" * 64,
+            review_case_id="review_case_" + "b" * 64,
+            report_id="report_" + "c" * 64,
+            connection="primary", library="ebooks", work_id="item-1",
+            destination="title", target_fingerprint="d" * 64,
+            target_version="e" * 64, occurred_at=17,
+        )
+        first = FieldEffectNoChange.create(**values)
+        self.assertEqual(first, FieldEffectNoChange.create(**values))
+        self.assertEqual(first.origin, "automatic_policy")
+        self.assertTrue(first.event_id.startswith("field_effect_no_change_"))
+        with self.assertRaisesRegex(FieldEffectError, "invalid_no_change"):
+            FieldEffectNoChange.create(**{**values, "destination": "unknown"})
+
     def test_service_tokens_accept_realistic_opaque_ids_but_remain_bounded(self) -> None:
         authority = EffectAuthority(
             "human_decision_" + "a" * 64, "review_case_" + "b" * 64,

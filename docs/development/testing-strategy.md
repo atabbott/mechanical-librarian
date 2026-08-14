@@ -142,6 +142,10 @@ report and ProposalSet creation, concurrent admission, replay, restart-backed
 get, successor/historical projection, and nonactionable retirement against a
 disposable loopback target and synthetic EPUB.
 
+Focused automatic no-change proof covers canonical equality and unequal
+near-matches, deterministic ledger identity and replay, exact-current schema
+admission, pending exclusion, and the absence of guarded-write dependencies.
+
 The required suite includes a 45-item continuous-review restart cohort across
 three libraries. It retains the cross-library fairness, interruption, forced
 restart and recovery, authenticated progress and completion, exact installed

@@ -90,6 +90,9 @@ automatic outcome publication itself creates no effect plan or target/media
 write. A persisted qualified automatic decision can later enter the same
 consent, backup, capability, field-currentness, verification, audit, and
 reconciliation-guarded field-effect path as an accepted human decision.
+When the exact current target already equals that automatic candidate, Activity
+instead records the terminal `no_change_required` outcome. It creates no plan
+and consults none of those guarded-write controls.
 Separate automatic-safety pause, suspension, and recovery operations fail
 closed.
 Shadow history events remain distinct from human decision events. Malformed
