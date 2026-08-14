@@ -282,6 +282,35 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     page.get_by_role("button", name="Curation").click()
                     page.wait_for_url("**/policy?section=curation")
                     expect(page.locator("#policy-curation")).to_be_focused()
+                    policy_chapters = page.get_by_role(
+                        "navigation", name="Policy chapters"
+                    )
+                    self.assertEqual(
+                        policy_chapters.locator("button b").all_inner_texts(),
+                        ["0", "0", "0", "0"],
+                    )
+                    self.assertEqual(
+                        policy_chapters.evaluate(
+                            "node => getComputedStyle(node).gridTemplateColumns.split(' ').length"
+                        ),
+                        2,
+                    )
+                    self.assertEqual(
+                        policy_chapters.get_by_role("button", name="Curation")
+                        .get_attribute("aria-describedby"),
+                        "policy-curation-changes",
+                    )
+                    page.get_by_text(
+                        "Choose how metadata is stored and when you want to review it.",
+                        exact=True,
+                    ).wait_for()
+                    unsupported_description = policy_chapters.get_by_role(
+                        "button", name="Unsupported"
+                    ).get_by_text(
+                        "Fields Mechanical Librarian can detect but cannot change yet.",
+                        exact=True,
+                    )
+                    self.assertEqual(unsupported_description.count(), 1)
                     self.assertLessEqual(
                         page.evaluate("() => document.documentElement.scrollWidth"),
                         390,
@@ -336,6 +365,76 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         0,
                     )
                     genres.get_by_role("button", name="Ignore").click()
+                    self.assertEqual(
+                        policy_chapters.locator("button b").all_inner_texts(),
+                        ["0", "0", "1", "0"],
+                    )
+
+                    def assert_text_zoom_policy_layout(width: int) -> None:
+                        page.set_viewport_size({"width": width, "height": 844})
+                        page.wait_for_function(
+                            """() => getComputedStyle(document.querySelector(
+                            '.cm-policy-sidebar nav')).gridTemplateColumns.split(' ').length === 1"""
+                        )
+                        self.assertLessEqual(
+                            page.evaluate("() => document.documentElement.scrollWidth"),
+                            width,
+                        )
+                        self.assertEqual(
+                            page.evaluate(
+                                """() => [...document.querySelectorAll(
+                                `.masthead nav, .masthead nav a, .cm-policy-route,
+                                .cm-policy-editor, .cm-policy-finish,
+                                .cm-policy-finish-actions, .cm-policy-finish-actions button`)]
+                                .filter(node => node.scrollWidth > node.clientWidth &&
+                                getComputedStyle(node).overflowX === 'visible')
+                                .map(node => [node.tagName, node.className, node.clientWidth, node.scrollWidth])"""
+                            ),
+                            [],
+                        )
+                    page.locator("html").evaluate(
+                        "node => { node.style.fontSize = '200%'; }"
+                    )
+                    assert_text_zoom_policy_layout(390)
+                    self.assertEqual(
+                        page.locator(".cm-policy-sidebar nav").evaluate(
+                            "node => getComputedStyle(node).gridTemplateColumns.split(' ').length"
+                        ),
+                        1,
+                    )
+                    self.assertLessEqual(
+                        page.evaluate("() => document.documentElement.scrollWidth"),
+                        390,
+                    )
+                    self.assertEqual(
+                        page.get_by_role("link", name="Policy", exact=True)
+                        .is_visible(),
+                        True,
+                    )
+                    self.assertEqual(
+                        page.get_by_role("link", name="Activity", exact=True)
+                        .is_visible(),
+                        True,
+                    )
+                    self.assertFalse(
+                        page.evaluate(
+                            """() => [...document.querySelectorAll('*')].some(node =>
+                            node.scrollWidth > node.clientWidth &&
+                            !node.classList.contains('brand-mark') &&
+                            getComputedStyle(node).overflowX === 'visible')"""
+                        )
+                    )
+                    assert_text_zoom_policy_layout(430)
+                    page.get_by_role("button", name="Use dark mode").click()
+                    page.get_by_role("button", name="Use light mode").wait_for()
+                    assert_text_zoom_policy_layout(390)
+                    assert_text_zoom_policy_layout(430)
+                    page.get_by_role("button", name="Use light mode").click()
+                    page.get_by_role("button", name="Use dark mode").wait_for()
+                    page.set_viewport_size({"width": 390, "height": 844})
+                    page.locator("html").evaluate(
+                        "node => { node.style.fontSize = ''; }"
+                    )
                     page.get_by_role("button", name="Validate and preview").click()
                     page.get_by_text(
                         "Impact preview is current. The active policy is unchanged."
@@ -343,15 +442,30 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     review_activation = page.get_by_role(
                         "button", name="Review activation"
                     )
+                    page.locator("html").evaluate(
+                        "node => { node.style.fontSize = '200%'; }"
+                    )
+                    assert_text_zoom_policy_layout(430)
+                    page.locator("html").evaluate(
+                        "node => { node.style.fontSize = ''; }"
+                    )
                     review_activation.click()
                     page.get_by_text("Activate this reviewed draft?").wait_for()
                     self.assertEqual(page.get_by_role("dialog").count(), 0)
+                    page.locator("html").evaluate(
+                        "node => { node.style.fontSize = '200%'; }"
+                    )
+                    assert_text_zoom_policy_layout(430)
+                    page.locator("html").evaluate(
+                        "node => { node.style.fontSize = ''; }"
+                    )
                     page.get_by_role("button", name="Back to preview").click()
                     review_activation.wait_for()
                     dark_mode = page.get_by_role("button", name="Use dark mode")
                     dark_mode.click()
                     page.get_by_role("button", name="Use light mode").wait_for()
                     page.set_viewport_size({"width": 1440, "height": 900})
+                    unsupported_description.wait_for()
                     self.assertTrue(
                         page.get_by_role("navigation", name="Policy chapters").is_visible()
                     )

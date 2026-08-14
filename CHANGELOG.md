@@ -7,6 +7,10 @@
   consulting write authority, consent, capability, backup, target, or read-back
   services. (#599)
 
+- Show each Library policy chapter's exact changed-field count, including zero,
+  with chapter-specific accessible labels. Unsupported fields now explain that
+  they are read-only and cannot be changed in a draft. (#607)
+
 - Keep authenticated Library and Attention reads bound to one completed review
   package. In-progress, stale, and failed preparation no longer replaces a
   visible prior package or exposes a first-generation partial result. Complete
