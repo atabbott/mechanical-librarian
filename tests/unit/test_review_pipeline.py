@@ -1050,7 +1050,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             providers=lambda *_: (ProviderStatus.DISABLED,),
             propose=publish_proposal,
             admit=admit,
-            project=lambda _, case_id: case_id.startswith("review_case_"),
+            project=lambda _, action: (action.review_case_id or "").startswith("review_case_"),
             clock=lambda: 20,
         )
         pipeline.request("primary", "ebooks")
@@ -1208,6 +1208,9 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             _report(title="Absent successor", content_digest="3", file_identity="4"),
             _report(title="Retired successor", content_digest="5", file_identity="6"),
         ]
+        repository = open_repository(self.path)
+        repository.enter_shadow_preview(1)
+        repository.close()
 
         def pipeline_for(
             report: MetadataReport,
@@ -1237,6 +1240,14 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 value = json.loads(repository.admit_review_case(proposal))
                 return value["status"], value.get("review_case_id")
 
+            def project(repository, action: PipelineAction) -> str:
+                if not projection:
+                    raise RuntimeError("synthetic projection failure")
+                outcome = repository.persist_shadow_outcome(
+                    action.review_case_id or "", now, staged_action=action
+                )
+                return "stale" if outcome == "stale" else "complete"
+
             return ReviewPreparationPipeline(
                 repository_factory=lambda: open_repository(selected_database),
                 libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
@@ -1245,7 +1256,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 providers=lambda *_: (),
                 propose=propose,
                 admit=admit,
-                project=lambda *_: projection,
+                project=project,
                 clock=lambda: now,
             )
 
@@ -1453,6 +1464,278 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                     self.assertTrue(first_failure.run_next(1))
                 self.assertFalse(first_failure.run_next(1))
                 confirm_removal(entries, 110 + index * 20, database)
+
+    def test_first_generation_real_shadow_projection_precedes_package_cutover(self) -> None:
+        report = _report(title="First staged projection", content_digest="a", file_identity="b")
+        proposal = evaluate_report(report)
+
+        def extract(repository, action: PipelineAction, claim_next: bool):
+            repository.publish(
+                report,
+                lambda: True,
+                after_publication=lambda bound, current: bound.complete_review_extraction_publication(
+                    action, current.report_id, 10, 0, None, claim_next, None
+                ),
+            )
+            return report.report_id, True
+
+        def project(repository, action: PipelineAction) -> str:
+            result = repository.persist_shadow_outcome(
+                action.review_case_id or "", 10, staged_action=action
+            )
+            observer = sqlite3.connect(self.path)
+            try:
+                self.assertEqual((0,), observer.execute(
+                    "SELECT COUNT(*) FROM shadow_decision_outcomes"
+                ).fetchone())
+                self.assertEqual((0, 0), observer.execute(
+                    "SELECT (SELECT COUNT(*) FROM current_review_packages),"
+                    "(SELECT COUNT(*) FROM automatic_decisions)"
+                ).fetchone())
+            finally:
+                observer.close()
+            return "complete" if result != "stale" else "stale"
+
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(self.path),
+            libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
+            discover=lambda *_: (1, report.file.content_digest, (replace(_entry("item-1", report.file.identity), library="ebooks"),)),
+            extract=extract,
+            providers=lambda *_: (),
+            propose=lambda repository, _: (repository.publish_proposal(proposal), proposal.proposal_set_id)[1],
+            admit=lambda repository, _: (lambda value: (value["status"], value.get("review_case_id")))(json.loads(repository.admit_review_case(proposal))),
+            project=project,
+            clock=lambda: 10,
+        )
+        pipeline.request("primary", "ebooks")
+        # Admission owns the staged lineage, but package publication remains
+        # gated on the real projection transaction.  In particular, automatic
+        # decision-only handling must not make the staged case visible early.
+        for _ in range(4):
+            self.assertTrue(pipeline.run_next(1))
+        repository = open_repository(self.path)
+        self.assertEqual(
+            ("projection", "queued"),
+            repository._connection.execute(
+                "SELECT stage,state FROM review_preparation_work"
+            ).fetchone(),
+        )
+        self.assertEqual((0,), repository._connection.execute(
+            "SELECT COUNT(*) FROM current_review_packages"
+        ).fetchone())
+        self.assertEqual((0,), repository._connection.execute(
+            "SELECT COUNT(*) FROM automatic_decisions"
+        ).fetchone())
+        staged_case = repository._connection.execute(
+            "SELECT review_case_id FROM current_review_case_lineages"
+        ).fetchone()[0]
+        self.assertFalse(json.loads(repository.get_review_case(staged_case))["current"])
+        self.assertFalse(repository._review_case_accepts_authority(staged_case))
+        repository.close()
+
+        self.assertTrue(pipeline.run_next(1))
+        repository = open_repository(self.path)
+        self.assertEqual(("complete",), repository._connection.execute("SELECT state FROM review_preparation_work").fetchone())
+        self.assertEqual((1,), repository._connection.execute("SELECT COUNT(*) FROM current_review_packages").fetchone())
+        case_id = repository._connection.execute(
+            "SELECT review_case_id FROM current_review_packages"
+        ).fetchone()[0]
+        repository.close()
+        # A restarted worker replays the same immutable outcome and never
+        # manufactures another decision, package checkpoint, or completion.
+        restarted = open_repository(self.path)
+        restarted.enter_shadow_preview(11)
+        replay = restarted.persist_shadow_outcome(case_id, 11)
+        self.assertTrue(replay.startswith('{"authority":"none"'))
+        self.assertEqual((1, 1, 1), restarted._connection.execute(
+            "SELECT (SELECT COUNT(*) FROM shadow_decision_outcomes),"
+            "(SELECT COUNT(*) FROM current_review_packages),"
+            "(SELECT COUNT(*) FROM review_preparation_work WHERE state='complete')"
+        ).fetchone())
+        restarted.close()
+
+    def test_projection_crash_rolls_back_staged_shadow_outcome_before_requeue(self) -> None:
+        report = _report(title="Rollback staged projection", content_digest="c", file_identity="d")
+        proposal = evaluate_report(report)
+
+        def extract(repository, action: PipelineAction, claim_next: bool):
+            repository.publish(
+                report,
+                lambda: True,
+                after_publication=lambda bound, current: bound.complete_review_extraction_publication(
+                    action, current.report_id, 10, 0, None, claim_next, None
+                ),
+            )
+            return report.report_id, True
+
+        def project(repository, action: PipelineAction) -> str:
+            self.assertNotEqual("stale", repository.persist_shadow_outcome(
+                action.review_case_id or "", 10, staged_action=action
+            ))
+            observer = sqlite3.connect(self.path)
+            try:
+                self.assertEqual((0,), observer.execute(
+                    "SELECT COUNT(*) FROM shadow_decision_outcomes"
+                ).fetchone())
+                self.assertEqual((0, 0), observer.execute(
+                    "SELECT (SELECT COUNT(*) FROM current_review_packages),"
+                    "(SELECT COUNT(*) FROM automatic_decisions)"
+                ).fetchone())
+            finally:
+                observer.close()
+            raise RuntimeError("injected projection crash")
+
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(self.path),
+            libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
+            discover=lambda *_: (1, report.file.content_digest, (
+                replace(_entry("item-1", report.file.identity), library="ebooks"),
+            )),
+            extract=extract,
+            providers=lambda *_: (),
+            propose=lambda repository, _: (
+                repository.publish_proposal(proposal), proposal.proposal_set_id
+            )[1],
+            admit=lambda repository, _: (lambda value: (
+                value["status"], value.get("review_case_id")
+            ))(json.loads(repository.admit_review_case(proposal))),
+            project=project,
+            clock=lambda: 10,
+        )
+        pipeline.request("primary", "ebooks")
+        for _ in range(5):
+            self.assertTrue(pipeline.run_next(1))
+
+        observer = open_repository(self.path)
+        try:
+            self.assertEqual((), observer.list_shadow_outcomes(50))
+            self.assertEqual((0, 0), observer._connection.execute(
+                "SELECT (SELECT COUNT(*) FROM current_review_packages),"
+                "(SELECT COUNT(*) FROM automatic_decisions)"
+            ).fetchone())
+            self.assertEqual(("failed", "failed"), observer._connection.execute(
+                "SELECT state,failure_code FROM review_preparation_work"
+            ).fetchone())
+        finally:
+            observer.close()
+
+    def test_real_projection_stale_lane_does_not_block_mixed_fifty_work_cohort(self) -> None:
+        reports: dict[str, MetadataReport] = {}
+        report_for_item: dict[str, MetadataReport] = {}
+        proposals = {}
+        entries = []
+        for index in range(50):
+            base = _report(
+                title=f"Synthetic {index}",
+                content_digest=f"{index % 16:x}",
+                file_identity=f"{(index + 5) % 16:x}",
+                actionable=index % 2 == 0,
+            )
+            report = MetadataReport.create(
+                target=replace(base.target, item=f"item-{index}"),
+                file=base.file,
+                local_claims=base.local_claims,
+                local_reasons=base.local_reasons,
+                providers=base.providers,
+            )
+            reports[report.report_id] = report
+            report_for_item[f"item-{index}"] = report
+            entries.append(replace(
+                _entry(f"item-{index}", report.file.identity), library="ebooks"
+            ))
+        first = report_for_item["item-0"]
+        replacement = MetadataReport.create(
+            target=first.target,
+            file=replace(first.file, content_digest="f" * 64),
+            local_claims=first.local_claims,
+            local_reasons=first.local_reasons,
+            providers=first.providers,
+        )
+        projected: list[str] = []
+        projection_outcomes: list[str] = []
+        stale_projection_items: list[str] = []
+
+        def extract(repository, action: PipelineAction, _: bool):
+            report = report_for_item[action.item_id or ""]
+            repository.publish(report, lambda: True)
+            return report.report_id, False
+
+        def propose(repository, report_id: str) -> str:
+            report = reports[report_id]
+            proposal = evaluate_report(report)
+            proposals[proposal.proposal_set_id] = proposal
+            repository.publish_proposal(proposal)
+            return proposal.proposal_set_id
+
+        def admit(repository, proposal_id: str) -> tuple[str, str | None]:
+            value = json.loads(repository.admit_review_case(proposals[proposal_id]))
+            return value["status"], value.get("review_case_id")
+
+        def project(repository, action: PipelineAction) -> str:
+            projected.append(action.item_id or "")
+            outcome = repository.persist_shadow_outcome(
+                action.review_case_id or "", 20, staged_action=action
+            )
+            projection_outcomes.append(outcome)
+            if outcome == "stale":
+                stale_projection_items.append(action.item_id or "")
+            return "stale" if outcome == "stale" else "complete"
+
+        repository = open_repository(self.path)
+        repository.enter_shadow_preview(1)
+        repository.close()
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(self.path),
+            libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
+            discover=lambda *_: (1, "a" * 64, tuple(entries)), extract=extract,
+            providers=lambda *_: (), propose=propose, admit=admit, project=project,
+            clock=lambda: 20,
+        )
+        pipeline.request("primary", "ebooks")
+        for _ in range(512):
+            repository = open_repository(self.path)
+            state = repository._connection.execute(
+                "SELECT stage,state,report_id FROM review_preparation_work "
+                "WHERE item_id='item-0'"
+            ).fetchone()
+            repository.close()
+            if state == ("projection", "queued", first.report_id):
+                break
+            self.assertTrue(pipeline.run_next(1))
+        else:
+            self.fail("item-0 never reached staged projection")
+        # A supported foreground refresh wins the lineage immediately before
+        # the worker claims projection.  The worker must discover that exact
+        # currentness drift through real staged shadow persistence, not a test
+        # projector shortcut.
+        repository = open_repository(self.path)
+        repository.publish(
+            replacement,
+            lambda: True,
+            first.report_id,
+            after_publication=lambda *_: None,
+        )
+        repository.close()
+        while pipeline.run_next(1):
+            pass
+        repository = open_repository(self.path)
+        states = repository._connection.execute(
+            "SELECT item_id,state,failure_code FROM review_preparation_work ORDER BY item_id"
+        ).fetchall()
+        repository.close()
+        self.assertIn("stale", projection_outcomes)
+        self.assertEqual({"item-0"}, set(stale_projection_items))
+        self.assertIn("item-2", projected)
+        self.assertEqual(50, len(states))
+        self.assertTrue(
+            all(state in {"complete", "failed", "stale"} for _, state, _ in states)
+        )
+        self.assertEqual(("complete", None), {
+            item_id: (state, failure_code) for item_id, state, failure_code in states
+        }["item-2"])
+        self.assertEqual(1, [
+            (state, failure_code) for _, state, failure_code in states
+        ].count(("stale", "stale")))
 
     def test_unrelated_provider_success_does_not_shorten_open_circuit(self) -> None:
         repository = open_repository(self.path)

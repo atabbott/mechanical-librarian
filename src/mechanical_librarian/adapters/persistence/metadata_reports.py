@@ -1466,7 +1466,11 @@ class SQLiteMetadataReportRepository:
                 "returned.destination=human.destination AND returned.active=0) UNION ALL "
                 "SELECT automatic.decision_id,automatic.occurred_at,automatic.document "
                 "FROM automatic_decisions automatic WHERE "
-                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
+                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage JOIN "
+                "current_review_packages package ON package.connection_name=lineage.connection_name "
+                "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
+                "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
+                "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint "
                 "WHERE lineage.review_case_id=automatic.review_case_id) AND "
                 "json_extract(automatic.document,'$.outcome')='candidate' AND NOT EXISTS ("
                 "SELECT 1 FROM human_decisions human WHERE "
@@ -1505,7 +1509,11 @@ class SQLiteMetadataReportRepository:
                 "returned.destination=human.destination AND returned.active=0) UNION ALL "
                 "SELECT automatic.decision_id,automatic.review_case_id,'automatic' origin "
                 "FROM automatic_decisions automatic WHERE "
-                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
+                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage JOIN "
+                "current_review_packages package ON package.connection_name=lineage.connection_name "
+                "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
+                "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
+                "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint "
                 "WHERE lineage.review_case_id=automatic.review_case_id) AND "
                 "json_extract(automatic.document,'$.outcome')='candidate' AND NOT EXISTS ("
                 "SELECT 1 FROM human_decisions human WHERE "
@@ -1519,7 +1527,11 @@ class SQLiteMetadataReportRepository:
                 "hold.destination=automatic.destination AND hold.active=1)) "
                 "SELECT lineage.connection_name,lineage.library_name,pending.origin,count(*) "
                 "FROM pending JOIN current_review_case_lineages lineage "
-                "ON lineage.review_case_id=pending.review_case_id "
+                "ON lineage.review_case_id=pending.review_case_id JOIN current_review_packages package "
+                "ON package.connection_name=lineage.connection_name AND package.library_name=lineage.library_name "
+                "AND package.item_id=lineage.item_id AND package.proposal_set_id=lineage.proposal_set_id "
+                "AND package.report_id=lineage.report_id AND package.review_case_id=lineage.review_case_id "
+                "AND package.checkpoint=lineage.checkpoint "
                 "WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
                 "WHERE effect.decision_id=pending.decision_id AND "
                 "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
@@ -3686,7 +3698,15 @@ class SQLiteMetadataReportRepository:
                 "SELECT work_id,scan_id,stage,attempt,connection_name,library_name,library_id,"
                 "producer_fingerprint,catalogue_generation,catalogue_fingerprint,"
                 "item_id,file_identity,source_revision,"
-                "report_id,proposal_set_id,review_case_id,source_fingerprint "
+                "report_id,proposal_set_id,review_case_id,source_fingerprint,"
+                "(SELECT checkpoint FROM current_review_case_lineages lineage "
+                "WHERE lineage.connection_name=review_preparation_work.connection_name "
+                "AND lineage.library_name=review_preparation_work.library_name "
+                "AND lineage.item_id=review_preparation_work.item_id "
+                "AND lineage.proposal_set_id=review_preparation_work.proposal_set_id "
+                "AND lineage.report_id=review_preparation_work.report_id "
+                "AND lineage.review_case_id=review_preparation_work.review_case_id) "
+                ",(SELECT generation FROM metadata_policy_state WHERE singleton=1) "
                 "FROM review_preparation_work WHERE state='queued' AND library_name=? "
                 "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
                 "WHERE s.scan_id=review_preparation_work.scan_id "
@@ -3732,6 +3752,8 @@ class SQLiteMetadataReportRepository:
                     work[14],
                     work[15],
                     work[16],
+                    work[17],
+                    work[18],
                 )
             scans = self._connection.execute(
                 "SELECT scan_id,rescan_requested FROM review_preparation_scans "
@@ -4155,6 +4177,12 @@ class SQLiteMetadataReportRepository:
         try:
             if not self._connection.in_transaction:
                 self._connection.execute("BEGIN IMMEDIATE")
+            if action.stage == "projection":
+                if action.review_case_id is None:
+                    raise MetadataReportError("review preparation state changed")
+                self._require_staged_shadow_projection_current(
+                    action.review_case_id, action
+                )
             values: list[object] = [target[0], completed_at]
             assignment = ""
             if target[1] is not None:
@@ -4238,11 +4266,13 @@ class SQLiteMetadataReportRepository:
             )
             self._connection.commit()
             return next_action
-        except (sqlite3.Error, MetadataReportError) as error:
+        except (sqlite3.Error, MetadataReportError, ReviewAdmissionStaleError) as error:
             if self._connection.in_transaction:
                 self._connection.rollback()
             if isinstance(error, MetadataReportError):
                 raise
+            if isinstance(error, ReviewAdmissionStaleError):
+                raise MetadataReportError("review preparation state changed") from error
             raise MetadataReportError("review preparation persistence failed") from error
 
     def begin_review_pipeline_output(self) -> None:
@@ -5655,7 +5685,11 @@ class SQLiteMetadataReportRepository:
         return expected.to_json(), row[6]
 
     def persist_shadow_outcome(
-        self, review_case_id: str, evaluated_at: int
+        self,
+        review_case_id: str,
+        evaluated_at: int,
+        *,
+        staged_action: PipelineAction | None = None,
     ) -> str:
         """Atomically publish or replay one exact Preview decision set."""
         if (
@@ -5663,6 +5697,7 @@ class SQLiteMetadataReportRepository:
             or re.fullmatch(r"review_case_[0-9a-f]{64}", review_case_id) is None
             or type(evaluated_at) is not int
             or evaluated_at < 0
+            or (staged_action is not None and type(staged_action) is not PipelineAction)
         ):
             raise MetadataReportError("shadow outcome request is invalid")
         owns_transaction = not self._connection.in_transaction
@@ -5677,7 +5712,12 @@ class SQLiteMetadataReportRepository:
             if raw_case is None:
                 raise MetadataReportError("shadow outcome source is unavailable")
             case_for_recovery = ReviewCase.from_json(raw_case[0])
-            self._require_shadow_case_current(review_case_id)
+            if staged_action is not None:
+                self._require_staged_shadow_projection_current(
+                    review_case_id, staged_action
+                )
+            else:
+                self._require_shadow_case_current(review_case_id)
             state = self._connection.execute(
                 "SELECT s.generation,s.posture,d.document FROM metadata_policy_state s "
                 "JOIN metadata_policy_drafts d ON d.policy_id=s.active_policy_id "
@@ -5702,6 +5742,13 @@ class SQLiteMetadataReportRepository:
                 )
             if policy is None:
                 raise MetadataReportError("shadow policy is unavailable")
+            if staged_action is not None and (
+                staged_action.report_id != report.report_id
+                or staged_action.proposal_set_id != proposal.proposal_set_id
+                or staged_action.review_case_id != case.review_case_id
+                or proposal.resolved_policy_id != policy.resolved_id
+            ):
+                raise ReviewAdmissionStaleError
             outcome = ShadowOutcomeSet.create(
                 case, decide_shadow_packet(packet), policy, state[0], report, proposal
             )
@@ -5775,12 +5822,14 @@ class SQLiteMetadataReportRepository:
                     else:
                         self._connection.execute("RELEASE automatic_admission")
                         break
+            if self._binding is not None:
+                self._binding.require_current()
             if owns_transaction:
                 self._connection.commit()
             return serialized
         except ReviewAdmissionStaleError:
             try:
-                if case_for_recovery is not None:
+                if staged_action is None and case_for_recovery is not None:
                     self._schedule_current_shadow_work(
                         case_for_recovery, evaluated_at
                     )
@@ -7518,6 +7567,40 @@ class SQLiteMetadataReportRepository:
             or type(reopened.get("case")) is not dict
             or not self._review_case_accepts_authority(review_case_id)
         ):
+            raise ReviewAdmissionStaleError
+
+    def _require_staged_shadow_projection_current(
+        self, review_case_id: str, action: PipelineAction
+    ) -> None:
+        """Admit only the exact claimed staged case to package-internal projection."""
+        if action.lineage_checkpoint is None or action.policy_generation is None or self._connection.execute(
+            "SELECT 1 FROM review_preparation_work work "
+            "JOIN current_review_case_lineages staged ON "
+            "staged.connection_name=work.connection_name AND "
+            "staged.library_name=work.library_name AND "
+            "staged.item_id=work.item_id AND "
+            "staged.proposal_set_id=work.proposal_set_id AND "
+            "staged.report_id=work.report_id AND "
+            "staged.review_case_id=work.review_case_id "
+            "JOIN current_metadata_reports report ON "
+            "report.connection_name=staged.connection_name AND "
+            "report.library_name=staged.library_name AND "
+            "report.item_id=staged.item_id AND "
+            "report.report_id=staged.report_id "
+            "JOIN metadata_policy_state policy ON policy.singleton=1 "
+            "WHERE work.work_id=? AND work.stage='projection' "
+            "AND work.state='running' AND work.attempt=? "
+            "AND work.connection_name=? AND work.library_name=? "
+            "AND work.item_id=? AND work.report_id=? "
+            "AND work.proposal_set_id=? AND work.review_case_id=? "
+            "AND staged.checkpoint=? AND policy.generation=?",
+            (
+                action.action_id, action.attempt, action.connection,
+                action.library, action.item_id, action.report_id,
+                action.proposal_set_id, review_case_id, action.lineage_checkpoint,
+                action.policy_generation,
+            ),
+        ).fetchone() != (1,):
             raise ReviewAdmissionStaleError
 
     def _review_case_accepts_authority(self, review_case_id: str) -> bool:

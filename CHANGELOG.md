@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Complete first-generation staged review projection before its package becomes
+  owner-visible, while retaining published-package authority for Library,
+  Attention, owner decisions, and field effects. (#630)
+
 - Record terminal provider failure recovery eligibility as durable,
   configuration-generation-scoped waiting or dormant state. The local canary
   claim is non-executing: it makes no provider, replay, fanout, or write call.
