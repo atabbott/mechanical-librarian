@@ -2485,6 +2485,12 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             )
         )
         self.assertNotIn("diagnostic", json.dumps(outcomes))
+        many = MetadataReport.create(
+            target=source.target, file=source.file, local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=tuple(ProviderObservation(f"lane-{index:02d}", ProviderStatus.NO_MATCH) for index in range(33)),
+        )
+        self.assertEqual(len(_provider_outcomes(many)), 33)
 
     def test_fifty_mixed_packages_and_failures_share_one_bounded_browse_window(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

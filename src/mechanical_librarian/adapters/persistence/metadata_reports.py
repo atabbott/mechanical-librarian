@@ -4475,10 +4475,10 @@ class SQLiteMetadataReportRepository:
             ):
                 raise MetadataReportError("review case source disagrees")
             package = self._connection.execute(
-                "SELECT p.proposal_set_id,p.report_id,p.review_case_id,c.checkpoint FROM current_review_packages p JOIN current_review_case_lineages c ON c.connection_name=p.connection_name AND c.library_name=p.library_name AND c.item_id=p.item_id AND c.proposal_set_id=p.proposal_set_id AND c.report_id=p.report_id AND c.review_case_id=p.review_case_id WHERE p.connection_name=? AND p.library_name=? AND p.item_id=?",
+                "SELECT proposal_set_id,report_id,review_case_id FROM current_review_packages WHERE connection_name=? AND library_name=? AND item_id=?",
                 (case.target["connection"], case.target["library"], case.target["item"]),
             ).fetchone()
-            current = package is not None and package[:3] == (case.proposal_set_id, case.report_id, case.review_case_id) and type(package[3]) is int and package[3] > 0
+            current = package == (case.proposal_set_id, case.report_id, case.review_case_id)
             return _canonical_json({"case": case.to_data(), "current": current, "schema_version": "review-case-get-v1"})
         except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
             raise MetadataReportError("review case is unavailable") from error

@@ -1238,6 +1238,10 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             if _ < 4:
                 self.assertEqual(titles(), ())
         self.assertEqual(titles(), ("Published old",))
+        repository = open_repository(self.path)
+        old_case = repository._connection.execute("SELECT review_case_id FROM current_review_packages").fetchone()[0]
+        self.assertTrue(json.loads(repository.get_review_case(old_case))["current"])
+        repository.close()
         self.assertFalse(first.run_next(1))
 
         refresh = pipeline_for(reports[1], now=30)
@@ -1246,7 +1250,13 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             self.assertTrue(refresh.run_next(1))
             if _ < 4:
                 self.assertEqual(titles(), ("Published old",))
+                repository = open_repository(self.path)
+                self.assertTrue(json.loads(repository.get_review_case(old_case))["current"])
+                repository.close()
         self.assertEqual(titles(), ("Staged successor",))
+        repository = open_repository(self.path)
+        self.assertFalse(json.loads(repository.get_review_case(old_case))["current"])
+        repository.close()
         self.assertFalse(refresh.run_next(1))
 
         failed_refresh = pipeline_for(reports[2], projection=False, now=40)
