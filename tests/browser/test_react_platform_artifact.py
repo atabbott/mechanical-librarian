@@ -166,6 +166,17 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     )
                     page.set_viewport_size({"width": 1440, "height": 900})
                     inspect = page.get_by_role("button", name="Inspect").first
+                    page.wait_for_function(
+                        """() => {
+                            const inspect = document.querySelector('.cm-activity-events article > button');
+                            const title = document.querySelector('.cm-activity-outcome > strong');
+                            return window.matchMedia('(min-width: 761px)').matches
+                                && inspect instanceof HTMLElement
+                                && title instanceof HTMLElement
+                                && getComputedStyle(inspect).whiteSpace === 'nowrap'
+                                && getComputedStyle(title).whiteSpace === 'nowrap';
+                        }"""
+                    )
                     inspect_box = inspect.bounding_box()
                     row_box = inspect.locator("xpath=ancestor::article").bounding_box()
                     self.assertIsNotNone(inspect_box)
@@ -174,6 +185,14 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     self.assertLessEqual(row_box["height"], 72)
                     self.assertLessEqual(inspect_box["height"], 40)
                     page.set_viewport_size({"width": 390, "height": 844})
+                    page.wait_for_function(
+                        """() => {
+                            const title = document.querySelector('.cm-activity-outcome > strong');
+                            return window.matchMedia('(max-width: 760px)').matches
+                                && title instanceof HTMLElement
+                                && getComputedStyle(title).webkitLineClamp === '2';
+                        }"""
+                    )
                     page.get_by_text("Authority and recovery", exact=True).click()
                     page.get_by_role(
                         "button", name="Review write permissions"
