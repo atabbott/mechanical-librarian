@@ -451,7 +451,10 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 long_title.evaluate("node => getComputedStyle(node.parentElement).overflow"),
                 "visible",
             )
-            page.evaluate("() => document.activeElement.blur()")
+            page.goto("https://react-platform.invalid/library?lens=all")
+            page.get_by_text("Catalogue-only work", exact=True).wait_for()
+            page.evaluate("() => { document.body.tabIndex = -1; document.body.focus(); }")
+            self.assertTrue(page.evaluate("() => document.activeElement === document.body"))
             for _ in range(20):
                 page.keyboard.press("Tab")
                 if page.evaluate("() => document.activeElement.matches('.lenses a')"):
