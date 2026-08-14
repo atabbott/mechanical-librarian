@@ -16,6 +16,7 @@ class ProviderRecoveryError(ValueError):
 _TRANSIENT = {"transient", "rate_limited"}
 _DORMANT = {"authentication", "authorization", "configuration"}
 _BACKOFF = (7_200, 14_400, 28_800, 57_600, 86_400)
+MAX_TIMESTAMP = 8_640_000_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +34,7 @@ class ProviderRecovery:
                 or type(self.generation) is not int or self.generation < 1
                 or self.state not in {"waiting", "dormant", "checking"}
                 or type(self.attempt) is not int or not 0 <= self.attempt <= len(_BACKOFF)
-                or (self.next_eligible_at is not None and (type(self.next_eligible_at) is not int or self.next_eligible_at < 0))):
+                or (self.next_eligible_at is not None and (type(self.next_eligible_at) is not int or not 0 <= self.next_eligible_at <= MAX_TIMESTAMP))):
             raise ProviderRecoveryError("provider recovery is invalid")
         if (self.state == "waiting") != (self.next_eligible_at is not None):
             raise ProviderRecoveryError("provider recovery is invalid")
@@ -43,22 +44,28 @@ class ProviderRecovery:
         cls, *, connection: str, adapter: str, scope: str, generation: int,
         failure: str, now: int, retry_after: int | None = None,
     ) -> "ProviderRecovery":
-        if type(now) is not int or now < 0 or failure not in _TRANSIENT | _DORMANT:
+        if type(now) is not int or not 0 <= now <= MAX_TIMESTAMP or failure not in _TRANSIENT | _DORMANT:
             raise ProviderRecoveryError("provider recovery failure is invalid")
         if failure in _DORMANT:
             return cls(connection, adapter, scope, generation, "dormant", 0, None)
         if retry_after is not None and (type(retry_after) is not int or not 1 <= retry_after <= 86_400):
             raise ProviderRecoveryError("provider retry delay is invalid")
-        return cls(connection, adapter, scope, generation, "waiting", 1, now + (retry_after or _BACKOFF[0]))
+        deadline = now + (retry_after or _BACKOFF[0])
+        if deadline > MAX_TIMESTAMP:
+            raise ProviderRecoveryError("provider recovery failure is invalid")
+        return cls(connection, adapter, scope, generation, "waiting", 1, deadline)
 
     def retry(self, *, now: int, retry_after: int | None = None) -> "ProviderRecovery":
-        if self.state != "waiting" or type(now) is not int or now < 0:
+        if self.state != "waiting" or type(now) is not int or not 0 <= now <= MAX_TIMESTAMP:
             raise ProviderRecoveryError("provider recovery retry is invalid")
         if retry_after is not None and (type(retry_after) is not int or not 1 <= retry_after <= 86_400):
             raise ProviderRecoveryError("provider retry delay is invalid")
         attempt = min(self.attempt + 1, len(_BACKOFF))
+        deadline = now + (retry_after or _BACKOFF[attempt - 1])
+        if deadline > MAX_TIMESTAMP:
+            raise ProviderRecoveryError("provider recovery retry is invalid")
         return ProviderRecovery(self.connection, self.adapter, self.scope, self.generation,
-                                "waiting", attempt, now + (retry_after or _BACKOFF[attempt - 1]))
+                                "waiting", attempt, deadline)
 
     def with_generation(self, generation: int) -> "ProviderRecovery":
         if type(generation) is not int or generation < self.generation:
@@ -68,4 +75,4 @@ class ProviderRecovery:
         return ProviderRecovery(self.connection, self.adapter, self.scope, generation, self.state, self.attempt, self.next_eligible_at)
 
 
-__all__ = ["ProviderRecovery", "ProviderRecoveryError"]
+__all__ = ["MAX_TIMESTAMP", "ProviderRecovery", "ProviderRecoveryError"]

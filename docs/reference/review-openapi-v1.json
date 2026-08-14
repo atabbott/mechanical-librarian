@@ -3078,7 +3078,7 @@
         "additionalProperties": false,
         "properties": {
           "affected_count": {
-            "maximum": 100.0,
+            "maximum": 1000000.0,
             "minimum": 1.0,
             "title": "Affected Count",
             "type": "integer"
@@ -3086,6 +3086,7 @@
           "next_eligible_at": {
             "anyOf": [
               {
+                "maximum": 8640000000000.0,
                 "minimum": 0.0,
                 "type": "integer"
               },

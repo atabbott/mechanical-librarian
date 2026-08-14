@@ -57,6 +57,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_shadow_preview_repository,
 )
 from mechanical_librarian.adapters.persistence.provider_recovery import SQLiteProviderRecoveryStore
+from mechanical_librarian.domain.provider_recovery import ProviderRecovery
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
     HardcoverPacer,
@@ -293,6 +294,9 @@ def compose_continuous_guarded_application(
     provider_recovery = SQLiteProviderRecoveryStore.open(
         database_path.parent / "private" / "provider-recovery.sqlite"
     )
+    provider_recovery.reconcile_generation(
+        generation=configuration.provider_recovery_generation, now=int(time.time())
+    )
     return ContinuousGuardedApplication(
         repository,
         applications,
@@ -303,7 +307,7 @@ def compose_continuous_guarded_application(
         preparation.request,
         graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
         scan_progress=preparation.progress,
-        provider_recovery_snapshot=provider_recovery.snapshot,
+        provider_recovery_snapshot=provider_recovery.activity_snapshot,
     )
 
 
@@ -699,6 +703,19 @@ def _provider_statuses(report: MetadataReport) -> tuple[ProviderStatus, ...]:
     )
 
 
+def _record_provider_recovery_observations(store: SQLiteProviderRecoveryStore, report: MetadataReport, *, connection: str, scope: str, generation: int, now: int) -> None:
+    """Persist only terminal F22 provider classifications; never retry them."""
+    failures = {
+        ProviderStatus.AUTHENTICATION: "authentication", ProviderStatus.AUTHORIZATION: "authorization",
+        ProviderStatus.RATE_LIMITED: "rate_limited", ProviderStatus.UNAVAILABLE: "transient",
+        ProviderStatus.INCOMPLETE: "transient",
+    }
+    for observation in report.providers:
+        failure = failures.get(observation.status)
+        if failure is not None:
+            store.record(ProviderRecovery.failed(connection=connection, adapter=observation.provider, scope=scope, generation=generation, failure=failure, now=now), occurred_at=now)
+
+
 class _NonClosingRepository:
     """Let one composed service borrow a pipeline-owned repository connection."""
 
@@ -1019,6 +1036,12 @@ def create_review_pipeline(
         else None
     )
     discovery_lock = threading.Lock()
+    provider_recovery = SQLiteProviderRecoveryStore.open(
+        database_path.parent / "private" / "provider-recovery.sqlite"
+    )
+    provider_recovery.reconcile_generation(
+        generation=configuration.provider_recovery_generation, now=int(time.time())
+    )
 
     def repository_factory():
         return open_repository(
@@ -1098,6 +1121,10 @@ def create_review_pipeline(
 
     def providers(pipeline_repository, report_id: str):
         value = MetadataReport.from_json(pipeline_repository.get(report_id))
+        _record_provider_recovery_observations(
+            provider_recovery, value, connection=value.target.connection, scope=value.target.library,
+            generation=configuration.provider_recovery_generation, now=int(time.time()),
+        )
         return _provider_statuses(value)
 
     def propose(pipeline_repository, report_id: str) -> str:

@@ -495,8 +495,8 @@ class _ActivityWaiting(_ClosedModel):
 
 
 class _ProviderRecoveryActivity(_ClosedModel):
-    affected_count: int = Field(ge=1, le=100)
-    next_eligible_at: int | None = Field(default=None, ge=0)
+    affected_count: int = Field(ge=1, le=1_000_000)
+    next_eligible_at: int | None = Field(default=None, ge=0, le=8_640_000_000_000)
     state: Literal["waiting", "checking", "dormant"]
 
 

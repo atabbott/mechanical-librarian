@@ -313,7 +313,9 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
   if (!Array.isArray(providerRecovery)) throw new ApiError(502, 'invalid_provider_recovery')
   const recovery = providerRecovery.map((item, index) => {
     if (!record(item) || !['waiting', 'checking', 'dormant'].includes(stringValue(item.state, `provider_recovery_state_${String(index)}`))) throw new ApiError(502, `invalid_provider_recovery_${String(index)}`)
-    return { state: item.state as ProviderRecoveryActivityView['state'], affected_count: integerValue(item.affected_count, 'provider_recovery_affected_count'), next_eligible_at: item.next_eligible_at === null ? null : integerValue(item.next_eligible_at, 'provider_recovery_next_eligible_at') }
+    const next = item.next_eligible_at === null ? null : integerValue(item.next_eligible_at, 'provider_recovery_next_eligible_at')
+    if (next !== null && (!Number.isSafeInteger(next) || next < 0 || next > 8640000000000)) throw new ApiError(502, 'invalid_provider_recovery_timestamp')
+    return { state: item.state as ProviderRecoveryActivityView['state'], affected_count: integerValue(item.affected_count, 'provider_recovery_affected_count'), next_eligible_at: next }
   })
   return {
     backup_ready: typeof value.backup_ready === 'boolean' ? value.backup_ready : (() => { throw new ApiError(502, 'invalid_activity_backup_ready') })(), capabilities: capabilities.map((item, index) => { if (!record(item) || !Array.isArray(item.destinations)) throw new ApiError(502, `invalid_activity_capability_${String(index)}`); return { connection: stringValue(item.connection, 'activity_connection'), library: stringValue(item.library, 'activity_library'), state: stringValue(item.state, 'activity_state'), destinations: item.destinations.map((destination, destinationIndex) => { if (!record(destination) || typeof destination.consented !== 'boolean') throw new ApiError(502, `invalid_activity_destination_${String(destinationIndex)}`); return { destination: stringValue(destination.destination, 'activity_destination'), state: stringValue(destination.state, 'activity_destination_state'), consented: destination.consented } }) } }),
