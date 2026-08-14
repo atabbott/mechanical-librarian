@@ -398,12 +398,18 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
             circuit = repository._connection.execute(
                 "SELECT circuit_open_until FROM review_preparation_control"
             ).fetchone()[0]
-            self.assertGreater(circuit, clock[0])
+            retry_at = repository._connection.execute(
+                "SELECT retry_not_before FROM review_preparation_work "
+                "WHERE item_id=?",
+                (transient_item,),
+            ).fetchone()[0]
+            self.assertEqual(circuit, 0)
+            self.assertGreater(retry_at, clock[0])
 
             restarted = pipeline()
             restarted.recover()
             self.assertFalse(run_next(restarted))
-            clock[0] = circuit
+            clock[0] = retry_at
             while True:
                 if restarted.progress("primary", "fiction").state == "completed":
                     break
