@@ -329,6 +329,31 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     ).get_by_text("5 prepared · Some destinations are ready").wait_for()
                     page.get_by_role("heading", name="Activity ledger").wait_for()
                     page.get_by_label("Search activity").wait_for()
+                    for width, height in ((1440, 900), (390, 844)):
+                        self._browser_stage = f"activity:escape-dropdown-focus:{width}"
+                        page.set_viewport_size({"width": width, "height": height})
+                        page_number = page.get_by_label("Activity page number")
+                        page_number.focus()
+                        page_number.fill("2")
+                        page.keyboard.press("Escape")
+                        expect(page_number).to_be_focused()
+                        date_range = page.get_by_role(
+                            "combobox", name="Activity date range"
+                        )
+                        date_range.click()
+                        page.get_by_role("option", name="Last 90 days").click()
+                        expect(date_range).to_be_focused()
+                        page_number = page.get_by_label("Activity page number")
+                        page_number.focus()
+                        page_number.fill("2")
+                        page.keyboard.press("Escape")
+                        expect(page_number).to_be_focused()
+                        page_size = page.get_by_role(
+                            "combobox", name="Rows per activity page"
+                        )
+                        page_size.click()
+                        page.get_by_role("option", name="50 per page").click()
+                        expect(page_size).to_be_focused()
                     page.get_by_role("button", name="Reviews").click()
                     page.get_by_role("button", name="All").click()
                     inspect_control = page.get_by_role("button", name="Inspect").first
