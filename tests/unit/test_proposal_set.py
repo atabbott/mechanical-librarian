@@ -34,6 +34,8 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidence,
     ProviderEvidenceKind,
     ProviderIdentityBinding,
+    ProviderLaneCandidate,
+    ProviderLaneObservation,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
@@ -47,6 +49,7 @@ from mechanical_librarian.domain.metadata_report import (
     comparison_links,
     default_target_fields,
     finalize_candidate_comparisons,
+    provider_lane_candidate_reference,
 )
 from mechanical_librarian.domain.proposal_set import (
     POLICY_VERSION,
@@ -653,6 +656,195 @@ class ProposalSetTests(unittest.TestCase):
             _result(evaluate_report(report), TargetDestination.AUTHORS).outcome,
         )
 
+    def test_mixed_discovery_requires_exact_successful_work_lane_membership(
+        self,
+    ) -> None:
+        """Only a candidate in the successful WORK lane can corroborate."""
+        report = _real_tigers_corroboration_report()
+        neutral = report.providers[0].candidates[0]
+        author = report.providers[1].candidates[0]
+        local = _local_creator("Mick Herron")
+
+        def lane(
+            provider: str,
+            identity: str,
+            kind: ProviderQueryKind,
+            candidate: ProviderCandidate,
+        ) -> ProviderLaneObservation:
+            return ProviderLaneObservation(
+                identity,
+                kind,
+                ProviderStatus.CANDIDATES,
+                (local.reference,),
+                "9780306406157" if kind is ProviderQueryKind.ISBN else None,
+                (
+                    ProviderLaneCandidate(
+                        provider_lane_candidate_reference(
+                            provider, identity, candidate.identity,
+                            candidate.work_identity,
+                        ),
+                        candidate.identity,
+                        candidate.work_identity,
+                    ),
+                ),
+            )
+
+        isbn_lane = lane(
+            "hardcover", "lane_" + "1" * 64, ProviderQueryKind.ISBN, neutral,
+        )
+        work_lane = lane(
+            "hardcover", "lane_" + "2" * 64, ProviderQueryKind.WORK, neutral,
+        )
+        mixed_neutral = ProviderObservation(
+            "hardcover", ProviderStatus.CANDIDATES, (local.reference,),
+            (neutral,), ProviderQueryKind.DISCOVERY, "hardcover",
+            lanes=(isbn_lane, work_lane),
+        )
+        mixed_author = ProviderObservation(
+            "open-library", ProviderStatus.CANDIDATES, (local.reference,),
+            (author,), ProviderQueryKind.DISCOVERY, "open_library",
+            lanes=(
+                lane(
+                    "open-library", "lane_" + "3" * 64,
+                    ProviderQueryKind.ISBN, author,
+                ),
+                lane(
+                    "open-library", "lane_" + "4" * 64,
+                    ProviderQueryKind.WORK, author,
+                ),
+            ),
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    title=None,
+                    fields=_fields(
+                        None,
+                        authors=TargetField(
+                            TargetDestination.AUTHORS,
+                            TargetFieldState.MISSING,
+                        ),
+                    ),
+                    local_claims=(local,),
+                    providers=(mixed_neutral, mixed_author),
+                )
+            ),
+            TargetDestination.AUTHORS,
+        )
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
+
+        isbn_only_neutral = replace(
+            mixed_neutral,
+            lanes=(isbn_lane,),
+            query_kind=ProviderQueryKind.ISBN,
+            convergence=(),
+        )
+        rejected = _result(
+            evaluate_report(
+                _report(
+                    title=None,
+                    fields=_fields(
+                        None,
+                        authors=TargetField(
+                            TargetDestination.AUTHORS,
+                            TargetFieldState.MISSING,
+                        ),
+                    ),
+                    local_claims=(local,),
+                    providers=(isbn_only_neutral, mixed_author),
+                )
+            ),
+            TargetDestination.AUTHORS,
+        )
+        self.assertNotIn(
+            neutral.claims[1].reference,
+            {
+                reference
+                for alternative in rejected.alternatives
+                for reference in alternative.evidence_references
+            },
+        )
+
+    def test_reused_creator_identity_binding_fails_closed_for_corroboration(
+        self,
+    ) -> None:
+        report = _real_tigers_corroboration_report()
+        neutral = report.providers[0].candidates[0]
+        claims = (
+            _claim(
+                "hardcover", neutral.identity, ClaimKind.CREATOR, "Mick Herron",
+                scope=ClaimScope.WORK, role=None,
+            ),
+            _claim(
+                "hardcover", neutral.identity, ClaimKind.CREATOR, "Jane Doe",
+                scope=ClaimScope.WORK, role=None, order=1,
+            ),
+        )
+        malformed = replace(
+            neutral,
+            claims=claims,
+            identity_bindings=tuple(
+                ProviderIdentityBinding(
+                    claim.reference, "hardcover-author-1", ClaimScope.WORK,
+                    None, index,
+                )
+                for index, claim in enumerate(claims)
+            ),
+        )
+        author_claims = (
+            _claim(
+                "open-library", "author-edition", ClaimKind.CREATOR,
+                "Mick Herron", scope=ClaimScope.WORK, role="author",
+            ),
+            _claim(
+                "open-library", "author-edition", ClaimKind.CREATOR,
+                "Jane Doe", scope=ClaimScope.WORK, role="author", order=1,
+            ),
+        )
+        author = ProviderCandidate(
+            "author-edition", "open-library-work", author_claims, (),
+            tuple(
+                ProviderIdentityBinding(
+                    claim.reference, f"open-library-author-{index}",
+                    ClaimScope.WORK, "author", index,
+                )
+                for index, claim in enumerate(author_claims)
+            ),
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    title=None,
+                    fields=_fields(
+                        None,
+                        authors=TargetField(
+                            TargetDestination.AUTHORS,
+                            TargetFieldState.MISSING,
+                        ),
+                    ),
+                    providers=(
+                        ProviderObservation(
+                            "hardcover", ProviderStatus.CANDIDATES, (),
+                            (malformed,), ProviderQueryKind.WORK, "hardcover",
+                        ),
+                        ProviderObservation(
+                            "open-library", ProviderStatus.CANDIDATES, (),
+                            (author,), ProviderQueryKind.WORK, "open_library",
+                        ),
+                    ),
+                )
+            ),
+            TargetDestination.AUTHORS,
+        )
+        self.assertNotIn(
+            claims[0].reference,
+            {
+                reference
+                for alternative in result.alternatives
+                for reference in alternative.evidence_references
+            },
+        )
+
     def test_distinct_author_and_untyped_creator_sets_corroborate_without_payloads(self) -> None:
         def creator(provider: str, candidate: str, value: str, role: str | None) -> ProviderClaim:
             return _claim(
@@ -796,6 +988,10 @@ class ProposalSetTests(unittest.TestCase):
             ProposalSet.from_json(canonical_json(prior))
         prior = json.loads(current.to_json())
         prior["policy_version"] = "fixed-conservative-v6"
+        with self.assertRaises(ProposalValueError):
+            ProposalSet.from_json(canonical_json(prior))
+        prior = json.loads(current.to_json())
+        prior["policy_version"] = "fixed-conservative-v7"
         with self.assertRaises(ProposalValueError):
             ProposalSet.from_json(canonical_json(prior))
         prior = json.loads(current.to_json())

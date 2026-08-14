@@ -424,6 +424,13 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ),
             ),
             (
+                "immediate previous v24",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v24",
+                ),
+            ),
+            (
                 "previous proposal policy v3",
                 lambda connection: _create_prior_schema(
                     connection,
@@ -445,6 +452,14 @@ class MetadataPersistenceTests(unittest.TestCase):
                     connection,
                     "metadata-report-v25",
                     "fixed-conservative-v5",
+                ),
+            ),
+            (
+                "immediate previous proposal policy v7",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v25",
+                    "fixed-conservative-v7",
                 ),
             ),
             (
@@ -3100,6 +3115,46 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(
             {ProviderEvidenceKind.FIRST_PUBLICATION_DATE},
             {evidence.kind for evidence in observation.candidates[0].evidence},
+        )
+        sibling_claims = observation.candidates[0].claims
+        self.assertEqual(
+            {"Synthetic title", "9780306406157"},
+            {
+                claim.value
+                for claim in sibling_claims
+                if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
+                and claim.state is FieldState.VALID
+            },
+        )
+        self.assertIn(
+            ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+            {evidence.kind for evidence in observation.candidates[0].evidence},
+        )
+
+    def test_reused_neutral_creator_identity_binding_fails_qualification_locally(
+        self,
+    ) -> None:
+        observation = self._observe_contributions(
+            [
+                {
+                    "id": 1,
+                    "contribution": None,
+                    "author": {"id": 1, "name": "Synthetic One"},
+                },
+                {
+                    "id": 2,
+                    "contribution": None,
+                    "author": {"id": 1, "name": "Synthetic Two"},
+                },
+            ]
+        )
+
+        self.assertEqual(
+            ProviderStatus.NO_MATCH,
+            qualify_provider_observation(
+                observation,
+                _work_lookup("Synthetic title", ("Synthetic One", "Synthetic Two")),
+            ).status,
         )
         sibling_claims = observation.candidates[0].claims
         self.assertEqual(
