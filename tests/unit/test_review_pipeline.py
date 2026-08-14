@@ -1200,6 +1200,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         clock = [30]
         extracted: list[str] = []
         provider_calls = 0
+        proposed: list[str] = []
 
         def publish_report(
             repository, __: PipelineAction, ___: bool
@@ -1223,7 +1224,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             ),
             extract=publish_report,
             providers=unavailable,
-            propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            propose=lambda _, report_id: proposed.append(report_id) or "proposal-set",
             admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
             project=lambda *_: True,
             clock=lambda: clock[0],
@@ -1234,13 +1235,16 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             self.assertTrue(pipeline.run_next(1))
             self.assertTrue(pipeline.run_next(1))
             repository = open_repository(self.path)
-            deadline = repository._connection.execute(
-                "SELECT circuit_open_until FROM review_preparation_control"
-            ).fetchone()[0]
+            deadline, staged_report = repository._connection.execute(
+                "SELECT retry_not_before,report_id FROM review_preparation_work"
+            ).fetchone()
             repository.close()
             if recovery < 2:
                 self.assertFalse(pipeline.run_next(1))
                 clock[0] = deadline
+            else:
+                self.assertIsNone(staged_report)
+        self.assertEqual(proposed, [])
         self.assertFalse(pipeline.run_next(1))
         progress = pipeline.progress("primary", "ebooks")
         assert progress is not None
@@ -1409,13 +1413,13 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         )
         resumed = reopened.claim_review_pipeline_action(16)
         assert resumed is not None
-        circuit = reopened._connection.execute(
-            "SELECT circuit_open_until FROM review_preparation_control"
+        retry_not_before = reopened._connection.execute(
+            "SELECT retry_not_before FROM review_preparation_work"
         ).fetchone()
         reopened.close()
         self.assertEqual(resumed.stage, "proposal")
         self.assertEqual(resumed.report_id, report.report_id)
-        self.assertEqual(circuit, (45,))
+        self.assertEqual(retry_not_before, (0,))
 
 
 def _entry(item_id: str, file_identity: str) -> CatalogueEntry:
