@@ -1643,9 +1643,17 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             entries.append(replace(
                 _entry(f"item-{index}", report.file.identity), library="ebooks"
             ))
+        first = report_for_item["item-0"]
+        replacement = MetadataReport.create(
+            target=first.target,
+            file=replace(first.file, content_digest="f" * 64),
+            local_claims=first.local_claims,
+            local_reasons=first.local_reasons,
+            providers=first.providers,
+        )
         projected: list[str] = []
         projection_outcomes: list[str] = []
-        stale_once = [True]
+        stale_projection_items: list[str] = []
 
         def extract(repository, action: PipelineAction, _: bool):
             report = report_for_item[action.item_id or ""]
@@ -1664,16 +1672,13 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             return value["status"], value.get("review_case_id")
 
         def project(repository, action: PipelineAction) -> str:
-            if action.item_id == "item-0" and stale_once[0]:
-                stale_once[0] = False
-                projected.append(action.item_id or "")
-                projection_outcomes.append("stale")
-                return "stale"
             projected.append(action.item_id or "")
             outcome = repository.persist_shadow_outcome(
                 action.review_case_id or "", 20, staged_action=action
             )
             projection_outcomes.append(outcome)
+            if outcome == "stale":
+                stale_projection_items.append(action.item_id or "")
             return "stale" if outcome == "stale" else "complete"
 
         repository = open_repository(self.path)
@@ -1687,21 +1692,50 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             clock=lambda: 20,
         )
         pipeline.request("primary", "ebooks")
+        for _ in range(512):
+            repository = open_repository(self.path)
+            state = repository._connection.execute(
+                "SELECT stage,state,report_id FROM review_preparation_work "
+                "WHERE item_id='item-0'"
+            ).fetchone()
+            repository.close()
+            if state == ("projection", "queued", first.report_id):
+                break
+            self.assertTrue(pipeline.run_next(1))
+        else:
+            self.fail("item-0 never reached staged projection")
+        # A supported foreground refresh wins the lineage immediately before
+        # the worker claims projection.  The worker must discover that exact
+        # currentness drift through real staged shadow persistence, not a test
+        # projector shortcut.
+        repository = open_repository(self.path)
+        repository.publish(
+            replacement,
+            lambda: True,
+            first.report_id,
+            after_publication=lambda *_: None,
+        )
+        repository.close()
         while pipeline.run_next(1):
             pass
         repository = open_repository(self.path)
         states = repository._connection.execute(
-            "SELECT state,failure_code FROM review_preparation_work ORDER BY item_id"
+            "SELECT item_id,state,failure_code FROM review_preparation_work ORDER BY item_id"
         ).fetchall()
         repository.close()
-        self.assertFalse(stale_once[0], (projected, states[:5]))
         self.assertIn("stale", projection_outcomes)
+        self.assertEqual({"item-0"}, set(stale_projection_items))
         self.assertIn("item-2", projected)
         self.assertEqual(50, len(states))
         self.assertTrue(
-            all(state in {"complete", "failed", "stale"} for state, _ in states)
+            all(state in {"complete", "failed", "stale"} for _, state, _ in states)
         )
-        self.assertTrue(any(state == "complete" for state, _ in states))
+        self.assertEqual(("complete", None), {
+            item_id: (state, failure_code) for item_id, state, failure_code in states
+        }["item-2"])
+        self.assertEqual(1, [
+            (state, failure_code) for _, state, failure_code in states
+        ].count(("stale", "stale")))
 
     def test_unrelated_provider_success_does_not_shorten_open_circuit(self) -> None:
         repository = open_repository(self.path)
