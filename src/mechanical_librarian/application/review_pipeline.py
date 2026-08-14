@@ -72,6 +72,8 @@ class PipelineAction:
     proposal_set_id: str | None = None
     review_case_id: str | None = None
     source_fingerprint: str | None = None
+    lineage_checkpoint: int | None = None
+    policy_generation: int | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -97,6 +99,15 @@ class PipelineAction:
             or type(self.source_fingerprint) is not str
             or len(self.source_fingerprint) != 64
             or any(value not in "0123456789abcdef" for value in self.source_fingerprint)
+        ):
+            raise ReviewPipelineError("state")
+        if self.lineage_checkpoint is not None and (
+            type(self.lineage_checkpoint) is not int
+            or self.lineage_checkpoint < 1
+        ):
+            raise ReviewPipelineError("state")
+        if self.policy_generation is not None and (
+            type(self.policy_generation) is not int or self.policy_generation < 1
         ):
             raise ReviewPipelineError("state")
 
@@ -136,7 +147,7 @@ class ReviewPipelineRepository(Protocol):
     def rollback_review_pipeline_output(self) -> None: ...
 
     def persist_shadow_outcome(
-        self, review_case_id: str, evaluated_at: int
+        self, review_case_id: str, evaluated_at: int, *, staged_action: PipelineAction | None = None
     ) -> str: ...
 
     def complete_review_discovery(
@@ -189,7 +200,7 @@ class ReviewPreparationPipeline:
         admit: Callable[
             [ReviewPipelineRepository, str], tuple[str, str | None]
         ],
-        project: Callable[[ReviewPipelineRepository, str], bool | str],
+        project: Callable[[ReviewPipelineRepository, PipelineAction], bool | str],
         clock: Callable[[], int] = lambda: int(time.time()),
         timing: StageTimer | None = None,
     ) -> None:
@@ -423,9 +434,11 @@ class ReviewPreparationPipeline:
                 _, output_id = self._admit(repository, action.proposal_set_id)
             elif action.stage == "projection":
                 if action.review_case_id is not None:
-                    projection = self._project(repository, action.review_case_id)
+                    repository.begin_review_pipeline_output()
+                    output_transaction = True
+                    projection = self._project(repository, action)
                     if projection == "stale":
-                        return None
+                        raise ReviewPipelineError("stale")
                     if projection is not True and projection != "complete":
                         raise ReviewPipelineError("projection")
             return self._advance(

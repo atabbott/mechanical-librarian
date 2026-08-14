@@ -1190,10 +1190,17 @@ def create_review_pipeline(
             raise ReviewPipelineError("stale")
         return result.status, result.review_case_id
 
-    def project(pipeline_repository, review_case_id: str) -> bool:
+    def project(pipeline_repository, action: PipelineAction | str) -> bool:
         try:
+            if type(action) is str:
+                outcome = pipeline_repository.persist_shadow_outcome(
+                    action, int(time.time())
+                )
+                return "stale" if outcome == "stale" else "complete"
+            if action.review_case_id is None:
+                raise ReviewPipelineError("state")
             outcome = pipeline_repository.persist_shadow_outcome(
-                review_case_id, int(time.time())
+                action.review_case_id, int(time.time()), staged_action=action
             )
             return "stale" if outcome == "stale" else "complete"
         except Exception as error:
