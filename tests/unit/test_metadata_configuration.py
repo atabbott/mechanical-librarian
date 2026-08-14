@@ -24,7 +24,8 @@ from mechanical_librarian.infrastructure.security.credentials import (
 
 def _source(root: Path) -> dict[str, object]:
     return {
-        "schema_version": "config-v5",
+        "schema_version": "config-v6",
+        "provider_recovery_generation": 1,
         "connections": [
             {"name": "secondary", "adapter": "audiobookshelf", "endpoint": "https://secondary.invalid", "secret_file": str(root / "secondary.secret")},
             {"name": "primary", "adapter": "audiobookshelf", "endpoint": "https://primary.invalid", "secret_file": str(root / "primary.secret")},
@@ -167,8 +168,17 @@ class MetadataConfigurationTests(unittest.TestCase):
         )
 
     def test_generated_schema_is_current(self) -> None:
-        expected = (Path(__file__).parents[2] / "docs" / "reference" / "config-v5.schema.json").read_text(encoding="utf-8")
+        expected = (Path(__file__).parents[2] / "docs" / "reference" / "config-v6.schema.json").read_text(encoding="utf-8")
         self.assertEqual(configuration_schema_json(), expected)
+
+    def test_provider_recovery_generation_is_required_and_positive(self) -> None:
+        source = _source(Path("/synthetic"))
+        source.pop("provider_recovery_generation")
+        with self.assertRaises(ValidationError):
+            ConfigurationInput.model_validate(source)
+        source["provider_recovery_generation"] = 0
+        with self.assertRaises(ValidationError):
+            ConfigurationInput.model_validate(source)
 
     def test_generated_schema_enforces_provider_variants(self) -> None:
         schema = json.loads(configuration_schema_json())["$defs"]

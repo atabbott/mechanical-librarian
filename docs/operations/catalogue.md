@@ -3,7 +3,7 @@
 The `RefreshCurrentCatalogue` application operation creates one bounded,
 read-only observation across configured Audiobookshelf book libraries. It is
 reached by authenticated review preparation in the supported runtime. The
-operation accepts only `config-v5`; it reads no provider credential
+operation accepts only `config-v6`; it reads no provider credential
 and makes no target or media write.
 
 The catalogue stores no more than 10,000 entries. A current generation is

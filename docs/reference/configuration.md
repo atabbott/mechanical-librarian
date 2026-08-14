@@ -1,21 +1,28 @@
 # Configuration reference
 
 The installed `review-serve` runtime and the shared application composition
-accept one strict UTF-8 JSON document with schema version `config-v5`. The
+accept one strict UTF-8 JSON document with schema version `config-v6`. The
 source-only contributor workbench may load the same schema only inside its
 disposable or explicitly approved test context. Unknown and duplicate fields
 are rejected. The generated schema is
-[`config-v5.schema.json`](config-v5.schema.json) and is regenerated with:
+[`config-v6.schema.json`](config-v6.schema.json) and is regenerated with:
 
 ```text
 uv run --frozen python scripts/generate_configuration_schema.py
 ```
 
+`provider_recovery_generation` is a required positive operator generation for
+provider recovery. After correcting a provider credential, authorization, or
+configuration condition, increment it and restart the container. It is the
+only recovery wake mechanism: the service does not watch configuration files,
+derive hashes, or accept environment overrides.
+
 ## Example
 
 ```json
 {
-  "schema_version": "config-v5",
+  "schema_version": "config-v6",
+  "provider_recovery_generation": 1,
   "connections": [
     {
       "name": "primary",

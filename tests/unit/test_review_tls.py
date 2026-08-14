@@ -231,7 +231,8 @@ class ReviewServerTLSCompositionTests(unittest.TestCase):
             config.write_text(
                 json.dumps(
                     {
-                        "schema_version": "config-v5",
+                        "schema_version": "config-v6",
+                        "provider_recovery_generation": 1,
                         "connections": [
                             {
                                 "name": "target",

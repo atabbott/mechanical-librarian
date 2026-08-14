@@ -9,7 +9,7 @@ proof.
 The current installed contract is intentionally narrow:
 
 - Python 3.13 or 3.14;
-- `config-v5` only;
+- `config-v6` only;
 - an absent database or the installed exact current report database containing
   `metadata-report-v24` plus `proposal-set-v4` under
   `fixed-conservative-v7`, or the separate `catalogue-v2` schema;

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Record terminal provider failure recovery eligibility as durable,
+  configuration-generation-scoped waiting or dormant state. The local canary
+  claim is non-executing: it makes no provider, replay, fanout, or write call.
+  Operators increment `provider_recovery_generation` and restart after fixing
+  a dormant provider condition. (#625)
+
 - Record an equal automatic metadata candidate as a durable **No change
   required** Activity outcome without creating a guarded write plan or
   consulting write authority, consent, capability, backup, target, or read-back

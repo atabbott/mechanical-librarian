@@ -255,12 +255,19 @@ class ApplicationConfiguration:
     mounts: tuple[MediaMountConfiguration, ...]
     providers: tuple[ProviderConnectionConfiguration, ...]
     limits: ReportLimits = ReportLimits()
-    schema_version: str = "config-v5"
+    schema_version: str = "config-v6"
+    provider_recovery_generation: int = 1
     review: ReviewWebConfiguration | None = None
 
     def __post_init__(self) -> None:
-        if self.schema_version != "config-v5":
+        if self.schema_version != "config-v6":
             raise ConfigurationError("configuration schema is unsupported")
+        # Recovery is deliberately tied to an operator-visible configuration
+        # generation.  There is no file watcher, hash, or environment override:
+        # changing credentials or provider configuration requires an increment
+        # and process restart before a dormant provider may be considered again.
+        if type(self.provider_recovery_generation) is not int or self.provider_recovery_generation < 1:
+            raise ConfigurationError("provider recovery generation is invalid")
         if self.review is not None and type(self.review) is not ReviewWebConfiguration:
             raise ConfigurationError("review web configuration is invalid")
         typed = (
