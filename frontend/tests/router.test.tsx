@@ -8,7 +8,7 @@ import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../src/api
 import type { ActivityDisplayView, ActivityView, AttentionSearch, AttentionView, CaseDetailView, HistoryView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
 import { createApplicationRouter, detailQuery, normalizeLibrarySearch, normalizePolicySearch } from '../src/router'
 import { activityEventKeys, activityOutcome } from '../src/activityState'
-import { policyRepresentationGuidance } from '../src/routes/PolicyPage'
+import { policyImpactDisplay, policyImpactTotals, policyRepresentationGuidance } from '../src/routes/PolicyPage'
 
 const library: LibraryView = {
   lens: 'all',
@@ -101,6 +101,27 @@ const openActivityAuthority = async (user: ReturnType<typeof userEvent.setup>) =
 }
 
 describe('typed review routes', () => {
+  it('projects bounded policy impact language without promoting transport enums', () => {
+    expect(policyImpactDisplay({ current_value: 'Old title', desired_value: 'New title', field: 'title_layout', outcome: 'projected', reason: null, target_state: 'value' })).toMatchObject({ changed: true, title: 'Change', detail: 'Old title → New title' })
+    expect(policyImpactDisplay({ current_value: null, desired_value: 'A bounded subtitle', field: 'subtitle', outcome: 'projected', reason: null, target_state: 'missing' })).toMatchObject({ changed: true, title: 'Change', detail: 'fills the empty field with A bounded subtitle' })
+    expect(policyImpactDisplay({ current_value: 'Old subtitle', desired_value: null, field: 'subtitle', outcome: 'projected', reason: null, target_state: 'missing' })).toMatchObject({ changed: true, title: 'Change', detail: 'clears Old subtitle' })
+    expect(policyImpactDisplay({ current_value: null, desired_value: '', field: 'subtitle', outcome: 'projected', reason: null, target_state: 'missing' })).toMatchObject({ changed: false, title: 'No change', detail: 'remains empty — no supported value found' })
+    expect(policyImpactDisplay({ current_value: 'Current title', desired_value: 'Current title', field: 'title_layout', outcome: 'projected', reason: null, target_state: 'value' })).toMatchObject({ changed: false, title: 'No change', detail: 'remains Current title — the exact current value is preserved' })
+    expect(policyImpactDisplay({ current_value: null, desired_value: null, field: 'subtitle', outcome: 'abstain', reason: 'no_supported_evidence', target_state: 'missing' })).toMatchObject({ changed: false, title: 'No change', detail: 'remains empty — no supported value found' })
+    expect(policyImpactDisplay({ current_value: null, desired_value: null, field: 'tags', outcome: 'abstain', reason: 'policy_ignored', target_state: 'missing' })).toMatchObject({ changed: false, title: 'No change', detail: 'remains empty — this policy leaves the field unchanged' })
+    expect(policyImpactDisplay({ current_value: null, desired_value: null, field: 'explicit', outcome: 'abstain', reason: 'explicit_unsupported', target_state: 'missing' })).toMatchObject({ changed: false, title: 'No supported value found', detail: 'empty remains — this destination is not currently supported' })
+    expect(policyImpactDisplay({ current_value: 'Current title', desired_value: 'Current title', field: 'title_layout', outcome: 'no_op', reason: 'unchanged', target_state: 'value' })).toMatchObject({ changed: false, title: 'No change', detail: 'remains Current title — the exact current value is preserved' })
+    expect(policyImpactDisplay({ current_value: 'Current title', desired_value: null, field: 'title_layout', outcome: 'abstain', reason: 'ambiguous_evidence', target_state: 'value' })).toMatchObject({ changed: false, title: 'Needs review', detail: 'Current title remains — evidence is ambiguous' })
+    expect(policyImpactDisplay({ current_value: 'Current title', desired_value: null, field: 'title_layout', outcome: 'abstain', reason: 'policy_ignored', target_state: 'value' })).toMatchObject({ changed: false, title: 'No change', detail: 'remains Current title — this policy leaves the field unchanged' })
+    expect(policyImpactDisplay({ current_value: 'Current title', desired_value: null, field: 'explicit', outcome: 'abstain', reason: 'explicit_unsupported', target_state: 'value' })).toMatchObject({ changed: false, title: 'No supported value found', detail: 'Current title remains — this destination is not currently supported' })
+    expect(policyImpactTotals([
+      { caseId: 'work-a', impact: policyImpactDisplay({ current_value: 'Old', desired_value: 'New', field: 'title_layout', outcome: 'projected', reason: null, target_state: 'value' }) },
+      { caseId: 'work-a', impact: policyImpactDisplay({ current_value: 'Current', desired_value: 'Current', field: 'subtitle', outcome: 'no_op', reason: 'target_preserved', target_state: 'value' }) },
+      { caseId: 'work-a', impact: policyImpactDisplay({ current_value: 'Current', desired_value: null, field: 'tags', outcome: 'abstain', reason: 'policy_ignored', target_state: 'value' }) },
+      { caseId: 'work-b', impact: policyImpactDisplay({ current_value: 'Current', desired_value: null, field: 'title_layout', outcome: 'abstain', reason: 'ambiguous_evidence', target_state: 'value' }) },
+    ])).toEqual({ changedWorks: 1, materialChanges: 1 })
+  })
+
   it('keeps every supported closed Policy representation context-complete', () => {
     const expected = [
       'title_layout:preserve', 'title_layout:title_and_subtitle', 'contributor_names:preserve', 'contributor_names:canonical', 'language_rendering:preserve', 'language_rendering:display_name', 'subtitle:fill_empty', 'subtitle:corroborated_split', 'date_precision:year', 'date_precision:full_date', 'publisher_preference:publisher', 'publisher_preference:imprint', 'isbn_form:preserve_exact', 'isbn_form:prefer_isbn13', 'series:primary_narrative', 'series:source_order', 'series:all_qualified', 'genres:fill_empty', 'genres:add', 'genres:replace', 'tags:off', 'tags:fill_empty', 'tags:add', 'tags:replace', 'description_fill:safe_plain_text', 'description_fill:google_visible_text', 'cover_order:fixed_source_order', 'asin:preserve_exact', 'asin:ebook_manifestation',
@@ -1384,6 +1405,8 @@ describe('typed review routes', () => {
     expect(await screen.findByText('Impact preview is current. The active policy is unchanged.')).toBeVisible()
     expect(await screen.findByText('Hostile <script> library')).toBeVisible()
     expect(screen.getByText(/Title and subtitle, Tags/)).toBeVisible()
+    expect(screen.getByText('Needs review', { selector: '.cm-policy-impact > b' })).toBeVisible()
+    expect(screen.getByText('· No sampled field outcome; 3 current unapplied works remain to inspect')).toBeVisible()
     const stateCallsBeforeChange = vi.mocked(http.getPolicyState).mock.calls.length
     // Simulate A → B during preview, then B → A before activation. The
     // activation must stay bound to B, the server-issued preview authority.
@@ -1414,7 +1437,7 @@ describe('typed review routes', () => {
     const user = userEvent.setup()
     const field = (current_value: string, desired_value: string, name = 'title_layout') => ({
       current_value, desired_value, field: name, narrowed_for_target: false,
-      option: 'title_only', outcome: 'change', qualified_value: desired_value,
+      option: 'title_only', outcome: 'projected', qualified_value: desired_value,
       reason: null, target_state: 'available',
     })
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
@@ -1423,7 +1446,7 @@ describe('typed review routes', () => {
         active_policy_id: 'policy-active', policy_id: 'policy-draft', schema_version: 'metadata-policy-preview-v1', rich_qualification: [],
         libraries: [{
           library: 'Fiction', affected_categories: ['title_layout'], cases_total: 2,
-          cases_truncated: false, current_unapplied_count: 2, resolved_policy_id: 'resolved-policy',
+          cases_truncated: true, current_unapplied_count: 7, resolved_policy_id: 'resolved-policy',
           cases: [
             { fields: [field('Old one', 'New one'), ...Array.from({ length: 7 }, (_, index) => field(`Old extra ${String(index)}`, `New extra ${String(index)}`, `extra_${String(index)}`))], proposal_set_id: 'proposal-1', report_id: 'report-1', resolved_policy_id: 'resolved-policy', work_label: 'First book' },
             { fields: [field('Old two', 'New two'), ...Array.from({ length: 7 }, (_, index) => field(`Second old extra ${String(index)}`, `Second new extra ${String(index)}`, `second_extra_${String(index)}`))], proposal_set_id: 'proposal-2', report_id: 'report-2', resolved_policy_id: 'resolved-policy', work_label: 'Second book' },
@@ -1442,15 +1465,19 @@ describe('typed review routes', () => {
     expect((await screen.findAllByText('First book'))[0]).toBeVisible()
     expect(screen.getByText('Second book')).toBeVisible()
     expect(screen.getAllByText('Fiction · Title and subtitle')).toHaveLength(2)
-    expect(screen.getByText('Old one → New one')).toBeVisible()
-    expect(screen.getByText('Old two → New two')).toBeVisible()
+    expect(screen.getAllByText('Change')).toHaveLength(6)
+    expect(screen.getByText('· Old one → New one')).toBeVisible()
+    expect(screen.getByText('· Old two → New two')).toBeVisible()
+    expect(screen.getByText('2 sampled works with changes')).toBeVisible()
+    expect(screen.getByText(/16 material changes in the bounded sample/)).toBeVisible()
+    expect(screen.getByLabelText('2 sampled works with changes')).toHaveTextContent('2')
   })
 
   it('tracks the protected whole-draft cadence and invalidates preview after an edit', async () => {
     const user = userEvent.setup()
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
       if (path === 'drafts') return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v2' }
-      if (path === 'preview') return { active_policy_id: 'policy-active', policy_id: 'policy-draft', schema_version: 'metadata-policy-preview-v1', libraries: [] }
+      if (path === 'preview') return { active_policy_id: 'policy-active', policy_id: 'policy-draft', schema_version: 'metadata-policy-preview-v1', libraries: [{ library: 'Empty library', affected_categories: [], cases: [], cases_total: 0, cases_truncated: false, current_unapplied_count: 0, resolved_policy_id: 'resolved-policy' }] }
       return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v2' }
     })
     const http: ReviewHttp = { ...createHttp(), policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T> }
@@ -1466,6 +1493,7 @@ describe('typed review routes', () => {
     await user.click(await screen.findByRole('option', { name: 'Separate title and subtitle' }))
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(await screen.findByText('Impact preview is current. The active policy is unchanged.')).toBeVisible()
+    expect(screen.getByText('· No current unapplied work remains to inspect')).toBeVisible()
     expect(step('Validate')).toHaveClass('done')
     expect(step('Preview')).toHaveAttribute('aria-current', 'step')
     await user.click(screen.getByRole('button', { name: 'Review activation' }))

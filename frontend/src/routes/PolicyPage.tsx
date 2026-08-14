@@ -87,7 +87,72 @@ const chapters: readonly { key: PolicySection; label: string; description: strin
 ]
 
 const readableCategory = (key: string) => fields.find((field) => field.key === key)?.label ?? key.replaceAll('_', ' ')
-const previewValue = (value: unknown) => value === null || value === undefined ? 'No value' : typeof value === 'string' ? value : JSON.stringify(value)
+const previewValue = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return 'empty'
+  if (typeof value === 'string') return value
+  return JSON.stringify(value)
+}
+
+interface PolicyPreviewField {
+  readonly current_value: unknown
+  readonly desired_value: unknown
+  readonly field: string
+  readonly outcome: string
+  readonly reason: string | null
+  readonly target_state: string
+}
+
+export interface PolicyImpactDisplay {
+  readonly changed: boolean
+  readonly detail: string
+  readonly technicalDetail: string
+  readonly title: 'Change' | 'Needs review' | 'No change' | 'No supported value found'
+}
+
+export interface PolicyImpactRow {
+  readonly caseId: string
+  readonly impact: PolicyImpactDisplay
+}
+
+const sameMetadataValue = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right)
+const hasMetadataValue = (value: unknown) => value !== null && value !== undefined && value !== ''
+const humanReason = (reason: string | null) => {
+  if (reason === 'ambiguous_evidence') return 'evidence is ambiguous'
+  if (reason === 'policy_ignored' || reason === 'policy_off') return 'this policy leaves the field unchanged'
+  if (reason === 'explicit_unsupported') return 'this destination is not currently supported'
+  if (reason === 'target_preserved' || reason === 'unchanged') return 'the exact current value is preserved'
+  return 'no supported value found'
+}
+
+// The server keeps its closed outcome and reason codes for audit detail. This
+// projection deliberately turns them into owner-facing impact language.
+// eslint-disable-next-line react-refresh/only-export-components
+export const policyImpactDisplay = (field: PolicyPreviewField): PolicyImpactDisplay => {
+  const current = previewValue(field.current_value)
+  const currentIsDisplayable = hasMetadataValue(field.current_value)
+  const desiredIsDisplayable = hasMetadataValue(field.desired_value)
+  const materialChange = field.outcome === 'projected' && !sameMetadataValue(field.current_value, field.desired_value) && (currentIsDisplayable || desiredIsDisplayable)
+  const technicalDetail = `outcome: ${field.outcome}; reason: ${field.reason ?? 'none'}; target state: ${field.target_state}`
+  if (materialChange) {
+    const detail = !currentIsDisplayable && desiredIsDisplayable
+      ? `fills the empty field with ${previewValue(field.desired_value)}`
+      : currentIsDisplayable && !desiredIsDisplayable
+        ? `clears ${current}`
+        : `${current} → ${previewValue(field.desired_value)}`
+    return { changed: true, title: 'Change', detail, technicalDetail }
+  }
+  if (field.reason === 'ambiguous_evidence') return { changed: false, title: 'Needs review', detail: `${current} remains — ${humanReason(field.reason)}`, technicalDetail }
+  if (field.reason === 'policy_ignored' || field.reason === 'policy_off') return { changed: false, title: 'No change', detail: `remains ${current} — ${humanReason(field.reason)}`, technicalDetail }
+  if (field.reason === 'explicit_unsupported') return { changed: false, title: 'No supported value found', detail: `${current} remains — ${humanReason(field.reason)}`, technicalDetail }
+  if (field.outcome === 'no_op' || sameMetadataValue(field.current_value, field.desired_value)) return { changed: false, title: 'No change', detail: `remains ${current} — ${field.reason ? humanReason(field.reason) : 'the exact current value is preserved'}`, technicalDetail }
+  if (!currentIsDisplayable && !desiredIsDisplayable) return { changed: false, title: 'No change', detail: 'remains empty — no supported value found', technicalDetail }
+  return { changed: false, title: 'No supported value found', detail: `${current} remains — ${humanReason(field.reason)}`, technicalDetail }
+}
+// eslint-disable-next-line react-refresh/only-export-components
+export const policyImpactTotals = (rows: readonly PolicyImpactRow[]) => {
+  const changes = rows.filter((row) => row.impact.changed)
+  return { changedWorks: new Set(changes.map((row) => row.caseId)).size, materialChanges: changes.length }
+}
 const isPolicyPreview = (value: unknown): value is PolicyPreviewView => typeof value === 'object' && value !== null && 'schema_version' in value && value.schema_version === 'metadata-policy-preview-v1' && 'active_policy_id' in value && typeof value.active_policy_id === 'string' && 'libraries' in value && Array.isArray(value.libraries)
 const isPolicyTransition = (value: unknown): value is PolicyTransitionView => typeof value === 'object' && value !== null
   && 'schema_version' in value && value.schema_version === 'metadata-policy-transition-v1'
@@ -232,14 +297,19 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const currentChapter = chapters.find((chapter) => chapter.key === activeChapter) ?? { key: 'identity' as const, label: 'Identity', description: 'How a work names itself and its contributors.' }
   const visibleFields = fields.filter((field) => field.chapter === activeChapter)
   const changedChapterLabels = chapters.filter((chapter) => changedFields.some((field) => field.chapter === chapter.key)).map((chapter) => chapter.label)
-  const impactTotals = useMemo(() => preview ? { libraries: preview.libraries.length, items: preview.libraries.reduce((total, item) => total + item.current_unapplied_count, 0) } : undefined, [preview])
   const previewRows = useMemo(() => {
     const cases = preview?.libraries.flatMap((library) => library.cases.map((rawCase, caseIndex) => {
-    const item = rawCase as unknown as { readonly fields: readonly { readonly current_value: unknown; readonly desired_value: unknown; readonly field: string; readonly outcome: string; readonly reason: string | null; readonly target_state: string }[]; readonly report_id: string; readonly work_label: string }
-    return item.fields.map((field) => ({ id: `${item.report_id || String(caseIndex)}:${field.field}`, library: library.library, work: item.work_label, field: readableCategory(field.field), outcome: `${previewValue(field.current_value === null ? field.target_state : field.current_value)} → ${field.desired_value === null ? (field.reason ?? field.outcome) : previewValue(field.desired_value)}` }))
+      const item = rawCase as unknown as { readonly fields: readonly PolicyPreviewField[]; readonly report_id: string; readonly work_label: string }
+      const caseId = item.report_id || String(caseIndex)
+      return item.fields.map((field) => ({ caseId, id: `${caseId}:${field.field}`, library: library.library, work: item.work_label, field: readableCategory(field.field), impact: policyImpactDisplay(field) }))
     })) ?? []
     return [...cases.flatMap((rows) => rows.slice(0, 1)), ...cases.flatMap((rows) => rows.slice(1))]
   }, [preview])
+  const impactTotals = useMemo(() => preview ? {
+    currentWorks: preview.libraries.reduce((total, library) => total + library.current_unapplied_count, 0),
+    libraries: preview.libraries.length,
+    ...policyImpactTotals(previewRows),
+  } : undefined, [preview, previewRows])
   const transitionCopy = transition.data && !transition.data.acknowledged
     ? transition.data.state === 'processing'
       ? `Applying updated policy · ${String(transition.data.completed)} of ${String(transition.data.total)}`
@@ -254,8 +324,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const completedValidate = stage === 'preview' || stage === 'activation' || stage === 'activated'
   const completedPreview = stage === 'activation' || stage === 'activated'
   const currentStep = stage === 'editing' || stage === 'validating' ? 0 : stage === 'preview' ? 1 : 2
-  const finishTitle = stage === 'activated' ? 'Policy activated' : stage === 'activation' ? 'Ready to activate' : stage === 'preview' ? `${String(impactTotals?.items ?? 0)} current unapplied ${(impactTotals?.items ?? 0) === 1 ? 'item' : 'items'} found` : stage === 'validating' ? 'Validating the working draft…' : draftDisplay.changed ? `${String(changedFields.length)} draft ${changedFields.length === 1 ? 'change is' : 'changes are'} ready to validate` : 'Draft matches the active policy'
-  const finishDetail = stage === 'activated' ? `${String(impactTotals?.items ?? 0)} items are queued for guarded reconciliation. Applied history is untouched.` : stage === 'activation' ? 'Review the unchanged preview before making this draft active.' : stage === 'preview' ? `Validated across all chapters${changedChapterLabels.length ? ` · changes in ${changedChapterLabels.join(', ')}` : ''} · snapshot saved automatically.` : stage === 'validating' ? 'Checking every chapter, Automatic qualification, and exact library scope.' : draftDisplay.changed ? `Changes in ${changedChapterLabels.join(', ')} · validation always checks and saves the complete draft.` : 'Every chapter is included. Change a field mode or representation to create a new draft.'
+  const finishTitle = stage === 'activated' ? 'Policy activated' : stage === 'activation' ? 'Ready to activate' : stage === 'preview' ? `${String(impactTotals?.changedWorks ?? 0)} sampled ${(impactTotals?.changedWorks ?? 0) === 1 ? 'work' : 'works'} with changes` : stage === 'validating' ? 'Validating the working draft…' : draftDisplay.changed ? `${String(changedFields.length)} draft ${changedFields.length === 1 ? 'change is' : 'changes are'} ready to validate` : 'Draft matches the active policy'
+  const finishDetail = stage === 'activated' ? `${String(impactTotals?.currentWorks ?? 0)} current unapplied ${(impactTotals?.currentWorks ?? 0) === 1 ? 'work is' : 'works are'} queued for guarded reconciliation. Applied history is untouched.` : stage === 'activation' ? 'Review the unchanged preview before making this draft active.' : stage === 'preview' ? `Validated across all chapters · ${String(impactTotals?.materialChanges ?? 0)} material ${(impactTotals?.materialChanges ?? 0) === 1 ? 'change' : 'changes'} in the bounded sample${changedChapterLabels.length ? ` · draft changes in ${changedChapterLabels.join(', ')}` : ''} · snapshot saved automatically.` : stage === 'validating' ? 'Checking every chapter, Automatic qualification, and exact library scope.' : draftDisplay.changed ? `Changes in ${changedChapterLabels.join(', ')} · validation always checks and saves the complete draft.` : 'Every chapter is included. Change a field mode or representation to create a new draft.'
 
   return <div className="cm-policy-route" data-route-focus tabIndex={-1}>
     <header className="cm-page-heading"><div><h1>Library policy</h1><p>Choose how metadata is stored and when you want to review it.</p></div><span className="cm-policy-state">{stage === 'activated' ? 'Active policy updated' : draftDisplay.changed ? `${String(changedFields.length)} draft ${changedFields.length === 1 ? 'change' : 'changes'}` : 'Draft matches active policy'}</span></header>
@@ -306,8 +376,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           {stage === 'activated' ? <button className="primary-action" onClick={() => setStage('editing')}>Continue editing</button> : null}
         </div>
         {stage === 'validating' ? <section className="cm-policy-validation" aria-label="Validation in progress"><header><span className="cm-policy-validation-spinner"/><div><strong>Checking this draft</strong><small>The snapshot is saved only if every check passes.</small></div></header><ul><li><span/><div><strong>Document structure</strong><small>14 supported field definitions</small></div></li><li><span/><div><strong>Automatic qualification</strong><small>Every Automatic representation is admitted</small></div></li><li><span/><div><strong>Library scope</strong><small>Exact current scope</small></div></li></ul></section> : null}
-        {(stage === 'preview' || stage === 'activation') && preview ? <section className="cm-policy-result"><aside><header><span><Check/></span><div><strong>Validated and saved</strong><small>Immutable snapshot for this preview</small></div></header><dl><div><dt>Structure</dt><dd>Passed</dd></div><div><dt>Qualification</dt><dd>Passed</dd></div><div><dt>Scope</dt><dd>{impactTotals?.libraries ? `${String(impactTotals.libraries)} ${impactTotals.libraries === 1 ? 'library' : 'libraries'}` : 'Current'}</dd></div></dl></aside><div className="cm-policy-preview"><header><div><strong>Impact preview</strong><small>Current unapplied work only · no metadata writes</small></div><b>{String(impactTotals?.items ?? 0)}</b></header><div className="cm-policy-preview-list">{previewRows.length ? previewRows.slice(0, 6).map((row) => <div key={row.id}><span className="cm-policy-work-mark" aria-hidden="true">{row.work.slice(0, 2).toUpperCase()}</span><span><strong>{row.work}</strong><small>{row.library} · {row.field}</small></span><b>{row.outcome}</b></div>) : preview.libraries.map((library) => <div key={library.library}><span className="cm-policy-work-mark" aria-hidden="true">{library.library.slice(0, 2).toUpperCase()}</span><span><strong>{library.library}</strong><small>{library.affected_categories.map(readableCategory).join(', ') || 'No changed fields'}</small></span><b>{String(library.current_unapplied_count)} current unapplied</b></div>)}</div>{previewRows.length > 6 ? <footer>Plus {String(previewRows.length - 6)} more exact field outcomes in this preview</footer> : preview.libraries.some((library) => library.cases_truncated) ? <footer>Additional current cases are included in the authoritative preview total.</footer> : null}</div>{stage === 'activation' ? <footer className="cm-policy-activation"><strong>Activate this reviewed draft?</strong><span>The active policy changes only after this guarded command succeeds. Applied history remains untouched.</span></footer> : null}</section> : null}
-        {stage === 'activated' ? <section className="cm-policy-activated"><span><Check/></span><div><strong>The reviewed policy is now active</strong><small>{String(impactTotals?.items ?? 0)} current unapplied items can enter separately guarded reconciliation.</small></div></section> : null}
+        {(stage === 'preview' || stage === 'activation') && preview ? <section className="cm-policy-result"><aside><header><span><Check/></span><div><strong>Validated and saved</strong><small>Immutable snapshot for this preview</small></div></header><dl><div><dt>Structure</dt><dd>Passed</dd></div><div><dt>Qualification</dt><dd>Passed</dd></div><div><dt>Scope</dt><dd>{impactTotals?.libraries ? `${String(impactTotals.libraries)} ${impactTotals.libraries === 1 ? 'library' : 'libraries'}` : 'Current'}</dd></div></dl></aside><div className="cm-policy-preview"><header><div><strong>Impact preview</strong><small>Current unapplied work only · no metadata writes</small></div><b aria-label={`${String(impactTotals?.changedWorks ?? 0)} sampled works with changes`}>{String(impactTotals?.changedWorks ?? 0)}</b></header><div className="cm-policy-preview-list">{previewRows.length ? previewRows.slice(0, 6).map((row) => <div key={row.id} className={row.impact.changed ? 'is-change' : ''}><span className="cm-policy-work-mark" aria-hidden="true">{row.work.slice(0, 2).toUpperCase()}</span><span><strong>{row.work}</strong><small>{row.library} · {row.field}</small></span><span className="cm-policy-impact"><b>{row.impact.title}</b><small>· {row.impact.detail}</small><details><summary>Technical detail</summary><code>{row.impact.technicalDetail}</code></details></span></div>) : preview.libraries.map((library) => <div key={library.library}><span className="cm-policy-work-mark" aria-hidden="true">{library.library.slice(0, 2).toUpperCase()}</span><span><strong>{library.library}</strong><small>{library.affected_categories.map(readableCategory).join(', ') || 'No changed fields'}</small></span><span className="cm-policy-impact"><b>{library.current_unapplied_count === 0 ? 'No change' : 'Needs review'}</b><small>· {library.current_unapplied_count === 0 ? 'No current unapplied work remains to inspect' : `No sampled field outcome; ${String(library.current_unapplied_count)} current unapplied ${library.current_unapplied_count === 1 ? 'work remains' : 'works remain'} to inspect`}</small></span></div>)}</div>{previewRows.length > 6 ? <footer>Plus {String(previewRows.length - 6)} more exact field outcomes in this preview</footer> : preview.libraries.some((library) => library.cases_truncated) ? <footer>Additional current cases are included in the authoritative preview total.</footer> : null}</div>{stage === 'activation' ? <footer className="cm-policy-activation"><strong>Activate this reviewed draft?</strong><span>The active policy changes only after this guarded command succeeds. Applied history remains untouched.</span></footer> : null}</section> : null}
+        {stage === 'activated' ? <section className="cm-policy-activated"><span><Check/></span><div><strong>The reviewed policy is now active</strong><small>{String(impactTotals?.currentWorks ?? 0)} current unapplied {(impactTotals?.currentWorks ?? 0) === 1 ? 'work can' : 'works can'} enter separately guarded reconciliation.</small></div></section> : null}
       </section>
     </div>
     <p className={`policy-status ${status.tone}`} role={status.tone === 'error' ? 'alert' : 'status'}>{status.message}</p>
