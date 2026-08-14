@@ -4531,6 +4531,8 @@ class SQLiteMetadataReportRepository:
         currentness: Callable[[], bool],
         expected_current: str | None = None,
         after_publication: Callable[[object, MetadataReport], None] | None = None,
+        *,
+        expected_package_report: str | None = None,
     ) -> str:
         if type(report) is not MetadataReport or not callable(currentness):
             raise MetadataReportError("report publication failed")
@@ -4555,8 +4557,10 @@ class SQLiteMetadataReportRepository:
             self._connection.execute("BEGIN IMMEDIATE")
             if self._binding is not None:
                 self._binding.require_current()
-            if currentness() is not True:
-                raise MetadataReportError("target or media changed")
+            if expected_package_report is not None and self.current_review_package_report(
+                report.target.connection, report.target.library, report.target.item
+            ) != expected_package_report:
+                raise MetadataReportError("current review package changed")
             current = self._connection.execute(
                 "SELECT r.report_id,r.connection_name,r.library_name,r.item_id,r.file_identity,r.content_digest,r.schema_version,r.document_digest,r.document FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
                 values[1:5],

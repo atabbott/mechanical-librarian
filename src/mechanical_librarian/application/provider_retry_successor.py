@@ -90,7 +90,7 @@ class GenerateProviderRetrySuccessor:
         provider_resolver: ProviderRetryResolver,
         mount: MediaMountConfiguration | None,
         limits: ReportLimits,
-        after_publication: Callable[[ReportRepository, MetadataReport], bool],
+        after_publication: Callable[[ReportRepository, MetadataReport], None],
     ) -> None:
         self._target = target
         self._inspector = inspector
@@ -128,6 +128,10 @@ class GenerateProviderRetrySuccessor:
             provider = self._provider(source, provider_name, adapter, generation)
             original = self._observation(source, provider)
             selected = self._selected(plan, original, lane_identities)
+            if not require_report_current(
+                self._target, self._inspector, self._mount, self._limits, source
+            ):
+                raise CurrentnessError("target or media changed")
             replacement = self._observe(provider, plan, selected)
             merged = self._merged(plan, original, selected, replacement)
             successor = MetadataReport.create(
@@ -145,14 +149,21 @@ class GenerateProviderRetrySuccessor:
                     return False
                 return (
                     self._current_source(repository, source) == current
-                    and self._provider(source, provider_name, adapter, generation) == provider
+                    and self._provider_identity(
+                        self._provider(source, provider_name, adapter, generation)
+                    ) == self._provider_identity(provider)
                 )
 
             def stage(bound: ReportRepository, report: MetadataReport) -> None:
-                if self._after_publication(bound, report) is not True:
-                    raise ProviderRetrySuccessorError("provider retry staging failed")
+                self._after_publication(bound, report)
 
-            published = repository.publish(successor, currentness, source.report_id, stage)
+            published = repository.publish(
+                successor,
+                currentness,
+                source.report_id,
+                stage,
+                expected_package_report=source.report_id,
+            )
             if published != successor.to_json() or repository.get(successor.report_id) != published:
                 raise ProviderRetrySuccessorError("provider retry publication failed")
             return published
@@ -207,6 +218,17 @@ class GenerateProviderRetrySuccessor:
         ):
             raise ProviderRetrySuccessorError("provider retry configuration changed")
         return value
+
+    @staticmethod
+    def _provider_identity(value: ConfiguredProviderRetry) -> tuple[str, bool, str | None, str, int]:
+        """Compare persisted configuration identity, never the factory callable."""
+        return (
+            value.binding.name,
+            value.binding.enabled,
+            value.binding.authority,
+            value.adapter,
+            value.generation,
+        )
 
     def _observation(self, source: MetadataReport, provider: ConfiguredProviderRetry) -> ProviderObservation:
         matches = tuple(value for value in source.providers if value.provider == provider.binding.name)

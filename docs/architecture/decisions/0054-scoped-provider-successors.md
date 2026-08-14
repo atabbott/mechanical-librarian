@@ -22,8 +22,11 @@ The replacement observation is merged with untouched sibling lane data. Exact
 candidate identity duplicates coalesce; conflicting evidence is rejected by the
 existing bounded observation constructor. Publication uses the existing
 expected-current report transaction and optional review-package publication
-callback, so dispatch failure, source drift, and a concurrent currentness race
-leave the predecessor package current.
+callback. It also asserts the source package report inside that transaction,
+while the final target/media/cover currentness check remains immediately before
+it. This keeps provider and target work outside the SQLite writer lock, while
+dispatch failure, source drift, and a concurrent package race leave the
+predecessor package current.
 
 The seam has no composition, scheduler, CLI, endpoint, recovery claim, canary,
 or production write caller in this constituent. F24 activation owns that
