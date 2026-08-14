@@ -9,7 +9,10 @@ from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
     qualify_provider_observation,
 )
-from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+from mechanical_librarian.application.review_web import (
+    InspectCurrentReviewCase,
+    _corroboration_source_labels,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverDesignation,
@@ -855,22 +858,55 @@ class ProposalSetTests(unittest.TestCase):
             },
         )
 
-    def test_distinct_author_and_untyped_creator_sets_corroborate_without_payloads(self) -> None:
+    def test_case_detail_projects_complete_creator_corroboration_by_authority(self) -> None:
         def creator(provider: str, candidate: str, value: str, role: str | None) -> ProviderClaim:
             return _claim(
                 provider, candidate, ClaimKind.CREATOR, value,
                 scope=ClaimScope.WORK, role=role,
             )
 
-        author_claim = creator("open-library", "author-edition", "Mick Herron", "author")
-        neutral_claim = creator("hardcover", "neutral-edition", "Mick Herron", None)
+        typed_provider = "misleading-connection-name"
+        untyped_provider = "not-the-provider-authority"
+        creators = ("Mick Herron", "Jane Doe")
+        author_claims = tuple(
+            creator(typed_provider, "author-edition", value, "author")
+            for value in creators
+        )
+        neutral_claims = tuple(
+            creator(untyped_provider, "neutral-edition", value, None)
+            for value in creators
+        )
         author_candidate = ProviderCandidate(
-            "author-edition", "open-library-work", (author_claim,), (),
-            (ProviderIdentityBinding(author_claim.reference, "open-library-author-OL1", ClaimScope.WORK, "author"),),
+            "author-edition", "open-library-work", author_claims, (),
+            tuple(
+                ProviderIdentityBinding(
+                    claim.reference, f"open-library-author-{index}",
+                    ClaimScope.WORK, "author", index,
+                )
+                for index, claim in enumerate(author_claims)
+            ),
         )
         neutral_candidate = ProviderCandidate(
-            "neutral-edition", "hardcover-work", (neutral_claim,), (),
-            (ProviderIdentityBinding(neutral_claim.reference, "hardcover-author-0000000001", ClaimScope.WORK, None),),
+            "neutral-edition", "hardcover-work",
+            (
+                *neutral_claims,
+                *(
+                    _claim(
+                        untyped_provider, "neutral-edition", ClaimKind.DESCRIPTION,
+                        f"Padding evidence {index}", scope=ClaimScope.WORK,
+                        order=index + len(neutral_claims),
+                    )
+                    for index in range(51)
+                ),
+            ),
+            (),
+            tuple(
+                ProviderIdentityBinding(
+                    claim.reference, f"hardcover-author-{index}",
+                    ClaimScope.WORK, None, index,
+                )
+                for index, claim in enumerate(neutral_claims)
+            ),
         )
         report = _report(
             title=None,
@@ -879,23 +915,43 @@ class ProposalSetTests(unittest.TestCase):
                 authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING),
             ),
             providers=(
-                ProviderObservation("hardcover", ProviderStatus.CANDIDATES, (), (neutral_candidate,), ProviderQueryKind.WORK, "hardcover"),
-                ProviderObservation("open-library", ProviderStatus.CANDIDATES, (), (author_candidate,), ProviderQueryKind.WORK, "open_library"),
+                ProviderObservation(untyped_provider, ProviderStatus.CANDIDATES, (), (neutral_candidate,), ProviderQueryKind.WORK, "hardcover"),
+                ProviderObservation(typed_provider, ProviderStatus.CANDIDATES, (), (author_candidate,), ProviderQueryKind.WORK, "open_library"),
             ),
         )
         replayed_report = MetadataReport.from_json(report.to_json())
+        reordered_report = MetadataReport.from_json(report.to_json())
+        object.__setattr__(reordered_report, "providers", tuple(reversed(reordered_report.providers)))
         proposal = evaluate_report(replayed_report)
+        self.assertEqual(proposal.to_json(), evaluate_report(reordered_report).to_json())
         result = _result(proposal, TargetDestination.AUTHORS)
 
         self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
         self.assertEqual(("explicit_author_corroborates_untyped_creator",), result.reasons)
         self.assertEqual(
-            {author_claim.reference, neutral_claim.reference},
+            {claim.reference for claim in (*author_claims, *neutral_claims)},
             set(result.alternatives[0].evidence_references),
         )
         replayed_proposal = ProposalSet.from_json(proposal.to_json())
         review_case = ReviewCase.create(replayed_proposal, replayed_report)
         self.assertEqual(review_case, ReviewCase.from_json(review_case.to_json()))
+        padded_references = (
+            author_claims[0].reference,
+            *(f"ignored-evidence-{index}" for index in range(26)),
+            neutral_claims[0].reference,
+            *(f"ignored-evidence-{index}" for index in range(26, 51)),
+            author_claims[1].reference,
+            neutral_claims[1].reference,
+        )
+        self.assertGreater(len(padded_references), 50)
+        self.assertEqual(
+            ["Hardcover", "Open Library"],
+            _corroboration_source_labels(
+                replayed_report,
+                list(padded_references),
+                list(result.reasons),
+            ),
+        )
         self.assertNotIn("raw_payload", report.to_json())
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
@@ -908,7 +964,7 @@ class ProposalSetTests(unittest.TestCase):
                 if field["destination"] == TargetDestination.AUTHORS.value
             )
             self.assertEqual(
-                {author_claim.reference, neutral_claim.reference},
+                {claim.reference for claim in (*author_claims, *neutral_claims)},
                 set(author_field["provenance"]),
             )
             self.assertEqual(
@@ -923,7 +979,7 @@ class ProposalSetTests(unittest.TestCase):
             repository.close()
 
         same_authority = ProviderObservation(
-            "hardcover", ProviderStatus.CANDIDATES, (), (neutral_candidate,),
+            untyped_provider, ProviderStatus.CANDIDATES, (), (neutral_candidate,),
             ProviderQueryKind.WORK, "open_library",
         )
         same_authority_report = MetadataReport.create(
@@ -931,11 +987,11 @@ class ProposalSetTests(unittest.TestCase):
             file=replayed_report.file,
             local_claims=replayed_report.local_claims,
             local_reasons=replayed_report.local_reasons,
-            providers=(same_authority, replayed_report.providers[1]),
+            providers=(replayed_report.providers[0], same_authority),
         )
         rejected = _result(evaluate_report(same_authority_report), TargetDestination.AUTHORS)
         self.assertNotIn(
-            neutral_claim.reference,
+            neutral_claims[0].reference,
             rejected.alternatives[0].evidence_references,
         )
 

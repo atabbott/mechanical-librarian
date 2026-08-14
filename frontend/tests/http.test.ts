@@ -38,6 +38,25 @@ describe('ReviewApiClient', () => {
     expect(detail([{ name: 'Standalone' }]).fields[0]?.currentValue).toBe('Standalone')
   })
 
+  it('requires exact creator corroboration source lists in case-detail responses', () => {
+    const response = (corroboration_sources: unknown) => ({
+      schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true,
+      target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
+      fields: [{
+        destination: 'authors', deterministic_disposition: 'review', effect_capability: 'manual',
+        needs_attention: true, manual_hold: false, current: { value: ['Ada Example'] },
+        proposed_values: [], proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',
+        human_decision: null, automatic_decision: null, notices: [], provenance: [],
+        corroboration_sources,
+      }],
+    })
+
+    expect(() => mapCaseDetail(response(undefined))).toThrow(ApiError)
+    expect(() => mapCaseDetail(response('Hardcover'))).toThrow(ApiError)
+    expect(mapCaseDetail(response(['Hardcover', 'Open Library'])).fields[0]?.corroborationSources)
+      .toEqual(['Hardcover', 'Open Library'])
+  })
+
   it('maps exact library DTOs into presentation-safe view models', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
       Response.json({
