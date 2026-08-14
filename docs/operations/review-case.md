@@ -171,9 +171,11 @@ absence or ineligibility. A stale or absent catalogue establishes its baseline
 progressively, one successfully observed library at a time, so an unavailable
 library cannot block healthy libraries; later library scans retain unrelated
 entries. The two lanes serialize catalogue publication and share synchronized
-provider pacing. Provider technical failure in any
-configured lane stops before proposal creation, discards staged retirements,
-and remains a bounded failure for a later owner-requested scan.
+provider pacing. Every configured provider lane records a bounded terminal
+observation. A failed, unavailable, ambiguous, disabled, or no-match lane
+remains visible without erasing independently coherent sibling evidence or
+stopping proposal and projection. Failure to construct or validate a complete
+report remains a bounded failed work for a later owner-requested scan.
 If an item disappears after discovery, its typed not-found result requests the
 same bounded rediscovery as other target or media drift, including between
 proposal creation and admission. A failed rediscovery terminalizes the scan;
@@ -201,12 +203,14 @@ control appears only while active, paused, or actionable; pause prevents new
 admissions without cancelling committed work and disables retry until resumed.
 Each activity response reads every configured library and the pause flag from
 one validated repository snapshot rather than reopening the database per row.
-Transient provider failures recover automatically behind the shared durable
-circuit for at most three cycles. The circuit honours bounded `Retry-After`
-from any failed provider lane, including the final provider-local attempt, but
-terminal technical failures do not delay unrelated work. Exhausted recovery
-becomes an actionable terminal failure. Explicit retry is also offered after
-corrected credential or configuration validation.
+Provider adapters perform their bounded local attempts and retain a safe
+aggregate request count in the report. A terminal lane never opens a
+whole-library circuit or delays unrelated work. Library exposes each
+non-success lane's provider, kind, terminal status, bounded provider-request
+count, and safe reason. A work that fails before a coherent package exists is
+Library-only, never Attention, and carries bounded recovery guidance. Explicit
+retry is offered after correcting a credential, configuration, or preparation
+failure.
 It makes only the reads and provider calls
 already authorized by catalogue and metadata-report, and adds no field
 decision, apply plan, target write, media write, deletion, or destructive

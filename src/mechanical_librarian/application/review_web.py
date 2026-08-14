@@ -912,7 +912,7 @@ def _provider_outcomes(report: MetadataReport) -> list[dict[str, object]]:
             if status in successful:
                 continue
             kind = (lane.kind if provider.lanes else provider.query_kind).value
-            outcomes.append({"attempts": provider.request_accounting.logical_requests, "lane_kind": kind, "provider": provider.provider, "reason": "Provider returned no matching metadata." if status == "no_match" else "Provider returned a bounded terminal status.", "status": status})
+            outcomes.append({"provider_requests": provider.request_accounting.logical_requests, "lane_kind": kind, "provider": provider.provider, "reason": "Provider returned no matching metadata." if status == "no_match" else "Provider returned a bounded terminal status.", "status": status})
     return outcomes[:32]
 
 
@@ -936,7 +936,7 @@ def _library_item(
                 work_id, item, library = terminal["work_id"], terminal["item"], terminal["library"]
                 if type(work_id) is not str or type(item) is not str or type(library) is not str:
                     raise ValueError
-                return {"authors": [], "attention_count": 0, "attention_state": "no_attention_needed", "detail_url": None, "dispositions": ["terminal_failure"], "item": item, "library": library, "media_kind": "unknown", "review_case_id": None, "title": "Preparation unavailable", "work_id": work_id, "preparation": {"attempt": terminal["attempt"], "provider": root or "provider", "reason": reasons.get(status, "Preparation ended without a usable review package."), "recovery": "Retry review preparation after correcting the reported condition.", "recovery_attempt": terminal["recovery_attempt"], "stage": lane, "status": status}, "preparation_outcomes": [{"attempts": terminal["attempt"], "lane_kind": lane, "provider": root or "provider", "reason": reasons.get(status, "Preparation ended without a usable review package."), "status": status}]}
+                return {"authors": [], "attention_count": 0, "attention_state": "no_attention_needed", "detail_url": None, "dispositions": ["terminal_failure"], "item": item, "library": library, "media_kind": "unknown", "review_case_id": None, "title": "Preparation unavailable", "work_id": work_id, "preparation": {"attempt": terminal["attempt"], "provider": root or "provider", "reason": reasons.get(status, "Preparation ended without a usable review package."), "recovery": "Retry review preparation after correcting the reported condition.", "recovery_attempt": terminal["recovery_attempt"], "stage": lane, "status": status}, "preparation_outcomes": [{"provider_requests": terminal["attempt"], "lane_kind": lane, "provider": root or "provider", "reason": reasons.get(status, "Preparation ended without a usable review package."), "status": status}]}
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise ReviewWebError("unavailable") from error
     try:

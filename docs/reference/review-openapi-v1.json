@@ -2860,10 +2860,6 @@
       "_ProviderOutcome": {
         "additionalProperties": false,
         "properties": {
-          "attempts": {
-            "title": "Attempts",
-            "type": "integer"
-          },
           "lane_kind": {
             "title": "Lane Kind",
             "type": "string"
@@ -2871,6 +2867,10 @@
           "provider": {
             "title": "Provider",
             "type": "string"
+          },
+          "provider_requests": {
+            "title": "Provider Requests",
+            "type": "integer"
           },
           "reason": {
             "title": "Reason",
@@ -2882,7 +2882,7 @@
           }
         },
         "required": [
-          "attempts",
+          "provider_requests",
           "lane_kind",
           "provider",
           "reason",

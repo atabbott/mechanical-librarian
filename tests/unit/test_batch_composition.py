@@ -12,6 +12,23 @@ from mechanical_librarian.bootstrap.composition import _load_batch_credentials
 from mechanical_librarian.domain.metadata_report import ProviderStatus
 
 class BatchCompositionTests(unittest.TestCase):
+ def test_review_receipt_keeps_complete_mixed_provider_report_for_proposal(self):
+  config=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/target"),),(LibraryConfiguration("books","primary","library","book","media",()),),(MediaMountConfiguration("media","/media","/books",True),),())
+  service=unittest.mock.Mock()
+  service.run.return_value="report"
+  action=SimpleNamespace(action_id="work")
+  report=SimpleNamespace(report_id="report-current",providers=(
+   SimpleNamespace(provider="hardcover",status=ProviderStatus.CANDIDATES,lanes=()),
+   SimpleNamespace(provider="open-library",status=ProviderStatus.CANDIDATES,lanes=()),
+   SimpleNamespace(provider="google-books",status=ProviderStatus.AUTHENTICATION,lanes=()),
+  ))
+  repository=unittest.mock.Mock()
+  with patch.object(composition,"CoverArtifactStore"),patch.object(composition,"AudiobookshelfItemReader"),patch.object(composition,"GenerateMetadataReport",return_value=service) as generate:
+   self.assertEqual("report",composition.run_metadata_report_loaded(config,Path("/reports"),Path("/artifacts"),"primary","books","item",0,review_action=action,pipeline_repository=repository))
+  receipt=generate.call_args.kwargs["publication_receipt"]
+  receipt(repository,report)
+  repository.complete_review_extraction_publication.assert_called_once_with(action,"report-current",unittest.mock.ANY,0,None,False,None)
+
  def test_provider_retry_after_becomes_bounded_durable_recovery_delay(self):
   transient=SimpleNamespace(providers=(SimpleNamespace(provider="failing",status=ProviderStatus.RATE_LIMITED,lanes=()),))
   attempts=[SimpleNamespace(delay_seconds=12.25,outcome="retry"),SimpleNamespace(delay_seconds=90_000.0,outcome="exhausted")]

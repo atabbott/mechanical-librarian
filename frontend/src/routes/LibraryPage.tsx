@@ -15,6 +15,11 @@ interface EvidenceRow { basis: string; observed: string; source: string }
 
 const friendly = (value: string) => value.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase())
 const authorLine = (work: LibraryWorkView) => work.authors.length ? work.authors.join(', ') : 'Author details unavailable'
+const providerOutcomeSummary = (work: LibraryWorkView) => work.preparation
+  ? 'Preparation needs owner recovery'
+  : work.preparationOutcomes.length
+    ? `${String(work.preparationOutcomes.length)} provider outcome${work.preparationOutcomes.length === 1 ? '' : 's'} retained`
+    : undefined
 const initials = (title: string) => title.split(/\s+/u).filter(Boolean).slice(0, 2).map((word) => word[0]?.toUpperCase()).join('') || 'ML'
 const requestKey = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `decision-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 const opaqueSource = /^(?:local|evidence|provider)_[0-9a-f]+$/iu
@@ -297,9 +302,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         <div className="library-work-list">{data.works.length === 0 ? <p className="empty-copy">No exact-current works match this search and lens.</p> : data.works.map((work) => {
           const selectedWorkRow = search.preview === work.reviewCaseId
           const needsAttention = work.attentionCount > 0
+          const providerSummary = providerOutcomeSummary(work)
           return <article key={work.id} className={`library-work-row${selectedWorkRow ? ' active' : ''}`}>
             <span className="library-book-mark" aria-hidden="true">{initials(work.title)}</span>
-            <div className="library-work-copy"><h3>{work.reviewCaseId ? <button className="work-select" type="button" aria-pressed={selectedWorkRow} onClick={() => select(work.reviewCaseId ?? '')}>{work.title}</button> : work.title}</h3><p>{authorLine(work)}</p><p>{work.library} · {friendly(work.mediaKind)}</p><div className="library-work-status"><span className={needsAttention ? 'needs-attention' : 'handled'}>{needsAttention ? `${String(work.attentionCount)} field${work.attentionCount === 1 ? '' : 's'} need attention` : 'No attention needed'}</span></div></div>
+            <div className="library-work-copy"><h3>{work.reviewCaseId ? <button className="work-select" type="button" aria-pressed={selectedWorkRow} onClick={() => select(work.reviewCaseId ?? '')}>{work.title}</button> : work.title}</h3><p>{authorLine(work)}</p><p>{work.library} · {friendly(work.mediaKind)}</p><div className="library-work-status"><span className={needsAttention || work.preparation ? 'needs-attention' : 'handled'}>{work.preparation ? 'Preparation failed safely' : needsAttention ? `${String(work.attentionCount)} field${work.attentionCount === 1 ? '' : 's'} need attention` : 'No attention needed'}</span></div>{providerSummary ? <details className="provider-outcomes"><summary>{providerSummary}</summary>{work.preparation ? <p><strong>{friendly(work.preparation.status)} at {friendly(work.preparation.stage)}</strong> · {work.preparation.reason} {work.preparation.recovery}</p> : null}<ul>{work.preparationOutcomes.map((outcome, index) => <li key={`${outcome.provider}:${outcome.laneKind}:${outcome.status}:${String(index)}`}><strong>{outcome.provider}</strong> · {friendly(outcome.laneKind)} · {friendly(outcome.status)} · {String(outcome.providerRequests)} bounded provider request{outcome.providerRequests === 1 ? '' : 's'}. {outcome.reason}</li>)}</ul></details> : null}</div>
           </article>
         })}</div>
         <div className="library-pager"><span>{data.nextCursor ? 'More current works are available' : 'End of the bounded current result'}</span>{data.nextCursor ? <Link to="/library" search={{ ...search, cursor: data.nextCursor }}>Next page →</Link> : null}</div>

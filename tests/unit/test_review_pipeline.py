@@ -1193,7 +1193,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         repository.close()
         self.assertEqual(control, (0, 0))
 
-    def test_persistent_transient_provider_failure_exhausts_automatic_recovery(
+    def test_terminal_unavailable_provider_report_continues_to_proposal(
         self,
     ) -> None:
         report = _report()
@@ -1231,28 +1231,82 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         )
         pipeline.request("primary", "ebooks")
         self.assertTrue(pipeline.run_next(1))
-        for recovery in range(3):
-            self.assertTrue(pipeline.run_next(1))
-            self.assertTrue(pipeline.run_next(1))
+        self.assertTrue(pipeline.run_next(1))
+        self.assertTrue(pipeline.run_next(1))
+        self.assertTrue(pipeline.run_next(1))
+        self.assertEqual(proposed, [report.report_id])
+        self.assertEqual((len(extracted), provider_calls), (1, 1))
+
+    def test_first_generation_and_refresh_publish_only_after_projection(self) -> None:
+        reports = [
+            _report(title="Published old", content_digest="a", file_identity="b"),
+            _report(title="Staged successor", content_digest="c", file_identity="d"),
+            _report(title="Failed successor", content_digest="e", file_identity="f"),
+        ]
+
+        def pipeline_for(report: MetadataReport, *, projection: bool = True, now: int = 20) -> ReviewPreparationPipeline:
+            proposal = evaluate_report(report)
+
+            def extract(repository, action: PipelineAction, claim_next: bool):
+                repository.publish(
+                    report,
+                    lambda: True,
+                    after_publication=lambda bound, current: bound.complete_review_extraction_publication(
+                        action, current.report_id, now, 0, None, claim_next, None
+                    ),
+                )
+                return report.report_id, True
+
+            def propose(repository, _: str) -> str:
+                repository.publish_proposal(proposal)
+                return proposal.proposal_set_id
+
+            def admit(repository, _: str) -> tuple[str, str | None]:
+                value = json.loads(repository.admit_review_case(proposal))
+                return value["status"], value.get("review_case_id")
+
+            return ReviewPreparationPipeline(
+                repository_factory=lambda: open_repository(self.path),
+                libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
+                discover=lambda *_: (1, report.file.content_digest, (replace(_entry("item-1", report.file.identity), library="ebooks"),)),
+                extract=extract,
+                providers=lambda *_: (),
+                propose=propose,
+                admit=admit,
+                project=lambda *_: projection,
+                clock=lambda: now,
+            )
+
+        def titles() -> tuple[str, ...]:
             repository = open_repository(self.path)
-            deadline, staged_report = repository._connection.execute(
-                "SELECT retry_not_before,report_id FROM review_preparation_work"
-            ).fetchone()
+            rows = repository.read_review_library(None, 10, 0, None).rows
             repository.close()
-            if recovery < 2:
-                self.assertFalse(pipeline.run_next(1))
-                clock[0] = deadline
-            else:
-                self.assertIsNone(staged_report)
-        self.assertEqual(proposed, [])
-        self.assertFalse(pipeline.run_next(1))
-        progress = pipeline.progress("primary", "ebooks")
-        assert progress is not None
-        self.assertEqual(
-            (progress.state, progress.checked, progress.blocked),
-            ("completed_with_failures", 1, 1),
-        )
-        self.assertEqual((len(extracted), provider_calls), (3, 3))
+            return tuple(json.loads(row[1])["target"]["fields"][0]["value"] for row in rows)
+
+        first = pipeline_for(reports[0])
+        first.request("primary", "ebooks")
+        self.assertEqual(titles(), ())
+        for _ in range(5):
+            self.assertTrue(first.run_next(1))
+            if _ < 4:
+                self.assertEqual(titles(), ())
+        self.assertEqual(titles(), ("Published old",))
+        self.assertFalse(first.run_next(1))
+
+        refresh = pipeline_for(reports[1], now=30)
+        refresh.request("primary", "ebooks")
+        for _ in range(5):
+            self.assertTrue(refresh.run_next(1))
+            if _ < 4:
+                self.assertEqual(titles(), ("Published old",))
+        self.assertEqual(titles(), ("Staged successor",))
+        self.assertFalse(refresh.run_next(1))
+
+        failed_refresh = pipeline_for(reports[2], projection=False, now=40)
+        failed_refresh.request("primary", "ebooks")
+        for _ in range(5):
+            self.assertTrue(failed_refresh.run_next(1))
+            self.assertEqual(titles(), ("Staged successor",))
 
     def test_unrelated_provider_success_does_not_shorten_open_circuit(self) -> None:
         repository = open_repository(self.path)

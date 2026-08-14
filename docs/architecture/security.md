@@ -91,13 +91,18 @@ work unclaimable. Final pipeline publication also requires the
 target to remain singular. External target, media, cover, and artifact
 currentness checks precede the short SQLite write transaction, which retains
 its local expected-pointer check; one slow external read cannot hold the writer
-lock against the other lane. Technical failure in any
-configured provider lane stops that work before proposal creation and prevents
-that scan's staged retirements. The path cannot decide a field, construct an apply plan, write a
+lock against the other lane. A complete report retains each configured lane's
+bounded terminal status. Technical failure remains typed and inspectable but
+cannot erase coherent sibling evidence or prevent proposal creation; only a
+failure before a complete report exists terminalizes the work. Public
+projection allowlists safe provider identity, lane kind, aggregate bounded
+request count, status, reason, and recovery text, never raw diagnostics,
+queries, headers, credentials, paths, or payloads. The path cannot decide a field, construct an apply plan, write a
 target or media file, or delete media. The supported review server may poll on
-the one bounded configured interval, resume transient work, and hold terminal
-provider failure for an authenticated owner retry. Durable pause, fair-claim,
-and circuit state contains only bounded operational values.
+the one bounded configured interval and hold pre-package terminal failure for
+an authenticated owner retry. Per-work retry eligibility, durable pause, and
+fair-claim state contain only bounded operational values; one work never opens
+a library-wide provider barrier.
 
 ## External actors
 

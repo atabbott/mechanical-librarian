@@ -858,16 +858,10 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
                 review_action,
                 report.report_id,
                 int(time.time()),
-                _provider_recovery_delay(provider_instances, report),
-                (
-                    None
-                    if (disposition := provider_failure_disposition(
-                        _provider_statuses(report)
-                    )) is None
-                    else disposition[0]
-                ),
+                0,
+                None,
                 review_claim_next,
-                _provider_authentication_root(report),
+                None,
             )
         ),
         require_singular_target=review_action is not None,

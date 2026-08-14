@@ -361,7 +361,7 @@ class _PreparationFailure(_ClosedModel):
 
 
 class _ProviderOutcome(_ClosedModel):
-    attempts: int
+    provider_requests: int
     lane_kind: str
     provider: str
     reason: str

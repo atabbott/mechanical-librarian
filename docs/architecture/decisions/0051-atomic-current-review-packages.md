@@ -19,9 +19,15 @@ Library and Attention reads. Pipeline work updates it in the same transaction
 that marks its projection complete after checking the exact staged report,
 proposal, case, and outcome. Direct foreground report/admission operations
 continue to publish their complete report-only or admitted package directly.
+Provider-lane outcomes are immutable report-local evidence. Once every
+configured lane is terminal, a sibling technical, no-match, disabled, or
+over-bound status cannot discard coherent evidence or stop proposal and
+projection. A failure before a complete report exists remains separate
+Library-only operational state.
 
 ## Consequences
 
 Rollback, restart, stale work, and projection failure leave the old package
 pointer unchanged. A clean schema is required; older databases are rejected
-under the existing no-migration policy.
+under the existing no-migration policy. Library and Attention counts, lenses,
+search, and pagination share the same pointer and one ordered browse window.
