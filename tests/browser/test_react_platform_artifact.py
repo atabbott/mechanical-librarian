@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import unittest
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -23,6 +24,27 @@ from tests.browser.fidelity_cohort import (
 
 class ReactPlatformArtifactTests(unittest.TestCase):
     def test_exact_built_shell_supports_every_direct_route_and_client_navigation(self) -> None:
+        self._browser_stage = "test-setup"
+        try:
+            self._exercise_exact_built_shell_supports_every_direct_route_and_client_navigation()
+        except Exception:
+            print(
+                json.dumps(
+                    {
+                        "schema": "protected-browser-failure-stage-v1",
+                        "stage": self._browser_stage,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            raise
+
+    def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigation(
+        self,
+    ) -> None:
         root_value = os.environ.get("ML_REACT_ASSET_DIR")
         self.assertIsNotNone(root_value, "ML_REACT_ASSET_DIR is required")
         bundle = load_react_asset_bundle(Path(root_value or ""))
@@ -123,9 +145,10 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 ("/policy?section=publication", "Library policy"),
                 ("/policy?section=curation", "Library policy"),
                 ("/policy?section=unsupported", "Library policy"),
-                ("/activity", "Activity"),
+                ("/activity", "Activity and recovery"),
             )
             for path, heading in routes:
+                self._browser_stage = f"direct-route:{path}"
                 fail_activity_once = path == "/activity"
                 before_entry = documents
                 response = page.goto(f"https://react-platform.invalid{path}")
@@ -144,32 +167,132 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertEqual(page.locator("img, script:not([src])").count(), 0)
                 self.assertIsNone(page.evaluate("() => window.__metadataExecuted"))
                 if path == "/activity":
+                    self._browser_stage = "activity:compact-initial-geometry"
+                    self.assertTrue(
+                        page.locator(".cm-activity-ledger").evaluate(
+                            "node => node.previousElementSibling?.classList.contains('cm-activity-status')"
+                        )
+                    )
+                    long_activity_title = page.locator(
+                        ".cm-activity-outcome > strong"
+                    ).filter(has_text=LONG_TITLE)
+                    self.assertEqual(long_activity_title.get_attribute("title"), LONG_TITLE)
+                    self.assertEqual(
+                        long_activity_title.evaluate(
+                            "node => getComputedStyle(node).webkitLineClamp"
+                        ),
+                        "2",
+                    )
+                    title_box = long_activity_title.bounding_box()
+                    row_box = long_activity_title.locator(
+                        "xpath=ancestor::article"
+                    ).bounding_box()
+                    self.assertIsNotNone(title_box)
+                    self.assertIsNotNone(row_box)
+                    compact_geometry = {
+                        "title_height": title_box["height"],
+                        "row_height": row_box["height"],
+                    }
+                    compact_row = long_activity_title.locator(
+                        "xpath=ancestor::article"
+                    )
+                    self.assertEqual(
+                        compact_row.evaluate(
+                            "node => getComputedStyle(node).gridTemplateColumns"
+                        ).split(" ", 1)[0],
+                        "44px",
+                    )
+                    self.assertEqual(
+                        compact_row.locator("b").evaluate(
+                            "node => getComputedStyle(node).gridRow"
+                        ),
+                        "3",
+                    )
+                    self.assertEqual(
+                        compact_row.get_by_role("button", name="Inspect").evaluate(
+                            "node => getComputedStyle(node).gridRow"
+                        ),
+                        "4",
+                    )
+                    self.assertLessEqual(title_box["height"], 36, compact_geometry)
+                    self.assertLessEqual(
+                        row_box["height"],
+                        182,
+                        compact_geometry,
+                    )
+                    page.set_viewport_size({"width": 1440, "height": 900})
+                    inspect = page.get_by_role("button", name="Inspect").first
+                    self._browser_stage = "activity:desktop-media-state"
+                    page.wait_for_function(
+                        """() => {
+                            const inspect = document.querySelector('.cm-activity-events article > button');
+                            const title = document.querySelector('.cm-activity-outcome > strong');
+                            return window.matchMedia('(min-width: 761px)').matches
+                                && inspect instanceof HTMLElement
+                                && title instanceof HTMLElement
+                                && getComputedStyle(inspect).whiteSpace === 'nowrap'
+                                && getComputedStyle(title).whiteSpace === 'nowrap';
+                        }"""
+                    )
+                    self._browser_stage = "activity:desktop-geometry"
+                    inspect_box = inspect.bounding_box()
+                    row_box = inspect.locator("xpath=ancestor::article").bounding_box()
+                    self.assertIsNotNone(inspect_box)
+                    self.assertIsNotNone(row_box)
+                    self.assertEqual(inspect.evaluate("node => getComputedStyle(node).whiteSpace"), "nowrap")
+                    self.assertLessEqual(row_box["height"], 72)
+                    self.assertEqual(
+                        inspect.evaluate("node => getComputedStyle(node).minHeight"),
+                        "40px",
+                    )
+                    self.assertLessEqual(inspect_box["height"], 40.5)
+                    page.set_viewport_size({"width": 390, "height": 844})
+                    self._browser_stage = "activity:compact-media-state"
+                    page.wait_for_function(
+                        """() => {
+                            const title = document.querySelector('.cm-activity-outcome > strong');
+                            return window.matchMedia('(max-width: 760px)').matches
+                                && title instanceof HTMLElement
+                                && getComputedStyle(title).webkitLineClamp === '2';
+                        }"""
+                    )
+                    self._browser_stage = "activity:authority-and-recovery"
+                    page.get_by_text("Authority and recovery", exact=True).click()
                     page.get_by_role(
-                        "button", name="Open write-permission details"
+                        "button", name="Review write permissions"
                     ).click()
-                    page.get_by_label("Household ebooks destination consent").get_by_text(
-                        "Subtitle: Excluded · A field is unavailable"
+                    page.get_by_role("heading", name="Enable guarded writes").wait_for()
+                    page.locator(".activity-consent-library").filter(
+                        has_text="Household ebooks"
+                    ).get_by_text("5 prepared · Some destinations are ready").wait_for()
+                    page.get_by_role("heading", name="Activity ledger").wait_for()
+                    page.get_by_label("Search activity").wait_for()
+                    page.get_by_role("button", name="Reviews").wait_for()
+                    page.get_by_role("button", name="Inspect").first.click()
+                    page.get_by_text("Durable evidence").wait_for()
+                    self.assertEqual(
+                        page.locator(".cm-activity-evidence").evaluate(
+                            "node => getComputedStyle(node).gridRow"
+                        ),
+                        "5",
+                    )
+                    page.get_by_text("Recorded origin").wait_for()
+                    page.locator(".cm-activity-evidence").get_by_text(
+                        "Outcome", exact=True
                     ).wait_for()
-                    page.get_by_text(
-                        "Qualified automatic decision", exact=False
-                    ).first.wait_for()
-                    page.get_by_text("Human decision", exact=False).first.wait_for()
-                    page.get_by_text(
-                        "The result is being checked", exact=False
-                    ).first.wait_for()
-                    page.get_by_text("Affected destinations: Authors, Title").wait_for()
-                    page.get_by_text("Recorded decision", exact=False).wait_for()
                     self.assertNotIn(
                         "future_provider_origin",
-                        page.locator(".activity-ledger").inner_text(),
+                        page.locator(".cm-activity-ledger").inner_text(),
                     )
-                    page.get_by_role(
-                        "checkbox", name="Spoken stories · 2 prepared"
-                    ).check()
+                    page.locator(".activity-consent-library").filter(
+                        has_text="Spoken stories"
+                    ).get_by_role("checkbox").check()
+                    self._browser_stage = "activity:consent-refresh"
                     page.get_by_role("button", name="Enable selected libraries").click()
                     page.get_by_text(
                         "Activity state refreshed from the authoritative server."
                     ).wait_for()
+                self._browser_stage = f"direct-route:{path}:document-count"
                 self.assertEqual(
                     documents,
                     before_entry + (2 if path == "/activity" else 1),
