@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../src/api/http'
 import type { ActivityDisplayView, ActivitySearch, ActivityView, AttentionSearch, AttentionView, CaseDetailView, HistoryView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
-import { createApplicationRouter, detailQuery, normalizeLibrarySearch, normalizePolicySearch } from '../src/router'
+import { activityRoute, createApplicationRouter, detailQuery, normalizeLibrarySearch, normalizePolicySearch } from '../src/router'
 import { activityEventKeys, activityOutcome } from '../src/activityState'
 import { policyImpactDisplay, policyImpactTotals, policyRepresentationGuidance } from '../src/routes/PolicyPage'
 
@@ -2227,6 +2227,38 @@ describe('typed review routes', () => {
     act(() => { deferred.get('desktop')?.resolve(activity({ ledger: { event_type: 'all', page: 1, page_count: 3, page_size: 50, query: 'desktop', range_days: 30, total: 75 } })) })
     await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'desktop' }), expect.anything()))
   }, 10_000)
+
+  it('retains the Activity search draft through a pending same-query page-size replacement', async () => {
+    expect(activityRoute.options.pendingMs).toBe(Infinity)
+    let resolveRows: ((value: ActivityView) => void) | undefined
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn((search: ActivitySearch) => {
+        if (search.q === 'ab' && search.pageSize === 50) return new Promise<ActivityView>((resolve) => { resolveRows = resolve })
+        return Promise.resolve(activity({ ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 } }))
+      }),
+    }
+    const user = userEvent.setup()
+    renderRoute('/activity?q=ab', http)
+
+    const search = await screen.findByRole('searchbox', { name: 'Search activity' })
+    const rows = screen.getByRole('combobox', { name: 'Rows per activity page' })
+    await user.click(rows)
+    await user.click(screen.getByRole('option', { name: '50 per page' }))
+    await waitFor(() => expect(resolveRows).toBeTypeOf('function'))
+    search.focus()
+    await user.clear(search)
+    await user.type(search, 'desktop')
+    expect(screen.getByRole('searchbox', { name: 'Search activity' })).toBe(search)
+    expect(search).toHaveValue('desktop')
+    expect(search).toHaveFocus()
+
+    act(() => { resolveRows?.(activity({ ledger: { event_type: 'all', page: 1, page_count: 3, page_size: 50, query: 'ab', range_days: 30, total: 75 } })) })
+    await waitFor(() => expect(search).toHaveValue('desktop'))
+    expect(screen.getByRole('searchbox', { name: 'Search activity' })).toBe(search)
+    expect(search).toHaveFocus()
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'desktop' }), expect.anything()))
+  })
 
   it('uses memory-history traversal, rather than synthetic popstate, as Activity query and page authority', async () => {
     const http: ReviewHttp = {

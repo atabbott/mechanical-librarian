@@ -1235,9 +1235,11 @@ def create_review_pipeline(
         clock=lambda: int(time.time()), cancelled=recovery_cancel.is_set,
     )
 
-    def drain_provider_recovery_outbox() -> None:
+    def drain_provider_recovery_outbox(repository=None) -> None:
         """Deliver exact package cutovers idempotently into recovery state."""
-        repository = repository_factory()
+        owns_repository = repository is None
+        if repository is None:
+            repository = repository_factory()
         try:
             while rows := repository.pending_provider_recovery_outbox(limit=100):
                 for row in rows:
@@ -1268,7 +1270,8 @@ def create_review_pipeline(
                         outbox_id, delivered_at=max(int(time.time()), created_at),
                     )
         finally:
-            repository.close()
+            if owns_repository:
+                repository.close()
 
     def recover_provider(now: int):
         drain_provider_recovery_outbox()
@@ -1422,7 +1425,7 @@ def create_review_pipeline(
             or (action.stage == "admission" and output_id is None)
         ) or action.report_id is None:
             return
-        drain_provider_recovery_outbox()
+        drain_provider_recovery_outbox(pipeline_repository)
 
     pipeline = ReviewPreparationPipeline(
         repository_factory=repository_factory,

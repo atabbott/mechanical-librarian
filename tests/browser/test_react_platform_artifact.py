@@ -333,9 +333,12 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                         self._browser_stage = f"activity:escape-dropdown-focus:{width}"
                         page.set_viewport_size({"width": width, "height": height})
                         page_number = page.get_by_label("Activity page number")
+                        page_url = page.url
                         page_number.focus()
                         page_number.fill("2")
                         page.keyboard.press("Escape")
+                        self.assertEqual("1", page_number.input_value())
+                        self.assertEqual(page_url, page.url)
                         expect(page_number).to_be_focused()
                         date_range = page.get_by_role(
                             "combobox", name="Activity date range"
@@ -344,9 +347,12 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                         page.get_by_role("option", name="Last 90 days").click()
                         expect(date_range).to_be_focused()
                         page_number = page.get_by_label("Activity page number")
+                        page_url = page.url
                         page_number.focus()
                         page_number.fill("2")
                         page.keyboard.press("Escape")
+                        self.assertEqual("1", page_number.input_value())
+                        self.assertEqual(page_url, page.url)
                         expect(page_number).to_be_focused()
                         page_size = page.get_by_role(
                             "combobox", name="Rows per activity page"
