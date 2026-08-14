@@ -24,6 +24,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
 )
+from mechanical_librarian.application.review_web import BrowseReviewLibrary
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -714,6 +715,11 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             "SELECT actor,kind,reason FROM review_case_transitions "
             "ORDER BY checkpoint DESC LIMIT 1"
         ).fetchone()
+        package_count = repository._connection.execute(
+            "SELECT COUNT(*) FROM current_review_packages"
+        ).fetchone()
+        library_count = repository.count_current_review_cases(None)
+        attention_count = repository.read_review_attention(None, 10, 0).total
         reopened = json.loads(repository.admit_review_case(proposal))
         repository.close()
 
@@ -721,6 +727,9 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertEqual(
             transition, ("review-preparation-v1", "retired", "ineligible")
         )
+        self.assertEqual(package_count, (0,))
+        self.assertEqual(library_count, (0, 0))
+        self.assertEqual(attention_count, 0)
         self.assertEqual(reopened["status"], "admitted")
         self.assertEqual(reopened["review_case_id"], admitted["review_case_id"])
 
@@ -1195,9 +1204,17 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             _report(title="Published old", content_digest="a", file_identity="b"),
             _report(title="Staged successor", content_digest="c", file_identity="d"),
             _report(title="Failed successor", content_digest="e", file_identity="f"),
+            _report(title="Recovered successor", content_digest="1", file_identity="2"),
+            _report(title="Absent successor", content_digest="3", file_identity="4"),
+            _report(title="Retired successor", content_digest="5", file_identity="6"),
         ]
 
-        def pipeline_for(report: MetadataReport, *, projection: bool = True, now: int = 20) -> ReviewPreparationPipeline:
+        def pipeline_for(
+            report: MetadataReport,
+            *,
+            projection: bool = True,
+            now: int = 20,
+        ) -> ReviewPreparationPipeline:
             proposal = evaluate_report(report)
 
             def extract(repository, action: PipelineAction, claim_next: bool):
@@ -1258,6 +1275,13 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 self.assertEqual(titles(), ("Published old",))
                 repository = open_repository(self.path)
                 self.assertTrue(json.loads(repository.get_review_case(old_case))["current"])
+                staged = repository._connection.execute(
+                    "SELECT review_case_id FROM current_review_case_lineages"
+                ).fetchone()
+                if staged is not None and staged[0] not in {None, old_case}:
+                    self.assertFalse(
+                        json.loads(repository.get_review_case(staged[0]))["current"]
+                    )
                 repository.close()
         self.assertEqual(titles(), ("Staged successor",))
         repository = open_repository(self.path)
@@ -1270,6 +1294,105 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         for _ in range(5):
             self.assertTrue(failed_refresh.run_next(1))
             self.assertEqual(titles(), ("Staged successor",))
+        self.assertFalse(failed_refresh.run_next(1))
+        repository = open_repository(self.path)
+        staged_case = repository._connection.execute(
+            "SELECT review_case_id FROM current_review_case_lineages"
+        ).fetchone()[0]
+        published_case = repository._connection.execute(
+            "SELECT review_case_id FROM current_review_packages"
+        ).fetchone()[0]
+        self.assertNotEqual(staged_case, published_case)
+        self.assertTrue(json.loads(repository.get_review_case(published_case))["current"])
+        self.assertFalse(json.loads(repository.get_review_case(staged_case))["current"])
+        prior_attention = repository.read_review_attention(None, 10, 0).total
+        repository.close()
+
+        reopened = open_repository(self.path)
+        page = BrowseReviewLibrary(reopened).library(
+            lens="all", search="Staged successor", limit=1, cursor=None
+        )
+        self.assertEqual(page["counts"]["all"], 1)
+        self.assertIsNone(page["next_cursor"])
+        self.assertEqual(len(page["items"]), 1)
+        self.assertIsNotNone(page["items"][0]["preparation"])
+        self.assertEqual(
+            reopened.read_review_attention(None, 10, 0).total,
+            prior_attention,
+        )
+        reopened.close()
+
+        recovery = pipeline_for(reports[3], now=50)
+        recovery.request("primary", "ebooks")
+        recovery_steps = 0
+        while recovery.run_next(1):
+            recovery_steps += 1
+            self.assertLessEqual(recovery_steps, 5)
+        self.assertGreater(recovery_steps, 0)
+        recovered = open_repository(self.path)
+        recovered_page = BrowseReviewLibrary(recovered).library(
+            lens="all", search="Recovered successor", limit=1, cursor=None
+        )
+        recovered_case = recovered._connection.execute(
+            "SELECT review_case_id FROM current_review_packages"
+        ).fetchone()[0]
+        self.assertIsNone(recovered_page["items"][0]["preparation"])
+        self.assertFalse(json.loads(recovered.get_review_case(published_case))["current"])
+        self.assertTrue(json.loads(recovered.get_review_case(recovered_case))["current"])
+        recovered.close()
+
+        def fail_successor(report: MetadataReport, now: int) -> None:
+            pipeline = pipeline_for(report, projection=False, now=now)
+            pipeline.request("primary", "ebooks")
+            for _ in range(5):
+                self.assertTrue(pipeline.run_next(1))
+            self.assertFalse(pipeline.run_next(1))
+
+        def confirm_removal(
+            entries: tuple[CatalogueEntry, ...], now: int
+        ) -> None:
+            repository = open_repository(self.path)
+            repository.request_review_scan(
+                "primary", "ebooks", "lib-1", _PRODUCER, now
+            )
+            discovery = repository.claim_review_pipeline_action(now + 1)
+            assert discovery is not None
+            repository.complete_review_discovery(
+                discovery, 1, "9" * 64, entries, now + 2
+            )
+            self.assertIsNone(repository.claim_review_pipeline_action(now + 3))
+            confirmation = repository.claim_review_pipeline_action(now + 4)
+            assert confirmation is not None
+            repository.complete_review_discovery(
+                confirmation, 2, "9" * 64, entries, now + 5
+            )
+            self.assertIsNone(repository.claim_review_pipeline_action(now + 6))
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT COUNT(*) FROM current_review_packages"
+                ).fetchone(),
+                (0,),
+            )
+            self.assertEqual(repository.count_current_review_cases(None), (0, 0))
+            repository.close()
+
+        fail_successor(reports[4], 60)
+        confirm_removal((), 70)
+
+        repository = open_repository(self.path)
+        recovered_proposal = evaluate_report(reports[3])
+        repository.publish(reports[3], lambda: True)
+        repository.publish_proposal(recovered_proposal)
+        repository.admit_review_case(recovered_proposal)
+        repository.close()
+        fail_successor(reports[5], 80)
+        ineligible = replace(
+            _entry(reports[5].target.item, reports[5].file.identity),
+            library="ebooks",
+            classification="singular-unmounted",
+            mount=None,
+        )
+        confirm_removal((ineligible,), 90)
 
     def test_unrelated_provider_success_does_not_shorten_open_circuit(self) -> None:
         repository = open_repository(self.path)
