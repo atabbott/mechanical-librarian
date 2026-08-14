@@ -916,8 +916,8 @@ class ProposalSetTests(unittest.TestCase):
                 author_field["notices"],
             )
             self.assertEqual(
-                {"Hardcover", "Open Library"},
-                set(author_field["corroboration_sources"]),
+                ["Hardcover", "Open Library"],
+                author_field["corroboration_sources"],
             )
             self.assertNotIn("raw_payload", json.dumps(detail))
             repository.close()

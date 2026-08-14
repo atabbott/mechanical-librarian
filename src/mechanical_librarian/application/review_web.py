@@ -696,13 +696,14 @@ def _corroboration_source_labels(
         "google_books": "Google Books",
     }
     by_reference = {
-        claim.reference: labels[provider.authority]
+        claim.reference: provider.authority
         for provider in report.providers
         if provider.authority in labels
         for candidate in provider.candidates
         for claim in candidate.claims
     }
-    return [by_reference[reference] for reference in references if reference in by_reference]
+    authorities = {by_reference[reference] for reference in references if reference in by_reference}
+    return [labels[authority] for authority in sorted(authorities)]
 
 
 def _bounded_token(value: object) -> bool:

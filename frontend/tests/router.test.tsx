@@ -48,6 +48,7 @@ const detail: CaseDetailView = {
     automaticDecision: null,
     notices: [],
     provenance: [],
+    corroborationSources: [],
   }],
 }
 
@@ -215,6 +216,18 @@ describe('typed review routes', () => {
     const targets = document.querySelectorAll('[data-route-focus]')
     expect(targets).toHaveLength(1)
     expect(targets[0]).toHaveClass('selected-work-header')
+  })
+
+  it('loads evidence only after the owner opens the Evidence subview', async () => {
+    const user = userEvent.setup()
+    const getEvidence = vi.fn(async () => ({ schema_version: 'review-case-evidence-v2', review_case_id: 'case-1', items: [], next_cursor: null }))
+    const http: ReviewHttp = { ...createHttp(), getEvidence }
+    renderRoute('/review/case-1?field=title&subview=review', http)
+
+    expect(await screen.findByRole('heading', { name: 'Current review case' })).toBeVisible()
+    expect(getEvidence).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Evidence' }))
+    await waitFor(() => expect(getEvidence).toHaveBeenCalledTimes(1))
   })
 
   it('loads the critical library query and progressively reveals detail', async () => {

@@ -30,6 +30,7 @@ describe('ReviewApiClient', () => {
         needs_attention: true, manual_hold: false, current: { value: series },
         proposed_values: [], proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',
         human_decision: null, automatic_decision: null, notices: [], provenance: [],
+        corroboration_sources: [],
       }],
     })
 
