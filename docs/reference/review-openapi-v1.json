@@ -2167,6 +2167,23 @@
             "title": "Media Kind",
             "type": "string"
           },
+          "preparation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_PreparationFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preparation_outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/_ProviderOutcome"
+            },
+            "title": "Preparation Outcomes",
+            "type": "array"
+          },
           "review_case_id": {
             "anyOf": [
               {
@@ -2198,7 +2215,8 @@
           "media_kind",
           "review_case_id",
           "title",
-          "work_id"
+          "work_id",
+          "preparation_outcomes"
         ],
         "title": "_LibraryWork",
         "type": "object"
@@ -2653,6 +2671,50 @@
         "title": "_PolicyTransitionResponse",
         "type": "object"
       },
+      "_PreparationFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "recovery": {
+            "title": "Recovery",
+            "type": "string"
+          },
+          "recovery_attempt": {
+            "title": "Recovery Attempt",
+            "type": "integer"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt",
+          "provider",
+          "reason",
+          "recovery",
+          "recovery_attempt",
+          "stage",
+          "status"
+        ],
+        "title": "_PreparationFailure",
+        "type": "object"
+      },
       "_PreparationProgress": {
         "additionalProperties": false,
         "properties": {
@@ -2793,6 +2855,40 @@
           "value"
         ],
         "title": "_ProposedValue",
+        "type": "object"
+      },
+      "_ProviderOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "lane_kind": {
+            "title": "Lane Kind",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempts",
+          "lane_kind",
+          "provider",
+          "reason",
+          "status"
+        ],
+        "title": "_ProviderOutcome",
         "type": "object"
       },
       "_ReviewCounts": {

@@ -4718,6 +4718,19 @@ class SQLiteMetadataReportRepository:
                     ),
                 )
                 values.append((case_document, report_document))
+            if attention is not True:
+                terminals = self._connection.execute(
+                    "SELECT work_id,connection_name,library_name,item_id,stage,attempt,recovery_attempt,failure_code,failure_root "
+                    "FROM review_preparation_work WHERE state='failed' AND failure_code IS NOT NULL "
+                    "AND NOT EXISTS (SELECT 1 FROM current_review_packages p WHERE p.connection_name=review_preparation_work.connection_name AND p.library_name=review_preparation_work.library_name AND p.item_id=review_preparation_work.item_id) "
+                    "AND (?='' OR ml_casefold(item_id) LIKE ? ESCAPE '\\' OR ml_casefold(library_name) LIKE ? ESCAPE '\\') "
+                    "ORDER BY library_name,item_id,connection_name,work_id LIMIT ? OFFSET ?",
+                    (query, pattern, pattern, limit, offset),
+                ).fetchall()
+                for terminal in terminals:
+                    if len(terminal) != 9 or any(type(value) is not str for value in terminal[:5]) or type(terminal[5]) is not int or type(terminal[6]) is not int or type(terminal[7]) is not str or (terminal[8] is not None and type(terminal[8]) is not str):
+                        raise MetadataReportError("review browse row is invalid")
+                    values.append((None, _canonical_json({"attempt": terminal[5], "connection": terminal[1], "failure_root": terminal[8], "item": terminal[3], "lane": terminal[4], "library": terminal[2], "recovery_attempt": terminal[6], "schema_version": "review-terminal-work-v1", "status": terminal[7], "work_id": terminal[0]})))
             return tuple(values)
         except (
             sqlite3.Error,
@@ -4750,7 +4763,15 @@ class SQLiteMetadataReportRepository:
                 or row[1] > row[0]
             ):
                 raise MetadataReportError("review library count is invalid")
-            return row
+            terminal = self._connection.execute(
+                "SELECT count(*) FROM review_preparation_work WHERE state='failed' AND failure_code IS NOT NULL "
+                "AND NOT EXISTS (SELECT 1 FROM current_review_packages p WHERE p.connection_name=review_preparation_work.connection_name AND p.library_name=review_preparation_work.library_name AND p.item_id=review_preparation_work.item_id) "
+                "AND (?='' OR ml_casefold(item_id) LIKE ? ESCAPE '\\' OR ml_casefold(library_name) LIKE ? ESCAPE '\\')",
+                (query, pattern, pattern),
+            ).fetchone()
+            if terminal is None or type(terminal[0]) is not int or terminal[0] < 0:
+                raise MetadataReportError("review library count is invalid")
+            return row[0] + terminal[0], row[1]
         except (sqlite3.Error, TypeError, ValueError) as error:
             raise MetadataReportError("review library is unavailable") from error
 

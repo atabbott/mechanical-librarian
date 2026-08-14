@@ -2445,6 +2445,32 @@ class ReviewWebTests(unittest.TestCase):
 
 
 class ReviewSessionPersistenceTests(unittest.TestCase):
+    def test_terminal_failed_work_is_library_only_and_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "review.sqlite")
+            repository.request_review_scan("primary", "fiction", "lib-1", "f" * 64, 10)
+            discovery = repository.claim_review_pipeline_action(11)
+            assert discovery is not None
+            from mechanical_librarian.application.catalogue import CatalogueEntry
+            repository.complete_review_discovery(discovery, 1, "a" * 64, (CatalogueEntry("primary", "fiction", "lib-1", "item-secret", 1, "Title", (), True, False, "singular-supported", "b" * 64, "/safe.epub", "epub", "/media"),), 12)
+            extraction = repository.claim_review_pipeline_action(13)
+            assert extraction is not None
+            repository.advance_review_pipeline_action(extraction, None, 14)
+            provider = repository.claim_review_pipeline_action(15)
+            assert provider is not None
+            repository.fail_review_pipeline_action(provider, "authentication", False, 16, "hardcover-main")
+            snapshot = repository.read_review_library(None, 10, 0, None)
+            attention = repository.read_review_attention(None, 10, 0)
+            repository.close()
+        self.assertEqual(snapshot.total, 1)
+        self.assertEqual(snapshot.attention_total, 0)
+        self.assertEqual(len(snapshot.rows), 1)
+        self.assertEqual(attention.total, 0)
+        from mechanical_librarian.application.review_web import _library_item
+        item = _library_item(*snapshot.rows[0][:3])
+        self.assertEqual(item["preparation"], {"attempt": 1, "provider": "hardcover-main", "reason": "Provider credentials need owner attention.", "recovery": "Retry review preparation after correcting the reported condition.", "recovery_attempt": 0, "stage": "provider", "status": "authentication"})
+        self.assertEqual(item["preparation_outcomes"], [{"attempts": 1, "lane_kind": "provider", "provider": "hardcover-main", "reason": "Provider credentials need owner attention.", "status": "authentication"}])
+        self.assertNotIn("credential unavailable", json.dumps(item))
     def test_cover_state_is_inside_the_current_case_read_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "application.sqlite3"

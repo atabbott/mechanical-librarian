@@ -901,6 +901,21 @@ def _report_authors(report: MetadataReport) -> list[str]:
     return list(value) if type(value) is tuple and all(type(author) is str for author in value) else []
 
 
+def _provider_outcomes(report: MetadataReport) -> list[dict[str, object]]:
+    """Expose only bounded terminal lane state, never diagnostics or queries."""
+    successful = {"candidates", "disabled", "insufficient_input"}
+    outcomes: list[dict[str, object]] = []
+    for provider in report.providers:
+        lanes = provider.lanes or (provider,)
+        for lane in lanes:
+            status = lane.status.value
+            if status in successful:
+                continue
+            kind = (lane.kind if provider.lanes else provider.query_kind).value
+            outcomes.append({"attempts": provider.request_accounting.logical_requests, "lane_kind": kind, "provider": provider.provider, "reason": "Provider returned no matching metadata." if status == "no_match" else "Provider returned a bounded terminal status.", "status": status})
+    return outcomes[:32]
+
+
 def _library_item(
     case_document: str | None,
     report_document: str,
@@ -908,6 +923,22 @@ def _library_item(
     automatic_attention_destinations: tuple[str, ...] = (),
     suspended_destinations: tuple[str, ...] = (),
 ) -> dict[str, object]:
+    if case_document is None:
+        try:
+            terminal = json.loads(report_document)
+            if type(terminal) is dict and terminal.get("schema_version") == "review-terminal-work-v1":
+                status = terminal["status"]
+                lane = terminal["lane"]
+                root = terminal["failure_root"]
+                if type(status) is not str or type(lane) is not str or (root is not None and type(root) is not str):
+                    raise ValueError
+                reasons = {"authentication": "Provider credentials need owner attention.", "configuration": "Provider configuration needs owner attention.", "provider": "Provider work ended without a usable result.", "transient": "Provider recovery attempts were exhausted.", "failed": "Preparation ended before a usable review package was produced.", "projection": "Review projection could not be completed."}
+                work_id, item, library = terminal["work_id"], terminal["item"], terminal["library"]
+                if type(work_id) is not str or type(item) is not str or type(library) is not str:
+                    raise ValueError
+                return {"authors": [], "attention_count": 0, "attention_state": "no_attention_needed", "detail_url": None, "dispositions": ["terminal_failure"], "item": item, "library": library, "media_kind": "unknown", "review_case_id": None, "title": "Preparation unavailable", "work_id": work_id, "preparation": {"attempt": terminal["attempt"], "provider": root or "provider", "reason": reasons.get(status, "Preparation ended without a usable review package."), "recovery": "Retry review preparation after correcting the reported condition.", "recovery_attempt": terminal["recovery_attempt"], "stage": lane, "status": status}, "preparation_outcomes": [{"attempts": terminal["attempt"], "lane_kind": lane, "provider": root or "provider", "reason": reasons.get(status, "Preparation ended without a usable review package."), "status": status}]}
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise ReviewWebError("unavailable") from error
     try:
         report = MetadataReport.from_json(report_document)
     except Exception as error:
@@ -957,6 +988,8 @@ def _library_item(
         "review_case_id": None if case is None else case.review_case_id,
         "title": report.target.current_title or "Untitled",
         "work_id": work_id,
+        "preparation": None,
+        "preparation_outcomes": _provider_outcomes(report),
     }
 
 

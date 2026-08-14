@@ -350,6 +350,24 @@ class _ReviewCounts(_ClosedModel):
     no_attention_needed: int
 
 
+class _PreparationFailure(_ClosedModel):
+    attempt: int
+    provider: str
+    reason: str
+    recovery: str
+    recovery_attempt: int
+    stage: str
+    status: str
+
+
+class _ProviderOutcome(_ClosedModel):
+    attempts: int
+    lane_kind: str
+    provider: str
+    reason: str
+    status: str
+
+
 class _LibraryWork(_ClosedModel):
     authors: list[str]
     attention_count: int
@@ -362,6 +380,8 @@ class _LibraryWork(_ClosedModel):
     review_case_id: str | None
     title: str
     work_id: str
+    preparation: _PreparationFailure | None = None
+    preparation_outcomes: list[_ProviderOutcome]
 
 
 class _LibraryResponse(_ClosedModel):
