@@ -281,7 +281,10 @@ class GenerateProviderRetrySuccessor:
             raise ProviderRetrySuccessorError("provider retry result is invalid")
         if {lane.identity for lane in observation.lanes} != {lane.identity for lane in selected}:
             raise ProviderRetrySuccessorError("provider retry result is invalid")
-        if any(lane.status is ProviderStatus.MALFORMED for lane in observation.lanes):
+        if (
+            observation.status is ProviderStatus.MALFORMED
+            or any(lane.status is ProviderStatus.MALFORMED for lane in observation.lanes)
+        ):
             raise ProviderRetrySuccessorError("provider retry result is invalid")
         return observation
 
@@ -291,14 +294,6 @@ class GenerateProviderRetrySuccessor:
         new_candidates = self._canonical_candidates(replacement.candidates)
         old_lanes = self._canonical_lanes(original.lanes)
         new_lanes = self._canonical_lanes(replacement.lanes)
-
-        if original.edition_enrichment_overflow is not None and any(
-            lane.kind.value == "work"
-            and lane.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
-            and lane.identity not in selected_ids
-            for lane in original.lanes
-        ):
-            raise ProviderRetrySuccessorError("provider retry overflow cannot be retained")
 
         aggregate_accessed_at = replacement.accessed_at or original.accessed_at
 
@@ -334,6 +329,12 @@ class GenerateProviderRetrySuccessor:
                 original.request_accounting.undispatched_incomplete + replacement.request_accounting.undispatched_incomplete,
             ),
         )
+        if (
+            original.edition_enrichment_overflow is not None
+            and merged.edition_enrichment_overflow
+            != original.edition_enrichment_overflow
+        ):
+            raise ProviderRetrySuccessorError("provider retry overflow cannot be retained")
         # A retry must never rewrite an unselected lane's persisted evidence.
         merged_lanes = {lane.identity: lane.to_data() for lane in merged.lanes}
         if any(merged_lanes[identity] != lane.to_data() for identity, lane in old_lanes.items() if identity not in selected_ids):

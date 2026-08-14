@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -186,6 +187,19 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
         with self.assertRaisesRegex(ProviderRetrySuccessorError, "result"):
             service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)
         self.assertEqual(self.report.report_id, self.repository.current_id)
+
+    def test_malformed_aggregate_with_clean_lane_leaves_predecessor_current(self):
+        clean_lane = provider_observation(
+            "catalogue", (ProviderLaneResult(self.failed, ProviderStatus.NO_MATCH),), authority="open_library"
+        )
+        provider = _Provider(replace(clean_lane, status=ProviderStatus.MALFORMED))
+        service = self.service(ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2
+        ))
+        with self.assertRaisesRegex(ProviderRetrySuccessorError, "result"):
+            service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)
+        self.assertEqual(self.report.report_id, self.repository.current_id)
+        self.assertEqual(self.report.report_id, self.repository.package[1])
 
     def test_merge_uses_one_timestamp_and_retains_bounded_evidence(self):
         diagnostic = FailureDiagnostic(
