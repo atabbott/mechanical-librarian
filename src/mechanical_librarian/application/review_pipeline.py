@@ -136,7 +136,7 @@ class ReviewPipelineRepository(Protocol):
     def rollback_review_pipeline_output(self) -> None: ...
 
     def persist_shadow_outcome(
-        self, review_case_id: str, evaluated_at: int
+        self, review_case_id: str, evaluated_at: int, *, staged_action: PipelineAction | None = None
     ) -> str: ...
 
     def complete_review_discovery(
@@ -189,7 +189,7 @@ class ReviewPreparationPipeline:
         admit: Callable[
             [ReviewPipelineRepository, str], tuple[str, str | None]
         ],
-        project: Callable[[ReviewPipelineRepository, str], bool | str],
+        project: Callable[[ReviewPipelineRepository, PipelineAction], bool | str],
         clock: Callable[[], int] = lambda: int(time.time()),
         timing: StageTimer | None = None,
     ) -> None:
@@ -423,9 +423,9 @@ class ReviewPreparationPipeline:
                 _, output_id = self._admit(repository, action.proposal_set_id)
             elif action.stage == "projection":
                 if action.review_case_id is not None:
-                    projection = self._project(repository, action.review_case_id)
+                    projection = self._project(repository, action)
                     if projection == "stale":
-                        return None
+                        raise ReviewPipelineError("stale")
                     if projection is not True and projection != "complete":
                         raise ReviewPipelineError("projection")
             return self._advance(

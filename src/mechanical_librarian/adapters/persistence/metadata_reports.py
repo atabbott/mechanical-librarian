@@ -5655,7 +5655,11 @@ class SQLiteMetadataReportRepository:
         return expected.to_json(), row[6]
 
     def persist_shadow_outcome(
-        self, review_case_id: str, evaluated_at: int
+        self,
+        review_case_id: str,
+        evaluated_at: int,
+        *,
+        staged_action: PipelineAction | None = None,
     ) -> str:
         """Atomically publish or replay one exact Preview decision set."""
         if (
@@ -5663,6 +5667,7 @@ class SQLiteMetadataReportRepository:
             or re.fullmatch(r"review_case_[0-9a-f]{64}", review_case_id) is None
             or type(evaluated_at) is not int
             or evaluated_at < 0
+            or (staged_action is not None and type(staged_action) is not PipelineAction)
         ):
             raise MetadataReportError("shadow outcome request is invalid")
         owns_transaction = not self._connection.in_transaction
@@ -5677,7 +5682,15 @@ class SQLiteMetadataReportRepository:
             if raw_case is None:
                 raise MetadataReportError("shadow outcome source is unavailable")
             case_for_recovery = ReviewCase.from_json(raw_case[0])
-            self._require_shadow_case_current(review_case_id)
+            if staged_action is not None:
+                try:
+                    self._require_shadow_case_current(review_case_id)
+                except ReviewAdmissionStaleError:
+                    self._require_staged_shadow_projection_current(
+                        review_case_id, staged_action
+                    )
+            else:
+                self._require_shadow_case_current(review_case_id)
             state = self._connection.execute(
                 "SELECT s.generation,s.posture,d.document FROM metadata_policy_state s "
                 "JOIN metadata_policy_drafts d ON d.policy_id=s.active_policy_id "
@@ -5702,6 +5715,13 @@ class SQLiteMetadataReportRepository:
                 )
             if policy is None:
                 raise MetadataReportError("shadow policy is unavailable")
+            if staged_action is not None and (
+                staged_action.report_id != report.report_id
+                or staged_action.proposal_set_id != proposal.proposal_set_id
+                or staged_action.review_case_id != case.review_case_id
+                or proposal.resolved_policy_id != policy.resolved_id
+            ):
+                raise ReviewAdmissionStaleError
             outcome = ShadowOutcomeSet.create(
                 case, decide_shadow_packet(packet), policy, state[0], report, proposal
             )
@@ -5775,6 +5795,8 @@ class SQLiteMetadataReportRepository:
                     else:
                         self._connection.execute("RELEASE automatic_admission")
                         break
+            if self._binding is not None:
+                self._binding.require_current()
             if owns_transaction:
                 self._connection.commit()
             return serialized
@@ -7518,6 +7540,41 @@ class SQLiteMetadataReportRepository:
             or type(reopened.get("case")) is not dict
             or not self._review_case_accepts_authority(review_case_id)
         ):
+            raise ReviewAdmissionStaleError
+
+    def _require_staged_shadow_projection_current(
+        self, review_case_id: str, action: PipelineAction
+    ) -> None:
+        """Admit only the exact claimed staged case to package-internal projection."""
+        if self._connection.execute(
+            "SELECT 1 FROM review_preparation_work work "
+            "JOIN current_review_case_lineages staged ON "
+            "staged.connection_name=work.connection_name AND "
+            "staged.library_name=work.library_name AND "
+            "staged.item_id=work.item_id AND "
+            "staged.proposal_set_id=work.proposal_set_id AND "
+            "staged.report_id=work.report_id AND "
+            "staged.review_case_id=work.review_case_id "
+            "JOIN current_metadata_reports report ON "
+            "report.connection_name=staged.connection_name AND "
+            "report.library_name=staged.library_name AND "
+            "report.item_id=staged.item_id AND "
+            "report.report_id=staged.report_id "
+            "WHERE work.work_id=? AND work.stage='projection' "
+            "AND work.state='running' AND work.attempt=? "
+            "AND work.connection_name=? AND work.library_name=? "
+            "AND work.item_id=? AND work.report_id=? "
+            "AND work.proposal_set_id=? AND work.review_case_id=? "
+            "AND staged.checkpoint=(SELECT checkpoint FROM "
+            "current_review_case_lineages WHERE connection_name=? "
+            "AND library_name=? AND item_id=?)",
+            (
+                action.action_id, action.attempt, action.connection,
+                action.library, action.item_id, action.report_id,
+                action.proposal_set_id, review_case_id, action.connection,
+                action.library, action.item_id,
+            ),
+        ).fetchone() != (1,):
             raise ReviewAdmissionStaleError
 
     def _review_case_accepts_authority(self, review_case_id: str) -> bool:

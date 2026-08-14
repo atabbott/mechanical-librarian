@@ -25,6 +25,11 @@ over-bound status cannot discard coherent evidence or stop proposal and
 projection. A failure before a complete report exists remains separate
 Library-only operational state.
 
+Before package cutover, a claimed projection may use the exact staged lineage
+and current report only to persist its immutable shadow outcome. That limited
+internal authority does not make the staged case owner-visible or available to
+owner decisions or field effects.
+
 ## Consequences
 
 Rollback, restart, stale work, and projection failure leave the old package

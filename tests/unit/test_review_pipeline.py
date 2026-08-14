@@ -1050,7 +1050,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             providers=lambda *_: (ProviderStatus.DISABLED,),
             propose=publish_proposal,
             admit=admit,
-            project=lambda _, case_id: case_id.startswith("review_case_"),
+            project=lambda _, action: (action.review_case_id or "").startswith("review_case_"),
             clock=lambda: 20,
         )
         pipeline.request("primary", "ebooks")
@@ -1453,6 +1453,39 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                     self.assertTrue(first_failure.run_next(1))
                 self.assertFalse(first_failure.run_next(1))
                 confirm_removal(entries, 110 + index * 20, database)
+
+    def test_first_generation_real_shadow_projection_precedes_package_cutover(self) -> None:
+        report = _report(title="First staged projection", content_digest="a", file_identity="b")
+        proposal = evaluate_report(report)
+
+        def extract(repository, action: PipelineAction, claim_next: bool):
+            repository.publish(
+                report,
+                lambda: True,
+                after_publication=lambda bound, current: bound.complete_review_extraction_publication(
+                    action, current.report_id, 10, 0, None, claim_next, None
+                ),
+            )
+            return report.report_id, True
+
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(self.path),
+            libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
+            discover=lambda *_: (1, report.file.content_digest, (replace(_entry("item-1", report.file.identity), library="ebooks"),)),
+            extract=extract,
+            providers=lambda *_: (),
+            propose=lambda repository, _: (repository.publish_proposal(proposal), proposal.proposal_set_id)[1],
+            admit=lambda repository, _: (lambda value: (value["status"], value.get("review_case_id")))(json.loads(repository.admit_review_case(proposal))),
+            project=lambda repository, action: "complete" if repository.persist_shadow_outcome(action.review_case_id or "", 10, staged_action=action) != "stale" else "stale",
+            clock=lambda: 10,
+        )
+        pipeline.request("primary", "ebooks")
+        for _ in range(5):
+            self.assertTrue(pipeline.run_next(1))
+        repository = open_repository(self.path)
+        self.assertEqual(("complete",), repository._connection.execute("SELECT state FROM review_preparation_work").fetchone())
+        self.assertEqual((1,), repository._connection.execute("SELECT COUNT(*) FROM current_review_packages").fetchone())
+        repository.close()
 
     def test_unrelated_provider_success_does_not_shorten_open_circuit(self) -> None:
         repository = open_repository(self.path)
