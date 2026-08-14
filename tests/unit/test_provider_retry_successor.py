@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import MediaMountConfiguration, ReportLimits
 from mechanical_librarian.application.metadata_report import (
     ProviderBinding, ProviderLaneResult, TargetFile, TargetSnapshot, metadata_discovery_plan,
@@ -89,6 +92,41 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
             MetadataReport.from_json(service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)).report_id,
             self.repository.current_id,
         )
+
+    def test_real_sqlite_successor_staging_retains_the_source_package(self):
+        replacement = provider_observation("catalogue", (ProviderLaneResult(self.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),), authority="open_library")
+        provider = _Provider(replacement)
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            source_repository = open_repository(path)
+            try:
+                source_repository.publish(self.report, lambda: True)
+            finally:
+                source_repository.close()
+            service = GenerateProviderRetrySuccessor(
+                target=_Target(self.snapshot), inspector=_Inspector(),
+                repository_factory=lambda: open_repository(path),
+                provider_resolver=lambda *_args: ConfiguredProviderRetry(
+                    ProviderBinding("catalogue", True, lambda: provider, "open_library"),
+                    "open_library", 2,
+                ),
+                mount=MediaMountConfiguration("books", "/container", "/service", True),
+                limits=ReportLimits(), after_publication=lambda *_args: None,
+            )
+            successor = MetadataReport.from_json(service.run(
+                self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2
+            ))
+            repository = open_repository(path)
+            try:
+                self.assertEqual(self.report.report_id, repository.current_review_package_report(
+                    self.report.target.connection, self.report.target.library, self.report.target.item
+                ))
+                self.assertEqual(successor.to_json(), repository.current(
+                    successor.target.connection, successor.target.library,
+                    successor.target.item, successor.file.identity,
+                ))
+            finally:
+                repository.close()
 
     def test_recreated_equivalent_resolver_factory_is_current(self):
         replacement = provider_observation("catalogue", (ProviderLaneResult(self.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),), authority="open_library")
