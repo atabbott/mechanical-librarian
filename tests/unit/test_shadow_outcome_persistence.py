@@ -1275,16 +1275,38 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             repository._connection.commit()
             repository.enter_shadow_preview(2)
 
+            # The old claim is tied to generation one.  Reconcile the active
+            # policy before the package exists, so an old projection cannot
+            # create a generation-two observation or automatic decision.
+            profile = _preview_automatic_profile()
+            repository.create_metadata_policy_draft(profile.canonical_json)
+            resolved = resolve_policy(profile, "ebooks")
+            transition = repository.activate_metadata_policy(
+                profile.policy_id,
+                MetadataPolicyProfile.builtin().policy_id,
+                (("ebooks", resolved.resolved_id, resolved.canonical_json),),
+                3,
+                reconcile_current=True,
+            )
+            assert transition is not None
+            self.assertEqual(2, transition.generation)
+
             self.assertEqual("stale", repository.persist_shadow_outcome(
-                case_id, 3, staged_action=action
+                case_id, 4, staged_action=action
             ))
             self.assertEqual((0,), repository._connection.execute(
                 "SELECT COUNT(*) FROM shadow_decision_outcomes"
             ).fetchone())
-            repository.fail_review_pipeline_action(action, "stale", True, 4)
+            self.assertEqual((0,), repository._connection.execute(
+                "SELECT COUNT(*) FROM automatic_decisions"
+            ).fetchone())
+            repository.fail_review_pipeline_action(action, "stale", True, 5)
             self.assertEqual(("queued", "stale"), repository._connection.execute(
                 "SELECT state,failure_code FROM review_preparation_work WHERE work_id=?",
                 (work_id,),
+            ).fetchone())
+            self.assertEqual((0,), repository._connection.execute(
+                "SELECT COUNT(*) FROM metadata_policy_transition_items"
             ).fetchone())
             repository.close()
 

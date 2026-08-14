@@ -1491,8 +1491,32 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             clock=lambda: 10,
         )
         pipeline.request("primary", "ebooks")
-        for _ in range(5):
+        # Admission owns the staged lineage, but package publication remains
+        # gated on the real projection transaction.  In particular, automatic
+        # decision-only handling must not make the staged case visible early.
+        for _ in range(4):
             self.assertTrue(pipeline.run_next(1))
+        repository = open_repository(self.path)
+        self.assertEqual(
+            ("projection", "queued"),
+            repository._connection.execute(
+                "SELECT stage,state FROM review_preparation_work"
+            ).fetchone(),
+        )
+        self.assertEqual((0,), repository._connection.execute(
+            "SELECT COUNT(*) FROM current_review_packages"
+        ).fetchone())
+        self.assertEqual((0,), repository._connection.execute(
+            "SELECT COUNT(*) FROM automatic_decisions"
+        ).fetchone())
+        staged_case = repository._connection.execute(
+            "SELECT review_case_id FROM current_review_case_lineages"
+        ).fetchone()[0]
+        self.assertFalse(json.loads(repository.get_review_case(staged_case))["current"])
+        self.assertFalse(repository._review_case_accepts_authority(staged_case))
+        repository.close()
+
+        self.assertTrue(pipeline.run_next(1))
         repository = open_repository(self.path)
         self.assertEqual(("complete",), repository._connection.execute("SELECT state FROM review_preparation_work").fetchone())
         self.assertEqual((1,), repository._connection.execute("SELECT COUNT(*) FROM current_review_packages").fetchone())
@@ -1597,7 +1621,9 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertFalse(stale_once[0], (projected, states[:5]))
         self.assertIn("item-2", projected)
         self.assertEqual(50, len(states))
-        self.assertTrue(all(state in {"complete", "failed"} for state, _ in states))
+        self.assertTrue(
+            all(state in {"complete", "failed", "stale"} for state, _ in states)
+        )
         self.assertIn(("failed", "failed"), states)
 
     def test_unrelated_provider_success_does_not_shorten_open_circuit(self) -> None:
