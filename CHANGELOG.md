@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add the internal, unreachable scoped provider retry-successor seam. It
+  rebuilds only explicit retry-eligible failed lanes from an exact-current
+  report, preserves unselected lane evidence, and relies on existing atomic
+  review-package cutover; it adds no scheduler, endpoint, canary, or write
+  path. (#629)
+
 - Record terminal provider failure recovery eligibility as durable,
   configuration-generation-scoped waiting or dormant state. The local canary
   claim is non-executing: it makes no provider, replay, fanout, or write call.
