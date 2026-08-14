@@ -142,6 +142,11 @@ report and ProposalSet creation, concurrent admission, replay, restart-backed
 get, successor/historical projection, and nonactionable retirement against a
 disposable loopback target and synthetic EPUB.
 
+The committed focused automatic no-change tests prove deterministic identity
+across replay timestamps, closed domain bounds, exact-current schema admission,
+and the existing scheduler/guarded-effect regression suite. Broader integration
+scenarios remain covered by their established field-effect cohorts.
+
 The required suite includes a 45-item continuous-review restart cohort across
 three libraries. It retains the cross-library fairness, interruption, forced
 restart and recovery, authenticated progress and completion, exact installed

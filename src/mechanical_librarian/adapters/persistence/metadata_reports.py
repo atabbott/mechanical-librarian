@@ -47,10 +47,12 @@ from mechanical_librarian.domain.field_effect import (
     FIELD_EFFECT_FAILURES,
     SUPPORTED_DESTINATIONS,
     FieldEffectError,
+    FieldEffectNoChange,
     FieldEffectOperation,
     authority_to_data,
     canonical_json as canonical_effect_json,
     field_value_version,
+    project_decision_value,
 )
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
@@ -420,6 +422,14 @@ _FIELD_EFFECTS_SQL = (
     "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072))"
 )
+_FIELD_EFFECT_NO_CHANGES_SQL = (
+    "CREATE TABLE field_effect_no_changes ("
+    "decision_id TEXT PRIMARY KEY NOT NULL REFERENCES automatic_decisions(decision_id), "
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, work_id TEXT NOT NULL, destination TEXT NOT NULL, "
+    "target_fingerprint TEXT NOT NULL, target_version TEXT NOT NULL, origin TEXT NOT NULL CHECK(origin='automatic_policy'), "
+    "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), event_id TEXT NOT NULL UNIQUE) WITHOUT ROWID"
+)
 _FIELD_EFFECT_ACTIONS_SQL = (
     "CREATE TABLE field_effect_actions ("
     "action_id TEXT PRIMARY KEY NOT NULL CHECK(action_id GLOB 'effect_action_[0-9a-f]*' AND length(action_id)=78), "
@@ -448,6 +458,8 @@ _FIELD_EFFECT_EVENTS_SQL = (
 )
 _FIELD_EFFECT_EVENT_NO_UPDATE_SQL = "CREATE TRIGGER field_effect_events_no_update BEFORE UPDATE ON field_effect_events BEGIN SELECT RAISE(ABORT, 'field effect events are append-only'); END"
 _FIELD_EFFECT_EVENT_NO_DELETE_SQL = "CREATE TRIGGER field_effect_events_no_delete BEFORE DELETE ON field_effect_events BEGIN SELECT RAISE(ABORT, 'field effect events are append-only'); END"
+_FIELD_EFFECT_NO_CHANGE_NO_UPDATE_SQL = "CREATE TRIGGER field_effect_no_changes_no_update BEFORE UPDATE ON field_effect_no_changes BEGIN SELECT RAISE(ABORT, 'field effect no-change facts are append-only'); END"
+_FIELD_EFFECT_NO_CHANGE_NO_DELETE_SQL = "CREATE TRIGGER field_effect_no_changes_no_delete BEFORE DELETE ON field_effect_no_changes BEGIN SELECT RAISE(ABORT, 'field effect no-change facts are append-only'); END"
 _CURRENT_REVIEW_FROM_SQL = (
     "FROM current_review_packages c "
     "JOIN current_review_packages ml ON ml.connection_name=c.connection_name "
@@ -968,53 +980,25 @@ class SQLiteMetadataReportRepository:
             decision.validate_for(case)
             value = decision.selected_value
         else:
-            if (decision.review_case_id != case.review_case_id
-                    or decision.report_id != case.report_id
-                    or decision.proposal_set_id != case.proposal_set_id
-                    or decision.target_fingerprint != case.target_fingerprint):
+            report_row = self._connection.execute(
+                "SELECT document FROM metadata_reports WHERE report_id=?",
+                (decision.report_id,),
+            ).fetchone()
+            proposal_row = self._connection.execute(
+                "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+                (decision.proposal_set_id,),
+            ).fetchone()
+            if report_row is None or proposal_row is None:
                 raise FieldEffectError("authority_binding")
-            proposal = next((item for item in case.proposals
-                             if item["proposal_id"] == decision.proposal_id
-                             and item["destination"] == decision.destination), None)
-            alternatives = None if proposal is None else proposal["result"].get("alternatives")
-            selected = next((item for item in alternatives or ()
-                             if item.get("alternative_id") == decision.candidate_id), None)
-            if selected is None:
-                raise FieldEffectError("authority_binding")
-            value = selected["value"]
-            if decision.policy_category == "isbn_form":
-                report_row = self._connection.execute(
-                    "SELECT document FROM metadata_reports WHERE report_id=?",
-                    (decision.report_id,),
-                ).fetchone()
-                proposal_row = self._connection.execute(
-                    "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
-                    (decision.proposal_set_id,),
-                ).fetchone()
-                if report_row is None or proposal_row is None:
-                    raise FieldEffectError("authority_binding")
-                try:
-                    report = MetadataReport.from_json(report_row[0])
-                    proposal_set = ProposalSet.from_json(proposal_row[0])
-                    result = next(
-                        item for item in proposal_set.results
-                        if item.destination.value == decision.destination
-                    )
-                    candidate = next(
-                        item for item in result.alternatives
-                        if item.alternative_id == decision.candidate_id
-                    )
-                    exact_value = select_isbn_representation(
-                        report, candidate, decision.policy_option
-                    )
-                except (
-                    ReportValueError, ProposalValueError, StopIteration,
-                    RichMetadataPreviewError,
-                ) as error:
-                    raise FieldEffectError("authority_binding") from error
-                if exact_value is None:
-                    raise FieldEffectError("authority_binding")
-                value = {"kind": "text", "value": exact_value}
+            try:
+                value = _automatic_decision_value(
+                    decision, case, MetadataReport.from_json(report_row[0]),
+                    ProposalSet.from_json(proposal_row[0]),
+                )
+            except (
+                ReportValueError, ProposalValueError, RichMetadataPreviewError,
+            ) as error:
+                raise FieldEffectError("authority_binding") from error
         lineage = self._connection.execute(
             "SELECT connection_name,library_name,item_id FROM current_review_case_lineages "
             "WHERE review_case_id=?", (decision.review_case_id,),
@@ -1040,18 +1024,6 @@ class SQLiteMetadataReportRepository:
             if target_field["state"] == "value"
             else None
         )
-        if type(decision) is AutomaticDecision and decision.policy_category in {
-            "series", "genres", "tags", "description_fill", "isbn_form",
-        }:
-            try:
-                value = project_f20_automatic_decision_value(
-                    decision.policy_category,
-                    decision.policy_option,
-                    value,
-                    pre_value,
-                )
-            except RichMetadataPreviewError as error:
-                raise FieldEffectError("authority_binding") from error
         dependency_digests = (decision.target_fingerprint,)
         if type(decision) is HumanDecision and decision.destination == "cover":
             consideration_row = self._connection.execute(
@@ -1104,6 +1076,64 @@ class SQLiteMetadataReportRepository:
                 "decision_value": value, "source": "persisted_review_case",
                 "pre_value": pre_value,
                 "dependency_digests": dependency_digests}
+
+    def record_current_field_effect_no_change(
+        self, decision: AutomaticDecision, occurred_at: int,
+    ) -> bool:
+        """Atomically persist an equal automatic candidate without write authority."""
+        if type(decision) is not AutomaticDecision or type(occurred_at) is not int or occurred_at < 0:
+            raise FieldEffectError("authority_binding")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            source = self.field_effect_authority_source(decision)
+            desired = project_decision_value(decision.destination, source["decision_value"])
+            if desired != source["pre_value"]:
+                self._connection.commit()
+                return False
+            record = FieldEffectNoChange.create(
+                decision_id=decision.decision_id, review_case_id=decision.review_case_id,
+                report_id=decision.report_id, connection=source["connection"],
+                library=source["library"], work_id=source["work_id"],
+                destination=decision.destination, target_fingerprint=decision.target_fingerprint,
+                target_version=source["target_version"], occurred_at=occurred_at,
+            )
+            inserted = self._connection.execute(
+                "INSERT OR IGNORE INTO field_effect_no_changes(decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (record.decision_id, record.review_case_id, record.report_id,
+                 record.connection, record.library, record.work_id, record.destination,
+                 record.target_fingerprint, record.target_version, record.origin,
+                 record.occurred_at, record.event_id),
+            ).rowcount
+            if not inserted:
+                row = self._connection.execute(
+                    "SELECT review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id FROM field_effect_no_changes WHERE decision_id=?",
+                    (record.decision_id,),
+                ).fetchone()
+                if row is None:
+                    raise FieldEffectError("persistence")
+                existing = FieldEffectNoChange.create(
+                    decision_id=record.decision_id, review_case_id=row[0], report_id=row[1],
+                    connection=row[2], library=row[3], work_id=row[4], destination=row[5],
+                    target_fingerprint=row[6], target_version=row[7], occurred_at=row[9],
+                )
+                if row[8] != existing.origin or row[10] != existing.event_id or (
+                    existing.decision_id, existing.review_case_id, existing.report_id,
+                    existing.connection, existing.library, existing.work_id,
+                    existing.destination, existing.target_fingerprint,
+                    existing.target_version, existing.origin, existing.event_id,
+                ) != (
+                    record.decision_id, record.review_case_id, record.report_id,
+                    record.connection, record.library, record.work_id,
+                    record.destination, record.target_fingerprint,
+                    record.target_version, record.origin, record.event_id,
+                ):
+                    raise FieldEffectError("persistence")
+            self._connection.commit()
+            return True
+        except (sqlite3.Error, FieldEffectError, TypeError, ValueError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError): raise
+            raise FieldEffectError("authority_binding") from error
 
     def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool:
         current = (self._connection.execute(
@@ -1450,7 +1480,7 @@ class SQLiteMetadataReportRepository:
                 "hold.destination=automatic.destination AND hold.active=1)"
                 ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
                 "WHERE effect.decision_id=pending.decision_id AND "
-                "effect.state NOT IN ('superseded','abandoned')) " + cursor +
+                "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) " + cursor +
                 "ORDER BY pending.occurred_at,pending.decision_id LIMIT ?",
                 (*parameters, limit),
             ).fetchall()
@@ -1492,7 +1522,7 @@ class SQLiteMetadataReportRepository:
                 "ON lineage.review_case_id=pending.review_case_id "
                 "WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
                 "WHERE effect.decision_id=pending.decision_id AND "
-                "effect.state NOT IN ('superseded','abandoned')) "
+                "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
                 "GROUP BY lineage.connection_name,lineage.library_name,pending.origin "
                 "ORDER BY lineage.connection_name,lineage.library_name,pending.origin"
             ).fetchall()
@@ -2078,6 +2108,15 @@ class SQLiteMetadataReportRepository:
               JOIN review_cases review ON review.review_case_id=decision.review_case_id
               JOIN metadata_reports report ON report.report_id=review.report_id
             UNION ALL
+            SELECT no_change.event_id, no_change.connection_name, no_change.destination,
+                   no_change.library_name, no_change.occurred_at, no_change.origin,
+                   no_change.report_id, 'no_change_required', no_change.work_id, '{}',
+                   'metadata', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END,
+                   NULL, 'field_effect_no_change', NULL, no_change.review_case_id,
+                   NULL, no_change.decision_id, 1
+              FROM field_effect_no_changes no_change
+              JOIN metadata_reports report ON report.report_id=no_change.report_id
+            UNION ALL
             SELECT event.event_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, 'cover', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END,
                    event.occurred_at, 'human', review.report_id, event.kind, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END,
                    event.document,
@@ -2181,7 +2220,7 @@ class SQLiteMetadataReportRepository:
                 if projected_type not in {"review", "policy", "metadata", "safety", "unknown"}:
                     raise FieldEffectError("persistence")
                 source_kind = scalar(source_kind)
-                if source_kind not in {"field_effect", "human_decision", "automatic_decision", "cover_safeguard", "policy_transition"}:
+                if source_kind not in {"field_effect", "field_effect_no_change", "human_decision", "automatic_decision", "cover_safeguard", "policy_transition"}:
                     raise FieldEffectError("persistence")
                 if source_document is not None and (
                     type(source_document) is not str
@@ -2219,6 +2258,28 @@ class SQLiteMetadataReportRepository:
                                     if key != "event_id"
                                 }).encode()
                             ).hexdigest()
+                        ):
+                            raise FieldEffectError("persistence")
+                    elif source_kind == "field_effect_no_change":
+                        if raw or document != "{}" or source_document is not None:
+                            raise FieldEffectError("persistence")
+                        record = FieldEffectNoChange.create(
+                            decision_id=source_identity, review_case_id=source_parent_id,
+                            report_id=report_id, connection=connection, library=library,
+                            work_id=work_id, destination=destination,
+                            target_fingerprint=self._connection.execute(
+                                "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
+                                (source_identity,),
+                            ).fetchone()[0],
+                            target_version=self._connection.execute(
+                                "SELECT target_version FROM field_effect_no_changes WHERE decision_id=?",
+                                (source_identity,),
+                            ).fetchone()[0],
+                            occurred_at=occurred_at,
+                        )
+                        if (
+                            state != "no_change_required" or origin != record.origin
+                            or event_id != record.event_id
                         ):
                             raise FieldEffectError("persistence")
                     elif source_kind == "human_decision":
@@ -2293,6 +2354,7 @@ class SQLiteMetadataReportRepository:
                     scalar(report_id)
                 source_label = {
                     "field_effect": "Recorded field effect",
+                    "field_effect_no_change": "Recorded no-change decision",
                     "human_decision": "Recorded human decision",
                     "automatic_decision": "Recorded automatic decision",
                     "cover_safeguard": "Recorded cover safeguard",
@@ -8012,6 +8074,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_FIELD_EFFECT_MANUAL_HOLDS_SQL)
             connection.execute(_FIELD_EFFECTS_SQL)
             connection.execute(_FIELD_EFFECT_EVENTS_SQL)
+            connection.execute(_FIELD_EFFECT_NO_CHANGES_SQL)
             connection.execute(_FIELD_EFFECT_ACTIONS_SQL)
             connection.execute(_FIELD_EFFECT_CLEANUPS_SQL)
             connection.execute(_SHADOW_DECISION_OUTCOMES_SQL)
@@ -8038,6 +8101,8 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_AUTOMATIC_DECISION_NO_DELETE_SQL)
             connection.execute(_FIELD_EFFECT_EVENT_NO_UPDATE_SQL)
             connection.execute(_FIELD_EFFECT_EVENT_NO_DELETE_SQL)
+            connection.execute(_FIELD_EFFECT_NO_CHANGE_NO_UPDATE_SQL)
+            connection.execute(_FIELD_EFFECT_NO_CHANGE_NO_DELETE_SQL)
             connection.execute(_SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL)
             connection.execute(_SHADOW_DECISION_OUTCOME_NO_DELETE_SQL)
             connection.execute(_NO_DELETE_SQL)
@@ -8297,6 +8362,9 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_automatic_decisions_3", None),
         ("index", "sqlite_autoindex_field_effect_events_1", None),
         ("index", "sqlite_autoindex_field_effect_events_2", None),
+        # WITHOUT ROWID is deliberate: only the explicit unique event identity
+        # has an autoindex; the primary key does not.
+        ("index", "sqlite_autoindex_field_effect_no_changes_2", None),
         ("index", "sqlite_autoindex_field_effect_suspensions_1", None),
         ("index", "sqlite_autoindex_field_effect_actions_1", None),
         ("index", "sqlite_autoindex_field_effect_actions_2", None),
@@ -8352,6 +8420,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "field_effect_consents", _FIELD_EFFECT_CONSENTS_SQL),
         ("table", "field_effect_manual_holds", _FIELD_EFFECT_MANUAL_HOLDS_SQL),
         ("table", "field_effect_events", _FIELD_EFFECT_EVENTS_SQL),
+        ("table", "field_effect_no_changes", _FIELD_EFFECT_NO_CHANGES_SQL),
         ("table", "field_effects", _FIELD_EFFECTS_SQL),
         ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
         ("table", "metadata_reports", _REPORTS_SQL),
@@ -8388,6 +8457,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("trigger", "automatic_decisions_no_update", _AUTOMATIC_DECISION_NO_UPDATE_SQL),
         ("trigger", "field_effect_events_no_delete", _FIELD_EFFECT_EVENT_NO_DELETE_SQL),
         ("trigger", "field_effect_events_no_update", _FIELD_EFFECT_EVENT_NO_UPDATE_SQL),
+        ("trigger", "field_effect_no_changes_no_delete", _FIELD_EFFECT_NO_CHANGE_NO_DELETE_SQL),
+        ("trigger", "field_effect_no_changes_no_update", _FIELD_EFFECT_NO_CHANGE_NO_UPDATE_SQL),
         ("trigger", "proposal_sets_no_delete", _PROPOSAL_NO_DELETE_SQL),
         ("trigger", "proposal_sets_no_update", _PROPOSAL_NO_UPDATE_SQL),
         ("trigger", "review_case_transitions_no_delete", _REVIEW_TRANSITION_NO_DELETE_SQL),
@@ -8446,9 +8517,141 @@ def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:
         ) from error
 
 
+def _automatic_decision_value(
+    decision: AutomaticDecision, case: ReviewCase, report: MetadataReport,
+    proposal_set: ProposalSet,
+) -> object:
+    """Project one persisted automatic decision to its exact target envelope."""
+    target = case.target
+    if (
+        decision.outcome != "candidate"
+        or decision.review_case_id != case.review_case_id
+        or decision.report_id != case.report_id
+        or decision.proposal_set_id != case.proposal_set_id
+        or decision.target_fingerprint != case.target_fingerprint
+        or proposal_set.proposal_set_id != case.proposal_set_id
+        or proposal_set.report_id != case.report_id
+        or proposal_set.target_fingerprint != case.target_fingerprint
+        or report.report_id != case.report_id
+        or report.target.fingerprint != case.target_fingerprint
+        or (target.get("connection"), target.get("library"), target.get("item"))
+        != (report.target.connection, report.target.library, report.target.item)
+    ):
+        raise FieldEffectError("authority_binding")
+    proposal = next(
+        (item for item in case.proposals
+         if item["proposal_id"] == decision.proposal_id
+         and item["destination"] == decision.destination),
+        None,
+    )
+    alternatives = None if proposal is None else proposal["result"].get("alternatives")
+    selected = next(
+        (item for item in alternatives or ()
+         if item.get("alternative_id") == decision.candidate_id),
+        None,
+    )
+    target_field = next(
+        (item for item in target.get("fields", ())
+         if type(item) is dict and item.get("destination") == decision.destination),
+        None,
+    )
+    if (
+        selected is None
+        or type(target_field) is not dict
+        or target_field.get("state") not in {"value", "null", "empty", "missing"}
+    ):
+        raise FieldEffectError("authority_binding")
+    value = selected["value"]
+    if decision.policy_category == "isbn_form":
+        try:
+            result = next(
+                item for item in proposal_set.results
+                if item.destination.value == decision.destination
+            )
+            candidate = next(
+                item for item in result.alternatives
+                if item.alternative_id == decision.candidate_id
+            )
+            exact_value = select_isbn_representation(report, candidate, decision.policy_option)
+        except (StopIteration, RichMetadataPreviewError) as error:
+            raise FieldEffectError("authority_binding") from error
+        if exact_value is None:
+            raise FieldEffectError("authority_binding")
+        value = {"kind": "text", "value": exact_value}
+    pre_value = target_field.get("value") if target_field["state"] == "value" else None
+    if decision.policy_category in {"series", "genres", "tags", "description_fill", "isbn_form"}:
+        try:
+            value = project_f20_automatic_decision_value(
+                decision.policy_category, decision.policy_option, value, pre_value,
+            )
+        except RichMetadataPreviewError as error:
+            raise FieldEffectError("authority_binding") from error
+    return value
+
+
 def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
     """Fail closed on any non-canonical field-effect envelope or row mismatch."""
     try:
+        for row in connection.execute(
+            "SELECT decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id FROM field_effect_no_changes"
+        ).fetchall():
+            record = FieldEffectNoChange.create(
+                decision_id=row[0], review_case_id=row[1], report_id=row[2],
+                connection=row[3], library=row[4], work_id=row[5], destination=row[6],
+                target_fingerprint=row[7], target_version=row[8], occurred_at=row[10],
+            )
+            if row[9] != record.origin or row[11] != record.event_id:
+                raise FieldEffectError("persistence")
+            decision_row = connection.execute(
+                "SELECT document FROM automatic_decisions WHERE decision_id=?", (record.decision_id,)
+            ).fetchone()
+            case_row = connection.execute(
+                "SELECT document FROM review_cases WHERE review_case_id=?", (record.review_case_id,)
+            ).fetchone()
+            report_row = connection.execute(
+                "SELECT document FROM metadata_reports WHERE report_id=?", (record.report_id,)
+            ).fetchone()
+            if decision_row is None or case_row is None or report_row is None:
+                raise FieldEffectError("persistence")
+            decision = AutomaticDecision.from_json(decision_row[0])
+            case = ReviewCase.from_json(case_row[0])
+            report = MetadataReport.from_json(report_row[0])
+            proposal_row = connection.execute(
+                "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+                (decision.proposal_set_id,),
+            ).fetchone()
+            if proposal_row is None:
+                raise FieldEffectError("persistence")
+            proposal_set = ProposalSet.from_json(proposal_row[0])
+            if (
+                decision.destination != record.destination
+                or decision.target_fingerprint != record.target_fingerprint
+                or report.target.connection != record.connection
+                or report.target.library != record.library
+                or report.target.item != record.work_id
+            ):
+                raise FieldEffectError("persistence")
+            target = next((value for value in case.target.get("fields", ())
+                           if type(value) is dict
+                           and value.get("destination") == record.destination), None)
+            proposal = next((value for value in case.proposals
+                             if value.get("proposal_id") == decision.proposal_id
+                             and value.get("destination") == record.destination), None)
+            result = proposal.get("result") if type(proposal) is dict else None
+            alternatives = result.get("alternatives") if type(result) is dict else None
+            selected = next((value for value in alternatives or ()
+                             if type(value) is dict
+                             and value.get("alternative_id") == decision.candidate_id), None)
+            if (type(target) is not dict or target.get("state") not in {"value", "null", "empty", "missing"}
+                    or type(selected) is not dict):
+                raise FieldEffectError("persistence")
+            pre_value = target.get("value") if target["state"] == "value" else None
+            desired = project_decision_value(
+                record.destination,
+                _automatic_decision_value(decision, case, report, proposal_set),
+            )
+            if desired != pre_value or record.target_version != field_value_version(record.destination, pre_value):
+                raise FieldEffectError("persistence")
         control = connection.execute(
             "SELECT singleton,paused,updated_at FROM field_effect_control"
         ).fetchall()

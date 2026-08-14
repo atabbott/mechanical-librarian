@@ -1,5 +1,13 @@
 # Current pre-release domain model
 
+## Automatic no-change fact
+
+`FieldEffectNoChange` is a closed immutable fact for an automatic candidate
+whose canonical target value is already current. It binds the decision, case,
+report, target fingerprint/version, opaque target identity, timestamp, and a
+content-derived event identity. It contains neither values nor consent,
+capability, authority, or plan material and never authorizes a write.
+
 ## Metadata evidence report
 
 `MetadataReport` is one closed typed observation of one explicitly selected

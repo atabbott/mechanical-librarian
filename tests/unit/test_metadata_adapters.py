@@ -492,6 +492,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                     ("field_effect_control",),
                     ("field_effect_events",),
                     ("field_effect_manual_holds",),
+                    ("field_effect_no_changes",),
                     ("field_effect_suspensions",),
                     ("field_effects",),
                     ("human_decision_events",),

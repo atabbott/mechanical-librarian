@@ -55,6 +55,7 @@ class ContinuousFieldEffectRepository(Protocol):
     def request_field_effect_manual_return(self, *values: object) -> bool: ...
     def get_field_effect(self, plan_id: str) -> FieldEffectOperation: ...
     def pending_field_effect_decision_documents(self, limit: int, after: object = None) -> tuple[str, ...]: ...
+    def record_current_field_effect_no_change(self, decision: object, occurred_at: int) -> bool: ...
     def retire_stale_cover_decision(self, *values: object) -> bool: ...
     def current_field_effect_consent(self, *values: object) -> object: ...
     def suspend_field_effect_capability(self, **values: object) -> None: ...
@@ -341,6 +342,15 @@ class ContinuousGuardedApplication:
         for document in documents:
             decision = self._decision(document)
             self._schedule_cursor = (decision.occurred_at, decision.decision_id)
+            # This is intentionally before authority, consent and capability: an
+            # equal automatic candidate is a terminal decision fact, not a write.
+            no_change = getattr(self._repository, "record_current_field_effect_no_change", None)
+            if (
+                type(decision) is AutomaticDecision
+                and no_change is not None
+                and no_change(decision, self._clock())
+            ):
+                continue
             try:
                 snapshot = self._authority.resolve(decision)
             except (FieldEffectError, GuardedApplicationError, ValueError):

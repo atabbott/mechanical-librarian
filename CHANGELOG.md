@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Record an equal automatic metadata candidate as a durable **No change
+  required** Activity outcome without creating a guarded write plan or
+  consulting write authority, consent, capability, backup, target, or read-back
+  services. (#599)
+
 - Show each Library policy chapter's exact changed-field count, including zero,
   with chapter-specific accessible labels. Unsupported fields now explain that
   they are read-only and cannot be changed in a draft. (#607)

@@ -9,6 +9,9 @@ provider-write client. Owner pause and durable category/global suspension fail
 closed to the authenticated human queue, and recovery is an explicit
 CSRF-protected owner action. Private qualification cases, values, and paths are
 not stored in the repository or public API.
+An equal automatic candidate is a separate identifier-only terminal fact. Its
+atomic currentness comparison happens before, and does not read, authority,
+consent, capability, backup, target, or read-back controls.
 
 The `RefreshCurrentCatalogue` application operation may make only bounded GET observations of configured ABS
 book libraries and publish a local current generation. Its bearer credential is

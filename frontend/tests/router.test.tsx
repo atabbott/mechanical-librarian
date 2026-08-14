@@ -1820,6 +1820,7 @@ describe('typed review routes', () => {
     ['stale', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_label: 'Stale work', state: 'stale' }] }, 'Stale'],
     ['stopped', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_label: 'Stopped work', state: 'abandoned' }] }, 'Stopped safely'],
     ['verified', { enabled_libraries: [{ connection: 'primary', library: 'fiction' }], events: [{ work_label: 'Verified work', state: 'verified' }] }, 'Verified'],
+    ['no change', { events: [{ work_label: 'Unchanged work', state: 'no_change_required', origin: 'automatic_policy' }] }, 'No change required'],
     ['accepted', { events: [{ work_label: 'Accepted work', state: 'accept', origin: 'human' }] }, 'Accepted'],
     ['kept current', { events: [{ work_label: 'Kept work', state: 'keep_current', origin: 'human' }] }, 'Kept current'],
     ['rejected', { events: [{ work_label: 'Rejected work', state: 'reject', origin: 'human' }] }, 'Rejected'],
