@@ -378,7 +378,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .brand { flex:1 1 auto; }
   .brand > span:last-child { display:none; }
   .masthead nav { order:3; width:100%; overflow-x:auto; }
-  .masthead nav a { flex:1 0 auto; text-align:center; }
+  .masthead nav a { min-width:44px; flex:1 1 6rem; text-align:center; }
   .shell-actions { margin-left:auto; }
   .private-session { display:none; }
   .shell-actions button { padding:.4rem .55rem; font-size:.68rem; }
@@ -438,7 +438,8 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .cm-policy-finish li > span { width:24px; height:24px; }
   .cm-policy-finish li small { font-size:.64rem; }
   .cm-policy-finish-actions { grid-column:1; grid-row:auto; width:100%; }
-  .cm-policy-finish-actions button { min-width:0; flex:1; }
+  .cm-policy-finish-actions button { min-width:0; flex:1; white-space:normal; overflow-wrap:anywhere; }
+  .cm-policy-finish li small { overflow-wrap:anywhere; white-space:normal; }
   .cm-policy-validation { grid-template-columns:1fr; gap:.65rem; }
   .cm-policy-validation ul { grid-template-columns:1fr; }
   .cm-policy-validation li { min-height:44px; align-items:center; }
@@ -458,11 +459,9 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .cm-policy-sidebar > header { grid-template-columns:1fr; align-items:start; }
   .cm-policy-sidebar > header small { grid-column:1; grid-row:auto; max-width:none; text-align:left; }
   .masthead nav { flex-wrap:wrap; overflow:visible; }
-  .masthead nav a { min-width:44px; flex:1 1 6rem; padding-inline:.45rem; }
+  .masthead nav a { padding-inline:.45rem; }
   .cm-policy-finish ol, .cm-policy-finish-actions { flex-wrap:wrap; }
   .cm-policy-finish li, .cm-policy-finish-actions button { min-width:0; }
-  .cm-policy-finish-actions button { white-space:normal; overflow-wrap:anywhere; }
-  .cm-policy-finish li small { overflow-wrap:anywhere; white-space:normal; }
 }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-duration:.01ms!important; }.cm-policy-validation-spinner,.cm-policy-validation li > span,.cm-policy-validation,.cm-policy-result,.cm-policy-activated,.cm-dropdown-menu { animation:none!important; }.cm-dropdown-trigger svg { transition:none!important; } }
 /* Variant M workspace: regular widths keep work, decision and attention in one operating surface. */
