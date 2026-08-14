@@ -913,7 +913,7 @@ def _provider_outcomes(report: MetadataReport) -> list[dict[str, object]]:
                 continue
             kind = (lane.kind if provider.lanes else provider.query_kind).value
             outcomes.append({"provider_requests": provider.request_accounting.logical_requests, "lane_kind": kind, "provider": provider.provider, "reason": "Provider returned no matching metadata." if status == "no_match" else "Provider returned a bounded terminal status.", "status": status})
-    return outcomes[:32]
+    return outcomes
 
 
 def _library_item(

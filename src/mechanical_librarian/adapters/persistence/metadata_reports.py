@@ -3657,6 +3657,11 @@ class SQLiteMetadataReportRepository:
                     checkpoint,
                 ),
             )
+            if self._connection.execute(
+                "DELETE FROM current_review_packages WHERE connection_name=? AND library_name=? AND item_id=? AND proposal_set_id=? AND report_id=? AND review_case_id=?",
+                (connection, library, item_id, proposal_id, report_id, case_id),
+            ).rowcount != 1:
+                raise MetadataReportError("review preparation state changed")
         self._connection.execute(
             "DELETE FROM review_preparation_absences WHERE scan_id=?", (scan_id,)
         )
@@ -4469,15 +4474,12 @@ class SQLiteMetadataReportRepository:
                 or tuple(value.to_data() for value in proposal.results) != case.results
             ):
                 raise MetadataReportError("review case source disagrees")
-            current = self._connection.execute("SELECT review_case_id FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", (case.target["connection"], case.target["library"], case.target["item"])).fetchone()
-            if current is not None and current[0] is not None and (
-                type(current[0]) is not str
-                or not current[0].startswith("review_case_")
-            ):
-                raise MetadataReportError("review case pointer is invalid")
-            source_current = self._connection.execute("SELECT report_id FROM current_metadata_report_lineages WHERE connection_name=? AND library_name=? AND item_id=?", (case.target["connection"], case.target["library"], case.target["item"])).fetchone()
-            file_current = self._connection.execute("SELECT report_id FROM current_metadata_reports WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?", (case.target["connection"], case.target["library"], case.target["item"], case.file_identity)).fetchone()
-            return _canonical_json({"case": case.to_data(), "current": current == (case.review_case_id,) and source_current == (case.report_id,) and file_current == (case.report_id,), "schema_version": "review-case-get-v1"})
+            package = self._connection.execute(
+                "SELECT p.proposal_set_id,p.report_id,p.review_case_id,c.checkpoint FROM current_review_packages p JOIN current_review_case_lineages c ON c.connection_name=p.connection_name AND c.library_name=p.library_name AND c.item_id=p.item_id AND c.proposal_set_id=p.proposal_set_id AND c.report_id=p.report_id AND c.review_case_id=p.review_case_id WHERE p.connection_name=? AND p.library_name=? AND p.item_id=?",
+                (case.target["connection"], case.target["library"], case.target["item"]),
+            ).fetchone()
+            current = package is not None and package[:3] == (case.proposal_set_id, case.report_id, case.review_case_id) and type(package[3]) is int and package[3] > 0
+            return _canonical_json({"case": case.to_data(), "current": current, "schema_version": "review-case-get-v1"})
         except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
             raise MetadataReportError("review case is unavailable") from error
 
