@@ -1214,8 +1214,10 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             *,
             projection: bool = True,
             now: int = 20,
+            database: Path | None = None,
         ) -> ReviewPreparationPipeline:
             proposal = evaluate_report(report)
+            selected_database = self.path if database is None else database
 
             def extract(repository, action: PipelineAction, claim_next: bool):
                 repository.publish(
@@ -1236,7 +1238,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 return value["status"], value.get("review_case_id")
 
             return ReviewPreparationPipeline(
-                repository_factory=lambda: open_repository(self.path),
+                repository_factory=lambda: open_repository(selected_database),
                 libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
                 discover=lambda *_: (1, report.file.content_digest, (replace(_entry("item-1", report.file.identity), library="ebooks"),)),
                 extract=extract,
@@ -1349,9 +1351,11 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             self.assertFalse(pipeline.run_next(1))
 
         def confirm_removal(
-            entries: tuple[CatalogueEntry, ...], now: int
+            entries: tuple[CatalogueEntry, ...],
+            now: int,
+            database: Path | None = None,
         ) -> None:
-            repository = open_repository(self.path)
+            repository = open_repository(self.path if database is None else database)
             repository.request_review_scan(
                 "primary", "ebooks", "lib-1", _PRODUCER, now
             )
@@ -1393,6 +1397,34 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             mount=None,
         )
         confirm_removal((ineligible,), 90)
+
+        for index, entries in enumerate(
+            (
+                (),
+                (
+                    replace(
+                        _entry(reports[4].target.item, reports[4].file.identity),
+                        library="ebooks",
+                        classification="singular-unmounted",
+                        mount=None,
+                    ),
+                ),
+            )
+        ):
+            with self.subTest(first_generation_removal=index):
+                database = Path(self.temporary.name) / f"first-{index}.sqlite3"
+                open_repository(database).close()
+                first_failure = pipeline_for(
+                    reports[4],
+                    projection=False,
+                    now=100 + index * 20,
+                    database=database,
+                )
+                first_failure.request("primary", "ebooks")
+                for _ in range(5):
+                    self.assertTrue(first_failure.run_next(1))
+                self.assertFalse(first_failure.run_next(1))
+                confirm_removal(entries, 110 + index * 20, database)
 
     def test_unrelated_provider_success_does_not_shorten_open_circuit(self) -> None:
         repository = open_repository(self.path)
