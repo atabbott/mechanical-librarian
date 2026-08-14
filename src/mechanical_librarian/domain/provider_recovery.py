@@ -19,13 +19,25 @@ class ProviderRecoveryJob:
 
     connection: str; adapter: str; scope: str; generation: int; member_id: str
     target_connection: str; library: str; item: str; file_identity: str
-    source_report_id: str; package_proposal_id: str; package_report_id: str
-    package_case_id: str; package_checkpoint: int; package_outcome: str; lane_ids: str
+    source_report_id: str; package_proposal_id: str | None; package_report_id: str
+    package_case_id: str | None; package_checkpoint: int | None; package_outcome: str; lane_ids: str
     state: str = "queued"; attempt: int = 0
 
     def __post_init__(self) -> None:
-        strings = (self.connection, self.adapter, self.scope, self.member_id, self.target_connection, self.library, self.item, self.file_identity, self.source_report_id, self.package_proposal_id, self.package_report_id, self.package_case_id, self.package_outcome, self.lane_ids)
-        if (not all(type(value) is str and value for value in strings) or type(self.generation) is not int or self.generation < 1 or type(self.package_checkpoint) is not int or self.package_checkpoint < 0 or self.state not in {"queued", "running", "complete", "failed"} or type(self.attempt) is not int or not 0 <= self.attempt <= 5):
+        strings = (self.connection, self.adapter, self.scope, self.member_id, self.target_connection, self.library, self.item, self.file_identity, self.source_report_id, self.package_report_id, self.package_outcome, self.lane_ids)
+        package = (self.package_proposal_id, self.package_case_id, self.package_checkpoint)
+        valid_package = (
+            (self.package_outcome == "report_only" and package == (None, None, None))
+            or (self.package_outcome in {"admitted", "superseded"} and all(value is not None for value in package))
+            or (self.package_outcome in {"no_case", "retired"} and self.package_proposal_id is not None and self.package_case_id is None and self.package_checkpoint is not None)
+        )
+        if (not all(type(value) is str and value for value in strings)
+                or self.package_proposal_id is not None and (type(self.package_proposal_id) is not str or not self.package_proposal_id)
+                or self.package_case_id is not None and (type(self.package_case_id) is not str or not self.package_case_id)
+                or self.package_checkpoint is not None and (type(self.package_checkpoint) is not int or self.package_checkpoint < 0)
+                or not valid_package or type(self.generation) is not int or self.generation < 1
+                or self.state not in {"queued", "running", "complete", "failed"}
+                or type(self.attempt) is not int or not 0 <= self.attempt <= 5):
             raise ProviderRecoveryError("provider recovery job is invalid")
 
 

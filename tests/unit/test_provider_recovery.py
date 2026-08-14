@@ -21,6 +21,26 @@ class ProviderRecoveryTests(unittest.TestCase):
     def _job(member_id: str) -> ProviderRecoveryJob:
         return ProviderRecoveryJob("google", "google_books", "books", 1, member_id, "primary", "books", member_id, f"file-{member_id}", f"report-{member_id}", "proposal", f"report-{member_id}", "case", 1, "admitted", '["work"]')
 
+    def test_job_preserves_each_canonical_current_review_package_shape(self) -> None:
+        common = ("google", "google_books", "books", 1, "member", "primary", "books", "item", "file", "report")
+        for package in (
+            (None, "report", None, None, "report_only"),
+            ("proposal", "report", "case", 1, "admitted"),
+            ("proposal", "report", "case", 1, "superseded"),
+            ("proposal", "report", None, 1, "no_case"),
+            ("proposal", "report", None, 1, "retired"),
+        ):
+            with self.subTest(package=package):
+                self.assertEqual(package, (
+                    ProviderRecoveryJob(*common, *package, '["work"]').package_proposal_id,
+                    ProviderRecoveryJob(*common, *package, '["work"]').package_report_id,
+                    ProviderRecoveryJob(*common, *package, '["work"]').package_case_id,
+                    ProviderRecoveryJob(*common, *package, '["work"]').package_checkpoint,
+                    ProviderRecoveryJob(*common, *package, '["work"]').package_outcome,
+                ))
+        with self.assertRaises(ProviderRecoveryError):
+            ProviderRecoveryJob(*common, None, "report", "case", 1, "report_only", '["work"]')
+
     def test_activation_runner_claims_one_canary_then_fans_out_current_members_once(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")

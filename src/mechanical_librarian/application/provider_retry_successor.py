@@ -143,6 +143,11 @@ class GenerateProviderRetrySuccessor:
             replacement = self._observe(
                 live_provider, plan, selected, deadline=time.monotonic() + 60.0
             )
+            # A shared provider condition is not evidence for a successor.
+            # Leave the predecessor current so the recovery claim can back off
+            # before any sibling is contacted.
+            if any(lane.status in _RETRYABLE for lane in replacement.lanes):
+                raise ProviderRetrySuccessorError("provider retry shared failure")
             merged = self._merged(plan, original, selected, replacement)
             successor = MetadataReport.create(
                 target=source.target, file=source.file,

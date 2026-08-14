@@ -9,8 +9,8 @@
 ## Context
 
 Provider failures must not repeatedly contact a failing provider or leak a
-credential/configuration condition into Activity. Recovery execution is not
-yet an authorized product capability.
+credential/configuration condition into Activity. F24 authorizes one durable,
+provider- and configuration-scoped canary before bounded sibling fanout.
 
 ## Decision
 
@@ -18,8 +18,12 @@ Persist a closed provider-connection, adapter, and scope recovery state. A
 transient or rate-limited failure waits for a bounded delay; authentication,
 authorization, and configuration failures are dormant until the operator
 increments `provider_recovery_generation` in `config-v6` and restarts. The
-store may atomically lease one due canary, but has no provider, replay, fanout,
-or write call.
+store atomically leases one due canary. The existing preparation supervisor is its
+only wake, clock, drain, and shutdown owner; it has no independent queue or
+endpoint. A successful canary may process remaining durable members in that
+exact scope once. A shared failure publishes no successor, has zero fanout,
+and takes Retry-After when supplied before bounded backoff. Target and package
+drift close safely without a provider call.
 
 Health rows are exact-current and events are append-only. Existing state must
 match this exact schema; there are no migrations or imports.
@@ -45,12 +49,12 @@ and transaction across worker threads and closes after the supervisor drains.
 
 ### Negative
 
-- A claimed canary remains non-executing until the activation increment.
+- A claimed canary is bounded to one exact-current provider scope.
 
 ### Neutral or deferred
 
-- Activity exposes only aggregate recovery state; provider execution, replay,
-  fanout, and target writes remain outside this report-only increment.
+- Activity exposes aggregate recovery state only; there is no owner retry
+  control, bulk recovery, or target metadata write.
 
 ## Validation
 
