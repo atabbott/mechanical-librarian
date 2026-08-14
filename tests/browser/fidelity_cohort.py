@@ -232,6 +232,7 @@ def _field(
     manual_hold: bool = False,
     notices: list[str] | None = None,
     provenance: list[str] | None = None,
+    corroboration_sources: list[str] | None = None,
 ) -> dict[str, object]:
     return {
         "destination": destination,
@@ -250,6 +251,7 @@ def _field(
         "automatic_decision": automatic_decision,
         "notices": notices or [],
         "provenance": provenance or [],
+        "corroboration_sources": corroboration_sources or [],
         "uncertainty": [],
     }
 
@@ -347,6 +349,9 @@ def _case(case_id: str) -> dict[str, object]:
                 }
                 if automatic
                 else None
+            ),
+            corroboration_sources=(
+                ["Hardcover", "Open Library"] if case_id == "case-1" else None
             ),
         ),
         _field(
