@@ -2673,6 +2673,9 @@ class SQLiteMetadataReportRepository:
                         json.JSONDecodeError) as error:
                     raise FieldEffectError("authority") from error
                 if (case_envelope.get("current") is not True
+                        or not self._review_case_accepts_authority(
+                            authority.review_case_id
+                        )
                         or case.get("target_fingerprint")
                         != authority.target_fingerprint
                         or (target.get("connection"), target.get("library"),
@@ -7031,6 +7034,9 @@ class SQLiteMetadataReportRepository:
                 type(case_envelope) is not dict
                 or case_envelope.get("current") is not True
                 or type(case_envelope.get("case")) is not dict
+                or not self._review_case_accepts_authority(
+                    decision.review_case_id
+                )
             ):
                 raise HumanDecisionError("stale")
             case = ReviewCase.create_from_data(case_envelope["case"])
@@ -7438,8 +7444,24 @@ class SQLiteMetadataReportRepository:
             type(reopened) is not dict
             or reopened.get("current") is not True
             or type(reopened.get("case")) is not dict
+            or not self._review_case_accepts_authority(review_case_id)
         ):
             raise ReviewAdmissionStaleError
+
+    def _review_case_accepts_authority(self, review_case_id: str) -> bool:
+        return self._connection.execute(
+            "SELECT 1 FROM current_review_case_lineages staged "
+            "JOIN current_review_packages published ON "
+            "published.connection_name=staged.connection_name AND "
+            "published.library_name=staged.library_name AND "
+            "published.item_id=staged.item_id AND "
+            "published.proposal_set_id=staged.proposal_set_id AND "
+            "published.report_id=staged.report_id AND "
+            "published.review_case_id=staged.review_case_id AND "
+            "published.checkpoint=staged.checkpoint "
+            "WHERE staged.review_case_id=?",
+            (review_case_id,),
+        ).fetchone() == (1,)
 
     def _policy_destinations_for(
         self, report: MetadataReport, proposal: ProposalSet
