@@ -909,6 +909,11 @@ def qualify_provider_observation(
         ClaimKind.GENRE,
         ClaimKind.TAG,
     }
+    neutral_rejection_sibling_claims = {
+        ClaimKind.ISBN,
+        ClaimKind.ASIN,
+        ClaimKind.PUBLICATION_DATE,
+    }
     allowed_evidence = {
         ProviderEvidenceKind.AUTHOR_IDENTITY,
         ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
@@ -922,8 +927,13 @@ def qualify_provider_observation(
         for claim in candidate.claims
         if claim.reference not in rejected_creator_references
         and (
-            reject_neutral_creators
-            or (claim.scope is ClaimScope.WORK and claim.kind in allowed_claims)
+            (claim.scope is ClaimScope.WORK and claim.kind in allowed_claims)
+            or (
+                reject_neutral_creators
+                and claim.scope is ClaimScope.EDITION
+                and claim.kind in neutral_rejection_sibling_claims
+                and claim.state is FieldState.VALID
+            )
         )
     )
     filtered_references = {claim.reference for claim in filtered_claims}
@@ -943,24 +953,23 @@ def qualify_provider_observation(
                     }
                 )
                 and (
-                value.scope is ClaimScope.WORK
-                and value.kind in allowed_evidence
+                    value.scope is ClaimScope.WORK
+                    and value.kind in allowed_evidence
                 )
                 or (
-                value.scope is ClaimScope.EDITION
-                and value.kind
-                is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
-                and value.date_normalized is not None
-                and value.date_confidence is DateLinkConfidence.UNRESOLVED
-                and (
-                    not value.links
-                    or any(
-                        link.publication_date_relation
-                        is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
-                        for link in value.links
+                    value.scope is ClaimScope.EDITION
+                    and value.kind
+                    is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                    and value.date_normalized is not None
+                    and value.date_confidence is DateLinkConfidence.UNRESOLVED
+                    and (
+                        not value.links
+                        or any(
+                            link.publication_date_relation
+                            is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+                            for link in value.links
+                        )
                     )
-                )
-                or reject_neutral_creators
                 )
             )
         ),

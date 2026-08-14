@@ -320,6 +320,9 @@ class InspectCurrentReviewCase:
                         alternative["value"] for alternative in alternatives
                     ],
                     "provenance": references,
+                    "corroboration_sources": _corroboration_source_labels(
+                        report, references, reasons,
+                    ),
                     "proposal_id": proposal["proposal_id"],
                     "target_fingerprint": case.target_fingerprint,
                     "uncertainty": (
@@ -677,6 +680,29 @@ def _decision_projection(decision: HumanDecision) -> dict[str, object]:
         "selected_value": decision.selected_value,
         "target_fingerprint": decision.target_fingerprint,
     }
+
+
+def _corroboration_source_labels(
+    report: MetadataReport,
+    references: list[str],
+    reasons: list[object],
+) -> list[str]:
+    """Project only closed provider authorities for #416 creator corroboration."""
+    if reasons != ["explicit_author_corroborates_untyped_creator"]:
+        return []
+    labels = {
+        "hardcover": "Hardcover",
+        "open_library": "Open Library",
+        "google_books": "Google Books",
+    }
+    by_reference = {
+        claim.reference: labels[provider.authority]
+        for provider in report.providers
+        if provider.authority in labels
+        for candidate in provider.candidates
+        for claim in candidate.claims
+    }
+    return [by_reference[reference] for reference in references if reference in by_reference]
 
 
 def _bounded_token(value: object) -> bool:

@@ -229,6 +229,7 @@ class _ReviewField(_ClosedModel):
     notices: list[str]
     proposed_values: list[_ProposedValue]
     provenance: list[str]
+    corroboration_sources: list[str]
     proposal_id: str
     target_fingerprint: str
     uncertainty: list[str]
