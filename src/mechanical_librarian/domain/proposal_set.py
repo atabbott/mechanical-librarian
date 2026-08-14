@@ -37,6 +37,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderIdentityBinding,
     ProviderQueryKind,
+    ProviderStatus,
     TargetDestination,
     TargetField,
     TargetFieldState,
@@ -1391,19 +1392,20 @@ def _work_lane_contains(
     provider: ProviderObservation, candidate: ProviderCandidate,
 ) -> bool:
     """Require a successful exact WORK-lane membership when lanes exist."""
-    if provider.query_kind is not ProviderQueryKind.WORK:
-        return False
-    if not provider.lanes:
-        return len(provider.candidates) == 1
-    return any(
-        lane.kind is ProviderQueryKind.WORK
-        and lane.status is ProviderStatus.CANDIDATES
-        and any(
-            member.edition_identity == candidate.identity
-            and member.work_identity == candidate.work_identity
-            for member in lane.candidates
+    if provider.lanes:
+        return any(
+            lane.kind is ProviderQueryKind.WORK
+            and lane.status is ProviderStatus.CANDIDATES
+            and any(
+                member.edition_identity == candidate.identity
+                and member.work_identity == candidate.work_identity
+                for member in lane.candidates
+            )
+            for lane in provider.lanes
         )
-        for lane in provider.lanes
+    return (
+        provider.query_kind is ProviderQueryKind.WORK
+        and len(provider.candidates) == 1
     )
 
 

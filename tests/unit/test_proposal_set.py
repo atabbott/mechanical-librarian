@@ -732,6 +732,13 @@ class ProposalSetTests(unittest.TestCase):
             TargetDestination.AUTHORS,
         )
         self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
+        self.assertEqual(
+            ("explicit_author_corroborates_untyped_creator",), result.reasons,
+        )
+        self.assertTrue(
+            {neutral.claims[1].reference, author.claims[1].reference}
+            .issubset(result.alternatives[0].evidence_references),
+        )
 
         isbn_only_neutral = replace(
             mixed_neutral,
@@ -755,6 +762,9 @@ class ProposalSetTests(unittest.TestCase):
                 )
             ),
             TargetDestination.AUTHORS,
+        )
+        self.assertNotIn(
+            "explicit_author_corroborates_untyped_creator", rejected.reasons,
         )
         self.assertNotIn(
             neutral.claims[1].reference,
