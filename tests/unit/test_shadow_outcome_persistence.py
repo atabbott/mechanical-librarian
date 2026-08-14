@@ -1300,6 +1300,17 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             self.assertEqual((0,), repository._connection.execute(
                 "SELECT COUNT(*) FROM automatic_decisions"
             ).fetchone())
+            with self.assertRaisesRegex(
+                MetadataReportError, "review preparation state changed"
+            ):
+                repository.advance_review_pipeline_action(action, None, 5)
+            self.assertEqual(("projection", "running"), repository._connection.execute(
+                "SELECT stage,state FROM review_preparation_work WHERE work_id=?",
+                (work_id,),
+            ).fetchone())
+            self.assertEqual((0,), repository._connection.execute(
+                "SELECT COUNT(*) FROM current_review_packages"
+            ).fetchone())
             repository.fail_review_pipeline_action(action, "stale", True, 5)
             self.assertEqual(("queued", "stale"), repository._connection.execute(
                 "SELECT state,failure_code FROM review_preparation_work WHERE work_id=?",

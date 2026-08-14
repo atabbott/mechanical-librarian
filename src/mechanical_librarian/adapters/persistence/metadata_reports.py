@@ -4177,6 +4177,12 @@ class SQLiteMetadataReportRepository:
         try:
             if not self._connection.in_transaction:
                 self._connection.execute("BEGIN IMMEDIATE")
+            if action.stage == "projection":
+                if action.review_case_id is None:
+                    raise MetadataReportError("review preparation state changed")
+                self._require_staged_shadow_projection_current(
+                    action.review_case_id, action
+                )
             values: list[object] = [target[0], completed_at]
             assignment = ""
             if target[1] is not None:
@@ -4260,11 +4266,13 @@ class SQLiteMetadataReportRepository:
             )
             self._connection.commit()
             return next_action
-        except (sqlite3.Error, MetadataReportError) as error:
+        except (sqlite3.Error, MetadataReportError, ReviewAdmissionStaleError) as error:
             if self._connection.in_transaction:
                 self._connection.rollback()
             if isinstance(error, MetadataReportError):
                 raise
+            if isinstance(error, ReviewAdmissionStaleError):
+                raise MetadataReportError("review preparation state changed") from error
             raise MetadataReportError("review preparation persistence failed") from error
 
     def begin_review_pipeline_output(self) -> None:
@@ -5705,12 +5713,9 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("shadow outcome source is unavailable")
             case_for_recovery = ReviewCase.from_json(raw_case[0])
             if staged_action is not None:
-                try:
-                    self._require_shadow_case_current(review_case_id)
-                except ReviewAdmissionStaleError:
-                    self._require_staged_shadow_projection_current(
-                        review_case_id, staged_action
-                    )
+                self._require_staged_shadow_projection_current(
+                    review_case_id, staged_action
+                )
             else:
                 self._require_shadow_case_current(review_case_id)
             state = self._connection.execute(

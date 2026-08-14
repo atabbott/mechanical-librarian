@@ -434,6 +434,8 @@ class ReviewPreparationPipeline:
                 _, output_id = self._admit(repository, action.proposal_set_id)
             elif action.stage == "projection":
                 if action.review_case_id is not None:
+                    repository.begin_review_pipeline_output()
+                    output_transaction = True
                     projection = self._project(repository, action)
                     if projection == "stale":
                         raise ReviewPipelineError("stale")
