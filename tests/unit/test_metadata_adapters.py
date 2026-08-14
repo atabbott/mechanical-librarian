@@ -229,6 +229,58 @@ def _leave_hot_journal(path: Path) -> Path:
 
 
 class MetadataPersistenceTests(unittest.TestCase):
+    def test_publication_currentness_runs_once_before_the_writer_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            calls: list[None] = []
+
+            def currentness() -> bool:
+                calls.append(None)
+                return True
+
+            try:
+                repository.publish(_report(), currentness)
+            finally:
+                repository.close()
+
+        self.assertEqual(1, len(calls))
+
+    def test_package_assertion_rolls_back_a_package_pointer_race(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            source = _report("Source")
+            successor = _report("Successor")
+            try:
+                repository.publish(source, lambda: True)
+                repository._connection.execute("PRAGMA ignore_check_constraints=ON")
+                repository._connection.execute(
+                    "UPDATE current_review_packages SET outcome='hostile'"
+                )
+                repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
+
+                with self.assertRaisesRegex(MetadataReportError, "review package is invalid"):
+                    repository.publish(
+                        successor,
+                        lambda: True,
+                        source.report_id,
+                        expected_package=(None, source.report_id, None, None, "report_only"),
+                    )
+
+                self.assertEqual(source.to_json(), repository.current(
+                    source.target.connection, source.target.library,
+                    source.target.item, source.file.identity,
+                ))
+                with self.assertRaisesRegex(MetadataReportError, "review package is invalid"):
+                    repository.current_review_package(
+                        source.target.connection, source.target.library, source.target.item
+                    )
+                self.assertIsNone(repository._connection.execute(
+                    "SELECT report_id FROM metadata_reports WHERE report_id=?",
+                    (successor.report_id,),
+                ).fetchone())
+            finally:
+                repository.close()
+
     def test_absent_field_effect_consent_remains_a_semantic_absence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")

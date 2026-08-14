@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add the internal, unreachable scoped provider retry-successor seam. It
+  rebuilds only explicit retry-eligible failed lanes from an exact-current
+  report, preserves unselected lane evidence, and relies on existing atomic
+  review-package cutover; it adds no scheduler, endpoint, canary, or write
+  path. (#629)
+
 - Complete first-generation staged review projection before its package becomes
   owner-visible, while retaining published-package authority for Library,
   Attention, owner decisions, and field effects. (#630)
