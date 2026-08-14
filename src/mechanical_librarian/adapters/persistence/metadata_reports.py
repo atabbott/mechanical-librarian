@@ -216,6 +216,18 @@ _REVIEW_POINTERS_SQL = (
     "CHECK ((outcome IN ('admitted','superseded') AND review_case_id IS NOT NULL) OR (outcome IN ('no_case','retired','tombstoned') AND review_case_id IS NULL)), "
     "PRIMARY KEY (connection_name,library_name,item_id))"
 )
+_CURRENT_REVIEW_PACKAGES_SQL = (
+    "CREATE TABLE current_review_packages ("
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
+    "proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), "
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "review_case_id TEXT REFERENCES review_cases(review_case_id), "
+    "outcome TEXT NOT NULL CHECK(outcome IN ('report_only','admitted','superseded','no_case','retired')), "
+    "CHECK ((outcome='report_only' AND proposal_set_id IS NULL AND review_case_id IS NULL) "
+    "OR (outcome IN ('admitted','superseded') AND proposal_set_id IS NOT NULL AND review_case_id IS NOT NULL) "
+    "OR (outcome IN ('no_case','retired') AND proposal_set_id IS NOT NULL AND review_case_id IS NULL)), "
+    "PRIMARY KEY(connection_name,library_name,item_id))"
+)
 _REVIEW_TRANSITIONS_SQL = (
     "CREATE TABLE review_case_transitions ("
     "transition_id TEXT PRIMARY KEY NOT NULL CHECK(transition_id GLOB 'review_transition_[0-9a-f]*' AND length(transition_id)=82), "
@@ -436,8 +448,11 @@ _FIELD_EFFECT_EVENTS_SQL = (
 _FIELD_EFFECT_EVENT_NO_UPDATE_SQL = "CREATE TRIGGER field_effect_events_no_update BEFORE UPDATE ON field_effect_events BEGIN SELECT RAISE(ABORT, 'field effect events are append-only'); END"
 _FIELD_EFFECT_EVENT_NO_DELETE_SQL = "CREATE TRIGGER field_effect_events_no_delete BEFORE DELETE ON field_effect_events BEGIN SELECT RAISE(ABORT, 'field effect events are append-only'); END"
 _CURRENT_REVIEW_FROM_SQL = (
-    "FROM current_review_case_lineages c "
-    "JOIN review_cases rc ON rc.review_case_id=c.review_case_id "
+    "FROM current_review_packages p "
+    "JOIN current_review_case_lineages c ON c.connection_name=p.connection_name "
+    "AND c.library_name=p.library_name AND c.item_id=p.item_id "
+    "AND c.report_id=p.report_id AND c.review_case_id=p.review_case_id "
+    "JOIN review_cases rc ON rc.review_case_id=p.review_case_id "
     "JOIN metadata_reports mr ON mr.report_id=rc.report_id "
     "JOIN current_metadata_report_lineages ml "
     "ON ml.connection_name=c.connection_name "
@@ -450,7 +465,7 @@ _CURRENT_REVIEW_FROM_SQL = (
     "AND mf.report_id=rc.report_id"
 )
 _CURRENT_LIBRARY_FROM_SQL = (
-    "FROM current_metadata_report_lineages ml "
+    "FROM current_review_packages ml "
     "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
     "JOIN current_metadata_reports mf "
     "ON mf.connection_name=ml.connection_name "
@@ -459,8 +474,8 @@ _CURRENT_LIBRARY_FROM_SQL = (
     "LEFT JOIN current_review_case_lineages c "
     "ON c.connection_name=ml.connection_name "
     "AND c.library_name=ml.library_name AND c.item_id=ml.item_id "
-    "AND c.report_id=ml.report_id "
-    "LEFT JOIN review_cases rc ON rc.review_case_id=c.review_case_id"
+    "AND c.report_id=ml.report_id AND c.review_case_id=ml.review_case_id "
+    "LEFT JOIN review_cases rc ON rc.review_case_id=ml.review_case_id"
 )
 _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL = (
     "EXISTS (SELECT 1 FROM json_each(rc.document,'$.results') manual_result "
@@ -3715,6 +3730,32 @@ class SQLiteMetadataReportRepository:
                     self._refresh_metadata_policy_transition(
                         transition_row[0], completed_at
                     )
+            if (
+                target[0] == "complete"
+                and action.stage in {"admission", "projection"}
+                and action.proposal_set_id is not None
+                and action.report_id is not None
+            ):
+                pointer = self._connection.execute(
+                    "SELECT proposal_set_id,report_id,review_case_id,outcome FROM current_review_case_lineages "
+                    "WHERE connection_name=? AND library_name=? AND item_id=?",
+                    (action.connection, action.library, action.item_id),
+                ).fetchone()
+                if (
+                    pointer is None
+                    or pointer[0] != action.proposal_set_id
+                    or pointer[1] != action.report_id
+                    or pointer[3] not in {"admitted", "superseded", "no_case", "retired"}
+                    or (action.stage == "projection" and pointer[2] != action.review_case_id)
+                ):
+                    raise MetadataReportError("review preparation state changed")
+                self._connection.execute(
+                    "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,outcome) "
+                    "VALUES(?,?,?,?,?,?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET "
+                    "proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,"
+                    "review_case_id=excluded.review_case_id,outcome=excluded.outcome",
+                    (action.connection, action.library, action.item_id, *pointer),
+                )
             if target[0] == "complete":
                 transition_row = self._connection.execute(
                     "SELECT transition_id FROM metadata_policy_transition_items WHERE work_id=? AND state='pending'",
@@ -4117,6 +4158,12 @@ class SQLiteMetadataReportRepository:
                 "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET report_id=excluded.report_id",
                 (report.target.connection, report.target.library, report.target.item, report.report_id),
             )
+            if after_publication is None:
+                self._connection.execute(
+                    "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,outcome) VALUES(?,?,?,NULL,?,NULL,'report_only') "
+                    "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=NULL,report_id=excluded.report_id,review_case_id=NULL,outcome='report_only'",
+                    (report.target.connection, report.target.library, report.target.item, report.report_id),
+                )
             if after_publication is not None:
                 after_publication(self, report)
             if self._binding is not None:
@@ -4345,6 +4392,12 @@ class SQLiteMetadataReportRepository:
                 transition = ReviewTransition(*lineage, checkpoint, proposal_set.proposal_set_id, report.report_id, outcome, prior_case_id, None, "nonactionable")
                 self._connection.execute("INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (transition.transition_id, *lineage, checkpoint, transition.actor, transition.from_review_case_id, None, proposal_set.proposal_set_id, report.report_id, outcome, "nonactionable"))
                 self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?, ?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=NULL,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome", (*lineage, proposal_set.proposal_set_id, report.report_id, None, transition.transition_id, checkpoint, outcome))
+                if owns_transaction:
+                    self._connection.execute(
+                        "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,outcome) VALUES(?,?,?,?,?,?,?) "
+                        "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,outcome=excluded.outcome",
+                        (*lineage, proposal_set.proposal_set_id, report.report_id, None, outcome),
+                    )
                 if self._binding is not None:
                     self._binding.require_current()
                 if owns_transaction:
@@ -4360,6 +4413,12 @@ class SQLiteMetadataReportRepository:
             transition = ReviewTransition(*lineage, checkpoint, proposal_set.proposal_set_id, report.report_id, outcome, prior_case_id, case.review_case_id, "actionable")
             self._connection.execute("INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (transition.transition_id, *lineage, checkpoint, transition.actor, transition.from_review_case_id, case.review_case_id, proposal_set.proposal_set_id, report.report_id, outcome, "actionable"))
             self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome", (*lineage, proposal_set.proposal_set_id, report.report_id, case.review_case_id, transition.transition_id, checkpoint, outcome))
+            if owns_transaction:
+                self._connection.execute(
+                    "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,outcome) VALUES(?,?,?,?,?,?,?) "
+                    "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,outcome=excluded.outcome",
+                    (*lineage, proposal_set.proposal_set_id, report.report_id, case.review_case_id, outcome),
+                )
             if self._binding is not None:
                 self._binding.require_current()
             if owns_transaction:
@@ -7464,6 +7523,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             )
             connection.execute(_REVIEW_CASES_SQL)
             connection.execute(_REVIEW_POINTERS_SQL)
+            connection.execute(_CURRENT_REVIEW_PACKAGES_SQL)
             connection.execute(_REVIEW_TRANSITIONS_SQL)
             connection.execute(_REVIEW_SCANS_SQL)
             connection.execute(_REVIEW_CONTROL_SQL)
@@ -7761,6 +7821,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_current_metadata_reports_1", None),
         ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
         ("index", "sqlite_autoindex_current_review_case_lineages_1", None),
+        ("index", "sqlite_autoindex_current_review_packages_1", None),
         ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
         ("index", "metadata_report_cover_references_artifact_id", _COVER_ARTIFACT_INDEX_SQL),
         ("index", "metadata_report_cover_references_preview_digest", _COVER_PREVIEW_INDEX_SQL),
@@ -7816,6 +7877,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "current_metadata_reports", _CURRENT_SQL),
         ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
         ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
+        ("table", "current_review_packages", _CURRENT_REVIEW_PACKAGES_SQL),
         ("table", "cover_considerations", _COVER_CONSIDERATIONS_SQL),
         ("table", "current_cover_considerations", _CURRENT_COVER_CONSIDERATIONS_SQL),
         ("table", "cover_consideration_events", _COVER_CONSIDERATION_EVENTS_SQL),

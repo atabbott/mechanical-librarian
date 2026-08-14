@@ -253,6 +253,12 @@ Existing immutable reports,
 ProposalSets, ReviewCases, decisions, and audit transitions remain the semantic
 records.
 
+The public Library and Attention snapshots read one current review package
+pointer, not intermediate report or admission pointers. A first generation is
+therefore absent until its read-only projection succeeds; a refresh keeps its
+previous package visible until the successor package atomically replaces it.
+Failed, stale, and restarted work never changes that pointer.
+
 Claims are persisted before work. Restart changes discovering and running
 claims back to queued without inventing a result. Two fixed claimers have no
 library-wide stage barrier, while catalogue publication and each shared

@@ -484,6 +484,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                     ("current_metadata_report_lineages",),
                     ("current_metadata_reports",),
                     ("current_review_case_lineages",),
+                    ("current_review_packages",),
                     ("field_effect_actions",),
                     ("field_effect_authorities",),
                     ("field_effect_cleanups",),

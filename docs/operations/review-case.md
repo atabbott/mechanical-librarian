@@ -187,6 +187,13 @@ When preparation changes ready/blocked counts or lifecycle state, the Library
 page refreshes its exact-current projection so newly admitted or retired cases
 are reflected without a manual reload.
 
+Preparation stages are deliberately not Library publication. The service
+publishes the report, proposal, case (or no-case disposition), and projection
+as one current package only after projection succeeds. During a refresh the
+last complete package remains browseable; during a first generation nothing is
+listed. Operators recover failed work with the existing bounded retry/scan
+controls rather than editing SQLite pointers.
+
 The supported container requests every configured library on first startup and
 after `review.library_polling_interval_seconds` from its last successful scan.
 Repeated automatic and owner requests coalesce. The compact shared activity
