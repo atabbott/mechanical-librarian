@@ -67,11 +67,12 @@ class ProviderRecovery:
         return ProviderRecovery(self.connection, self.adapter, self.scope, self.generation,
                                 "waiting", attempt, deadline)
 
-    def with_generation(self, generation: int) -> "ProviderRecovery":
-        if type(generation) is not int or generation < self.generation:
+    def with_generation(self, generation: int, *, now: int = 0) -> "ProviderRecovery":
+        if (type(generation) is not int or generation < self.generation
+                or type(now) is not int or not 0 <= now <= MAX_TIMESTAMP):
             raise ProviderRecoveryError("provider recovery generation is invalid")
         if self.state == "dormant" and generation > self.generation:
-            return ProviderRecovery(self.connection, self.adapter, self.scope, generation, "waiting", 0, 0)
+            return ProviderRecovery(self.connection, self.adapter, self.scope, generation, "waiting", 0, now)
         return ProviderRecovery(self.connection, self.adapter, self.scope, generation, self.state, self.attempt, self.next_eligible_at)
 
 

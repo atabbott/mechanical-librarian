@@ -57,6 +57,10 @@ class ProviderRecoveryTests(unittest.TestCase):
             store.record(first, occurred_at=0)
             claimed = store.claim_one(generation=1, now=2, token="owner")
             self.assertIsNotNone(claimed)
+            with self.assertRaises(TypeError):
+                store.record(ProviderRecovery("primary", "hardcover", "books", 1, "waiting", 2, 6), occurred_at=2, owner_token="owner")
+            with self.assertRaises(ProviderRecoveryStoreError):
+                store.record(ProviderRecovery("primary", "hardcover", "books", 1, "waiting", 2, 6), occurred_at=2)
             waiting = ProviderRecovery("primary", "hardcover", "books", 1, "waiting", 2, 6)
             with self.assertRaises(ProviderRecoveryStoreError):
                 store.complete(token="other", recovery=claimed, now=2, failure="transient", retry_after=4)
@@ -86,16 +90,69 @@ class ProviderRecoveryTests(unittest.TestCase):
         with self.assertRaises(ProviderRecoveryError):
             ProviderRecovery("primary", "hardcover", "books", 1, "waiting", 1, MAX_TIMESTAMP + 1)
 
-    def test_startup_generation_wakes_only_dormant_rows(self) -> None:
+    def test_startup_generation_reconciles_every_older_state_and_rejects_newer(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
             dormant = ProviderRecovery.failed(connection="primary", adapter="hardcover", scope="books", generation=1, failure="authentication", now=0)
             waiting = ProviderRecovery.failed(connection="other", adapter="hardcover", scope="books", generation=1, failure="transient", now=0, retry_after=1)
-            store.record(dormant, occurred_at=0); store.record(waiting, occurred_at=0)
-            self.assertEqual(1, store.reconcile_generation(generation=2, now=9))
-            rows = {item.connection: item for item in store.snapshot(limit=2)}
+            checking = ProviderRecovery.failed(connection="aaa", adapter="hardcover", scope="books", generation=1, failure="transient", now=0, retry_after=1)
+            store.record(dormant, occurred_at=0); store.record(waiting, occurred_at=0); store.record(checking, occurred_at=0)
+            self.assertIsNotNone(store.claim_one(generation=1, now=1, token="owner"))
+            self.assertEqual(3, store.reconcile_generation(generation=2, now=9))
+            rows = {item.connection: item for item in store.snapshot(limit=3)}
             self.assertEqual((2, "waiting", 0, 9), (rows["primary"].generation, rows["primary"].state, rows["primary"].attempt, rows["primary"].next_eligible_at))
-            self.assertEqual(1, rows["other"].generation)
+            self.assertEqual((2, "waiting", 1, 1), (rows["other"].generation, rows["other"].state, rows["other"].attempt, rows["other"].next_eligible_at))
+            self.assertEqual((2, "checking", 1, None), (rows["aaa"].generation, rows["aaa"].state, rows["aaa"].attempt, rows["aaa"].next_eligible_at))
+            self.assertEqual(
+                [("aaa", 2, "checking", 1, None), ("other", 2, "waiting", 1, 1), ("primary", 2, "waiting", 0, 9)],
+                store._connection.execute("SELECT connection,generation,state,attempt,next_eligible_at FROM provider_recovery_events WHERE generation=2 ORDER BY connection").fetchall(),
+            )
+            before = (store.snapshot(limit=3), store._connection.execute("SELECT count(*) FROM provider_recovery_events").fetchone()[0])
+            with self.assertRaises(ProviderRecoveryStoreError):
+                store.reconcile_generation(generation=1, now=10)
+            self.assertEqual(before, (store.snapshot(limit=3), store._connection.execute("SELECT count(*) FROM provider_recovery_events").fetchone()[0]))
+            store.close()
+
+    def test_health_observation_is_idempotent_and_never_completes_a_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            kwargs = {"connection": "primary", "adapter": "hardcover", "scope": "books", "generation": 1}
+            store.observe_failure(**kwargs, failure="transient", now=0)
+            first = store.snapshot()[0]
+            store.observe_failure(**kwargs, failure="rate_limited", now=10)
+            self.assertEqual(first, store.snapshot()[0])
+            self.assertEqual(1, store._connection.execute("SELECT count(*) FROM provider_recovery_events").fetchone()[0])
+            store.observe_failure(**kwargs, failure="authentication", now=10)
+            dormant = store.snapshot()[0]
+            store.observe_failure(**kwargs, failure="authorization", now=11)
+            self.assertEqual(dormant, store.snapshot()[0])
+            self.assertEqual(2, store._connection.execute("SELECT count(*) FROM provider_recovery_events").fetchone()[0])
+
+            checking = ProviderRecovery.failed(connection="other", adapter="hardcover", scope="books", generation=1, failure="transient", now=0, retry_after=1)
+            store.record(checking, occurred_at=0)
+            claimed = store.claim_one(generation=1, now=1, token="owner")
+            self.assertIsNotNone(claimed)
+            events = store._connection.execute("SELECT count(*) FROM provider_recovery_events").fetchone()[0]
+            store.observe_failure(connection="other", adapter="hardcover", scope="books", generation=1, failure="authentication", now=1)
+            self.assertEqual("checking", {item.connection: item for item in store.snapshot(limit=2)}["other"].state)
+            self.assertEqual(events, store._connection.execute("SELECT count(*) FROM provider_recovery_events").fetchone()[0])
+            store.close()
+
+    def test_completion_rejects_exact_expiry_and_excluded_failure_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            recovery = ProviderRecovery.failed(connection="primary", adapter="hardcover", scope="books", generation=1, failure="transient", now=0, retry_after=1)
+            store.record(recovery, occurred_at=0)
+            claimed = store.claim_one(generation=1, now=1, token="owner", lease_seconds=1)
+            assert claimed is not None
+            before = (store.snapshot(), store._connection.execute("SELECT count(*) FROM provider_recovery_events").fetchone()[0])
+            with self.assertRaises(ProviderRecoveryStoreError):
+                store.complete(token="owner", recovery=claimed, now=2, failure="transient")
+            self.assertEqual(before, (store.snapshot(), store._connection.execute("SELECT count(*) FROM provider_recovery_events").fetchone()[0]))
+            with self.assertRaises(ProviderRecoveryStoreError):
+                store.complete(token="owner", recovery=claimed, now=1, failure="no_match")
+            self.assertEqual(before, (store.snapshot(), store._connection.execute("SELECT count(*) FROM provider_recovery_events").fetchone()[0]))
+            store.close()
 
     def test_completion_caps_retry_storm_and_activity_aggregates_without_truncation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -57,7 +57,6 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_shadow_preview_repository,
 )
 from mechanical_librarian.adapters.persistence.provider_recovery import SQLiteProviderRecoveryStore
-from mechanical_librarian.domain.provider_recovery import ProviderRecovery
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
     HardcoverPacer,
@@ -713,7 +712,7 @@ def _record_provider_recovery_observations(store: SQLiteProviderRecoveryStore, r
     for observation in report.providers:
         failure = failures.get(observation.status)
         if failure is not None:
-            store.record(ProviderRecovery.failed(connection=connection, adapter=observation.provider, scope=scope, generation=generation, failure=failure, now=now), occurred_at=now)
+            store.observe_failure(connection=connection, adapter=observation.provider, scope=scope, generation=generation, failure=failure, now=now)
 
 
 class _NonClosingRepository:

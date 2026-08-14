@@ -24,6 +24,13 @@ or write call.
 Health rows are exact-current and events are append-only. Existing state must
 match this exact schema; there are no migrations or imports.
 
+Startup rejects a persisted generation newer than configuration and advances
+every older row atomically through its domain generation transition. Checking
+can only transition through strict lease completion. Terminal health
+observations are atomic and idempotent: checking and dormant take precedence,
+and a dormant observation replaces waiting once without rescheduling repeated
+transient or rate-limited observations.
+
 ## Consequences
 
 ### Positive
@@ -42,5 +49,6 @@ match this exact schema; there are no migrations or imports.
 
 ## Validation
 
-Unit tests cover bounded delays, dormancy, generation wake, duplicate claims,
-restart, stale leases, and schema corruption.
+Unit tests cover bounded delays, dormancy, all-state generation reconciliation,
+idempotent observation, strict lease completion, restart, stale leases, and
+schema corruption.
